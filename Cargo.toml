@@ -1,0 +1,27 @@
+[package]
+name = "bankml"
+version = "0.0.1"
+edition = "2021"
+authors = ["Professor Codephreak", "Gregory L. Magnusson"]
+repository = "https://github.com/cryptoAGI/bankml"
+readme = "README.md"
+description = "In-house Rust player for low-bit (1-bit Q1_0 / ternary Q2_0_g64) GGUF models — P1 guard+pin and the P2 Q1_0 + Q2_0 kernels proven; see bankml.rs"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+path = "bankml.rs"
+
+# Zero dependencies (2026-09-25): sha256, the GGUF parse, f16 and the kernels are in-crate. Each one added
+# later carries a comment saying why (design goal: succinct).
+[dependencies]
+
+[[bin]]
+name = "bankml"
+path = "main.rs"
+
+[profile.release]
+# one static-ish binary, small: the kernels choose AVX2 at run time, so no target-cpu flag is needed
+lto = true
+codegen-units = 1
+panic = "abort"
