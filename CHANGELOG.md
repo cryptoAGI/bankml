@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.0.4 — 2026-09-28
+
+Where the time goes, and a faster 1-bit prefill. Gate record: `testing/results/0.0.4.txt`. Every oracle is bit-exact.
+Two measurements in the gate were disturbed by other load on the laptop (swap full), so the record adds a re-run.
+
+### Added
+- **`bench_memory_floor`** (`par.rs`) measures streaming read bandwidth on the laptop at 1–4 threads: **14.9–17.2
+  GB/s**. Streaming one token's weights therefore takes at least **0.12–0.14 s** (ternary) and **0.06–0.07 s** (1-bit).
+  Against that floor, bankml's ternary matmuls (0.23–0.27 s at 3 threads) are about 2× above it, and the 1-bit ones
+  (0.34–0.37 s) about **5.5× above it**. Both kernels are compute-bound, not memory-bound, which says where the
+  remaining work is.
+- **`q1_0::mat_mul_act` / `mat_mul_act_par`**: a 1-bit prefill over prepared `Q8Act` columns, using the selection
+  kernel in a 1×4 tile. The ±1 expansion is shared by the four columns, and the scales are already f32, so nothing is
+  converted once per column. A column that holds q = −128 falls back to the wrapping kernel. Measured against ggml's
+  per-pair kernel (1024×4096 × 32 columns): **1.27–1.33× median** (8.25 against 10.09–10.28 ns per block·column,
+  min). The q8-byte tile it replaces measured 1.08–1.18×. Bit-exact against the scalar model of ggml on 1,500 random
+  cases, and against ggml itself in `ab_vs_ggml`.
+
+### Measured and not adopted (the oracle said same bits; the stopwatch said no)
+- **Two 1-bit blocks per iteration**, with their FMA chains interleaved: 1.00× on the GEMV, 1.05× on an L1-resident
+  row. The kernel is not bound by latency.
+- **A "pair-order" 1-bit kernel** that replaces a multiply (`madd`) with a 128-bit add, on the theory that Zen+'s
+  single integer-multiply pipe is the limit. It was bit-exact and **0.84×** on decode: the cross-lane extract and the
+  widening cost more than the multiply they save. The source is in `testing/experiments/q1_0_pair_order.rs` for anyone
+  who wants to try it on another core.
+- (Already on record from 0.0.1: 2- and 4-row decode tiles, 0.81–0.99×.)
+
+1-bit decode stays at parity with ggml (0.95–1.03× over the whole token). Every bit-exact variant tried so far runs at
+about ggml's speed on this core.
+
+### Testing
+- The gate now also runs `bench_q1_0_prefill_act` and `bench_memory_floor`.
+- `testing/experiments/` holds the code of measured-and-rejected kernels.
+
 ## 0.0.3 — 2026-09-28
 
 Threads, and more oracle evidence. Each speed figure below was measured with the oracles passing on the same code.

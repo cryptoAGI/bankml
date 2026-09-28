@@ -399,6 +399,58 @@ pub unsafe fn vec_dot_act_sel_avx2(x: &[u8], a: &Q8Act) -> f32 {
     _mm_cvtss_f32(r)
 }
 
+/// Prefill tile over prepared activations (0.0.4): one Q1_0 row against four `Q8Act`
+/// columns with the selection kernel. The ±1 expansion is done once per q8 block and shared by the four
+/// columns; each column reads contiguous quants, f32 scales and lane totals, so no f16 conversion is
+/// repeated per column. Requires `!has_min` on every column (the wrap case goes through `vec_dot_act`).
+///
+/// # Safety
+/// AVX2+FMA+F16C present; `x` holds `n / 128` blocks; all four columns have the same `n` and `!has_min`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma,f16c")]
+pub unsafe fn vec_dot_act_1x4_sel_avx2(x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] {
+    use std::arch::x86_64::*;
+    let ones_8 = _mm256_set1_epi8(1);
+    let twos_16 = _mm256_set1_epi16(2);
+    let sh = |k: i8| _mm256_setr_epi8(
+        4 * k, 4 * k, 4 * k, 4 * k, 4 * k, 4 * k, 4 * k, 4 * k, 4 * k + 1, 4 * k + 1, 4 * k + 1, 4 * k + 1, 4 * k + 1, 4 * k + 1, 4 * k + 1, 4 * k + 1,
+        4 * k + 2, 4 * k + 2, 4 * k + 2, 4 * k + 2, 4 * k + 2, 4 * k + 2, 4 * k + 2, 4 * k + 2, 4 * k + 3, 4 * k + 3, 4 * k + 3, 4 * k + 3, 4 * k + 3, 4 * k + 3, 4 * k + 3, 4 * k + 3,
+    );
+    let shuf = [sh(0), sh(1), sh(2), sh(3)];
+    let bit_masks = _mm256_setr_epi8(
+        1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128,
+    );
+    let mut acc = [_mm256_setzero_ps(); 4];
+    let xp = x.as_ptr();
+    for i in 0..cols[0].n / QK1_0 {
+        let xb = xp.add(i * Q1_0_BYTES);
+        let d0 = _mm256_set1_ps(f16c(xb));
+        let signs = _mm256_broadcastsi128_si256(_mm_loadu_si128(xb.add(2) as *const __m128i));
+        let mut ab = [_mm256_setzero_ps(); 4];
+        for (k, shuf_k) in shuf.iter().enumerate() {
+            let j = i * 4 + k;
+            let u = _mm256_min_epu8(_mm256_and_si256(_mm256_shuffle_epi8(signs, *shuf_k), bit_masks), ones_8);
+            for c in 0..4 {
+                let a = cols[c];
+                let pos2 = _mm256_madd_epi16(_mm256_maddubs_epi16(u, _mm256_loadu_si256(a.qs.as_ptr().add(j * QK8_0) as *const __m256i)), twos_16);
+                let s = _mm256_cvtepi32_ps(_mm256_sub_epi32(pos2, _mm256_loadu_si256(a.tot.as_ptr().add(j * 8) as *const __m256i)));
+                let d1 = _mm256_broadcast_ss(&*a.d.as_ptr().add(j));
+                ab[c] = if k == 0 { _mm256_mul_ps(d1, s) } else { _mm256_fmadd_ps(d1, s, ab[c]) };
+            }
+        }
+        for c in 0..4 {
+            acc[c] = _mm256_fmadd_ps(d0, ab[c], acc[c]);
+        }
+    }
+    acc.map(|v| {
+        let hi = _mm256_extractf128_ps(v, 1);
+        let mut r = _mm_add_ps(hi, _mm256_castps256_ps128(v));
+        r = _mm_add_ps(r, _mm_movehl_ps(r, r));
+        r = _mm_add_ss(r, _mm_movehdup_ps(r));
+        _mm_cvtss_f32(r)
+    })
+}
+
 /// out[r] = row r of `w` · `a` for `rows` rows (the decode matvec); bits of per-row `vec_dot_act`.
 pub fn mat_vec(w: &[u8], rows: usize, a: &Q8Act, out: &mut [f32]) {
     // Measured 2026-09-25 (Ryzen 3 3200U): 2- and 4-row register tiles were 0.95–0.99x and 0.81x of
@@ -510,6 +562,67 @@ pub fn mat_vec_par(pool: &crate::par::Pool, w: &[u8], rows: usize, a: &Q8Act, ou
     let rb = a.n / QK1_0 * Q1_0_BYTES;
     assert!(w.len() >= rows * rb && out.len() >= rows);
     pool.rows(rows, out, &|r0, o| mat_vec(&w[r0 * rb..], o.len(), a, o));
+}
+
+/// out[c·rows + r] = row r of `w` · prepared column c — the prefill matmul over `Q8Act` columns (0.0.4).
+/// 1×4 selection tiles where the CPU has AVX2 and no column holds q = −128; `vec_dot_act` otherwise. Every
+/// element has the bits of ggml's per-pair vec_dot. 1.135× the q8-byte `mat_mul` on the dev box.
+pub fn mat_mul_act(w: &[u8], rows: usize, cols: &[Q8Act], out: &mut [f32]) {
+    if mat_mul_act_check(w, rows, cols, out) {
+        // SAFETY: checked above; one caller owns all of `out`
+        unsafe { mat_mul_act_rows(w, rows, 0..rows, cols, out.as_mut_ptr()) }
+    }
+}
+
+/// `mat_mul_act` on every thread of `pool`; the same bits at any thread count.
+pub fn mat_mul_act_par(pool: &crate::par::Pool, w: &[u8], rows: usize, cols: &[Q8Act], out: &mut [f32]) {
+    if !mat_mul_act_check(w, rows, cols, out) {
+        return;
+    }
+    let (next, base) = (std::sync::atomic::AtomicUsize::new(0), out.as_mut_ptr() as usize);
+    let step = crate::par::CHUNK_ROWS;
+    pool.run(&|_| loop {
+        let r0 = next.fetch_add(step, std::sync::atomic::Ordering::Relaxed);
+        if r0 >= rows {
+            break;
+        }
+        // SAFETY: checked; each row range is claimed by exactly one worker
+        unsafe { mat_mul_act_rows(w, rows, r0..(r0 + step).min(rows), cols, base as *mut f32) };
+    });
+}
+
+fn mat_mul_act_check(w: &[u8], rows: usize, cols: &[Q8Act], out: &[f32]) -> bool {
+    let Some(n) = cols.first().map(|c| c.n) else { return false };
+    assert!(cols.iter().all(|c| c.n == n) && w.len() >= rows * (n / QK1_0 * Q1_0_BYTES) && out.len() >= rows * cols.len());
+    true
+}
+
+/// # Safety
+/// `mat_mul_act_check` passed, and no other thread writes rows `rs` of `out`.
+unsafe fn mat_mul_act_rows(w: &[u8], rows: usize, rs: std::ops::Range<usize>, cols: &[Q8Act], out: *mut f32) {
+    let rb = cols[0].n / QK1_0 * Q1_0_BYTES;
+    let mut c0 = 0;
+    #[cfg(target_arch = "x86_64")]
+    if has_avx2() {
+        while c0 + 4 <= cols.len() {
+            let t = [&cols[c0], &cols[c0 + 1], &cols[c0 + 2], &cols[c0 + 3]];
+            if t.iter().any(|a| a.has_min) {
+                break; // the wrap case: per-pair from here on
+            }
+            for r in rs.clone() {
+                let v = vec_dot_act_1x4_sel_avx2(&w[r * rb..], t);
+                for (c, v) in v.into_iter().enumerate() {
+                    *out.add((c0 + c) * rows + r) = v;
+                }
+            }
+            c0 += 4;
+        }
+    }
+    for (c, a) in cols.iter().enumerate().skip(c0) {
+        for r in rs.clone() {
+            *out.add(c * rows + r) = vec_dot_act(&w[r * rb..], a);
+        }
+    }
 }
 
 /// `mat_mul` on every thread of `pool` (row chunks, all columns each); the same bits at any thread count.
@@ -865,6 +978,65 @@ pub(crate) mod tests {
         }
     }
 
+    /// 0.0.4: the Q8Act prefill tile, bit-exact first (against the scalar model of ggml), then timed
+    /// against the q8-byte tile it replaces (1024×4096 × 32 columns).
+    /// `cargo test --release -- --ignored bench_q1_0_prefill_act --nocapture --test-threads=1`
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn act_tile_bit_exact() {
+        if !has_avx2() {
+            return;
+        }
+        let mut r = Rng(4040);
+        for round in 0..1500 {
+            let nb = 1 + (r.next() % 41) as usize;
+            let x = random_q1(&mut r, nb);
+            let ys: Vec<Vec<u8>> = (0..4).map(|_| random_q8(&mut r, nb, false)).collect();
+            let acts: Vec<Q8Act> = ys.iter().map(|y| Q8Act::from_q8_0(nb * 128, y)).collect();
+            let want: Vec<u32> = ys.iter().map(|y| vec_dot_ref(nb * 128, &x, y).to_bits()).collect();
+            let t = unsafe { vec_dot_act_1x4_sel_avx2(&x, [&acts[0], &acts[1], &acts[2], &acts[3]]) };
+            assert_eq!(t.map(f32::to_bits).to_vec(), want, "1x4 sel round {round} nb {nb}");
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    #[ignore = "benchmark; run with --release --nocapture"]
+    fn bench_q1_0_prefill_act() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        let mut r = Rng(4041);
+        let med = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (v[0], v[v.len() / 2])
+        };
+        let n = 4096;
+        let rb = n / 128 * Q1_0_BYTES;
+        let w = random_q1(&mut r, 1024 * n / 128);
+        // prefill
+        let (pr, cols) = (1024usize, 32usize);
+        let ys: Vec<Vec<u8>> = (0..cols).map(|_| random_q8(&mut r, n / 128, false)).collect();
+        let yr: Vec<&[u8]> = ys.iter().map(|v| v.as_slice()).collect();
+        let acts: Vec<Q8Act> = ys.iter().map(|y| Q8Act::from_q8_0(n, y)).collect();
+        let pb = (pr * cols * n / 128) as f64;
+        let (mut old, mut new) = (vec![], vec![]);
+        let mut o = vec![0f32; pr * cols];
+        for _ in 0..9 {
+            let t = Instant::now();
+            mat_mul(&w, pr, n, &yr, &mut o);
+            old.push(t.elapsed().as_nanos() as f64 / pb);
+            let t = Instant::now();
+            for c0 in (0..cols).step_by(4) {
+                for i in 0..pr {
+                    black_box(unsafe { vec_dot_act_1x4_sel_avx2(&w[i * rb..], [&acts[c0], &acts[c0 + 1], &acts[c0 + 2], &acts[c0 + 3]]) });
+                }
+            }
+            new.push(t.elapsed().as_nanos() as f64 / pb);
+        }
+        let (p1, p2) = (med(old), med(new));
+        eprintln!("prefill 1024x4096 x 32 ns/(block·col) min/median: 1x4 (q8 bytes) {:.2}/{:.2} | 1x4 sel (Q8Act) {:.2}/{:.2} ({:.3}x)", p1.0, p1.1, p2.0, p2.1, p1.1 / p2.1);
+    }
+
     #[test]
     fn par_bit_exact_with_single_thread() {
         let mut r = Rng(778);
@@ -881,6 +1053,10 @@ pub(crate) mod tests {
             let (mut pv, mut pm) = (vec![0f32; rows], vec![0f32; rows * cols]);
             mat_vec_par(&pool, &w, rows, &a, &mut pv);
             mat_mul_par(&pool, &w, rows, nb * 128, &yr, &mut pm);
+            let acts: Vec<Q8Act> = ys.iter().map(|y| Q8Act::from_q8_0(nb * 128, y)).collect();
+            let mut pa = vec![0f32; rows * cols];
+            mat_mul_act_par(&pool, &w, rows, &acts, &mut pa);
+            assert!(pa.iter().zip(&mm).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_mul_act_par {th}");
             assert!(pv.iter().zip(&mv).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_vec_par {th}");
             assert!(pm.iter().zip(&mm).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_mul_par {th}");
         }
@@ -1091,9 +1267,10 @@ pub(crate) mod tests {
         let (pr, cols) = (1024usize, 32usize);
         let ys: Vec<Vec<u8>> = (0..cols).map(|_| random_q8(&mut r, n / 128, false)).collect();
         let yr: Vec<&[u8]> = ys.iter().map(|v| v.as_slice()).collect();
-        let (mut og, mut ob) = (vec![0f32; pr * cols], vec![0f32; pr * cols]);
+        let (mut og, mut ob, mut oa) = (vec![0f32; pr * cols], vec![0f32; pr * cols], vec![0f32; pr * cols]);
+        let pacts: Vec<Q8Act> = ys.iter().map(|y| Q8Act::from_q8_0(n, y)).collect();
         let pb = (pr * cols * n / 128) as f64;
-        let (mut pg, mut pbk) = (vec![], vec![]);
+        let (mut pg, mut pbk, mut pact) = (vec![], vec![], vec![]);
         for _ in 0..15 {
             let t = Instant::now();
             for c in 0..cols {
@@ -1105,9 +1282,14 @@ pub(crate) mod tests {
             let t = Instant::now();
             mat_mul(&w, pr, n, &yr, &mut ob);
             pbk.push(t.elapsed().as_nanos() as f64 / pb);
+            let t = Instant::now();
+            mat_mul_act(&w, pr, &pacts, &mut oa);
+            pact.push(t.elapsed().as_nanos() as f64 / pb);
         }
         assert!(og.iter().zip(&ob).all(|(a, b)| a.to_bits() == b.to_bits()), "prefill bits");
-        let (pg, pbk) = (stat(&mut pg), stat(&mut pbk));
-        eprintln!("prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair {:.2}/{:.2} | bankml 1x4 tile {:.2}/{:.2} ({:.3}x)", pg.0, pg.1, pbk.0, pbk.1, pg.1 / pbk.1);
+        assert!(og.iter().zip(&oa).all(|(a, b)| a.to_bits() == b.to_bits()), "prefill (Q8Act tile) bits");
+        let (pg, pbk, pact) = (stat(&mut pg), stat(&mut pbk), stat(&mut pact));
+        eprintln!("prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair {:.2}/{:.2} | bankml 1x4 tile {:.2}/{:.2} ({:.3}x) | bankml Q8Act tile {:.2}/{:.2} ({:.3}x)",
+            pg.0, pg.1, pbk.0, pbk.1, pg.1 / pbk.1, pact.0, pact.1, pg.1 / pact.1);
     }
 }

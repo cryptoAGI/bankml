@@ -142,6 +142,32 @@ with kernel. Laptop, two runs, min s/token; the full output is in `testing/resul
   (8,188,239,872 weights) bit-exact, 762/762 rows and dot products. Every threaded output in the budgets is compared
   bit for bit with ggml.
 
+## The memory floor (0.0.4) — how far each kernel is from streaming speed
+
+`bench_memory_floor`: a 768 MiB buffer read on the same pool and scheduler as the matmuls. Laptop:
+
+| threads | read GB/s | floor, ternary token (2.13 GB) | floor, 1-bit token (1.06 GB) |
+|---:|---:|---:|---:|
+| 1 | 14.9–15.2 | 0.14 s | 0.07 s |
+| 2–4 | 16.6–17.2 | 0.12–0.13 s | 0.06 s |
+
+bankml's ternary matmuls (0.23–0.27 s at 3 threads) are about 2× above the floor; its 1-bit ones (0.34–0.37 s),
+like ggml's, about 5.5×. Both are compute-bound. (0.0.1 quoted 7.7 GB/s single-thread from a scalar loop; this loop
+vectorises, which is the fair floor.)
+
+## 1-bit prefill over prepared activations (0.0.4)
+
+`ab_vs_ggml` (1024 rows × 4096 × 32 columns, ns per block·column, min / median):
+
+| kernel | ns | vs ggml per-pair (median) |
+|---|---:|---:|
+| ggml b11192 per-pair `vec_dot` | 10.09 / 11.12 | 1.00× |
+| bankml 1×4 tile over q8 bytes (0.0.1) | 9.18 / 9.42 | 1.18× |
+| **bankml `mat_mul_act`, 1×4 selection tile over `Q8Act`** | **8.25 / 8.35** | **1.33×** |
+
+The gate run, disturbed by other load, measured 1.27×. Two decode experiments were bit-exact and not faster (see
+CHANGELOG 0.0.4); 1-bit decode remains at parity with ggml.
+
 ## Reproduce
 
 ```sh

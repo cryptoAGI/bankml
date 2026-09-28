@@ -18,7 +18,7 @@ out=testing/results/$v.txt
   python3 testing/guard_agree.py target/release/bankml $(ls .models/*.gguf 2>/dev/null) | tail -1
   if [ -n "${BANKML_GGML_LIB:-}" ]; then
     for t in oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
-             ab_vs_ggml ab_vs_ggml_q2_0 decode_budget_q1_0 decode_budget_q2_0; do
+             ab_vs_ggml ab_vs_ggml_q2_0 bench_q1_0_prefill_act bench_memory_floor decode_budget_q1_0 decode_budget_q2_0; do
       echo "## $t"
       name=$(cargo test --release -q -- --list --ignored 2>/dev/null | sed -n "s/^\(.*::$t\): test$/\1/p")
       log=$(cargo test --release --locked -q -- --ignored --exact "$name" --nocapture --test-threads=1 2>&1) || { echo "$log"; echo "FAILED: $t"; exit 1; }

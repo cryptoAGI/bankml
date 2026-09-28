@@ -24,6 +24,7 @@ kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
 | `gguf_guard.py`, `test_gguf_guard.py` | the Python guard the Rust one was ported from (vendored from minaiml), and its suite |
 | `guard_agree.py` | runs both guards on every synthetic case and any real file given; exit 0 only if the JSON is identical |
 | `results/<version>.txt` | each release's record |
+| `experiments/` | kernels that were measured and not adopted, with their numbers, for re-running elsewhere |
 
 ## The tests, and where they live
 
@@ -42,6 +43,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | layouts, portable and AVX2 paths == ggml model (3,300 cases), `*_par` == single thread | `q2_0.rs` | the ternary kernel against its scalar model |
 | `oracle_ggml_b11192_real_ternary_bonsai_8b` *(real)* | `q2_0.rs` | every `Q2_0` weight of Ternary-Bonsai-8B bit-exact; dot products against ggml's haswell and x64 builds |
 | `ab_vs_ggml_q2_0`, `decode_budget_q2_0` *(real)* | `q2_0.rs` | speed against ggml's ternary kernel |
+| `act_tile_bit_exact`, `bench_q1_0_prefill_act` | `q1_0.rs` | the 0.0.4 prefill tile: bits, then speed |
 | pool coverage, `bench_pool_overhead`, `bench_memory_floor` | `par.rs` | the thread pool, its wake-up cost, the machine's read bandwidth |
 
 ## Results
@@ -51,3 +53,4 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |
 | 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
 | 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml) |
+| 0.0.4 | `results/0.0.4.txt` | memory floor 15–17 GB/s (kernels are compute-bound); 1-bit prefill 1.27–1.33× ggml; two rejected decode experiments |
