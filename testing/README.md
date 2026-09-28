@@ -18,7 +18,8 @@ kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
 
 | file | what |
 |---|---|
-| `release_gate.sh` | the gate above |
+| `release_gate.sh` | the gate above (also appends to `live.log`) |
+| `live.sh` | runs one step with its output appended to `live.log`, which `ui/savante.py --mode view` shows live |
 | `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify |
 | `ggml_oracle.py` | writes an oracle: llama.cpp b11192's own answers (its exported symbols, in-process) on a real GGUF — dequantized tensors, q8_0 rows, dot products |
 | `gguf_guard.py`, `test_gguf_guard.py` | the Python guard the Rust one was ported from (vendored from minaiml), and its suite |
@@ -53,4 +54,5 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |
 | 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
 | 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml) |
+| 0.0.5 | `results/0.0.5.txt` | three ternary experiments, bit-exact, none reliably faster (no kernel change); kernels at the Zen+ instruction limit; live log |
 | 0.0.4 | `results/0.0.4.txt` | memory floor 15–17 GB/s (kernels are compute-bound); 1-bit prefill 1.27–1.33× ggml; two rejected decode experiments |

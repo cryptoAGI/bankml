@@ -3,3 +3,4 @@ target/
 *.gguf
 __pycache__/
 *.pyc
+testing/live.log

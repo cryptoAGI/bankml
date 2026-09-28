@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.0.5 — 2026-09-28
+
+The third performance release, on the ternary kernel, with the testing shown live. **No kernel changed**: three
+experiments were bit-exact, and none was reliably faster. Gate record: `testing/results/0.0.5.txt`. Every oracle is
+bit-exact. Ternary stays at 9.2–9.6× ggml over a whole token, and 1-bit at parity.
+
+### Measured and not adopted (bit-exact, not reliably faster), code in `testing/experiments/`
+- **`Q2Packed`**: the ternary weights repacked once at load time, as llama.cpp's `repack.cpp` does for other types.
+  Each quad of blocks becomes 64 contiguous code bytes followed by its four f16 scales: the same 72 bytes, with the
+  arithmetic unchanged. It measured 1.00–1.075× in the first run and 0.90–1.05× in the release gate, on the real
+  ffn_gate, ffn_down and output tensors. That is within noise.
+- **Two-row decode tile**, loading the activation once for two rows: **0.80×**. Register pressure costs more than the
+  shared loads save.
+- **Software prefetch** of the weight row, 256–1024 bytes ahead: within ±3 % at 1 and 3 threads. The hardware
+  prefetcher already follows a sequential stream.
+
+### Added
+- **`testing/live.sh`** and a live log: the gate and every experiment append to `testing/live.log`, which the UI's
+  view mode shows as it runs (branch `ui`, next release).
+
+### What the oracles and the stopwatch say after three performance releases
+At 3 threads the ternary kernel moves about 9 GB/s against a 17 GB/s floor. Going from 1 to 3 threads gives 1.8×, and
+the laptop has two physical cores. So it is bound by compute per core, not by memory. It already does one multiply
+per weight, and moving the bytes around changes nothing measurable. On this Zen+ core, both kernels are at their
+instruction-throughput limit for bit-exact results. The gains still available lie elsewhere:
+- the forward pass (P3), which turns the 9.5× matmul lead into tokens;
+- a Zen3 or AVX-512 core (the node).
+
 ## 0.0.4 — 2026-09-28
 
 Where the time goes, and a faster 1-bit prefill. Gate record: `testing/results/0.0.4.txt`. Every oracle is bit-exact.

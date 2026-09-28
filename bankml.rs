@@ -1,6 +1,6 @@
 //! # bankml.rs — the in-house Rust player for low-bit models
 //!
-//! **Status (0.0.4, 2026-09-28): P1 guard + pin (one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
+//! **Status (0.0.5, 2026-09-28): P1 guard + pin (one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
 //! proven (see the checklist). Nothing here runs a model yet** — `answer()`'s `todo!()` is P0/P3. The
 //! ternary finding: llama.cpp b11192 has **no x86 Q2_0 kernel** (scalar C, ~49 ns per 64 weights on the
 //! dev box); bankml's is bit-exact with it and ~9–10× faster, and ggml's matmuls are ~90–98 % of its wall. Created 2026-09-26 on the operator's instruction: "create llama.cpp rust version
@@ -104,6 +104,9 @@
 //!     2.27–2.36 s), below ggml's *1-bit* 0.34 s; 1-bit at parity. New 8B Q1_0 oracle: 254 tensors bit-exact.
 //!   - [x] 0.0.4: memory floor 15–17 GB/s (both kernels compute-bound: ternary ~2×, 1-bit ~5.5× above
 //!     it); `mat_mul_act` 1-bit prefill 1.27–1.33× ggml; two bit-exact decode variants measured and rejected.
+//!   - [x] 0.0.5: three ternary experiments bit-exact and not reliably faster (repacked quads 0.90–1.075×,
+//!     two-row tile 0.80×, prefetch ±3 %); no kernel change. Both kernels are at the Zen+ instruction limit:
+//!     the next gains are P3 and a Zen3 row.
 //!   - [ ] NEON; AVX-512 (the node has none); bit-exact on *dumped real activations* (today: real weights ×
 //!     synthetic activations); a Q1_0 GEMM that beats 1.1× for prompt eval (the Q2_0 layout above runs at
 //!     5.0 ns per 64 weights vs Q1_0's 7.2 — porting it to Q1_0 is the next experiment).

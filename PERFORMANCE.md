@@ -168,6 +168,18 @@ vectorises, which is the fair floor.)
 The gate run, disturbed by other load, measured 1.27×. Two decode experiments were bit-exact and not faster (see
 CHANGELOG 0.0.4); 1-bit decode remains at parity with ggml.
 
+## Ternary kernel experiments (0.0.5) — laptop, real Ternary-Bonsai-8B tensors
+
+| experiment | bits | speed vs the file-layout kernel | kept |
+|---|---|---:|---|
+| `Q2Packed`: quads repacked (codes contiguous, 4 scales adjacent), same 72 bytes | exact | 1.00–1.075× first run, 0.90–1.05× in the gate: noise | no |
+| two-row decode tile (activation shared) | exact | 0.80× | no |
+| software prefetch 256 / 512 / 1024 bytes ahead | exact | ±3 % | no |
+
+At 3 threads the kernel moves about 9 GB/s against the 17 GB/s floor, and scales 1.8× from 1 to 3 threads on two
+physical cores. It is bound by compute per core, and at its instruction-throughput limit on Zen+. No kernel changed
+in 0.0.5; the three experiments' code is in `testing/experiments/`.
+
 ## Reproduce
 
 ```sh
