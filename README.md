@@ -39,6 +39,10 @@ against llama.cpp's own compiled library on all 8.19 billion weights of the mode
   <img src="docs/cards/q1_proof.svg" alt="1-bit bit-exact against ggml b11192" width="720">
 </p>
 
+Since 0.0.3 the kernels run on a zero-dependency thread pool: one ternary token's matmuls take **0.23–0.25 s** on
+three threads, less than llama.cpp needs for the *1-bit* model's (0.34 s). Every release's test record is in
+[testing/results/](testing/results/).
+
 Every number above is measured and reproducible — the tables, machines and commands are in
 **[PERFORMANCE.md](PERFORMANCE.md)**. The design, the method and the literature are in the technical report,
 **[TECHNICAL.md](TECHNICAL.md)**.
@@ -71,16 +75,16 @@ three threads, a matmul-bound ceiling of about **2.8 tokens/s** against **0.39**
 
 ```sh
 cargo build --release
-cargo test --release                       # 31 unit tests, offline
+cargo test --release                       # 34 unit + 4 end-to-end tests, offline
 
 # the oracles and the A/B against llama.cpp's own kernels (needs the model files and the b11192 release):
 #   models  → .models/  from huggingface.co/PYTHAI/Bonsai-8B-gguf-fork and PYTHAI/Ternary-Bonsai-8B-gguf-fork
 #             (check each file's sha256 against the fork's FORK.json: `bankml pin FILE --fork FORK.json`)
 #   release → llama-b11192-bin-ubuntu-x64.tar.gz, sha256 34cf6fa5de9da0db3932c78fe15fed2fbca17451e665dac0a4f6a3c8fc881ec7
-python3 tools/ggml_oracle.py .models/Ternary-Bonsai-8B-Q2_0_g64.gguf /path/to/llama-b11192 .models/oracle-ternary
+python3 testing/ggml_oracle.py .models/Ternary-Bonsai-8B-Q2_0_g64.gguf /path/to/llama-b11192 .models/oracle-ternary
 BANKML_GGML_LIB=/path/to/llama-b11192 cargo test --release -- --ignored --nocapture --test-threads=1
 
-python3 tools/guard_agree.py target/release/bankml     # the Rust guard == the Python guard
+python3 testing/guard_agree.py target/release/bankml     # the Rust guard == the Python guard
 target/release/bankml guard MODEL.gguf                 # play | refuse (with the reason) | need more
 target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then the sha256 pin: one gate
 ```
@@ -94,7 +98,8 @@ target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then 
 | `q1_0.rs` | the 1-bit kernel: dequantize, `q8_0` activations, scalar model, AVX2, decode and prefill |
 | `q2_0.rs` | the ternary kernel: the same, plus the per-token activation layout |
 | `sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
-| `tools/` | the oracle (`ggml_oracle.py`), the guard agreement check, the Python guard it was ported from |
+| `par.rs` | the thread pool and row scheduler (0.0.3) |
+| `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
 
 Changes by release are in **[CHANGELOG.md](CHANGELOG.md)**.

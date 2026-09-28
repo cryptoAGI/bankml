@@ -1,0 +1,11 @@
+# bankml 0.0.1 — record reconstructed on 2026-09-28 (0.0.1 predates the gate)
+# The 0.0.1 measurements are in PERFORMANCE.md (laptop, Ryzen 3 3200U). Re-run on 2026-09-28 at the 0.0.1 code
+# (commit 37996b4), before any 0.0.2 change:
+cargo test --release: 27 passed; 0 failed; 8 ignored
+clippy (1.95.0): clean
+oracle_ggml_b11192_real_bonsai_1_7b: 197 tensors / 1719904256 weights dequantized bit-exact; 788 q8_0 rows byte-exact; 788 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 788/788
+oracle_ggml_b11192_real_ternary_bonsai_8b: 254 Q2_0 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot_ref, vec_dot_act (AVX2) and scalar bit-exact vs ggml haswell; no-FMA model == ggml x64 in 762/762
+real_bonsai_1_7b_q1_0: ok
+# found by the 0.0.2 audit (crafted headers):
+bankml guard nested.gguf (2,000,000 nested arrays): "thread 'main' has overflowed its stack", exit 134
+bankml guard kvover.gguf (block_count = head_count_kv = key_length = 2^64-1): kv_f16_bytes_per_token 221360928884514619388 (wrapped i128), verdict play, exit 0

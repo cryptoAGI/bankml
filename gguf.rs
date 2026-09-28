@@ -699,7 +699,7 @@ mod tests {
     }
 
     /// Real file (Apache-2.0, prism-ml/Bonsai-1.7B-gguf, 248,302,272 B). The expected values are
-    /// `python3 minaiml-bonsai/tools/gguf_guard.py <file> --json` on 2026-09-25; `tools/guard_agree.py`
+    /// `python3 minaiml-bonsai/tools/gguf_guard.py <file> --json` on 2026-09-25; `testing/guard_agree.py`
     /// re-checks the full JSON against the Python at any time.
     #[test]
     #[ignore = "needs bankml/.models/Bonsai-1.7B-Q1_0.gguf"]

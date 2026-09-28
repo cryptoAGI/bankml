@@ -1,6 +1,6 @@
 [package]
 name = "bankml"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 authors = ["Professor Codephreak", "Gregory L. Magnusson"]
 repository = "https://github.com/cryptoAGI/bankml"
@@ -19,6 +19,11 @@ path = "bankml.rs"
 [[bin]]
 name = "bankml"
 path = "main.rs"
+
+# end-to-end tests of the binary (testing/README.md lists every test and where it lives)
+[[test]]
+name = "cli"
+path = "testing/cli.rs"
 
 [profile.release]
 # one static-ish binary, small: the kernels choose AVX2 at run time, so no target-cpu flag is needed

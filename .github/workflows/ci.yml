@@ -18,5 +18,5 @@ jobs:
       - run: cargo build --release --locked
       - run: cargo test --release --locked
       - run: cargo clippy --release --all-targets --locked -- -D warnings
-      - run: python3 tools/test_gguf_guard.py
-      - run: python3 tools/guard_agree.py target/release/bankml
+      - run: python3 testing/test_gguf_guard.py
+      - run: python3 testing/guard_agree.py target/release/bankml

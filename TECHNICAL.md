@@ -63,13 +63,13 @@ and the measurements (PERFORMANCE.md).
    (`PQ2_0` = 142, `PTQ1_0` = 143), which mainline rejects safely; (2) legacy `Q2_0` whose group-128 bytes are filed
    under type 42, which mainline reads as group-64 — detectable as a size mismatch; and (3) Bonsai 2 `Q2_0` in a rotated
    basis, which mainline loads and answers in fluent nonsense — the dangerous case, visible only by name. The Python
-   original (`tools/gguf_guard.py`) and the Rust port (`gguf.rs`) agree JSON-for-JSON on every case (20 of 20 with the
+   original (vendored as `testing/gguf_guard.py`) and the Rust port (`gguf.rs`) agree JSON-for-JSON on every case (20 of 20 with the
    real file; 18 of 18 synthetic in the published tree).
 3. **Provenance forks and the pin.** The models are forked with provenance to `PYTHAI/Bonsai-8B-gguf-fork` and
    `PYTHAI/Ternary-Bonsai-8B-gguf-fork`, each with a `FORK.json` recording the upstream revision and every file's
    sha256; `bankml pin` refuses a file whose hash differs and names both hashes (`sha256.rs`, FIPS 180-4 vectors).
 4. **Exactness against the compiled reference, not its source.** The oracle loads the sha256-checked llama.cpp b11192
-   release and calls its exported symbols in-process on the same bytes (`tools/ggml_oracle.py`). Reading the shipped
+   release and calls its exported symbols in-process on the same bytes (`testing/ggml_oracle.py`). Reading the shipped
    binary exposed that its compiler contracts multiply-add pairs into single FMA instructions; a source-faithful port
    disagrees in the last bit. bankml models both reference builds — the haswell build and the baseline x64 build,
    which themselves disagree on 19 of 762 ternary cases — so the oracle demonstrably distinguishes float orders.

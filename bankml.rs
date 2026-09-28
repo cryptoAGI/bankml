@@ -1,6 +1,6 @@
 //! # bankml.rs — the in-house Rust player for low-bit models
 //!
-//! **Status (0.0.2, 2026-09-28): P1 guard + pin (now one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
+//! **Status (0.0.3, 2026-09-28): P1 guard + pin (one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
 //! proven (see the checklist). Nothing here runs a model yet** — `answer()`'s `todo!()` is P0/P3. The
 //! ternary finding: llama.cpp b11192 has **no x86 Q2_0 kernel** (scalar C, ~49 ns per 64 weights on the
 //! dev box); bankml's is bit-exact with it and ~9–10× faster, and ggml's matmuls are ~90–98 % of its wall. Created 2026-09-26 on the operator's instruction: "create llama.cpp rust version
@@ -55,7 +55,7 @@
 //!   `/v1/chat/completions` with `usage` + `timings`, Receipt, guard in front. Parity row = the bar above.
 //! - [ ] **P1 — guard + receipts native.** (guard and pin proven; receipts not yet emitted)
 //!   - [x] GGUF v3 header parse + the three traps + kv_f16_bytes_per_token (`gguf.rs`). Evidence: the 9
-//!     cases of `test_gguf_guard.py` as Rust tests + fail-closed extras; `tools/guard_agree.py` = **20/20**
+//!     cases of `test_gguf_guard.py` as Rust tests + fail-closed extras; `testing/guard_agree.py` = **20/20**
 //!     JSON-identical with the Python guard (real `Bonsai-1.7B-Q1_0.gguf` sha256 `3d7c6c90…` + all synthetic
 //!     cases, both engines): play · qwen3 · F32 113 / Q1_0 197 · 114,688 kv bytes/token.
 //!   - [x] sha256 (FIPS vectors; equals `sha256sum` and the HF LFS oid on the real file) + FORK.json pin
@@ -99,6 +99,9 @@
 //!     3 threads — llama-bench tg **2.59–2.68 s/token**, ggml's matmuls **2.54–2.64 s** (≈ 98 % of the wall),
 //!     bankml **0.36–0.37 s** (7.0×; matmul-only ceiling 2.77 tok/s); 1 thread — llama-bench 4.50–5.21 s,
 //!     ggml matmuls 4.22–4.42 s, bankml **0.49 s** (8.7×; ceiling 2.06 tok/s). Not the node: a Zen3 row decides.
+//!   - [x] 0.0.3 threads: `par::Pool` (persistent, zero-dependency) + `mat_vec_par`/`mat_mul_par`, bits
+//!     independent of thread count. One ternary token's 253 matmuls: **0.23–0.25 s at 3 threads** (ggml
+//!     2.27–2.36 s), below ggml's *1-bit* 0.34 s; 1-bit at parity. New 8B Q1_0 oracle: 254 tensors bit-exact.
 //!   - [ ] NEON; AVX-512 (the node has none); bit-exact on *dumped real activations* (today: real weights ×
 //!     synthetic activations); a Q1_0 GEMM that beats 1.1× for prompt eval (the Q2_0 layout above runs at
 //!     5.0 ns per 64 weights vs Q1_0's 7.2 — porting it to Q1_0 is the next experiment).
@@ -116,6 +119,7 @@
 #![allow(dead_code)]
 
 pub mod gguf;
+pub mod par;
 pub mod q1_0;
 pub mod q2_0;
 pub mod sha256;

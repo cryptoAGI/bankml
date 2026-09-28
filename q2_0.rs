@@ -304,28 +304,67 @@ pub unsafe fn vec_dot_1x4_avx2(x: &[u8], a: [&Q8Act2; 4]) -> [f32; 4] {
 /// out[c·rows + r] = row r of `w` · column c — the Q2_0 matmul for a batch of columns (prefill).
 /// 1×4 tiles where the CPU has AVX2; every element has the bits of ggml's per-pair vec_dot.
 pub fn mat_mul(w: &[u8], rows: usize, cols: &[Q8Act2], out: &mut [f32]) {
-    let Some(n) = cols.first().map(|c| c.n) else { return };
-    let rb = n / QK2_0 * Q2_0_BYTES;
-    assert!(cols.iter().all(|c| c.n == n) && w.len() >= rows * rb && out.len() >= rows * cols.len());
+    if mat_mul_check(w, rows, cols, out) {
+        // SAFETY: checked above; one caller owns all of `out`
+        unsafe { mat_mul_rows(w, rows, 0..rows, cols, out.as_mut_ptr()) }
+    }
+}
+
+fn mat_mul_check(w: &[u8], rows: usize, cols: &[Q8Act2], out: &[f32]) -> bool {
+    let Some(n) = cols.first().map(|c| c.n) else { return false };
+    assert!(cols.iter().all(|c| c.n == n) && w.len() >= rows * (n / QK2_0 * Q2_0_BYTES) && out.len() >= rows * cols.len());
+    true
+}
+
+/// Rows `rs` of the product, written to `out[c·rows + r]`.
+///
+/// # Safety
+/// `mat_mul_check` passed for these arguments, and no other thread writes rows `rs` of `out`.
+unsafe fn mat_mul_rows(w: &[u8], rows: usize, rs: std::ops::Range<usize>, cols: &[Q8Act2], out: *mut f32) {
+    let rb = cols[0].n / QK2_0 * Q2_0_BYTES;
     let mut c0 = 0;
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
         while c0 + 4 <= cols.len() {
             let t = [&cols[c0], &cols[c0 + 1], &cols[c0 + 2], &cols[c0 + 3]];
-            for r in 0..rows {
-                let v = unsafe { vec_dot_1x4_avx2(&w[r * rb..], t) };
-                for c in 0..4 {
-                    out[(c0 + c) * rows + r] = v[c];
+            for r in rs.clone() {
+                let v = vec_dot_1x4_avx2(&w[r * rb..], t);
+                for (c, v) in v.into_iter().enumerate() {
+                    *out.add((c0 + c) * rows + r) = v;
                 }
             }
             c0 += 4;
         }
     }
     for (c, a) in cols.iter().enumerate().skip(c0) {
-        for r in 0..rows {
-            out[c * rows + r] = vec_dot_act(&w[r * rb..], a);
+        for r in rs.clone() {
+            *out.add(c * rows + r) = vec_dot_act(&w[r * rb..], a);
         }
     }
+}
+
+/// `mat_vec` on every thread of `pool`; the same bits at any thread count.
+pub fn mat_vec_par(pool: &crate::par::Pool, w: &[u8], rows: usize, a: &Q8Act2, out: &mut [f32]) {
+    let rb = a.n / QK2_0 * Q2_0_BYTES;
+    assert!(w.len() >= rows * rb && out.len() >= rows);
+    pool.rows(rows, out, &|r0, o| mat_vec(&w[r0 * rb..], o.len(), a, o));
+}
+
+/// `mat_mul` on every thread of `pool` (row chunks, all columns each); the same bits at any thread count.
+pub fn mat_mul_par(pool: &crate::par::Pool, w: &[u8], rows: usize, cols: &[Q8Act2], out: &mut [f32]) {
+    if !mat_mul_check(w, rows, cols, out) {
+        return;
+    }
+    let (next, base) = (std::sync::atomic::AtomicUsize::new(0), out.as_mut_ptr() as usize);
+    let step = crate::par::CHUNK_ROWS;
+    pool.run(&|_| loop {
+        let r0 = next.fetch_add(step, std::sync::atomic::Ordering::Relaxed);
+        if r0 >= rows {
+            break;
+        }
+        // SAFETY: checked; each row range is claimed by exactly one worker
+        unsafe { mat_mul_rows(w, rows, r0..(r0 + step).min(rows), cols, base as *mut f32) };
+    });
 }
 
 // ---------------------------------------------------------------- tests -------------------------
@@ -406,10 +445,10 @@ mod tests {
         }
     }
 
-    /// Against ggml itself: `tools/ggml_oracle.py` on the real Ternary-Bonsai-8B file records what the
+    /// Against ggml itself: `testing/ggml_oracle.py` on the real Ternary-Bonsai-8B file records what the
     /// b11192 exported symbols return; this re-derives every value in Rust (weights via mmap).
     #[test]
-    #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + .models/oracle-ternary (tools/ggml_oracle.py); --release"]
+    #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + .models/oracle-ternary (testing/ggml_oracle.py); --release"]
     fn oracle_ggml_b11192_real_ternary_bonsai_8b() {
         use crate::gguf::{guard_file, Engine, Mmap};
         use crate::sha256::{hex, Sha256};
@@ -497,33 +536,17 @@ mod tests {
     }
 
     /// All rows of a Q2_0 matrix against one q8_0 column, through ggml's kernel (`g = Some`) or
-    /// bankml's `mat_vec`; with `threads` > 1 the rows go out in 16-row chunks from an atomic counter,
-    /// as ggml's mul_mat hands them out (a static split measured 1.1× at 3 threads on this 2C/4T part).
-    fn gemv(g: Option<VecDot>, w: &[u8], rows: usize, q8: &[u8], a: &Q8Act2, out: &mut [f32], threads: usize) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+    /// bankml's `mat_vec_par`, both on the same pool and row scheduler (`par::Pool::rows`, 16-row
+    /// chunks from an atomic counter, as ggml's mul_mat hands them out), so the A/B is kernel against kernel.
+    fn gemv(g: Option<VecDot>, w: &[u8], rows: usize, q8: &[u8], a: &Q8Act2, out: &mut [f32], pool: &crate::par::Pool) {
         let n = a.n;
         let rb = n / QK2_0 * Q2_0_BYTES;
-        let run = |r0: usize, o: &mut [f32]| match g {
-            Some(f) => o.iter_mut().enumerate().for_each(|(i, s)| unsafe { f(n as i32, s, 0, w[(r0 + i) * rb..].as_ptr(), 0, q8.as_ptr(), 0, 1) }),
-            None => mat_vec(&w[r0 * rb..], o.len(), a, o),
-        };
-        if threads == 1 {
-            return run(0, &mut out[..rows]);
+        match g {
+            Some(f) => pool.rows(rows, out, &|r0, o| {
+                o.iter_mut().enumerate().for_each(|(i, s)| unsafe { f(n as i32, s, 0, w[(r0 + i) * rb..].as_ptr(), 0, q8.as_ptr(), 0, 1) })
+            }),
+            None => mat_vec_par(pool, w, rows, a, out),
         }
-        let (next, optr) = (AtomicUsize::new(0), out.as_mut_ptr() as usize);
-        std::thread::scope(|sc| {
-            for _ in 0..threads {
-                sc.spawn(|| loop {
-                    let r0 = next.fetch_add(16, Ordering::Relaxed);
-                    if r0 >= rows {
-                        break;
-                    }
-                    // SAFETY: each 16-row chunk is claimed by exactly one thread
-                    let o = unsafe { std::slice::from_raw_parts_mut((optr as *mut f32).add(r0), 16.min(rows - r0)) };
-                    run(r0, o);
-                });
-            }
-        });
     }
 
     /// Activation-like f32 → (ggml's q8_0 bytes, bankml's prepared activation).
@@ -560,13 +583,14 @@ mod tests {
             let blocks = (rows * n / QK2_0) as f64;
             let reps = if rows > 100_000 { 5 } else { 15 };
             let (mut tg, mut tb) = (vec![], vec![]);
-            gemv(Some(ggml), w, rows, &q8, &a, &mut og, 1); // page in
+            let one = crate::par::Pool::new(1);
+            gemv(Some(ggml), w, rows, &q8, &a, &mut og, &one); // page in
             for _ in 0..reps {
                 let t0 = Instant::now();
-                gemv(Some(ggml), w, rows, &q8, &a, &mut og, 1);
+                gemv(Some(ggml), w, rows, &q8, &a, &mut og, &one);
                 tg.push(t0.elapsed().as_nanos() as f64 / blocks);
                 let t0 = Instant::now();
-                gemv(None, w, rows, &q8, &a, &mut ob, 1);
+                gemv(None, w, rows, &q8, &a, &mut ob, &one);
                 tb.push(t0.elapsed().as_nanos() as f64 / blocks);
             }
             assert!(og.iter().zip(&ob).all(|(x, y)| x.to_bits() == y.to_bits()), "{name}: bits");
@@ -647,6 +671,7 @@ mod tests {
         eprintln!("decode budget: {} Q2_0 matmuls, {weights} weights ({:.2} GB of blocks) per token", mats.len(), weights as f64 / 64.0 * 18.0 / 1e9);
         let threads = std::env::var("BANKML_THREADS").unwrap_or("1,3".into());
         for th in threads.split(',').map(|v| v.parse::<usize>().unwrap()) {
+            let pool = crate::par::Pool::new(th);
             let mut kinds: std::collections::BTreeMap<String, [f64; 2]> = Default::default();
             let pass = |g: bool, kinds: &mut std::collections::BTreeMap<String, [f64; 2]>| {
                 let t0 = Instant::now();
@@ -655,7 +680,7 @@ mod tests {
                     let (q8, a) = &acts[&n];
                     let mut o = vec![0f32; rows];
                     let t1 = Instant::now();
-                    gemv(if g { Some(ggml) } else { None }, mm.tensor(h, t).unwrap(), rows, q8, a, &mut o, th);
+                    gemv(if g { Some(ggml) } else { None }, mm.tensor(h, t).unwrap(), rows, q8, a, &mut o, &pool);
                     let kind = if t.name.starts_with("output") { "output" } else { t.name.rsplit('.').nth(1).unwrap() };
                     kinds.entry(kind.into()).or_default()[!g as usize] += t1.elapsed().as_secs_f64();
                 }
@@ -674,14 +699,34 @@ mod tests {
                 eprintln!("      {k:12} ggml {:6.3} s  bankml {:6.3} s  (mean of 3 passes)", v[0] / 3.0, v[1] / 3.0);
             }
         }
-        // bits: every tensor's first 64 rows, both kernels (the timing passes above do not compare)
+        // bits: every tensor's first 64 rows, both kernels, bankml threaded (the timing passes do not compare)
+        let (one, par) = (crate::par::Pool::new(1), crate::par::Pool::new(3));
         for t in &mats {
             let (n, rows) = (t.dims[0] as usize, 64usize);
             let (q8, a) = &acts[&n];
             let (mut og, mut ob) = (vec![0f32; rows], vec![0f32; rows]);
-            gemv(Some(ggml), mm.tensor(h, t).unwrap(), rows, q8, a, &mut og, 1);
-            gemv(None, mm.tensor(h, t).unwrap(), rows, q8, a, &mut ob, 1);
+            gemv(Some(ggml), mm.tensor(h, t).unwrap(), rows, q8, a, &mut og, &one);
+            gemv(None, mm.tensor(h, t).unwrap(), rows, q8, a, &mut ob, &par);
             assert!(og.iter().zip(&ob).all(|(x, y)| x.to_bits() == y.to_bits()), "{}: bits", t.name);
+        }
+    }
+
+    #[test]
+    fn par_bit_exact_with_single_thread() {
+        let mut r = Rng(777);
+        let (rows, nb, cols) = (203usize, 9usize, 6usize);
+        let w = random_q2(&mut r, rows * nb);
+        let acts: Vec<Q8Act2> = (0..cols).map(|_| Q8Act2::from_q8_0(nb * 64, &random_q8(&mut r, nb, true))).collect();
+        let (mut mv, mut mm) = (vec![0f32; rows], vec![0f32; rows * cols]);
+        mat_vec(&w, rows, &acts[0], &mut mv);
+        mat_mul(&w, rows, &acts, &mut mm);
+        for th in [1, 2, 3, 4] {
+            let pool = crate::par::Pool::new(th);
+            let (mut pv, mut pm) = (vec![0f32; rows], vec![0f32; rows * cols]);
+            mat_vec_par(&pool, &w, rows, &acts[0], &mut pv);
+            mat_mul_par(&pool, &w, rows, &acts, &mut pm);
+            assert!(pv.iter().zip(&mv).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_vec_par {th}");
+            assert!(pm.iter().zip(&mm).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_mul_par {th}");
         }
     }
 

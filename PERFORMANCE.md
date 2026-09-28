@@ -119,14 +119,38 @@ order as a real token touches them; llama-bench run immediately before and after
 
 
 
+## Threads (0.0.3) — one token's matmuls at 1–4 threads, both formats
+
+`decode_budget_q1_0` / `decode_budget_q2_0`: all 253 matmuls of one token, each tensor once in file order. ggml's own
+kernel and bankml's run on the **same pool and row scheduler** (`par::Pool`, 16-row chunks), so the A/B compares kernel
+with kernel. Laptop, two runs, min s/token; the full output is in `testing/results/0.0.3.txt`.
+
+| threads | ternary ggml | ternary **bankml** | 1-bit ggml | 1-bit bankml |
+|---:|---:|---:|---:|---:|
+| 1 | 4.22–4.65 | **0.45–0.47** | 0.62–0.67 | 0.61–0.62 |
+| 2 | 2.65 | **0.31** | 0.45–0.46 | 0.43–0.44 |
+| 3 | 2.27–2.36 | **0.23–0.25** | 0.34–0.35 | 0.34–0.35 |
+| 4 | 2.11 | **0.23** | 0.34–0.35 | 0.36 |
+
+- **Ternary is now cheaper than 1-bit.** At 3 threads bankml's ternary matmuls (0.23–0.25 s) take less time than ggml's
+  1-bit ones (0.34–0.35 s), although the ternary weights are twice the bytes. The ternary matmul-only ceiling is
+  4.0–4.4 tok/s, against 0.42 for llama.cpp.
+- The persistent pool replaced per-call thread spawning (12.6 against 88.8 µs per matmul; `bench_pool_overhead`). With
+  it, the 3-thread ternary budget moved from 0.36 s (0.0.2 harness) to 0.23–0.25 s.
+- The 1-bit kernel is at parity at every thread count (0.93–1.13×).
+- Exactness: the new `oracle_ggml_b11192_real_bonsai_8b_q1_0` covers all **254** `Q1_0` tensors of Bonsai-8B
+  (8,188,239,872 weights) bit-exact, 762/762 rows and dot products. Every threaded output in the budgets is compared
+  bit for bit with ggml.
+
 ## Reproduce
 
 ```sh
 cargo test --release                                   # unit tests
+BANKML_GGML_LIB=/path/to/llama-b11192 testing/release_gate.sh    # everything, recorded in testing/results/
 BANKML_GGML_LIB=/path/to/llama-b11192 \
   cargo test --release -- --ignored --nocapture --test-threads=1   # oracles + A/B + benchmarks
-python3 tools/ggml_oracle.py MODEL.gguf /path/to/llama-b11192 .models/oracle-ternary   # write an oracle
-python3 tools/guard_agree.py target/release/bankml [FILE.gguf ...]                   # Rust guard == Python guard
+python3 testing/ggml_oracle.py MODEL.gguf /path/to/llama-b11192 .models/oracle-ternary   # write an oracle
+python3 testing/guard_agree.py target/release/bankml [FILE.gguf ...]                   # Rust guard == Python guard
 ```
 
 The oracle and A/B tests need the model files under `.models/` (fetched from the PYTHAI forks above and checked

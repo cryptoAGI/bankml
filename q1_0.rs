@@ -13,7 +13,7 @@
 //! "Bit-exact against ggml" therefore means against the AVX2 build the node runs (the prebuilt
 //! `libggml-cpu-haswell.so`, chosen on AVX2-without-AVX-512 CPUs). `vec_dot_ref` is a scalar model of
 //! that exact float order; `vec_dot_avx2` must equal it bit for bit, and both must equal ggml's
-//! exported symbol on real tensors (`tools/ggml_oracle.py`). `vec_dot_generic` ports ggml's generic C
+//! exported symbol on real tensors (`testing/ggml_oracle.py`). `vec_dot_generic` ports ggml's generic C
 //! (a different float order — it is *not* expected to match the AVX2 result bit for bit).
 
 pub const QK1_0: usize = 128;
@@ -466,30 +466,65 @@ pub unsafe fn vec_dot_1x4_avx2(n: usize, x: &[u8], ys: [&[u8]; 4]) -> [f32; 4] {
 /// (prefill). 4-column tiles where the CPU has AVX2, `vec_dot` for the rest; every element has the
 /// bits ggml's per-pair vec_dot would give.
 pub fn mat_mul(w: &[u8], rows: usize, n: usize, ys: &[&[u8]], out: &mut [f32]) {
-    let rb = n / QK1_0 * Q1_0_BYTES;
-    assert!(w.len() >= rows * rb && out.len() >= rows * ys.len());
+    mat_mul_check(w, rows, n, ys, out);
+    // SAFETY: checked above; one caller owns all of `out`
+    unsafe { mat_mul_rows(w, rows, n, 0..rows, ys, out.as_mut_ptr()) }
+}
+
+fn mat_mul_check(w: &[u8], rows: usize, n: usize, ys: &[&[u8]], out: &[f32]) {
+    assert!(w.len() >= rows * (n / QK1_0 * Q1_0_BYTES) && out.len() >= rows * ys.len());
     for y in ys {
         check(n, w, y);
     }
+}
+
+/// Rows `rs` of the product, written to `out[c·rows + r]`.
+///
+/// # Safety
+/// `mat_mul_check` passed for these arguments, and no other thread writes rows `rs` of `out`.
+unsafe fn mat_mul_rows(w: &[u8], rows: usize, n: usize, rs: std::ops::Range<usize>, ys: &[&[u8]], out: *mut f32) {
+    let rb = n / QK1_0 * Q1_0_BYTES;
     let mut c0 = 0;
     #[cfg(target_arch = "x86_64")]
     if has_avx2() {
         while c0 + 4 <= ys.len() {
             let t = [ys[c0], ys[c0 + 1], ys[c0 + 2], ys[c0 + 3]];
-            for r in 0..rows {
-                let v = unsafe { vec_dot_1x4_avx2(n, &w[r * rb..], t) };
-                for c in 0..4 {
-                    out[(c0 + c) * rows + r] = v[c];
+            for r in rs.clone() {
+                let v = vec_dot_1x4_avx2(n, &w[r * rb..], t);
+                for (c, v) in v.into_iter().enumerate() {
+                    *out.add((c0 + c) * rows + r) = v;
                 }
             }
             c0 += 4;
         }
     }
     for (c, y) in ys.iter().enumerate().skip(c0) {
-        for r in 0..rows {
-            out[c * rows + r] = vec_dot(n, &w[r * rb..], y);
+        for r in rs.clone() {
+            *out.add(c * rows + r) = vec_dot(n, &w[r * rb..], y);
         }
     }
+}
+
+/// `mat_vec` on every thread of `pool`; the same bits at any thread count.
+pub fn mat_vec_par(pool: &crate::par::Pool, w: &[u8], rows: usize, a: &Q8Act, out: &mut [f32]) {
+    let rb = a.n / QK1_0 * Q1_0_BYTES;
+    assert!(w.len() >= rows * rb && out.len() >= rows);
+    pool.rows(rows, out, &|r0, o| mat_vec(&w[r0 * rb..], o.len(), a, o));
+}
+
+/// `mat_mul` on every thread of `pool` (row chunks, all columns each); the same bits at any thread count.
+pub fn mat_mul_par(pool: &crate::par::Pool, w: &[u8], rows: usize, n: usize, ys: &[&[u8]], out: &mut [f32]) {
+    mat_mul_check(w, rows, n, ys, out);
+    let (next, base) = (std::sync::atomic::AtomicUsize::new(0), out.as_mut_ptr() as usize);
+    let step = crate::par::CHUNK_ROWS;
+    pool.run(&|_| loop {
+        let r0 = next.fetch_add(step, std::sync::atomic::Ordering::Relaxed);
+        if r0 >= rows {
+            break;
+        }
+        // SAFETY: checked; each row range is claimed by exactly one worker
+        unsafe { mat_mul_rows(w, rows, n, r0..(r0 + step).min(rows), ys, base as *mut f32) };
+    });
 }
 
 // ---------------------------------------------------------------- tests -------------------------
@@ -658,21 +693,37 @@ pub(crate) mod tests {
         assert_eq!(cases, 3500);
     }
 
-    /// Against ggml itself: `tools/ggml_oracle.py` records what b11192's exported symbols return on
+    /// Against ggml itself: `testing/ggml_oracle.py` records what b11192's exported symbols return on
     /// the real Bonsai-1.7B file; this re-derives every value in Rust and demands equal bits.
     #[test]
-    #[ignore = "needs .models/Bonsai-1.7B-Q1_0.gguf + .models/oracle (tools/ggml_oracle.py); run with --release"]
+    #[ignore = "needs .models/Bonsai-1.7B-Q1_0.gguf + .models/oracle (testing/ggml_oracle.py); run with --release"]
     fn oracle_ggml_b11192_real_bonsai_1_7b() {
-        use crate::gguf::{guard_file, tensor_bytes, Engine};
+        assert_eq!(oracle_q1_0("Bonsai-1.7B-Q1_0.gguf", "oracle"), (197, 788, 788));
+    }
+
+    /// The same oracle on the 8B 1-bit model the node serves (0.0.3; 254 tensors, 8.19 B weights).
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-8b-q1 (testing/ggml_oracle.py); run with --release"]
+    fn oracle_ggml_b11192_real_bonsai_8b_q1_0() {
+        let (tensors, cases, generic_same) = oracle_q1_0("Bonsai-8B-Q1_0.gguf", "oracle-8b-q1");
+        assert_eq!((tensors, generic_same), (254, cases));
+    }
+
+    /// Every dequantized tensor, q8_0 row and dot product the oracle recorded, re-derived and compared
+    /// bit for bit; returns (tensors, cases, cases where the generic port equals ggml generic).
+    fn oracle_q1_0(file: &str, oracle: &str) -> (usize, usize, usize) {
+        use crate::gguf::{guard_file, Engine, Mmap};
         use crate::sha256::{hex, Sha256};
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
-        let model = dir.join("Bonsai-1.7B-Q1_0.gguf");
+        let model = dir.join(file);
         let rep = guard_file(&model, Engine::Mainline).unwrap();
         let h = rep.header.as_ref().unwrap();
+        let mm = Mmap::open(&model).unwrap();
         let find = |name: &str| h.tensors.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("{name}"));
+        let tensor_bytes = |_: &std::path::Path, _: &crate::gguf::Header, t: &crate::gguf::TensorInfo| mm.tensor(h, t).map(|b| b.to_vec()).ok_or(());
 
         // 1. dequantize: sha256 of the f32 output, every Q1_0 tensor
-        let tsv = std::fs::read_to_string(dir.join("oracle/dequant.tsv")).unwrap();
+        let tsv = std::fs::read_to_string(dir.join(oracle).join("dequant.tsv")).unwrap();
         let (mut tensors, mut elems) = (0, 0u64);
         for line in tsv.lines() {
             let f: Vec<&str> = line.split('\t').collect();
@@ -695,7 +746,7 @@ pub(crate) mod tests {
         }
 
         // 2. q8_0 activations + vec_dot: bytes and bits
-        let vb = std::fs::read(dir.join("oracle/vecdot.bin")).unwrap();
+        let vb = std::fs::read(dir.join(oracle).join("vecdot.bin")).unwrap();
         let (mut o, mut cases, mut generic_same) = (0usize, 0, 0);
         let u32at = |o: usize| u32::from_le_bytes(vb[o..o + 4].try_into().unwrap()) as usize;
         let mut cache: Option<(String, Vec<u8>)> = None;
@@ -728,7 +779,7 @@ pub(crate) mod tests {
         }
         eprintln!("oracle: {tensors} tensors / {elems} weights dequantized bit-exact; {cases} q8_0 rows byte-exact; \
                    {cases} vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in {generic_same}/{cases}");
-        assert_eq!((tensors, cases, generic_same), (197, 788, 788));
+        (tensors, cases, generic_same)
     }
 
     /// ns per Q1_0 block (128 weights), one thread. Two regimes: L1-resident (one 32-block row,
@@ -814,6 +865,27 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn par_bit_exact_with_single_thread() {
+        let mut r = Rng(778);
+        let (rows, nb, cols) = (203usize, 5usize, 7usize);
+        let w = random_q1(&mut r, rows * nb);
+        let ys: Vec<Vec<u8>> = (0..cols).map(|_| random_q8(&mut r, nb, true)).collect();
+        let yr: Vec<&[u8]> = ys.iter().map(|v| v.as_slice()).collect();
+        let a = Q8Act::from_q8_0(nb * 128, &ys[0]);
+        let (mut mv, mut mm) = (vec![0f32; rows], vec![0f32; rows * cols]);
+        mat_vec(&w, rows, &a, &mut mv);
+        mat_mul(&w, rows, nb * 128, &yr, &mut mm);
+        for th in [1, 2, 3, 4] {
+            let pool = crate::par::Pool::new(th);
+            let (mut pv, mut pm) = (vec![0f32; rows], vec![0f32; rows * cols]);
+            mat_vec_par(&pool, &w, rows, &a, &mut pv);
+            mat_mul_par(&pool, &w, rows, nb * 128, &yr, &mut pm);
+            assert!(pv.iter().zip(&mv).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_vec_par {th}");
+            assert!(pm.iter().zip(&mm).all(|(a, b)| a.to_bits() == b.to_bits()), "mat_mul_par {th}");
+        }
+    }
+
     /// Prefill: ns per (block × column) — per-pair vec_dot (what ggml does) vs the 1×4 tile.
     #[test]
     #[ignore = "benchmark; run with --release --nocapture"]
@@ -842,6 +914,101 @@ pub(crate) mod tests {
             std::hint::black_box(&out);
         }
         eprintln!("prefill 1024x4096 x 32 cols: per-pair vec_dot {:.2} ns/block·col, 1x4 tile {:.2} ns/block·col ({:.2}x)", best[0], best[1], best[0] / best[1]);
+    }
+
+    /// One token's worth of every Q1_0 matmul in Bonsai-8B (36 × q,k,v,o,gate,up,down + output), each
+    /// tensor once in file order, ggml's AVX2 kernel vs bankml's `mat_vec_par`, both on the same pool and
+    /// row scheduler, per thread count (`BANKML_THREADS`, default "1,2,3,4"); then every tensor's first 64
+    /// rows compared bit for bit, bankml threaded. (0.0.3)
+    /// `BANKML_GGML_LIB=… cargo test --release -- --ignored decode_budget_q1_0 --nocapture --test-threads=1`
+    #[test]
+    #[ignore = "needs BANKML_GGML_LIB + .models/Bonsai-8B-Q1_0.gguf; ~1 min"]
+    fn decode_budget_q1_0() {
+        use crate::gguf::{guard_file, Engine, Mmap};
+        use crate::par::Pool;
+        use std::time::Instant;
+        let ggml = ggml_q1_0_vec_dot();
+        let model = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".models/Bonsai-8B-Q1_0.gguf");
+        let rep = guard_file(&model, Engine::Mainline).unwrap();
+        let h = rep.header.as_ref().unwrap();
+        let mm = Mmap::open(&model).unwrap();
+        let mut r = Rng(81);
+        let mats: Vec<_> = h.tensors.iter().filter(|t| t.ty == 41 && t.name != "token_embd.weight").collect();
+        let mut acts = std::collections::HashMap::new();
+        for t in &mats {
+            let n = t.dims[0] as usize;
+            acts.entry(n).or_insert_with(|| {
+                let x: Vec<f32> = (0..n).map(|_| r.act()).collect();
+                let mut q8 = vec![0u8; n / QK8_0 * Q8_0_BYTES];
+                quantize_row_q8_0(&x, &mut q8);
+                let a = Q8Act::from_q8_0(n, &q8);
+                (q8, a)
+            });
+        }
+        let weights: u64 = mats.iter().map(|t| t.dims[0] * t.dims[1]).sum();
+        eprintln!("decode budget: {} Q1_0 matmuls, {weights} weights ({:.2} GB of blocks) per token", mats.len(), weights as f64 / 128.0 * 18.0 / 1e9);
+        let gemv = |g: bool, t: &crate::gguf::TensorInfo, o: &mut [f32], rows: usize, pool: &Pool| {
+            let (n, w) = (t.dims[0] as usize, mm.tensor(h, t).unwrap());
+            let (q8, a) = &acts[&n];
+            let rb = n / QK1_0 * Q1_0_BYTES;
+            if g {
+                pool.rows(rows, o, &|r0, o| o.iter_mut().enumerate().for_each(|(i, s)| unsafe { ggml(n as i32, s, 0, w[(r0 + i) * rb..].as_ptr() as _, 0, q8.as_ptr() as _, 0, 1) }));
+            } else {
+                mat_vec_par(pool, w, rows, a, o);
+            }
+        };
+        let threads = std::env::var("BANKML_THREADS").unwrap_or("1,2,3,4".into());
+        for th in threads.split(',').map(|v| v.parse::<usize>().unwrap()) {
+            let pool = Pool::new(th);
+            let pass = |g: bool| {
+                let t0 = Instant::now();
+                for t in &mats {
+                    let rows = t.dims[1] as usize;
+                    gemv(g, t, &mut vec![0f32; rows], rows, &pool);
+                }
+                t0.elapsed().as_secs_f64()
+            };
+            pass(true); // page in
+            let (mut tg, mut tb) = (vec![], vec![]);
+            for _ in 0..3 {
+                tg.push(pass(true));
+                tb.push(pass(false));
+            }
+            tg.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            tb.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            eprintln!("  {th} thread(s): ggml b11192 {:.3}/{:.3} s/token (min/median) | bankml {:.3}/{:.3} | {:.2}x | matmul-only ceiling ggml {:.2}, bankml {:.2} tok/s",
+                tg[0], tg[1], tb[0], tb[1], tg[1] / tb[1], 1.0 / tg[0], 1.0 / tb[0]);
+        }
+        let (one, par) = (Pool::new(1), Pool::new(3));
+        for t in &mats {
+            let (mut og, mut ob) = (vec![0f32; 64], vec![0f32; 64]);
+            gemv(true, t, &mut og, 64, &one);
+            gemv(false, t, &mut ob, 64, &par);
+            assert!(og.iter().zip(&ob).all(|(x, y)| x.to_bits() == y.to_bits()), "{}: bits", t.name);
+        }
+    }
+
+    type VecDot = unsafe extern "C" fn(i32, *mut f32, usize, *const std::ffi::c_void, usize, *const std::ffi::c_void, usize, i32);
+
+    /// ggml b11192's own `ggml_vec_dot_q1_0_q8_0` from the shipped haswell library (dlopen, no crate).
+    pub(crate) fn ggml_q1_0_vec_dot() -> VecDot {
+        use std::ffi::{c_char, c_int, c_void, CString};
+        extern "C" {
+            fn dlopen(f: *const c_char, flag: c_int) -> *mut c_void;
+            fn dlsym(h: *mut c_void, s: *const c_char) -> *mut c_void;
+        }
+        let dir = std::env::var("BANKML_GGML_LIB").expect("BANKML_GGML_LIB (llama.cpp b11192 ubuntu-x64 release dir)");
+        let (base, cpu) = (CString::new(format!("{dir}/libggml-base.so")).unwrap(), CString::new(format!("{dir}/libggml-cpu-haswell.so")).unwrap());
+        unsafe {
+            assert!(!dlopen(base.as_ptr(), 0x102).is_null(), "dlopen base"); // RTLD_NOW|RTLD_GLOBAL
+            let h = dlopen(cpu.as_ptr(), 0x102);
+            assert!(!h.is_null(), "dlopen cpu");
+            let init = dlsym(h, c"ggml_cpu_init".as_ptr()); // fills the f16→f32 table the kernel reads
+            std::mem::transmute::<*mut c_void, unsafe extern "C" fn()>(init)();
+            let f = dlsym(h, c"ggml_vec_dot_q1_0_q8_0".as_ptr());
+            assert!(!f.is_null());
+            std::mem::transmute::<*mut c_void, VecDot>(f)
+        }
     }
 
     /// In-process A/B against ggml b11192's own exported AVX2 kernel (dlopen, no crate): the two

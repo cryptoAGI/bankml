@@ -22,7 +22,7 @@ import numpy as np
 
 gguf_path, libdir, out = sys.argv[1:4]
 rows_per = int(sys.argv[4]) if len(sys.argv) > 4 else 3
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # tools/gguf_guard.py (vendored from minaiml)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # testing/gguf_guard.py (vendored from minaiml)
 from gguf_guard import parse  # the same header parse the guard uses
 
 base = ctypes.CDLL(os.path.join(libdir, "libggml-base.so"), mode=ctypes.RTLD_GLOBAL)
