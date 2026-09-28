@@ -12,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      # pinned to the toolchain the kernels were verified with; newer clippy adds style lints
+      # (e.g. chunks_exact_to_as_chunks) that -D warnings would fail on
+      - run: rustup toolchain install 1.95.0 --profile minimal --component clippy && rustup default 1.95.0
       - run: cargo build --release --locked
       - run: cargo test --release --locked
       - run: cargo clippy --release --all-targets --locked -- -D warnings
