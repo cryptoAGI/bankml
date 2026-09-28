@@ -9,6 +9,7 @@ const USAGE: &str = "usage: bankml guard FILE [--engine mainline|prism] [--json]
        bankml sha256 FILE
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
+       bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N]
        bankml version";
 
 fn main() {
@@ -97,6 +98,28 @@ fn main() {
                     }
                 }
             },
+        },
+        (Some("serve"), Some(file)) => match fork() {
+            Err(c) => c,
+            Ok(fork_json) => {
+                let cfg = bankml::serve::Config {
+                    model: file.into(),
+                    fork_json,
+                    engine,
+                    listen: opt("--listen").unwrap_or("127.0.0.1:18093".into()),
+                    upstream: opt("--upstream").unwrap_or("127.0.0.1:18092".into()),
+                    spawn: opt("--spawn").map(Into::into),
+                    threads: opt("--threads").and_then(|v| v.parse().ok()).unwrap_or(3),
+                    ctx: opt("--ctx").and_then(|v| v.parse().ok()).unwrap_or(4096),
+                };
+                match bankml::serve::run(cfg) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("bankml serve: refuse: {e}");
+                        2
+                    }
+                }
+            }
         },
         _ => {
             eprintln!("{USAGE}");

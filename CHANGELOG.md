@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.0.6 — 2026-09-28
+
+bankml answers on this laptop. The answers come through the reference engine (P0), behind the gate, with a receipt,
+in a Savante UI that anyone can watch.
+
+### Added
+- **`bankml serve`** (P0, `serve.rs`, std only) is a loopback HTTP gateway in front of llama.cpp b11192's
+  `llama-server`:
+  - It starts only after `verify` passes (guard, then the sha256 pin to `FORK.json`).
+  - The upstream must be serving the verified file. Either bankml launches it (`--spawn LLAMA_SERVER`), or a running
+    server's `/props` must name the same canonical path. Otherwise it refuses.
+  - Every `/v1/chat/completions` answer, streamed or not, carries a `bankml_receipt`. The receipt holds the version,
+    the engine, the model sha256, the guard verdict, the tokens, the time to first token, the wall time and the
+    **sha256 of the answer text**, so a client can check that what it shows is what the verified model wrote.
+  - `GET /bankml` reports the verification.
+  - What it is not: bankml's own forward pass (P3). The arithmetic is ggml's.
+- **`ui/savante.py`** is the Savante chat in Gradio (3.x or newer), built from the Hugging Face template
+  PYTHAI/savante. It has two modes:
+  - **interact** (the operator): the chat, the `.prompt` picker, `.history` and the offline verifier. The `.prompt`
+    choices are the persona's `system_prompt` (canon, ledgered, the default), `sAGI.prompt` (canon facet, ledgered) or
+    the Space's `Savante.prompt` (not ledgered), each shown with its sha256. `.history` is a JSONL file outside the
+    canon, and the last session reloads on start. Each answer is labelled a draft and carries its receipt.
+  - **view** (anyone watching, read-only): the live testing log (`testing/live.log`, refreshed every 2 s), every
+    release's gate record, CI status, the laptop's load, memory and swap (so a disturbed measurement shows as one),
+    and Savante's office and ledger. It has no chat, no `.history`, and runs no commands.
+- **iNFT compatibility.** Savante's canon is read and never written, not even a Python cache. At start the UI re-hashes
+  every file that `savante.commitments.json` commits to: the nine artefacts, the card, the image and the thot bundle.
+  If the persona does not verify, the UI refuses to speak as Savante. The Integrity tab shows the ledger, and
+  `bind/savante_verify.py` runs from a button. Nothing mints; the card's status stays `not_yet_minted`.
+- 2 new unit tests (the JSON reader and HTTP bodies) and 2 end-to-end tests of `serve` against a mock llama-server:
+  the receipt and the answer hash, refusal of a wrong pin, and refusal of an upstream serving a different file.
+
+### Measured on the laptop (Ryzen 3 3200U), the real canon and model
+- `bankml serve` verified Bonsai-8B Q1_0 (`284a335a…`, the fork's pin) and the running llama-server serving it.
+- A Savante turn under the persona's system prompt: 316 prompt + 28 completion tokens in 125 s, with the first token
+  at 113 s. Prefill runs at 2.8 tok/s in llama.cpp. The answer's sha256 matched its receipt.
+- The canon ledger verifies 12/12; `savante_verify.py` exits 0 (APPROVE); `~/savante` is unchanged afterwards.
+
 ## 0.0.5 — 2026-09-28
 
 The third performance release, on the ternary kernel, with the testing shown live. **No kernel changed**: three

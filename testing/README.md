@@ -20,7 +20,7 @@ kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
 |---|---|
 | `release_gate.sh` | the gate above (also appends to `live.log`) |
 | `live.sh` | runs one step with its output appended to `live.log`, which `ui/savante.py --mode view` shows live |
-| `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify |
+| `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify, and `serve` against a mock llama-server (receipts, answer hashes, refusals) |
 | `ggml_oracle.py` | writes an oracle: llama.cpp b11192's own answers (its exported symbols, in-process) on a real GGUF — dequantized tensors, q8_0 rows, dot products |
 | `gguf_guard.py`, `test_gguf_guard.py` | the Python guard the Rust one was ported from (vendored from minaiml), and its suite |
 | `guard_agree.py` | runs both guards on every synthetic case and any real file given; exit 0 only if the JSON is identical |
@@ -38,6 +38,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `real_bonsai_1_7b_q1_0` *(real)* | `gguf.rs` | the guard's report on the real file |
 | FIPS vectors, FORK.json pin | `sha256.rs` | SHA-256 and the pin scanner |
 | `verify_runs_guard_then_pin` | `bankml.rs` | the verify gate |
+| JSON reader, chunked/sized bodies | `serve.rs` | what `serve` parses from llama-server |
 | f16 (all 65,536 values, and against F16C hardware), layouts, q8_0 rounding, AVX2 == scalar model (3,500 cases), `mat_vec`/`mat_mul`/`*_par` == per-pair | `q1_0.rs` | the 1-bit kernel against its scalar model of ggml |
 | `oracle_ggml_b11192_real_bonsai_1_7b`, `oracle_ggml_b11192_real_bonsai_8b_q1_0` *(real)* | `q1_0.rs` | every `Q1_0` weight of Bonsai-1.7B and Bonsai-8B dequantized bit-exact; q8_0 rows and dot products bit-exact against ggml |
 | `ab_vs_ggml`, `decode_budget_q1_0` *(real)* | `q1_0.rs` | speed against ggml's own 1-bit kernel, in one process on the same bits; one token's 253 matmuls at 1–4 threads |
@@ -54,5 +55,6 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |
 | 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
 | 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml) |
+| 0.0.6 | `results/0.0.6.txt` | `bankml serve` (P0) with receipts; Savante UI, view / interact; iNFT ledger checked 12/12 |
 | 0.0.5 | `results/0.0.5.txt` | three ternary experiments, bit-exact, none reliably faster (no kernel change); kernels at the Zen+ instruction limit; live log |
 | 0.0.4 | `results/0.0.4.txt` | memory floor 15–17 GB/s (kernels are compute-bound); 1-bit prefill 1.27–1.33× ggml; two rejected decode experiments |

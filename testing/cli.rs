@@ -2,6 +2,8 @@
 //! Offline — synthetic GGUFs and a mock llama-server; the real-model oracles are in the modules (see
 //! testing/README.md). `cargo test --release --test cli`
 
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -130,4 +132,143 @@ fn pin_and_verify() {
     let w = bankml(&["verify", &m, "--fork", &wrong, "--json"]);
     assert_eq!(code(&w), 2);
     assert!(out(&w).contains("\"verdict\": \"refuse\"") && out(&w).contains("!= pinned"));
+}
+
+// ---------------------------------------------------------------- serve, against a mock llama-server
+
+/// A mock llama-server: /health, /props naming `model`, and a chat endpoint that streams (chunked) or not.
+fn mock_upstream(model: String) -> String {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        for c in l.incoming().flatten() {
+            let model = model.clone();
+            std::thread::spawn(move || mock_one(c, &model));
+        }
+    });
+    addr
+}
+
+fn mock_one(mut c: TcpStream, model: &str) {
+    let mut r = BufReader::new(c.try_clone().unwrap());
+    let mut line = String::new();
+    r.read_line(&mut line).unwrap();
+    let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
+    let mut n = 0;
+    loop {
+        let mut h = String::new();
+        r.read_line(&mut h).unwrap();
+        if h == "\r\n" || h.is_empty() {
+            break;
+        }
+        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+            n = v.trim().parse().unwrap();
+        }
+    }
+    let mut body = vec![0; n];
+    r.read_exact(&mut body).unwrap();
+    let json = |b: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{b}", b.len());
+    let reply = match path.as_str() {
+        "/health" => json("{\"status\":\"ok\"}"),
+        "/props" => json(&format!("{{\"model_path\":{:?}}}", model)),
+        _ if String::from_utf8_lossy(&body).contains("\"stream\": true") || String::from_utf8_lossy(&body).contains("\"stream\":true") => {
+            let events = [
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Savante \"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"knows.\"}}]}\n\n",
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}\n\n",
+                "data: [DONE]\n\n",
+            ];
+            let mut s = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n".to_string();
+            for e in events {
+                s += &format!("{:x}\r\n{e}\r\n", e.len());
+            }
+            s + "0\r\n\r\n"
+        }
+        _ => json("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Savante knows.\"}}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}"),
+    };
+    let _ = c.write_all(reply.as_bytes());
+}
+
+fn http(addr: &str, method: &str, path: &str, body: &str) -> String {
+    let mut s = TcpStream::connect(addr).unwrap();
+    write!(s, "{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+    let mut o = String::new();
+    s.read_to_string(&mut o).unwrap();
+    o
+}
+
+fn free_port() -> String {
+    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string()
+}
+
+fn start_serve(m: &str, fork: &str, upstream: &str) -> (std::process::Child, String) {
+    let listen = free_port();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_bankml"))
+        .args(["serve", m, "--fork", fork, "--upstream", upstream, "--listen", &listen])
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    for _ in 0..100 {
+        if TcpStream::connect(&listen).is_ok() {
+            return (child, listen);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("serve did not start");
+}
+
+fn sha_hex(b: &[u8]) -> String {
+    let mut h = bankml::sha256::Sha256::default();
+    h.update(b);
+    bankml::sha256::hex(&h.finish())
+}
+
+#[test]
+fn serve_gates_and_signs_answers() {
+    let d = dir("serve");
+    let m = write(&d, "m.gguf", &gguf(&[("general.architecture", "qwen3")], &[("a", 4096, 41, 18, 128)]));
+    let h = sha(&m);
+    let fork = write(&d, "FORK.json", format!("{{\"files\": [{{\"path\": \"m.gguf\", \"sha256\": \"{h}\"}}]}}").as_bytes());
+    let canon = Path::new(&m).canonicalize().unwrap().to_string_lossy().into_owned();
+    let up = mock_upstream(canon);
+    let (mut child, addr) = start_serve(&m, &fork, &up);
+
+    let st = http(&addr, "GET", "/bankml", "");
+    assert!(st.contains(&h) && st.contains("\"verdict\": \"play\""), "{st}");
+
+    let one = http(&addr, "POST", "/v1/chat/completions", "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+    assert!(one.contains("\"bankml_receipt\"") && one.contains(&format!("\"model_sha256\": \"{h}\"")), "{one}");
+    assert!(one.contains(&format!("\"response_sha256\": \"{}\"", sha_hex(b"Savante knows."))), "{one}");
+    assert!(one.contains("\"completion_tokens\": 2"));
+
+    let st = http(&addr, "POST", "/v1/chat/completions", "{\"stream\": true, \"messages\":[]}");
+    let receipt = st.lines().find(|l| l.contains("bankml_receipt")).unwrap_or_else(|| panic!("{st}"));
+    assert!(receipt.contains(&format!("\"response_sha256\": \"{}\"", sha_hex(b"Savante knows."))), "{receipt}");
+    assert!(st.find("bankml_receipt").unwrap() < st.find("[DONE]").unwrap(), "receipt before DONE");
+    assert!(st.contains("\"content\":\"Savante \""), "the stream itself passes through untouched");
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn serve_refuses_an_unverified_model_or_a_different_upstream_file() {
+    let d = dir("serve-refuse");
+    let m = write(&d, "m.gguf", &gguf(&[("general.architecture", "qwen3")], &[("a", 4096, 41, 18, 128)]));
+    let other = write(&d, "other.gguf", b"GGUF");
+    let h = sha(&m);
+    let fork = write(&d, "FORK.json", format!("{{\"files\": [{{\"path\": \"m.gguf\", \"sha256\": \"{h}\"}}]}}").as_bytes());
+    let wrong = write(&d, "WRONG.json", format!("{{\"files\": [{{\"path\": \"m.gguf\", \"sha256\": \"{}\"}}]}}", "1".repeat(64)).as_bytes());
+    let up = mock_upstream(Path::new(&other).canonicalize().unwrap().to_string_lossy().into_owned());
+    let run = |f: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_bankml")).args(["serve", &m, "--fork", f, "--upstream", &up, "--listen", &free_port()]).output().unwrap();
+        (code(&o), String::from_utf8_lossy(&o.stderr).into_owned() + &out(&o))
+    };
+    let (c, msg) = run(&wrong);
+    assert_eq!(c, 2, "{msg}");
+    assert!(msg.contains("!= pinned"), "{msg}");
+    let (c, msg) = run(&fork);
+    assert_eq!(c, 2, "{msg}");
+    assert!(msg.contains("not the verified"), "{msg}");
 }

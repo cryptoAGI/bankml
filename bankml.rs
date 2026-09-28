@@ -1,6 +1,6 @@
 //! # bankml.rs — the in-house Rust player for low-bit models
 //!
-//! **Status (0.0.5, 2026-09-28): P1 guard + pin (one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
+//! **Status (0.0.6, 2026-09-28): P0 serve + the Savante UI;: P1 guard + pin (one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
 //! proven (see the checklist). Nothing here runs a model yet** — `answer()`'s `todo!()` is P0/P3. The
 //! ternary finding: llama.cpp b11192 has **no x86 Q2_0 kernel** (scalar C, ~49 ns per 64 weights on the
 //! dev box); bankml's is bit-exact with it and ~9–10× faster, and ggml's matmuls are ~90–98 % of its wall. Created 2026-09-26 on the operator's instruction: "create llama.cpp rust version
@@ -51,8 +51,10 @@
 //!
 //! ## Phases (each ends in a measured row, or it is not done)
 //!
-//! - [ ] **P0 — wrap.** FFI to ggml/llama.cpp b11192 (`llama-cpp-2` or raw bindgen), OpenAI-compatible
-//!   `/v1/chat/completions` with `usage` + `timings`, Receipt, guard in front. Parity row = the bar above.
+//! - [x] **P0 — wrap.** (0.0.6) Not FFI: `bankml serve` (`serve.rs`), a loopback gateway to llama.cpp b11192's
+//!   `llama-server`, OpenAI-compatible `/v1/chat/completions`; `verify` in front, the upstream bound to the
+//!   verified path, a receipt (with the answer's sha256) on every answer. Laptop: Savante turn 316 + 28 tokens in
+//!   125 s (prefill 2.8 tok/s — llama.cpp's). The Savante UI (`ui/savante.py`, view / interact) sits on it.
 //! - [ ] **P1 — guard + receipts native.** (guard and pin proven; receipts not yet emitted)
 //!   - [x] GGUF v3 header parse + the three traps + kv_f16_bytes_per_token (`gguf.rs`). Evidence: the 9
 //!     cases of `test_gguf_guard.py` as Rust tests + fail-closed extras; `testing/guard_agree.py` = **20/20**
@@ -125,6 +127,7 @@
 
 pub mod gguf;
 pub mod par;
+pub mod serve;
 pub mod q1_0;
 pub mod q2_0;
 pub mod sha256;

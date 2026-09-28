@@ -63,11 +63,11 @@ Every number above is measured and reproducible — the tables, machines and com
 | P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B weights; decode 1.03×, prefill 1.16× |
 | P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.5–9.8× decode, 12.5× prefill |
 | P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | next — acceptance: token-identical to llama.cpp at temperature 0 |
-| P0 | serve answers now through the reference, behind guard + pin + receipts | planned |
+| P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | planned |
 | P5 | ARM / NEON, handheld | planned |
 
-bankml does not answer questions yet — the kernels are proven; the forward pass is the next phase. The whole-model
+Since 0.0.6 bankml answers through the reference engine (P0), behind its gate. Its own forward pass is the next phase. The whole-model
 budget says what it can reach: the ternary matrix work for one token in **0.36 s** against llama.cpp's **2.54 s** on
 three threads, a matmul-bound ceiling of about **2.8 tokens/s** against **0.39**.
 
@@ -75,7 +75,7 @@ three threads, a matmul-bound ceiling of about **2.8 tokens/s** against **0.39**
 
 ```sh
 cargo build --release
-cargo test --release                       # 34 unit + 4 end-to-end tests, offline
+cargo test --release                       # unit + end-to-end tests, offline
 
 # the oracles and the A/B against llama.cpp's own kernels (needs the model files and the b11192 release):
 #   models  → .models/  from huggingface.co/PYTHAI/Bonsai-8B-gguf-fork and PYTHAI/Ternary-Bonsai-8B-gguf-fork
@@ -89,6 +89,20 @@ target/release/bankml guard MODEL.gguf                 # play | refuse (with the
 target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then the sha256 pin: one gate
 ```
 
+## Run it on this computer (0.0.6)
+
+```sh
+cargo build --release
+# answers through llama.cpp b11192's llama-server, behind the guard, the pin and a receipt (P0)
+target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork FORK.json --upstream 127.0.0.1:18092   # or --spawn /path/to/llama-server
+python3 ui/savante.py --mode interact            # http://127.0.0.1:7873  Savante: chat, .prompt, .history, verifier
+python3 ui/savante.py --mode view --port 7874    # http://127.0.0.1:7874  read-only: watch the testing live
+```
+
+`serve` refuses to start unless the file verifies and the upstream serves that very file. Every answer carries a
+`bankml_receipt` with the sha256 of the text. The UI reads Savante's canon (`~/savante`, or `SAVANTE_CANON`) without
+writing to it, and checks it against the iNFT ledger `savante.commitments.json` before it speaks as Savante.
+
 ## Layout
 
 | file | what |
@@ -99,6 +113,8 @@ target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then 
 | `q2_0.rs` | the ternary kernel: the same, plus the per-token activation layout |
 | `sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
 | `par.rs` | the thread pool and row scheduler (0.0.3) |
+| `serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
+| `ui/savante.py` | the Savante UI, view and interact modes (0.0.6) |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
 
