@@ -253,14 +253,17 @@ pub unsafe fn vec_dot_avx2(n: usize, x: &[u8], y: &[u8]) -> f32 {
 /// A q8_0 activation prepared once per token: quants contiguous (32 per block, no 34-byte
 /// stride) and the scales already f32 (f16→f32 is exact, so no bit can move). In a GEMV every
 /// row reuses the same activation, so ggml's per-row, per-block scale conversion is paid once here.
+/// The fields are private: the AVX2 kernels read them through raw pointers sized by `n`, so they may
+/// only be built by `from_q8_0`/`quantize`, which keep them consistent (0.0.1 exposed them, which let
+/// safe code set `n` past the buffers).
 pub struct Q8Act {
-    pub n: usize,
-    pub qs: Vec<i8>,
-    pub d: Vec<f32>,
+    n: usize,
+    qs: Vec<i8>,
+    d: Vec<f32>,
     /// Σq over each 4-element lane (8 per q8 block): the activation half of Σ±q = 2·Σ₊q − Σq.
-    pub tot: Vec<i32>,
+    tot: Vec<i32>,
     /// some q == −128: ggml's i8 negation wraps there and the Σ₊ identity would not; use the wrap kernel.
-    pub has_min: bool,
+    has_min: bool,
 }
 
 impl Q8Act {
@@ -282,6 +285,18 @@ impl Q8Act {
         let mut q = vec![0u8; x.len() / QK8_0 * Q8_0_BYTES];
         quantize_row_q8_0(x, &mut q);
         Self::from_q8_0(x.len(), &q)
+    }
+    /// Elements (a multiple of 128).
+    pub fn n(&self) -> usize {
+        self.n
+    }
+    /// The quants, contiguous.
+    pub fn qs(&self) -> &[i8] {
+        &self.qs
+    }
+    /// One f32 scale per q8 block.
+    pub fn d(&self) -> &[f32] {
+        &self.d
     }
 }
 

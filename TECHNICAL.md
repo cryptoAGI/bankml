@@ -1,6 +1,6 @@
 # bankml: verified low-bit inference on commodity CPUs — a technical report
 
-*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.0.1 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
+*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.0.2 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
 here with the command that reproduces it.*
 
 ## Abstract

@@ -1,0 +1,20 @@
+# Offline checks only: the oracles need the model files and the b11192 release, so they stay local
+# (`cargo test --release -- --ignored`, see PERFORMANCE.md).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - run: cargo build --release --locked
+      - run: cargo test --release --locked
+      - run: cargo clippy --release --all-targets --locked -- -D warnings
+      - run: python3 tools/test_gguf_guard.py
+      - run: python3 tools/guard_agree.py target/release/bankml

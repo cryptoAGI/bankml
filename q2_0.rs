@@ -85,11 +85,13 @@ pub fn vec_dot_ref_nofma(n: usize, x: &[u8], y: &[u8]) -> f32 {
 /// activation stores, per pair and per r, the 16 quants of elements 4b+r of A then of B. `d` (f32, exact)
 /// and `sum` (Σq per q8 block, for Σ(c−1)·q = Σc·q − Σq with c ∈ {0..3} unsigned) are stored in the
 /// lane order `hadd` leaves: [A₀ A₁ C₀ C₁ | B₀ B₁ D₀ D₁]. Tail blocks (nb % 4) keep a plain r-major layout.
+/// Private fields, built only by `from_q8_0`/`quantize`: `qs()` and the AVX2 kernels trust `n` (0.0.1
+/// made `n`, `d` and `sum` public, so safe code could send the kernels past their buffers).
 pub struct Q8Act2 {
-    pub n: usize,
+    n: usize,
     qs: Vec<Line>,
-    pub d: Vec<f32>,
-    pub sum: Vec<i32>,
+    d: Vec<f32>,
+    sum: Vec<i32>,
 }
 
 /// 64-byte-aligned storage, so no 32-byte activation load straddles a cache line (a `Vec<i8>` is only
@@ -137,8 +139,13 @@ impl Q8Act2 {
         }
         Q8Act2 { n, qs, d, sum }
     }
+    /// Elements (a multiple of 64).
+    pub fn n(&self) -> usize {
+        self.n
+    }
     /// The prepared quants (n of them, 64-byte aligned).
     pub fn qs(&self) -> &[i8] {
+        // SAFETY: `qs` holds n / 64 Lines of 64 i8 each, and `n` is private and fixed at construction
         unsafe { std::slice::from_raw_parts(self.qs.as_ptr() as *const i8, self.n) }
     }
     /// Quantize f32 activations exactly as ggml's AVX2 `quantize_row_q8_0`.

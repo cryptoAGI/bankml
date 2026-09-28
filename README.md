@@ -55,7 +55,7 @@ Every number above is measured and reproducible — the tables, machines and com
 
 | phase | what | state |
 |---|---|---|
-| P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON |
+| P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON; `bankml verify` = guard + pin as one gate (0.0.2) |
 | P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B weights; decode 1.03×, prefill 1.16× |
 | P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.5–9.8× decode, 12.5× prefill |
 | P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | next — acceptance: token-identical to llama.cpp at temperature 0 |
@@ -71,7 +71,7 @@ three threads, a matmul-bound ceiling of about **2.8 tokens/s** against **0.39**
 
 ```sh
 cargo build --release
-cargo test --release                       # 27 unit tests, offline
+cargo test --release                       # 31 unit tests, offline
 
 # the oracles and the A/B against llama.cpp's own kernels (needs the model files and the b11192 release):
 #   models  → .models/  from huggingface.co/PYTHAI/Bonsai-8B-gguf-fork and PYTHAI/Ternary-Bonsai-8B-gguf-fork
@@ -82,19 +82,22 @@ BANKML_GGML_LIB=/path/to/llama-b11192 cargo test --release -- --ignored --nocapt
 
 python3 tools/guard_agree.py target/release/bankml     # the Rust guard == the Python guard
 target/release/bankml guard MODEL.gguf                 # play | refuse (with the reason) | need more
+target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then the sha256 pin: one gate
 ```
 
 ## Layout
 
 | file | what |
 |---|---|
-| `bankml.rs` | the crate: the plan of record (header checklist), `guard`, `pin`, `Receipt` |
+| `bankml.rs` | the crate: the plan of record (header checklist), `guard`, `pin`, `verify`, `Receipt` |
 | `gguf.rs` | header-only GGUF v3 parse, the guard, a read-only memory map |
 | `q1_0.rs` | the 1-bit kernel: dequantize, `q8_0` activations, scalar model, AVX2, decode and prefill |
 | `q2_0.rs` | the ternary kernel: the same, plus the per-token activation layout |
 | `sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
 | `tools/` | the oracle (`ggml_oracle.py`), the guard agreement check, the Python guard it was ported from |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
+
+Changes by release are in **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## Models
 

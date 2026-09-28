@@ -3,7 +3,9 @@
 //! never read by `judge`; `tensor_bytes` exists for kernels/tests that need a tensor's raw blocks.
 //!
 //! Deliberate divergences from the Python (each one fails *closed*, never open):
-//! - a malformed header (bad magic, unknown value type, alignment 0) is `Refuse(reason)`; Python raises.
+//! - a malformed header (bad magic, unknown value type, alignment 0, arrays nested deeper than
+//!   `MAX_ARRAY_DEPTH`) is `Refuse(reason)`; Python raises (for deep nesting, `RecursionError`).
+//! - a KV size per token that overflows i128 is `Refuse(reason)`; Python's big integers report it and play.
 //! - `guard(path)` re-reads with a larger prefix when the header outgrows 32 MiB, so `NeedMore` only
 //!   survives when the file itself is truncated; the pure `judge(bytes, ..)` behaves exactly like Python.
 
@@ -15,6 +17,9 @@ use std::path::Path;
 pub const MAINLINE_COUNT: u32 = 43; // GGML_TYPE_COUNT, ggml.h @ b11192 (read 2026-09-25)
 pub const FORK_ONLY: [u32; 2] = [142, 143]; // PQ2_0, PTQ1_0 (PrismML fork)
 const DEFAULT_PREFIX: u64 = 32 << 20;
+/// Arrays of arrays deeper than this refuse. Each level costs 12 header bytes and one stack frame, so an
+/// unbounded parse lets a 24 MB header overflow the stack (0.0.1 aborted there instead of refusing).
+pub const MAX_ARRAY_DEPTH: u32 = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
@@ -129,7 +134,7 @@ impl<'a> Rd<'a> {
         let n = self.u64()?;
         Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
     }
-    fn val(&mut self, t: u32) -> Result<Val, Err> {
+    fn val(&mut self, t: u32, depth: u32) -> Result<Val, Err> {
         let size = |t: u32| match t {
             0 | 1 | 7 => Some(1u64), // u8 i8 bool
             2 | 3 => Some(2),
@@ -149,11 +154,14 @@ impl<'a> Rd<'a> {
             8 => Val::S(self.str()?),
             9 => {
                 let (et, n) = (self.u32()?, self.u64()?);
+                if et == 9 && depth >= MAX_ARRAY_DEPTH {
+                    return Err(Err::Bad(format!("gguf arrays nested deeper than {MAX_ARRAY_DEPTH}")));
+                }
                 if let Some(sz) = size(et) {
                     self.take(n.saturating_mul(sz))?; // bulk scalar arrays are skipped, not decoded
                 } else {
                     for _ in 0..n {
-                        self.val(et)?;
+                        self.val(et, depth + 1)?;
                     }
                 }
                 Val::Arr(n)
@@ -176,7 +184,7 @@ fn parse(b: &[u8]) -> Result<Header, Err> {
     for _ in 0..nkv {
         let k = r.str()?;
         let t = r.u32()?;
-        kv.insert(k, r.val(t)?); // duplicate keys: last wins, as a Python dict
+        kv.insert(k, r.val(t, 0)?); // duplicate keys: last wins, as a Python dict
     }
     let mut tensors = Vec::new();
     for _ in 0..nt {
@@ -287,7 +295,10 @@ pub fn judge(b: &[u8], engine: Engine, file_size: Option<u64>, filename: &str) -
         }
     }
     if let (Some(l), Some(hk), Some(k)) = (l, hk, k.and_then(Val::int)) {
-        rep.kv_f16_bytes_per_token = Some(l * hk * (k + v.unwrap_or(k)) * 2);
+        match k.checked_add(v.unwrap_or(k)).and_then(|kv| l.checked_mul(hk)?.checked_mul(kv)?.checked_mul(2)) {
+            Some(b) => rep.kv_f16_bytes_per_token = Some(b),
+            None => why.push(format!("KV cache size per token overflows ({a}.block_count × head_count_kv × key/value length): malformed header")),
+        }
     }
 
     let unknown: Vec<u32> = ids.iter().copied().filter(|t| *t >= MAINLINE_COUNT && !FORK_ONLY.contains(t)).collect();
@@ -366,14 +377,32 @@ pub fn block_layout(ty: u32) -> Option<(u64, u64)> {
     }
 }
 
-/// Raw bytes of one tensor (for kernels and oracle tests; the player will mmap instead).
+/// (absolute start, byte length) of a tensor's blocks, or why it cannot be read. Checked end to end:
+/// the type must be one bankml reads, rows (`dims[0]`) must be whole blocks, and no size may overflow.
+pub fn tensor_span(h: &Header, t: &TensorInfo) -> Result<(u64, u64), String> {
+    let (per, bb) = block_layout(t.ty).ok_or_else(|| format!("{}: type {} not readable", t.name, type_name(t.ty)))?;
+    if t.dims.first().is_some_and(|&d0| d0 % per != 0) {
+        return Err(format!("{}: row length {} is not a whole number of {per}-element blocks", t.name, t.dims[0]));
+    }
+    let len = u64::try_from(t.nelem()).ok().and_then(|n| (n / per).checked_mul(bb));
+    let start = h.data_start.checked_add(t.offset);
+    match (start, len) {
+        (Some(s), Some(l)) if s.checked_add(l).is_some() => Ok((s, l)),
+        _ => Err(format!("{}: size or offset overflows", t.name)),
+    }
+}
+
+/// Raw bytes of one tensor (for kernels and oracle tests; the player will mmap instead). The span is
+/// checked against the file before anything is allocated, so a lying header cannot ask for a huge buffer.
 pub fn tensor_bytes(path: &Path, h: &Header, t: &TensorInfo) -> std::io::Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
-    let (per, bb) = block_layout(t.ty).ok_or_else(|| std::io::Error::other(format!("type {} not readable", t.ty)))?;
-    let n = (t.nelem() as u64).div_ceil(per) * bb;
+    let (start, n) = tensor_span(h, t).map_err(std::io::Error::other)?;
     let mut f = std::fs::File::open(path)?;
-    f.seek(SeekFrom::Start(h.data_start + t.offset))?;
-    let mut v = vec![0u8; n as usize];
+    if start + n > f.metadata()?.len() {
+        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("{}: runs past the end of the file", t.name)));
+    }
+    f.seek(SeekFrom::Start(start))?;
+    let mut v = vec![0u8; usize::try_from(n).map_err(std::io::Error::other)?];
     f.read_exact(&mut v)?;
     Ok(v)
 }
@@ -411,12 +440,10 @@ impl Mmap {
     pub fn bytes(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
-    /// One tensor's blocks, bounds-checked against the file.
+    /// One tensor's blocks, bounds-checked against the file (`tensor_span`, then the mapping's length).
     pub fn tensor(&self, h: &Header, t: &TensorInfo) -> Option<&[u8]> {
-        let (per, bb) = block_layout(t.ty)?;
-        let start = h.data_start.checked_add(t.offset)? as usize;
-        let n = ((t.nelem() as u64).div_ceil(per) * bb) as usize;
-        self.bytes().get(start..start.checked_add(n)?)
+        let (start, n) = tensor_span(h, t).ok()?;
+        self.bytes().get(usize::try_from(start).ok()?..usize::try_from(start + n).ok()?)
     }
 }
 
@@ -611,8 +638,68 @@ mod tests {
         assert!(bonsai2("Bonsai_-  2") && bonsai2("x PRISM-FORK-REQUIRED") && !bonsai2("Bonsai-1.7B") && !bonsai2("Bonsai-8B-2x"));
     }
 
+    fn kv_entry(k: &str, t: u32, v: &[u8]) -> Vec<u8> {
+        let mut e = s(k);
+        e.extend(t.to_le_bytes());
+        e.extend_from_slice(v);
+        e
+    }
+
+    fn raw(entries: &[Vec<u8>]) -> Vec<u8> {
+        let mut h = b"GGUF".to_vec();
+        h.extend(3u32.to_le_bytes());
+        h.extend(0u64.to_le_bytes());
+        h.extend((entries.len() as u64).to_le_bytes());
+        entries.iter().for_each(|e| h.extend(e));
+        h.resize(h.len().div_ceil(32) * 32 + 32, 0);
+        h
+    }
+
+    /// 0.0.1 recursed once per nesting level and aborted on a stack overflow; now a bounded refusal.
+    #[test]
+    fn deeply_nested_arrays_refuse_not_crash() {
+        let nest = |depth: usize| {
+            let mut v = Vec::new();
+            for _ in 0..depth {
+                v.extend(9u32.to_le_bytes());
+                v.extend(1u64.to_le_bytes());
+            }
+            v.extend(4u32.to_le_bytes());
+            v.extend(0u64.to_le_bytes());
+            raw(&[kv_entry("a", 9, &v)])
+        };
+        assert_eq!(judge(&nest(3), Engine::Mainline, None, "").verdict, Verdict::Play);
+        let deep = nest(2_000_000);
+        assert!(matches!(judge(&deep, Engine::Mainline, None, "").verdict, Verdict::Refuse(ref w) if w[0].contains("nested deeper")));
+    }
+
+    /// 0.0.1 wrapped i128 silently in release (and panicked in debug) and played.
+    #[test]
+    fn kv_size_overflow_refuses() {
+        let mut e = vec![kv_entry("general.architecture", 8, &s("qwen3"))];
+        for k in ["qwen3.block_count", "qwen3.attention.head_count_kv", "qwen3.attention.key_length"] {
+            e.push(kv_entry(k, 10, &u64::MAX.to_le_bytes()));
+        }
+        let r = judge(&raw(&e), Engine::Mainline, None, "");
+        assert_eq!(r.kv_f16_bytes_per_token, None);
+        assert!(matches!(r.verdict, Verdict::Refuse(ref w) if w[0].contains("overflows")), "{:?}", r.verdict);
+    }
+
+    #[test]
+    fn tensor_span_is_checked() {
+        let h = Header { version: 3, kv: HashMap::new(), tensors: vec![], alignment: 32, data_start: 64 };
+        let t = |dims: Vec<u64>, ty: u32, offset: u64| TensorInfo { name: "t".into(), dims, ty, offset };
+        assert_eq!(tensor_span(&h, &t(vec![128, 2], 41, 0)), Ok((64, 36)));
+        assert_eq!(tensor_span(&h, &t(vec![64, 3], 42, 32)), Ok((96, 54)));
+        assert!(tensor_span(&h, &t(vec![100, 2], 41, 0)).unwrap_err().contains("whole number"));
+        // 0.0.1 truncated this element count to 64 bits and returned a short slice
+        assert!(tensor_span(&h, &t(vec![1 << 62, 1 << 40], 42, 0)).unwrap_err().contains("overflows"));
+        assert!(tensor_span(&h, &t(vec![64], 42, u64::MAX)).unwrap_err().contains("overflows"));
+        assert!(tensor_span(&h, &t(vec![64], 12, 0)).unwrap_err().contains("not readable"));
+    }
+
     /// Real file (Apache-2.0, prism-ml/Bonsai-1.7B-gguf, 248,302,272 B). The expected values are
-    /// `python3 minaiml-bonsai/tools/gguf_guard.py <file> --json` on 2026-09-25; `tools/guard_agree.sh`
+    /// `python3 minaiml-bonsai/tools/gguf_guard.py <file> --json` on 2026-09-25; `tools/guard_agree.py`
     /// re-checks the full JSON against the Python at any time.
     #[test]
     #[ignore = "needs bankml/.models/Bonsai-1.7B-Q1_0.gguf"]

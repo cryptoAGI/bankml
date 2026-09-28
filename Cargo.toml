@@ -1,11 +1,11 @@
 [package]
 name = "bankml"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 authors = ["Professor Codephreak", "Gregory L. Magnusson"]
 repository = "https://github.com/cryptoAGI/bankml"
 readme = "README.md"
-description = "In-house Rust player for low-bit (1-bit Q1_0 / ternary Q2_0_g64) GGUF models — P1 guard+pin and the P2 Q1_0 + Q2_0 kernels proven; see bankml.rs"
+description = "Verified low-bit inference: a zero-dependency Rust runtime for 1-bit (Q1_0) and ternary (Q2_0_g64) GGUF models — guard, pin and kernels bit-exact against llama.cpp b11192"
 license = "Apache-2.0"
 publish = false
 

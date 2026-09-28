@@ -1,6 +1,6 @@
 //! # bankml.rs — the in-house Rust player for low-bit models
 //!
-//! **Status (2026-09-26): P1 guard + pin and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
+//! **Status (0.0.2, 2026-09-28): P1 guard + pin (now one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
 //! proven (see the checklist). Nothing here runs a model yet** — `answer()`'s `todo!()` is P0/P3. The
 //! ternary finding: llama.cpp b11192 has **no x86 Q2_0 kernel** (scalar C, ~49 ns per 64 weights on the
 //! dev box); bankml's is bit-exact with it and ~9–10× faster, and ggml's matmuls are ~90–98 % of its wall. Created 2026-09-26 on the operator's instruction: "create llama.cpp rust version
@@ -61,6 +61,9 @@
 //!   - [x] sha256 (FIPS vectors; equals `sha256sum` and the HF LFS oid on the real file) + FORK.json pin
 //!     (`bankml pin FILE --fork FORK.json`; parses the real PYTHAI/Bonsai-8B-gguf-fork FORK.json → `284a335a…`,
 //!     refuses a mislabelled file naming both hashes).
+//!   - [x] 0.0.2: `verify` = guard then pin as one gate (`bankml verify FILE --fork FORK.json --json`);
+//!     on the real Ternary-Bonsai-8B + its FORK.json → play, `e17b298d…`. Guard hardened against hostile
+//!     headers (nested arrays refuse instead of overflowing the stack; KV-size overflow refuses).
 //!   - [ ] Receipt emitted per answer, THOT8 leaf (needs P0/P3 to have an answer to sign).
 //! - [ ] **P2 — own the kernels.** (Q1_0 and Q2_0 proven on x86 AVX2; NEON, real activations open)
 //!   - [x] Q1_0 exactly as ggml b11192 defines it (`q1_0.rs`, read from source): f16 `d` first, 16 sign
@@ -167,6 +170,39 @@ pub fn pin(gguf: &Path, fork_json: &str) -> Result<String, String> {
     if got == want { Ok(got) } else { Err(format!("{name} sha256 {got} != pinned {want}: refused")) }
 }
 
+/// The crate version (`Cargo.toml`), printed by `bankml version` and carried by every verification.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What a model file earned before it may answer: the guard said play and the pin matched.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Verified {
+    pub model_sha256: String,
+    pub guard: &'static str,
+    pub engine: &'static str,
+}
+
+impl Verified {
+    pub fn to_json(&self) -> String {
+        format!(
+            "{{\"verdict\": \"play\", \"guard\": \"{}\", \"engine\": \"{}\", \"model_sha256\": \"{}\", \"bankml\": \"{VERSION}\"}}",
+            self.guard, self.engine, self.model_sha256
+        )
+    }
+}
+
+/// P1 as one gate — the check P0 puts in front of every answer: the header guard first (cheap, reads
+/// only the header), then the sha256 pin (reads the whole file). Either refusal stops it, reason given.
+pub fn verify(gguf: &Path, fork_json: &str, engine: gguf::Engine) -> Result<Verified, String> {
+    let r = gguf::guard_file(gguf, engine).map_err(|e| format!("cannot read {}: {e}", gguf.display()))?;
+    match r.verdict {
+        Verdict::Play => {}
+        Verdict::Refuse(why) => return Err(format!("guard refused: {}", why.join("; "))),
+        Verdict::NeedMore(n) => return Err(format!("guard needs {n} header bytes: file truncated")),
+    }
+    let model_sha256 = pin(gguf, fork_json)?;
+    Ok(Verified { model_sha256, guard: "play", engine: engine.as_str() })
+}
+
 /// P0→P3: load a guarded, pinned model and answer one chat turn with its receipt.
 pub fn answer(_model: &Path, _prompt: &str, _max_tokens: u32) -> Result<(String, Receipt), String> {
     todo!("P0 via ggml FFI; P3 native Qwen3 forward")
@@ -180,6 +216,32 @@ mod tests {
     fn type_ids_match_mainline() {
         assert_eq!(GgmlType::Q1_0 as u32, 41);
         assert_eq!(GgmlType::Q2_0 as u32, 42);
+    }
+
+    #[test]
+    fn verify_runs_guard_then_pin() {
+        let dir = std::env::temp_dir().join(format!("bankml-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // a minimal header the guard plays: no tensors, one key
+        let mut g = b"GGUF".to_vec();
+        g.extend(3u32.to_le_bytes());
+        g.extend(0u64.to_le_bytes());
+        g.extend(1u64.to_le_bytes());
+        for part in [&(20u64.to_le_bytes())[..], b"general.architecture", &8u32.to_le_bytes(), &5u64.to_le_bytes(), b"qwen3"] {
+            g.extend_from_slice(part);
+        }
+        let f = dir.join("m.gguf");
+        std::fs::write(&f, &g).unwrap();
+        let sha = sha256::file_hex(&f).unwrap();
+        let fork = format!("{{\"files\": [{{\"path\": \"m.gguf\", \"sha256\": \"{sha}\"}}]}}");
+        let v = verify(&f, &fork, gguf::Engine::Mainline).unwrap();
+        assert_eq!(v.model_sha256, sha);
+        assert!(v.to_json().contains(&format!("\"model_sha256\": \"{sha}\"")));
+        let wrong = fork.replace(&sha[..8], "00000000");
+        assert!(verify(&f, &wrong, gguf::Engine::Mainline).unwrap_err().contains("!= pinned"));
+        std::fs::write(&f, b"GGUX").unwrap();
+        assert!(verify(&f, &fork, gguf::Engine::Mainline).unwrap_err().starts_with("guard refused"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
