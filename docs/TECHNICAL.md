@@ -440,7 +440,7 @@ The gate does not depend on the format. The guard reads any mainline type (it na
 from `Q4_0` and the K-quants to the `IQ` family and `MXFP4`), and no architecture is allow-listed. So a standard
 Qwen3, SmolLM or Granite GGUF at `Q4_K_M` or `Q8_0` is served on exactly the terms of a 1-bit Bonsai: it is guarded,
 pinned to its publisher's sha256, and carries a receipt. Since 0.1.5 the verification reports the architecture and the
-weight types it checked. The importer (`ui/models.py`) brings such files in, and admits only open-source licences.
+weight types it checked. The importer (`sAGI/models.py`) brings such files in, and admits only open-source licences.
 Only `Q1_0` and `Q2_0_g64` have bankml kernels proven against the oracle; other formats are answered by the reference
 engine alone, which is what P0 means. The propositions this report makes testable are
 stated at the kernel level:

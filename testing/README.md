@@ -24,7 +24,7 @@ memory floor and both whole-model decode budgets.
 | `release_gate.sh` | the gate above (also appends to `live.log`) |
 | `pinned.sh` | runs a benchmark on a fixed amount of processor and memory: pinned cores (`taskset`), a hard RAM cap with no swap (a user cgroup), and the machine's load recorded before and after |
 | `spdx_check.py` | every source file carries the SPDX licence of its layer (LICENSING.md); in the gate |
-| `live.sh` | runs one step with its output appended to `live.log`, which `ui/savante.py --mode view` shows live |
+| `live.sh` | runs one step with its output appended to `live.log`, which `sAGI/savante.py --mode view` shows live |
 | `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify, and `serve` against a mock llama-server (receipts, answer hashes, refusals) |
 | `forward_oracle.py` | the forward pass's operations from the SHIPPED ggml, driven through ctypes as llama.cpp's Qwen3 graph drives them (`get_rows` on the Q1_0 embedding, `rms_norm`, `mul`), on 300 real token ids, for `oracle_forward_*` |
 | `template_oracle.py` | records llama.cpp's own chat-template rendering (`/apply-template`) of 317 conversations — every rule of the Bonsai / Qwen3 template in bankml's scope, and 300 random ones — for `oracle_chat_template` |

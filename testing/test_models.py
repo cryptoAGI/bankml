@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""The model importer (ui/models.py) without the network: a tiny GGUF served from a loopback HTTP server stands in for
+"""The model importer (sAGI/models.py) without the network: a tiny GGUF served from a loopback HTTP server stands in for
 Hugging Face / the Ollama registry. Checks the pin (a download is kept only if its sha256 is the published one), the
 licence gate (open source or refused), resume, the guard, and the URL and search parsers. With BANKML_TEST_CARRIER=1
 and Bonsai-1.7B present it also starts, switches and rolls back a real carrier on spare ports.
@@ -13,7 +13,7 @@ tmp = Path(tempfile.mkdtemp(prefix="bankml-models-"))
 os.environ.update(BANKML_MODELS=str(tmp / "models"), BANKML_FORKS=str(tmp / "forks"), BANKML_UI_STATE=str(tmp / "state"),
                   BANKML_SERVE_LISTEN="127.0.0.1:18293", BANKML_UPSTREAM="127.0.0.1:18292")
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(ROOT / "ui"))
+sys.path.insert(0, str(ROOT / "sAGI"))
 import models as M  # noqa: E402
 
 fails = 0

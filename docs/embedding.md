@@ -117,9 +117,9 @@ Public-only publishing sends no lines and so no vectors: a vector of private tex
 
 | file | what |
 |---|---|
-| `ui/embed.py` | status and provenance, `embed()`, the cache (`index`, `index_async`, `cached`), `query_vector`, `fuse` |
-| `ui/savante.py` | `history_search()` fuses BM25 and bge-m3; `_semantic()` indexes in the background |
-| `ui/connectors.py` | `publish()` writes `embedding` with the lines, in one transaction |
+| `sAGI/embed.py` | status and provenance, `embed()`, the cache (`index`, `index_async`, `cached`), `query_vector`, `fuse` |
+| `sAGI/savante.py` | `history_search()` fuses BM25 and bge-m3; `_semantic()` indexes in the background |
+| `sAGI/connectors.py` | `publish()` writes `embedding` with the lines, in one transaction |
 | `testing/test_ui.py` | fusion, the cache, and the fallback to BM25 (offline: a fake Ollama) |
 
 ## Measured on this laptop (2026-09-29, Ryzen 3 3200U, Ollama 0.13.3)

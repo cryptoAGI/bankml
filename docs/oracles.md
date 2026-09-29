@@ -56,8 +56,8 @@ x64) and matches each one in 762 of 762.
      of it, and ggml's dot products (AVX2 and generic).
 
    The release tarball is checked by sha256 before use (`llama-b11192-bin-ubuntu-x64.tar.gz`, `34cf6fa5…81ec7`).
-2. **Compare** (every gate): the Rust tests `oracle_ggml_b11192_real_*` (in [`q1_0.rs`](../q1_0.rs) and
-   [`q2_0.rs`](../q2_0.rs), `#[ignore]`d because they need the models) re-derive every recorded quantity from the same
+2. **Compare** (every gate): the Rust tests `oracle_ggml_b11192_real_*` (in [`q1_0.rs`](../bankML/q1_0.rs) and
+   [`q2_0.rs`](../bankML/q2_0.rs), `#[ignore]`d because they need the models) re-derive every recorded quantity from the same
    file through bankml's own memory map and assert equality.
 3. **A/B against the live library** (every gate): `ab_vs_ggml` and `ab_vs_ggml_q2_0` `dlopen` the shipped haswell
    library directly (no crate, `dlopen`/`dlsym` declared by hand) and time ggml's kernel and bankml's on the same
@@ -240,12 +240,12 @@ model present and requires identical JSON. Last result: **28/28 agree**.
 | construction | oracle | where |
 |---|---|---|
 | SHA-256 (the model pin) | FIPS 180-4 test vectors; since 0.1.8 the SHA-NI path must also equal the portable rounds on every length 0–1,000 (and 4 KiB, 64 KiB, split updates), and a real 1.16 GB model must hash to coreutils `sha256sum`'s value and its published pin | `sha256.rs` (`fips_vectors`, `hardware_path_equals_portable_on_every_length`) |
-| the model pin | the sha256 the publisher lists: the FORK.json of the PYTHAI fork, a Hugging Face repository's LFS sha256 at a fixed revision, or the Ollama registry's layer digest; every import is hashed as it streams and kept only if equal | `bankml.rs` (`pin`), `ui/models.py` |
-| keccak256 (pure Python) | pycryptodome's keccak on every input length 0–400 bytes; and Savante's **published doctrine root** `0x92fe83eb…ae137d0`, reproduced from her persona | `ui/agents.py`, `testing/test_ui.py` |
-| THOT manifests (`sagi.thot_manifest/1`) | the spec's own test vectors (`THOT_MANIFEST.md` §5: savante@1fcca89, jaimla@8b57ccf, luvai@0c1eef7): bundle root, Merkle root, identity CID | `ui/thot.py`, `testing/test_ui.py` |
+| the model pin | the sha256 the publisher lists: the FORK.json of the PYTHAI fork, a Hugging Face repository's LFS sha256 at a fixed revision, or the Ollama registry's layer digest; every import is hashed as it streams and kept only if equal | `bankml.rs` (`pin`), `sAGI/models.py` |
+| keccak256 (pure Python) | pycryptodome's keccak on every input length 0–400 bytes; and Savante's **published doctrine root** `0x92fe83eb…ae137d0`, reproduced from her persona | `sAGI/agents.py`, `testing/test_ui.py` |
+| THOT manifests (`sagi.thot_manifest/1`) | the spec's own test vectors (`THOT_MANIFEST.md` §5: savante@1fcca89, jaimla@8b57ccf, luvai@0c1eef7): bundle root, Merkle root, identity CID | `sAGI/thot.py`, `testing/test_ui.py` |
 | CIDv1 (raw, sha2-256, base32) | the CID of `"abc"` that mindX's `rage.py` and Savante's ledger construction give | `testing/test_ui.py` |
 | `.history` Merkle tree (RFC 6962) | the Certificate Transparency reference roots for 1, 3 and 8 leaves | `testing/test_ui.py` |
-| iNFT ABI encoding | the compiled `iNFT_7857` contract itself, deployed from its artifact on a throwaway anvil devnet: it must accept the calldata bankml encodes (simulate and mint), refuse what it should (missing role, a repeated content root), and read back exactly the values encoded | `ui/chain.py`, `testing/test_chain.py` |
+| iNFT ABI encoding | the compiled `iNFT_7857` contract itself, deployed from its artifact on a throwaway anvil devnet: it must accept the calldata bankml encodes (simulate and mint), refuse what it should (missing role, a repeated content root), and read back exactly the values encoded | `sAGI/chain.py`, `testing/test_chain.py` |
 | Savante's canon | her own offline verifier `bind/savante_verify.py`: 12 of 12 commitments, doctrine root | the Verifier tab |
 
 ## 5. The gateway: receipts against the text

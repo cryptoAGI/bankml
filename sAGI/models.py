@@ -575,7 +575,7 @@ def usage() -> dict:
     except (OSError, AttributeError):
         avail = 0
     return {"pids": pids, "rss_gb": round(sum(rss(p) for p in pids) / 1e9, 2), "cpu_pct": round(cpu), "cores": os.cpu_count(),
-            "mem_total_gb": round(mem_total() / 1e9, 1), "mem_available_gb": round(avail / 1e9, 2), "source": "ui/models.py (/proc)"}
+            "mem_total_gb": round(mem_total() / 1e9, 1), "mem_available_gb": round(avail / 1e9, 2), "source": "sAGI/models.py (/proc)"}
 
 
 def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False) -> dict:
@@ -730,7 +730,7 @@ def first_run(busy=lambda: False) -> dict:
     return switch(c["file"], busy)
 
 
-if __name__ == "__main__":  # python3 ui/models.py [list | catalog | import ID|URL|ollama:NAME:TAG | use FILE | first-run | search Q]
+if __name__ == "__main__":  # python3 sAGI/models.py [list | catalog | import ID|URL|ollama:NAME:TAG | use FILE | first-run | search Q]
     import sys
     a = sys.argv[1:] or ["list"]
     if a[0] == "list":

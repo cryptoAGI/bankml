@@ -16,7 +16,7 @@ if not ART.is_file() or not Path(ANVIL).is_file():
 tmp = Path(tempfile.mkdtemp(prefix="bankml-chain-"))
 os.environ.update(BANKML_AGENTS=str(tmp / "agents"), BANKML_UI_STATE=str(tmp / "state"))
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sAGI"))
 import agents, chain, thot  # noqa: E402
 
 s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()

@@ -55,7 +55,7 @@
 //! - [x] **P0 — wrap.** (0.0.6) Not FFI: `bankml serve` (`serve.rs`), a loopback gateway to llama.cpp b11192's
 //!   `llama-server`, OpenAI-compatible `/v1/chat/completions`; `verify` in front, the upstream bound to the
 //!   verified path, a receipt (with the answer's sha256) on every answer. Laptop: Savante turn 316 + 28 tokens in
-//!   125 s (prefill 2.8 tok/s — llama.cpp's). The Savante UI (`ui/savante.py`, view / interact) sits on it.
+//!   125 s (prefill 2.8 tok/s — llama.cpp's). The Savante UI (`sAGI/savante.py`, view / interact) sits on it.
 //! - [ ] **P1 — guard + receipts native.** (guard and pin proven; receipts not yet emitted)
 //!   - [x] GGUF v3 header parse + the three traps + kv_f16_bytes_per_token (`gguf.rs`). Evidence: the 9
 //!     cases of `test_gguf_guard.py` as Rust tests + fail-closed extras; `testing/guard_agree.py` = **20/20**

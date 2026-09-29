@@ -14,7 +14,7 @@ This server is the Python standard library with a fixed set of GET routes, nothi
 
 No chat, no .history, no command execution, no file paths from the client. Refreshes every 2 s.
 
-  python3 ui/view.py --host 0.0.0.0 --port 7874      # the LAN
+  python3 sAGI/view.py --host 0.0.0.0 --port 7874      # the LAN
 """
 from __future__ import annotations
 

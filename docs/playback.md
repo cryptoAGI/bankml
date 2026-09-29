@@ -72,7 +72,7 @@ install her voice engine once:
 
 ```sh
 ./install.sh voice      # Piper and the en_GB-cori-high voice, no sudo
-python3 ui/speak.py     # render every clip; run one at a time on a small machine
+python3 sAGI/speak.py     # render every clip; run one at a time on a small machine
 ```
 
 Without it, a simpler stand-in voice is used. Her voice is her own, built from open parts: Piper's

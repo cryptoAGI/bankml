@@ -4,7 +4,7 @@ target/
 __pycache__/
 *.pyc
 testing/live.log
-ui/voice/cache/**/.*.lock
-ui/voice/cache/**/.manifest.lock
-ui/voice/export/.bankml-export-*/
-ui/voice/**/*.tmp
+sAGI/voice/cache/**/.*.lock
+sAGI/voice/cache/**/.manifest.lock
+sAGI/voice/export/.bankml-export-*/
+sAGI/voice/**/*.tmp

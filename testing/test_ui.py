@@ -9,7 +9,7 @@ from pathlib import Path
 tmp = Path(tempfile.mkdtemp(prefix="bankml-ui-"))
 os.environ.update(BANKML_UI_STATE=str(tmp), RAGE_PATH=str(tmp / "no-rage"), SAVANTE_CANON=str(tmp / "no-canon"), BANKML_VOICE_DIR=str(tmp / "voice"), BANKML_EXPORT_DIR=str(tmp / "export"))
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sAGI"))
 import savante as u  # noqa: E402
 
 fails = 0

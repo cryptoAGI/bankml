@@ -3,7 +3,7 @@
 # The release gate: every check that decides whether a version ships, with the output kept as its record.
 # Offline checks always; the oracles, A/Bs and whole-model budgets when the models and b11192 are present.
 #   BANKML_GGML_LIB=/path/to/llama-b11192 testing/release_gate.sh      → testing/results/<version>.txt
-# Everything it prints is also appended to testing/live.log, which `ui/savante.py --mode view` shows live.
+# Everything it prints is also appended to testing/live.log, which `sAGI/savante.py --mode view` shows live.
 # A kernel change counts only if every oracle still passes: speed without the same bits is not a result.
 set -euo pipefail
 cd "$(dirname "$0")/.."

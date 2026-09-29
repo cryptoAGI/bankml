@@ -222,7 +222,7 @@ step_canon() {
 }
 
 # the importer runs with the engine and binary this installer chose
-importer() { BANKML_LLAMA_SERVER="$LLAMA_SERVER" BANKML_BIN="$BIN" "$PY" -B ui/models.py "$@"; }
+importer() { BANKML_LLAMA_SERVER="$LLAMA_SERVER" BANKML_BIN="$BIN" "$PY" -B sAGI/models.py "$@"; }
 
 step_model() {
   [ -x "$BIN" ] || bm_die "no $BIN yet: run ./install.sh build"
@@ -253,7 +253,7 @@ step_voice() {
     [ -s "$dir/$f" ] || fetch "$PIPER_VOICE/$f" "$dir/$f"
   done
   bm_ok "voice en_GB-cori-high (public-domain LibriVox recordings)"
-  bm_info "render her clips once, one render at a time on a small machine: $PY ui/speak.py"
+  bm_info "render her clips once, one render at a time on a small machine: $PY sAGI/speak.py"
 }
 
 start_ui() {  # start_ui NAME PORT ARGS…: a detached UI with its own log
@@ -268,8 +268,8 @@ start_ui() {  # start_ui NAME PORT ARGS…: a detached UI with its own log
 }
 
 step_start() {
-  start_ui interact 7873 ui/savante.py --mode interact --port 7873
-  [ "$WITH_VIEW" = 1 ] && start_ui view 7874 ui/view.py --host 0.0.0.0 --port 7874
+  start_ui interact 7873 sAGI/savante.py --mode interact --port 7873
+  [ "$WITH_VIEW" = 1 ] && start_ui view 7874 sAGI/view.py --host 0.0.0.0 --port 7874
   echo
   bm_say "Savante is ready"
   bm_sub "talk:   $(bm_link http://127.0.0.1:7873)   (this computer only)"

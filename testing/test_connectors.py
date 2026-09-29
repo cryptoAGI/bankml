@@ -19,7 +19,7 @@ if not Path("/usr/share/postgresql/16/extension/vector.control").is_file():
 tmp = Path(tempfile.mkdtemp(prefix="bankml-pg-"))
 os.environ.update(BANKML_AGENTS=str(tmp / "agents"), BANKML_UI_STATE=str(tmp / "state"))
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sAGI"))
 import agents, connectors, thot  # noqa: E402
 
 data, sock, port = tmp / "pgdata", tmp / "sock", "5499"

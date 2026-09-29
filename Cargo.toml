@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [lib]
-path = "bankml.rs"
+path = "bankML/bankml.rs"
 
 # Zero dependencies (2026-09-25): sha256, the GGUF parse, f16 and the kernels are in-crate. Each one added
 # later carries a comment saying why (design goal: succinct).
@@ -18,7 +18,7 @@ path = "bankml.rs"
 
 [[bin]]
 name = "bankml"
-path = "main.rs"
+path = "bankML/main.rs"
 
 # end-to-end tests of the binary (testing/README.md lists every test and where it lives)
 [[test]]

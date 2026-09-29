@@ -243,7 +243,7 @@ def available() -> tuple:
     if neural_available():
         return True, "ok"
     for need, what in ((shutil.which("node"), "node"), (shutil.which("ffmpeg"), "ffmpeg"), ((ESPEAK / "espeak-ng.js").is_file(), "the espeak-ng WASM build"),
-                       ((VOICES / "voices").is_dir(), "the house voice files"), (PRERENDER.is_file(), "ui/voice/prerender.mjs")):
+                       ((VOICES / "voices").is_dir(), "the house voice files"), (PRERENDER.is_file(), "sAGI/voice/prerender.mjs")):
         if not need:
             return False, f"needs {what}"
     return True, "ok"
@@ -281,7 +281,7 @@ def render(texts: list, state: Path | None = None) -> list:
     import fcntl
     man_p = d / "manifest.json"
     lock = open(d / ".manifest.lock", "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)  # renders may run in parallel (python3 ui/speak.py --shard i/n)
+    fcntl.flock(lock, fcntl.LOCK_EX)  # renders may run in parallel (python3 sAGI/speak.py --shard i/n)
     man = json.loads(man_p.read_text(encoding="utf-8")) if man_p.is_file() else {}
     for i in items:
         if "seconds" in i:
@@ -543,7 +543,7 @@ if __name__ == "__main__":  # pre-render Savante's introduction and voice exampl
     chs = intro_chapters(c, per, crd)
     # listening order: her voice examples first (short), then the introduction chapter by chapter, then the reading
     allt = [x for x in per.get("voice_examples") or [] if isinstance(x, str)] + [x for _, s in chs + reading_chapters() for x in s]
-    if "--shard" in sys.argv:  # python3 ui/speak.py --shard 1/2 : every n-th statement, for parallel renders
+    if "--shard" in sys.argv:  # python3 sAGI/speak.py --shard 1/2 : every n-th statement, for parallel renders
         k, n = map(int, sys.argv[sys.argv.index("--shard") + 1].split("/"))
         allt = allt[k - 1::n]
     print(f"{len(chs)} chapters, {len(allt)} statements, {sum(len(x.split()) for x in allt)} words", flush=True)
@@ -552,7 +552,7 @@ if __name__ == "__main__":  # pre-render Savante's introduction and voice exampl
         print(f"  {min(k + 10, len(allt))}/{len(allt)}", flush=True)
     items = cached(allt)
     print(f"cached {sum(1 for i in items if i)} of {len(allt)} · {sum(i['seconds'] or 0 for i in items if i) / 60:.1f} min · {VOICE_DIR}")
-    if "--shard" not in sys.argv:  # complete → one file per set: ui/voice/export/Savante.opus, Savante-reading.opus
+    if "--shard" not in sys.argv:  # complete → one file per set: sAGI/voice/export/Savante.opus, Savante-reading.opus
         for name, (lead, cs) in export_sets(c, per, crd).items():
             try:
                 e = export(name, cs, lead)

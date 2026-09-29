@@ -22,11 +22,11 @@ What it adds:
 
   · **Two modes.** `--mode interact` (the operator, loopback: chat, .prompt, .history with response times, the
     verifier; Gradio) and view (read-only, for anyone on the LAN: the live testing log, every release's results, CI,
-    the laptop's load, Savante's office and ledger — served by `ui/view.py`, the standard library, not Gradio).
+    the laptop's load, Savante's office and ledger — served by `sAGI/view.py`, the standard library, not Gradio).
 
   bankml serve .models/Bonsai-8B-Q1_0.gguf --fork FORK.json --upstream 127.0.0.1:18092 --listen 127.0.0.1:18093
-  python3 ui/savante.py --mode interact               # http://127.0.0.1:7873
-  python3 ui/view.py --host 0.0.0.0 --port 7874       # http://<this laptop's LAN address>:7874
+  python3 sAGI/savante.py --mode interact             # http://127.0.0.1:7873
+  python3 sAGI/view.py --host 0.0.0.0 --port 7874     # http://<this laptop's LAN address>:7874
 
 stdlib + gradio (3.x or newer).
 """
@@ -54,7 +54,7 @@ SERVE = os.environ.get("BANKML_SERVE", "http://127.0.0.1:18093")
 STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" / "bankml" / "savante")).expanduser()
 HISTORY = STATE / "savante.history"
 MEMORY = STATE / "savante.memory"
-ACTIVE = {"slug": None}  # None = Savante (the canon); else a custom agent from ui/agents.py
+ACTIVE = {"slug": None}  # None = Savante (the canon); else a custom agent from sAGI/agents.py
 
 
 def use_agent(slug):
@@ -2593,7 +2593,7 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--mode", choices=("interact", "view"), default="interact")
     a = ap.parse_args()
-    if a.mode == "view":  # the LAN-safe stdlib server (not Gradio): ui/view.py
+    if a.mode == "view":  # the LAN-safe stdlib server (not Gradio): sAGI/view.py
         import view
         sys.argv = [sys.argv[0], "--host", a.host if a.host != "127.0.0.1" else "0.0.0.0", "--port", str(a.port if a.port != 7873 else 7874)]
         return view.main()

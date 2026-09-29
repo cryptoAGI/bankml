@@ -114,13 +114,13 @@ page, her card and her voice.
 
 ## 5. Models
 
-The **Models** tab and `ui/models.py` import a model, verify it, and switch to it:
+The **Models** tab and `sAGI/models.py` import a model, verify it, and switch to it:
 
 ```sh
-python3 ui/models.py list                 # what is here, pinned or not, and which one is running
-python3 ui/models.py catalog              # the curated catalogue, and whether each fits this machine
-python3 ui/models.py import qwen3-1.7b    # a catalogue id, a Hugging Face URL, or ollama:NAME:TAG
-python3 ui/models.py use Qwen3-1.7B-Q8_0.gguf   # switch (rolls back if the new model fails)
+python3 sAGI/models.py list                 # what is here, pinned or not, and which one is running
+python3 sAGI/models.py catalog              # the curated catalogue, and whether each fits this machine
+python3 sAGI/models.py import qwen3-1.7b    # a catalogue id, a Hugging Face URL, or ollama:NAME:TAG
+python3 sAGI/models.py use Qwen3-1.7B-Q8_0.gguf   # switch (rolls back if the new model fails)
 ```
 
 An import is kept only if its sha256 equals the one its publisher lists, `bankml guard` passes, and a `FORK.json`
@@ -137,7 +137,7 @@ target/release/bankml guard  .models/Bonsai-8B-Q1_0.gguf                   # pla
 target/release/bankml verify .models/Bonsai-8B-Q1_0.gguf --fork FORK.json  # guard, then the sha256 pin
 target/release/bankml serve  .models/Bonsai-8B-Q1_0.gguf --fork FORK.json \
     --spawn /path/to/llama-b11192/llama-server --threads 3 --ctx 2048
-python3 ui/savante.py --mode interact
+python3 sAGI/savante.py --mode interact
 ```
 
 `verify` exits 0 on play, 2 on refuse, 1 on an I/O error, 3 on a truncated file. `serve` can also sit in front of a
@@ -153,7 +153,7 @@ curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' 
 ## 7. Let others watch (view mode, on the LAN)
 
 ```sh
-./install.sh start --view          # or: python3 ui/view.py --host 0.0.0.0 --port 7874
+./install.sh start --view          # or: python3 sAGI/view.py --host 0.0.0.0 --port 7874
 ```
 
 Others open `http://<this computer's LAN address>:7874` (`ip -4 addr` shows it). The page is read-only: the live
@@ -443,10 +443,10 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml generate MODEL.gguf [--max N] < messages.json` (or plain text) | bankml's own forward pass, greedy, streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts under 64 tokens and contexts up to 256 cells (llama.cpp pads its KV length to multiples of 256 and switches kernels beyond that; the 0.2.7–0.2.8 warning threshold said 512 and is corrected in 0.2.9); `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
 | `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage` |
-| `python3 ui/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
-| `python3 ui/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
-| `python3 ui/models.py list \| catalog \| search Q \| import ID\|URL\|ollama:NAME:TAG \| use FILE \| first-run` | the model importer and carrier switch |
-| `python3 ui/speak.py [--prune]` | render every voice clip, write both exports (`--prune`: drop unused clips) |
+| `python3 sAGI/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
+| `python3 sAGI/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
+| `python3 sAGI/models.py list \| catalog \| search Q \| import ID\|URL\|ollama:NAME:TAG \| use FILE \| first-run` | the model importer and carrier switch |
+| `python3 sAGI/speak.py [--prune]` | render every voice clip, write both exports (`--prune`: drop unused clips) |
 
 | port | service |
 |---|---|
@@ -478,5 +478,5 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `BANKML_FIRST_RUN` | `1` | `0` stops interact from starting the Bonsai-8B carrier by itself |
 | `BANKML_CTX`, `BANKML_THREADS_SERVE` | `2048`, `3` | the engine's context and threads when the importer starts the carrier |
 | `BANKML_SERVE_LISTEN`, `BANKML_UPSTREAM` | `127.0.0.1:18093`, `127.0.0.1:18092` | the ports the switch manages |
-| `BANKML_VOICE_DIR`, `BANKML_EXPORT_DIR` | `ui/voice/cache`, `ui/voice/export` | voice clips and the two exports |
+| `BANKML_VOICE_DIR`, `BANKML_EXPORT_DIR` | `sAGI/voice/cache`, `sAGI/voice/export` | voice clips and the two exports |
 | `BANKML_VOICE_ASYNC` | `1` | `0` stops the UI rendering missing clips in the background |

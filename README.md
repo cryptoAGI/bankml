@@ -214,7 +214,7 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
 - **iNFT**: plan and simulate an `iNFT_7857` mint from the agent's THOT bundle, get the unsigned transaction (you sign
   it), mint on a local devnet, or load an agent back from a token, verified back to the minted generation.
 - **Models, imported without friction**: Bonsai-8B arrives by itself on first run. The **Models** tab (or `python3
-  ui/models.py`) imports from a curated catalogue (Bonsai 1-bit and ternary, Qwen3 0.6B–8B, SmolLM2/3, Granite), from
+  sAGI/models.py`) imports from a curated catalogue (Bonsai 1-bit and ternary, Qwen3 0.6B–8B, SmolLM2/3, Granite), from
   any Hugging Face GGUF by URL, or from Ollama (search ollama.com, or adopt a local model with no download). Each file
   is kept only if its sha256 equals the publisher's, then guarded and pinned, and the carrier switches with rollback.
   Open-source licences only: Gemma and Llama are refused. Standard formats (Q4_K_M, Q8_0, …) play through the same
@@ -226,7 +226,7 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   (hashes, doctrine root, THOT) and its ledgered files. Choose the portrait, or upload one for a derived agent.
 - Panels resize from a refined corner handle. The side panel drags to either side (drop zones appear) or swaps with ⇄.
 
-**4. Let others watch**: `python3 ui/view.py --host 0.0.0.0` gives a read-only page at
+**4. Let others watch**: `python3 sAGI/view.py --host 0.0.0.0` gives a read-only page at
 **http://&lt;your LAN address&gt;:7874**. It shows the live testing, the release records, CI, the machine's load and
 Savante's ledger, and the commitments of `.history` and `.memory` (never their content), in draggable, resizable
 panels. It is the standard library, not Gradio, so it is safe to put on a network.
@@ -236,26 +236,37 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 
 ## Layout
 
+```
+bankml/
+├── install.sh   start here: installs, verifies and starts everything
+├── bankML/      the Rust runtime (guard, pin, kernels, forward pass, bankml serve)
+├── sAGI/        Savante's UI (interact and view) and the model importer
+├── docs/        usage, playback, technical report, performance, oracles, research
+├── testing/     the release gate, the oracles and their records
+├── tools/       bashmoji and the card renderer
+└── upstream/    the Q2_0 kernel offered to llama.cpp
+```
+
 | file | what |
 |---|---|
 | `install.sh` | the installer: check, build, engine, python, canon, model, start (and stop, status, voice) |
 | `tools/bashmoji.sh` | the installer's glyphs and colour, vendored from [cryptoAGI/bashmoji](https://github.com/cryptoAGI/bashmoji) |
-| `bankml.rs` | the crate: the plan of record (header checklist), `guard`, `pin`, `verify`, `Receipt` |
-| `gguf.rs` | header-only GGUF v3 parse, the guard, a read-only memory map |
-| `q1_0.rs` | the 1-bit kernel: dequantize, `q8_0` activations, scalar model, AVX2, decode and prefill |
-| `q2_0.rs` | the ternary kernel: the same, plus the per-token activation layout |
-| `sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
-| `par.rs` | the thread pool and row scheduler (0.0.3) |
-| `serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
-| `ui/savante.py` | the Savante UI, interact mode (Gradio, loopback) |
-| `ui/view.py` | the read-only view page for the LAN (standard library) |
-| `ui/agents.py` | custom agents: derive, edit, ledger; keccak256 and the doctrine root |
-| `ui/thot.py` | THOT manifests (`sagi.thot_manifest/1`), checked against the spec's test vectors |
-| `ui/connectors.py` | PostgreSQL (pgvector / pgvectorscale): publish and load agents, verified |
-| `ui/models.py` | the model importer: catalogue, Hugging Face, Ollama; sha256 pins; the carrier switch |
-| `ui/embed.py` | embeddings with bge-m3 (the model mindX uses) through the local Ollama — see [embedding.md](docs/embedding.md) |
-| `ui/speak.py` | Savante's voice: rendering, the introduction and the reading, the exports |
-| `ui/chain.py` | iNFT: ABI, JSON-RPC, mint planning, simulation, unsigned transactions, devnet, load from a token |
+| `bankML/bankml.rs` | the crate: the plan of record (header checklist), `guard`, `pin`, `verify`, `Receipt` |
+| `bankML/gguf.rs` | header-only GGUF v3 parse, the guard, a read-only memory map |
+| `bankML/q1_0.rs` | the 1-bit kernel: dequantize, `q8_0` activations, scalar model, AVX2, decode and prefill |
+| `bankML/q2_0.rs` | the ternary kernel: the same, plus the per-token activation layout |
+| `bankML/sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
+| `bankML/par.rs` | the thread pool and row scheduler (0.0.3) |
+| `bankML/serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
+| `sAGI/savante.py` | the Savante UI, interact mode (Gradio, loopback) |
+| `sAGI/view.py` | the read-only view page for the LAN (standard library) |
+| `sAGI/agents.py` | custom agents: derive, edit, ledger; keccak256 and the doctrine root |
+| `sAGI/thot.py` | THOT manifests (`sagi.thot_manifest/1`), checked against the spec's test vectors |
+| `sAGI/connectors.py` | PostgreSQL (pgvector / pgvectorscale): publish and load agents, verified |
+| `sAGI/models.py` | the model importer: catalogue, Hugging Face, Ollama; sha256 pins; the carrier switch |
+| `sAGI/embed.py` | embeddings with bge-m3 (the model mindX uses) through the local Ollama — see [embedding.md](docs/embedding.md) |
+| `sAGI/speak.py` | Savante's voice: rendering, the introduction and the reading, the exports |
+| `sAGI/chain.py` | iNFT: ABI, JSON-RPC, mint planning, simulation, unsigned transactions, devnet, load from a token |
 | `docs/usage.md` | the full guide: install, both modes, `.history`, receipts, the canon, troubleshooting |
 | `docs/playback.md` | new to Savante: her page, her card, listening to her |
 | `docs/embedding.md` | the embedding model: why, how, the cache, the ranking, PostgreSQL, settings |
@@ -263,7 +274,7 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `docs/oracles.md` | every oracle bankml is checked against: what, how, where, and what it last found |
 | `docs/TODO.md` | what comes next and what was rejected, each item with its source (research, KoboldCpp, vLLM, Rust, audits) |
 | `LICENSING.md` | the licence layers: `MIT OR Apache-2.0`, key handling `GPL-3.0-only`, AGPL walled off |
-| `sys.rs` | bankml's psutil: memory, cores, a process's resident memory and CPU time, from `/proc` (0.1.8) |
+| `bankML/sys.rs` | bankml's psutil: memory, cores, a process's resident memory and CPU time, from `/proc` (0.1.8) |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `upstream/` | the AVX2 `Q2_0` kernel prepared for llama.cpp, its bit-exact harness against the shipped library, and why ([upstream/README.md](upstream/README.md)) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
