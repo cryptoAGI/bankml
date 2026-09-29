@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/dependencies-0-56D364?style=flat-square" alt="zero dependencies">
   <img src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-2563EB?style=flat-square" alt="MIT OR Apache-2.0">
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
-  <img src="https://img.shields.io/badge/ternary%20kernel-9.5%E2%80%939.8%C3%97-D9A23A?style=flat-square" alt="ternary 9.5–9.8x">
+  <img src="https://img.shields.io/badge/ternary%20kernel-9.4%E2%80%9310.0%C3%97-D9A23A?style=flat-square" alt="ternary 9.4–10.0x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
   <img src="https://img.shields.io/badge/status-P0%20serving%20%C2%B7%20Savante%20UI%20%C2%B7%20forward%20pass%20next-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
@@ -28,7 +28,8 @@ serves it **five to seven times slower** than the 1-bit one.
 
 bankml found why and fixed it at the kernel: **llama.cpp b11192 has no vectorised x86 kernel for ternary (`Q2_0`)
 at all** — it runs scalar C with 64 integer multiplies per block. bankml's kernel computes the **same bits**, verified
-against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.5–9.8× faster**.
+against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.4–10.0× faster** per matrix
+(the 0.2.2 gate record; every gate since 0.0.1 has measured 9.4–10.8×).
 
 ## Documentation
 
@@ -38,6 +39,8 @@ Start here, then go where your question is:
 |---|---|
 | install, run and use bankml and Savante (both modes, models, `.history`, receipts, voice, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
 | understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
+| read the thesis: the design intent of bankml's authors, in their own words | **[the Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson)**, in TECHNICAL.md (Savante reads it aloud: `Savante-reading.opus`) |
+| meet Savante, the agent bankml runs | **[Using Savante](#using-savante)**, with her public places (Hugging Face, canon, sAGI) |
 | see every speed number, the machines and the commands that produced them | **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** |
 | know what bankml is checked against, and how | **[docs/oracles.md](docs/oracles.md)** |
 | see where bankml stands among Rust engines, 1-bit/ternary kernels and verifiable inference (with papers) | **[docs/research.md](docs/research.md)** |
@@ -57,9 +60,13 @@ Start here, then go where your question is:
   <img src="docs/cards/q1_proof.svg" alt="1-bit bit-exact against ggml b11192" width="720">
 </p>
 
-Since 0.0.3 the kernels run on a zero-dependency thread pool: one ternary token's matmuls take **0.23–0.25 s** on
-three threads, less than llama.cpp needs for the *1-bit* model's (0.34 s). Every release's test record is in
-[testing/results/](testing/results/). Those whole-token figures were measured in the 0.0.3–0.0.6 gate records with the model resident in memory. The gates since 0.1.0 measure 4.5–5.2 s per token (1.1–1.5× the reference) because this laptop can no longer keep the 2.3 GB ternary file in its page cache (other applications hold the memory; 1.04 of 2.31 GB stayed resident after a full read, 2026-09-29), so both runtimes wait on the disk; the per-matmul A/B on cached tensors still shows 9.8× (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
+All numbers on this page come from the 0.2.2 gate record ([testing/results/0.2.2.txt](testing/results/0.2.2.txt)),
+where every oracle was bit-exact in the same run. On the zero-dependency thread pool, **one ternary token's matmuls
+take 0.233 s on three threads against llama.cpp's 2.204 s (9.46×)**, comparing the fastest runs; by medians it is
+0.287 s against 2.23 s (7.8×). That is less than llama.cpp needs for the *1-bit* model's matmuls (0.35 s). The figure
+needs the 2.31 GB model resident in memory. On this 6 GB laptop that means closing other applications; when they hold
+the memory, the gate measures the disk instead (1.4–5.2 s per token), as recorded in
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 Every number above is measured and reproducible — the tables, machines and commands are in
 **[PERFORMANCE.md](docs/PERFORMANCE.md)**. The design, the method and the literature are in the technical report,
@@ -80,9 +87,9 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | phase | what | state |
 |---|---|---|
 | P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON; `bankml verify` = guard + pin as one gate (0.0.2) |
-| P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B + 8.19 B weights (1.7B and 8B); decode at parity, prefill 1.2–1.3× (0.0.4) |
-| P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.5–9.8× decode, 12.5× prefill; threaded 0.0.3 (9.2–9.9× per token) |
-| P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | **tokenizer done (0.2.1)** — token-identical to llama.cpp on 4,258 of 4,258 cases; the rest next, each step against its oracle |
+| P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B + 8.19 B weights (1.7B and 8B); decode at parity (1.02×), prefill 1.23× (0.2.2 gate) |
+| P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.4–10.0× decode per matrix, 12.9× prefill; one whole token 9.46× on three threads (0.2.2 gate) |
+| P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | **tokenizer (0.2.1) and chat template (0.2.2) done** — token- and byte-identical to llama.cpp on 4,258 and 317 of their oracle cases; the forward pass next, each step against its oracle |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
@@ -94,9 +101,10 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 
 Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Its own forward
 pass is the next phase. The whole-model budget says what that can reach: the ternary matrix work for one token takes
-**0.23–0.25 s** against llama.cpp's **2.2–2.4 s** on three threads, a matmul-bound ceiling of about **4 tokens/s**
-against **0.4**. Five more bit-exact kernel variants were measured in 0.0.4–0.0.5 and none was reliably faster; on
-the test laptop both kernels are compute-bound, at the core's instruction limit (see TECHNICAL §IV.5). (Measured with the model resident in memory, 0.0.3–0.0.6; on this laptop today it no longer fits in the page cache, and the whole-token figure is disk-bound — PERFORMANCE.md.)
+**0.233 s** against llama.cpp's **2.204 s** on three threads, a matmul-bound ceiling of about **4.3 tokens/s**
+against **0.45** (0.2.2 gate, model resident). Five more bit-exact kernel variants were measured in 0.0.4–0.0.5, and
+none was reliably faster. On the test laptop bankml's ternary token runs about twice the memory floor (0.124 s), and
+the 1-bit kernel is at the core's instruction limit (TECHNICAL §IV.5).
 
 ## Releases
 
@@ -106,6 +114,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [0.2.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.2) | P3 step two: the chat template, byte-identical to llama.cpp on 317 of 317 conversations; the ternary headline re-measured with the model resident: 0.231 s per token, 9.45× |
 | [0.2.1](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.1) | P3 step one: bankml's own tokenizer (no crates), token-identical to llama.cpp on 4,258 of 4,258 recorded cases, `bankml tokenize` |
 | [**0.2.0**](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.0) | **milestone**: every document checked against the code and records (23 corrections); the fourth audit fixed; bankml's ternary kernel prepared for llama.cpp (`upstream/`, bit-exact 200,000/200,000, 3.4× the shipped scalar path) |
 | [0.1.9](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.9) | the system prompt's KV saved across restarts: first answer after a restart 132 s → 15 s, identical; history counted in the engine's own tokens and never silently dropped; the third audit fixed; bge-m3 live |
@@ -149,7 +158,16 @@ target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then 
 ## Using Savante
 
 Savante is the review office of the mindX DAIO: an agent defined by a signed canon, not by a model. With bankml she
-runs on your own computer, and every answer she gives carries a receipt. Four steps (details in **[usage.md](docs/usage.md)**):
+runs on your own computer, and every answer she gives carries a receipt.
+
+**Savante in public:**
+- [Savante on Hugging Face](https://huggingface.co/spaces/PYTHAI/savante): the public office (chat, canon, integrity);
+- [the sAGI skill](https://huggingface.co/spaces/PYTHAI/savante/blob/main/skills/sagi/SKILL.md) she runs;
+- [Savante's loop](https://huggingface.co/datasets/PYTHAI/savante-loop): her public questions and answers, as a dataset;
+- [the sAGI engine](https://github.com/cryptoAGI/sagi): the verdict contract, enforced in code;
+- [Savante's canon](https://github.com/cryptoAGI/savante): persona, charter, facets and ledger.
+
+Four steps (details in **[usage.md](docs/usage.md)**):
 
 **1. Build bankml and verify the model**
 ```sh

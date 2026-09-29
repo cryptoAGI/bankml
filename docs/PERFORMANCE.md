@@ -133,7 +133,7 @@ with kernel. Laptop, two runs, min s/token; the full output is in `testing/resul
 | 3 | 2.27–2.36 | **0.23–0.25** | 0.34–0.35 | 0.34–0.35 |
 | 4 | 2.11 | **0.23** | 0.34–0.35 | 0.36 |
 
-*These whole-token figures were measured in the 0.0.3–0.0.6 gate records with the model resident in memory. The gates since 0.1.0 measure 4.5–5.2 s per token (1.1–1.5× the reference) because this laptop can no longer keep the 2.3 GB ternary file in its page cache (other applications hold the memory; 1.04 of 2.31 GB stayed resident after a full read, 2026-09-29), so both runtimes wait on the disk; the per-matmul A/B on cached tensors still shows 9.8×.*
+*These whole-token figures were measured with the model resident in memory, and reproduced on 2026-09-29 on current code: 0.231 s at three threads, 9.45× the reference (docs/PERFORMANCE.md). When other applications leave too little memory to keep the 2.31 GB file cached, the gates measure the disk instead (4.5–5.2 s).*
 
 - **Ternary is now cheaper than 1-bit.** At 3 threads bankml's ternary matmuls (0.23–0.25 s) take less time than ggml's
   1-bit ones (0.34–0.35 s), although the ternary weights are twice the bytes. The ternary matmul-only ceiling is
@@ -225,4 +225,20 @@ gate). The whole-token figure needs a machine with at least 3 GB free to be re-m
 **0.2.1 gate, with the chat engine stopped (2.0 GB free):** bankml 1.42 s per ternary token at one and three threads,
 against llama.cpp's 5.15 s (one thread) and 2.99 s (three threads): 3.6× and 2.1×. The more of the model stays cached,
 the closer the whole-token figure comes to the kernels' own ratio.
+
+## Re-measured with the model resident (2026-09-29, after 0.2.1)
+
+The browser and the chat engine were closed to free memory, and the ternary file was read twice. 2.25 of its 2.31 GB
+stayed in the page cache. `decode_budget_q2_0` at one to four threads gave:
+
+| threads | llama.cpp b11192 (min / median) | bankml (min / median) | ratio | matmul-only ceiling |
+|---|---|---|---|---|
+| 1 | 4.145 / 4.161 s | **0.435 / 0.439 s** | 9.52× | 0.24 → 2.30 tok/s |
+| 2 | 2.345 / 2.500 s | **0.284 / 0.313 s** | 8.27× | 0.43 → 3.53 tok/s |
+| 3 | 2.185 / 2.221 s | **0.231 / 0.232 s** | 9.45× | 0.46 → 4.32 tok/s |
+| 4 | 2.179 / 2.202 s | **0.223 / 0.228 s** | 9.78× | 0.46 → 4.49 tok/s |
+
+**This reproduces the 0.0.3–0.0.6 figure (0.23–0.25 s at three threads, about 9×) on today's code**, and it confirms
+the explanation above: the kernels never slowed down. The gates in between measured a laptop that could not keep the
+model in memory.
 

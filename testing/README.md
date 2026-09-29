@@ -26,6 +26,7 @@ memory floor and both whole-model decode budgets.
 | `spdx_check.py` | every source file carries the SPDX licence of its layer (LICENSING.md); in the gate |
 | `live.sh` | runs one step with its output appended to `live.log`, which `ui/savante.py --mode view` shows live |
 | `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify, and `serve` against a mock llama-server (receipts, answer hashes, refusals) |
+| `template_oracle.py` | records llama.cpp's own chat-template rendering (`/apply-template`) of 317 conversations — every rule of the Bonsai / Qwen3 template in bankml's scope, and 300 random ones — for `oracle_chat_template` |
 | `tokenizer_oracle.py` | records llama.cpp's own `/tokenize` answers (a running llama-server) on a corpus — every doc, Savante's canon, edge cases and a seeded 2,000-string Unicode fuzz set, with special tokens parsed and not — for `oracle_tokenizer` |
 | `ggml_oracle.py` | writes an oracle: llama.cpp b11192's own answers (its exported symbols, in-process) on a real GGUF — dequantized tensors, q8_0 rows, dot products |
 | `gguf_guard.py`, `test_gguf_guard.py` | the Python guard the Rust one was ported from (vendored from minaiml), and its suite |
@@ -59,6 +60,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | pool coverage, `bench_pool_overhead`, `bench_memory_floor` | `par.rs` | the thread pool, its wake-up cost, the machine's read bandwidth |
 | `reads_this_machine_and_this_process`, `stat_with_spaces_and_parens_in_the_name`, `busy_loop_is_seen_as_cpu` | `sys.rs` | bankml's psutil: `/proc` memory, rss, CPU time and % |
 | `heads_are_bounded`, `only_loopback_hosts`, `unpaired_surrogates_become_replacement_characters`, `file_identity_changes_are_seen` | `serve.rs` | the gateway's limits, Host check, JSON decoding and the model-identity re-check |
+| `oracle_chat_template` *(real)*, `a_short_conversation`, `python_split_semantics` | `chat.rs` | P3 step two: every recorded conversation byte-identical to llama.cpp b11192's rendering (317 of 317) |
 | `oracle_tokenizer` *(real)*, `pretokenizer_shapes`, `byte_chars_are_gpt2s` | `tokenizer.rs` | P3 step one: every recorded case token-identical to llama.cpp b11192 (4,258 of 4,258) |
 | `type_ids_match_mainline`, `verified_json_escapes_what_the_header_says` | `bankml.rs` | type ids; `/bankml`'s JSON stays valid for a hostile model name |
 | `hardware_path_equals_portable_on_every_length` | `sha256.rs` | SHA-NI equals the portable rounds (lengths 0–1,000, 4 KiB, 64 KiB, split updates) |
@@ -67,6 +69,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.2 | `results/0.2.2.txt` | P3 step two: the chat template byte-identical to llama.cpp on 317 of 317 conversations; the ternary headline re-measured with the model resident (0.231 s, 9.45×) |
 | 0.2.1 | `results/0.2.1.txt` | P3 step one: a Rust tokenizer token-identical to llama.cpp on 4,258 of 4,258 recorded cases |
 | 0.2.0 | `results/0.2.0.txt` | **milestone** — docs pass (23 corrections), fourth audit fixed, the `Q2_0` kernel prepared for llama.cpp (bit-exact 200,000/200,000) |
 | 0.1.9 | `results/0.1.9.txt` | the system prompt's KV saved across restarts (first answer 132 s → 15 s, identical); history counted in engine tokens, never silently dropped |

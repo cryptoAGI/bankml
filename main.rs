@@ -13,6 +13,7 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
        bankml tokenize MODEL.gguf [--no-special] < text      (token ids, as llama.cpp's /tokenize)
+       bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
        bankml version";
 
 fn main() {
@@ -32,6 +33,26 @@ fn main() {
         })
     };
     let code = match (a.first().map(String::as_str), a.get(1)) {
+        (Some("chat-template"), Some(file)) => {
+            // P3 step two: the prompt a conversation becomes, byte-identical to llama.cpp's /apply-template
+            let mut text = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+            let r = bankml::chat::check_template(Path::new(file)).and_then(|_| {
+                let v = bankml::serve::Json::parse(&text).ok_or("stdin is not JSON")?;
+                let msgs = v.get("messages").unwrap_or(&v);
+                bankml::chat::render(&bankml::chat::messages_from_json(msgs)?)
+            });
+            match r {
+                Ok(p) => {
+                    print!("{p}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("bankml chat-template: {e}");
+                    2
+                }
+            }
+        }
         (Some("tokenize"), Some(file)) => {
             // bankml's tokenizer (P3, step one): token-identical to llama.cpp b11192 on its oracle; text from stdin
             match bankml::tokenizer::Tokenizer::from_gguf(Path::new(file)) {

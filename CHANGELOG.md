@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.2.2 — 2026-09-29
+
+**P3, step two: the chat template, byte-identical to llama.cpp. The ternary headline re-measured and confirmed.**
+Record: `testing/results/0.2.2.txt`.
+
+### Added
+- **`chat.rs`** renders a conversation into the prompt exactly as llama.cpp b11192 does with the Bonsai / Qwen3
+  template in the GGUF, without a Jinja engine. `check_template` accepts only that template (sha256 `30a75d10e60b57e2…`
+  of its text; the 1.7B and 8B files carry the same one). Its rules are written out with Python's `split`/`strip`
+  semantics:
+  - the first system message at the top;
+  - the last real user query found by scanning back;
+  - `<think>` blocks kept only after that query;
+  - tool results grouped into one user turn;
+  - the thinking-off generation prompt.
+
+  Tool definitions, tool calls and assistant prefills are refused, not guessed.
+- **The chat-template oracle** (`testing/template_oracle.py` → `oracle_chat_template`, in the gate): llama-server's
+  own `/apply-template` on 317 conversations. **317 of 317 byte-identical.** The oracle caught one server behaviour
+  the template does not show: an empty `reasoning_content` is dropped before templating.
+- `bankml chat-template MODEL.gguf < messages.json`.
+
+### Measured
+- **The whole-token ternary budget, with the model resident.** The browser and the chat engine were closed, and 2.25
+  of 2.31 GB stayed cached. bankml then took **0.231 s per ternary token at three threads against llama.cpp's
+  2.185 s (9.45×)**, and 0.223 s (9.78×) at four. That reproduces the 0.0.3–0.0.6 figure on today's code and confirms
+  that the slower gates measured the disk, not the kernel. README, TECHNICAL and PERFORMANCE now state it as measured
+  (docs/PERFORMANCE.md has the table). The 0.2.2 gate itself ran with 3.3 GB free and recorded the same: **0.233 s
+  against 2.204 s (9.46×)** by the fastest runs, 0.287 s against 2.23 s (7.8×) by medians.
+
+### Documentation
+- **The README's results checked against the record.** Every figure now comes from the 0.2.2 gate record and says
+  which statistic it is. The corrections:
+  - ternary per matrix 9.4–10.0×, was "9.5–9.8×" from 0.0.1;
+  - ternary prefill 12.9×, was 12.5×;
+  - 1-bit prefill 1.23×, was "1.2–1.3×";
+  - llama.cpp's 1-bit token 0.35 s, was 0.34 s;
+  - the ceiling 4.3 vs 0.45 tok/s, was "4 vs 0.4";
+  - the badge.
+- **The speed cards are now drawn from a gate record** by `tools/cards.py`, not by hand. The 0.0.1 cards had drifted
+  (7.06× from a pre-pool harness; 14.47 ns per 1-bit block from an older build). Each card names its record, says
+  whether the model was resident, and gives the min and median where they differ.
+- **Savante's public places are linked from the README**: the Hugging Face Space, the sAGI skill, her loop dataset,
+  the sAGI engine and her canon. The Documentation table links straight to **the Thesis** in TECHNICAL.md.
+
 ## 0.2.1 — 2026-09-29
 
 **P3, step one: bankml's own tokenizer, token-identical to llama.cpp.** P3, a forward pass of bankml's own, has to

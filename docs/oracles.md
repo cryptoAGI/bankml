@@ -103,6 +103,23 @@ Two details the oracle settles:
 - **The pre-tokenizer's letter class.** It is Unicode general category L, which is not `char::is_alphabetic`. It is
   generated into `unicode_letters.rs`.
 
+## 1c. The chat-template oracle: byte-identical prompts (0.2.2)
+
+A conversation becomes a prompt through the model's chat template, a Jinja program inside the GGUF. bankml does not
+run Jinja. `chat.rs` writes the Bonsai / Qwen3 template's rules out, and `check_template` accepts only that template,
+identified by the sha256 of its text. [`testing/template_oracle.py`](../testing/template_oracle.py) records
+llama-server's own `/apply-template` for 317 conversations. They cover:
+- a system prompt first, later, or absent;
+- assistant turns with and without `<think>` blocks, before and after the last real user query;
+- `reasoning_content`;
+- runs of tool results;
+- user messages that look like tool responses;
+- special markers and Unicode inside content;
+- 300 random conversations.
+
+`oracle_chat_template` requires every prompt **byte-identical**: **317 of 317**. The oracle found one server behaviour
+that the template alone would not predict: an empty `reasoning_content` is dropped before templating.
+
 ## 2. Scalar models: every fast path against its own reference
 
 Between the real-model oracle runs, the kernels are held to a scalar model of ggml, on synthetic inputs, in the

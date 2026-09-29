@@ -64,7 +64,7 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 
 ## The production server (and any machine with ≥ 3 GB free)
 
-- [ ] **Re-measure the whole-token ternary budget** with the 2.31 GB model resident in the page cache (on this laptop
+- [x] **Re-measure the whole-token ternary budget** with the 2.31 GB model resident (done 2026-09-29: 0.231 s at three threads, 9.45×; browser and chat engine closed, 2.25 of 2.31 GB cached) in the page cache (on this laptop
   it no longer fits: 1.04 GB stayed resident after a full read). The 0.0.3–0.0.6 records say 0.23–0.25 s per token at
   three threads; the gates since 0.1.0, disk-bound, say 4.5–5.2 s.
 - [ ] Re-measure n-gram speculation on an idle machine (ahead in 5 of 6 pairs here, within the noise).
@@ -74,7 +74,7 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 - [x] **P3, step one (0.2.1): the tokenizer.** GPT-2 byte-level BPE with the Qwen2 pre-tokenizer, no crates,
   token-identical to llama.cpp on 4,258 of 4,258 recorded cases (a 2,000-string Unicode fuzz set included).
 - [ ] **P3: the Qwen3 forward pass, token-identical to llama.cpp at temperature 0** (TECHNICAL §VI). Next steps, each
-  with its oracle: the chat template (Jinja subset) → the embedding lookup and RMSNorm → attention with YaRN RoPE →
+  with its oracle: ~~the chat template~~ (done 0.2.2, 317 of 317 byte-identical) → the embedding lookup and RMSNorm → attention with YaRN RoPE →
   one full layer → the whole model's logits → greedy tokens. Design notes from
   V: kernels must be **batch-invariant** (each row reduced in the same order whatever the batch size) or prefill,
   chunked prefill and speculative verification will not be token-identical.

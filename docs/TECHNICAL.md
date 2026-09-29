@@ -423,7 +423,7 @@ reference's own end-to-end benchmark at the same clock: on three threads the ref
 2.59–2.68 s per token in these products — about 98 % of the wall — and bankml computes the same products in 0.36–0.37 s,
 a matmul-bound ceiling of about 2.8 tokens per second against the reference's 0.37–0.39. On one thread the figures are
 4.2–4.4 s against 0.49 s. With the persistent thread pool of 0.0.3 (both engines on the same scheduler), the three-thread
-figure is 0.23–0.25 s against the reference's 2.18–2.36 s (9.2–9.9×), a ceiling of about 4 tokens per second — measured in the 0.0.3–0.0.6 gate records with the model resident in memory. The gates since 0.1.0 measure 4.5–5.2 s per token (1.1–1.5× the reference) because this laptop can no longer keep the 2.3 GB ternary file in its page cache (other applications hold the memory; 1.04 of 2.31 GB stayed resident after a full read, 2026-09-29), so both runtimes wait on the disk; the per-matmul A/B on cached tensors still shows 9.8×. That
+figure is 0.23–0.25 s against the reference's 2.18–2.36 s (9.2–9.9×), a ceiling of about 4 tokens per second — measured with the model resident in memory, and reproduced on 2026-09-29 on current code: 0.231 s at three threads, 9.45× the reference (docs/PERFORMANCE.md). When other applications leave too little memory to keep the 2.31 GB file cached, the gates measure the disk instead (4.5–5.2 s). That
 is less time than the reference spends on the *1-bit* model's products (0.34–0.37 s). What remains — attention with a
 key–value cache, normalisation, rotary embedding, sampling — is the forward pass (§IV.4), and the ceiling stands until
 it exists.
