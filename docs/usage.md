@@ -1,14 +1,14 @@
 # Using bankml and Savante
 
-This guide goes from a fresh checkout to asking Savante a question on your own computer, and to letting other people
-watch the testing on your network. It also says what each part does, what it checks, and where it keeps what.
+How to install bankml, start it, and use it on your own computer. Everything runs on this machine: the model, the
+gate that verifies it, and Savante's page. New to Savante's page and her voice? Read **[playback.md](playback.md)**.
 
-- [1. What runs where](#1-what-runs-where)
+- [1. Install](#1-install)
 - [2. What you need](#2-what-you-need)
-- [3. Build and check bankml](#3-build-and-check-bankml)
-- [4. Get a model (the importer), and verify it](#4-get-a-model-the-importer-and-verify-it)
-- [5. Start `bankml serve`](#5-start-bankml-serve)
-- [6. Talk to Savante (interact mode)](#6-talk-to-savante-interact-mode)
+- [3. Start, stop, check](#3-start-stop-check)
+- [4. Talk to Savante](#4-talk-to-savante)
+- [5. Models](#5-models)
+- [6. By hand: build, verify, serve](#6-by-hand-build-verify-serve)
 - [7. Let others watch (view mode, on the LAN)](#7-let-others-watch-view-mode-on-the-lan)
 - [8. The files Savante keeps: `.history`, `.memory`, `.prompt`](#8-the-files-savante-keeps-history-memory-prompt)
 - [8a. Proof of data without the data](#8a-proof-of-data-without-the-data)
@@ -24,284 +24,143 @@ watch the testing on your network. It also says what each part does, what it che
 
 ---
 
-## 1. What runs where
+## 1. Install
 
-```
- you (browser) ──► ui/savante.py  (interact, 127.0.0.1:7873, Gradio)  ──► bankml serve (127.0.0.1:18093)
-                     │ reads ~/savante (read-only)                        │ verified: guard + sha256 pin
-                     │ writes ~/.local/share/bankml/savante/              ▼
-                     │        savante.history                         llama-server b11192 (127.0.0.1:18092)
-                                                                       Bonsai-8B Q1_0 — the file bankml verified
- anyone on the LAN ──► ui/view.py (view, 0.0.0.0:7874, stdlib, read-only) ──► testing/live.log, testing/results/, CI
-```
-
-- **bankml serve** is the gate. It refuses to start unless the model file passes the guard, its sha256 equals the
-  pin in the model fork's `FORK.json`, and the llama-server behind it serves *that* file. Every answer carries a
-  receipt.
-- **Interact mode** is where you talk to Savante. It is only reachable from this computer (loopback), because Gradio
-  3.x must not face a network (see §7).
-- **View mode** is a small read-only page for everyone else: the live testing log, the release records, CI, this
-  machine's load, and Savante's office and ledger. It has no chat, no history, and no way to run anything.
-- **The answers come from llama.cpp b11192's kernels** (bankml phase P0). bankml vouches for the file, the path and
-  the transcript. bankml's own forward pass is phase P3.
-
-## 2. What you need
-
-| what | where it comes from | check |
-|---|---|---|
-| Rust 1.95 (or newer) | rustup | `cargo --version` |
-| Python 3.10+ with Gradio 3.x or newer | `pip install gradio` | `python3 -c "import gradio; print(gradio.__version__)"` |
-| llama.cpp b11192 release (`llama-server`) | `llama-b11192-bin-ubuntu-x64.tar.gz`, sha256 `34cf6fa5…81ec7` | `sha256sum` against that value |
-| The model | [PYTHAI/Bonsai-8B-gguf-fork](https://huggingface.co/PYTHAI/Bonsai-8B-gguf-fork) → `Bonsai-8B-Q1_0.gguf` (1.16 GB) | step 4 |
-| The fork's `FORK.json` | the same repository | step 4 |
-| Savante's canon | `git clone https://github.com/cryptoAGI/savante ~/savante` | §10 |
-
-RAM: the 1-bit 8B model maps 1.16 GB; the whole stack runs in about 2 GB. The ternary model (2.31 GB) also works and
-gives better answers, but llama.cpp runs it about 5× slower on a CPU (see PERFORMANCE.md).
-
-## 3. Build and check bankml
+One command, from a fresh machine to Savante answering on your own CPU:
 
 ```sh
 git clone https://github.com/cryptoAGI/bankml && cd bankml
-cargo build --release
-cargo test --release          # unit + end-to-end tests, offline, a few seconds
-target/release/bankml version
+./install.sh
 ```
 
-## 4. Get a model (the importer), and verify it
-
-**The easy way.** Start the interact UI (§6). If no `bankml serve` answers, it imports Bonsai-8B on first run in the
-background (a 1.16 GB download, only if absent), verifies it, and starts the carrier. The **Models** tab shows the
-progress. From the command line, the same steps:
+or, without cloning first (the installer clones bankml to `~/bankml`, or to `$BANKML_DIR`):
 
 ```sh
-python3 ui/models.py first-run            # Bonsai-8B: import if absent, pin, verify, start bankml serve + llama-server
+curl -fsSL https://raw.githubusercontent.com/cryptoAGI/bankml/main/install.sh | bash
+```
+
+It runs these steps in order, and stops at the first one that fails, saying why:
+
+| step | what it does |
+|---|---|
+| `check` | Rust 1.95+, Python 3.10+, git, curl, tar, ss, sha256sum; reports AVX2, RAM and free disk |
+| `build` | `cargo build --release` and `cargo test --release` |
+| `engine` | downloads llama.cpp b11192 (17 MB) and refuses it unless its sha256 is the published one |
+| `python` | uses your Python if it has Gradio and numpy; otherwise makes a venv with Gradio 3 |
+| `canon` | clones Savante's canon to `~/savante` if it is not there (an existing canon is left as it is) |
+| `model` | imports Bonsai-8B (1.16 GB) if absent, verifies it, and starts `bankml serve` with llama-server behind it |
+| `start` | starts Savante on `http://127.0.0.1:7873` |
+
+Run any steps on their own: `./install.sh build`, `./install.sh model start`. Options: `--skip-tests`, `--no-start`,
+`--view` (also start view mode, §7), `--voice` (also install Savante's voice; see [playback.md](playback.md)).
+Nothing needs sudo. What the installer chose is kept in `~/.local/share/bankml/install.env`, and logs in
+`~/.local/share/bankml/logs/`.
+
+## 2. What you need
+
+| what | where it comes from |
+|---|---|
+| Linux on x86_64 (AVX2 for the fast kernels; without it bankml is correct, just slower) | — |
+| Rust 1.95 or newer | [rustup](https://rustup.rs) |
+| Python 3.10+ | your system |
+| about 2 GB of free RAM and 3 GB of free disk | the 1-bit 8B model maps 1.16 GB |
+
+The installer fetches the rest: llama.cpp b11192 (`llama-b11192-bin-ubuntu-x64.tar.gz`, sha256
+`34cf6fa5de9da0db3932c78fe15fed2fbca17451e665dac0a4f6a3c8fc881ec7`), Gradio 3 if needed, the model from
+[PYTHAI/Bonsai-8B-gguf-fork](https://huggingface.co/PYTHAI/Bonsai-8B-gguf-fork), and Savante's canon (§10). On
+another platform, build llama.cpp b11192 yourself and set `BANKML_LLAMA_SERVER` to its `llama-server`.
+
+The ternary model (2.31 GB) also works and gives better answers, but llama.cpp runs it about 5× slower on a CPU (see
+[PERFORMANCE.md](PERFORMANCE.md)).
+
+## 3. Start, stop, check
+
+```sh
+./install.sh start           # bankml serve (if not up) is started by `model`; this starts Savante's page
+./install.sh start --view    # also the read-only page for your network
+./install.sh status          # what is running, and which model bankml verified
+./install.sh stop            # stops the page(s), bankml serve and llama-server
+```
+
+What runs where:
+
+```
+ you (browser) ──► Savante's page (127.0.0.1:7873) ──► bankml serve (127.0.0.1:18093) ──► llama-server (127.0.0.1:18092)
+                                                        verifies the model file            runs the verified file
+ anyone on the LAN ──► view mode (0.0.0.0:7874, read-only)
+```
+
+- **bankml serve** is the gate. It refuses to start unless the model passes the guard, its sha256 equals the pin in
+  the model's `FORK.json`, and llama-server serves that same file. Every answer carries a receipt (§9).
+- **Savante's page** is reachable only from this computer.
+- **View mode** is a read-only page for others on your network (§7).
+
+## 4. Talk to Savante
+
+Open **http://127.0.0.1:7873**, type a question, press **Send**.
+
+- The first answer takes about **2 minutes** on a laptop CPU, while the model reads Savante's instructions. Later
+  answers start sooner.
+- Every answer is labelled **draft · not a finding**, and carries a receipt (§9).
+- To ask for a review, say so: *"review: is Bonsai-8B ready to serve mindX?"*. She then answers as FINDINGS /
+  VERDICT / RATIONALE / CONDITIONS / RISKS WATCHED. The 1-bit carrier was graded REJECT for review duty in the sAGI
+  carrier test, so treat its verdicts as drafts.
+- **Stop** cancels an answer; **New session** starts a fresh conversation.
+
+The side panel sets the system prompt (`.prompt`, §8), max tokens, temperature, and the engine's CPU threads and RAM
+budget (**Apply** restarts the engine with them, and restores your previous settings if it will not start). The tabs
+hold your history, notes, metrics, integrity checks and the verifier. [playback.md](playback.md) walks through the
+page, her card and her voice.
+
+## 5. Models
+
+The **Models** tab and `ui/models.py` import a model, verify it, and switch to it:
+
+```sh
+python3 ui/models.py list                 # what is here, pinned or not, and which one is running
 python3 ui/models.py catalog              # the curated catalogue, and whether each fits this machine
 python3 ui/models.py import qwen3-1.7b    # a catalogue id, a Hugging Face URL, or ollama:NAME:TAG
-python3 ui/models.py import https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/blob/main/SmolLM3-Q4_K_M.gguf
-python3 ui/models.py search granite       # search ollama.com
-python3 ui/models.py import ollama:qwen3:0.6b   # the local Ollama already has it: adopted by link, no download
-python3 ui/models.py list                 # what is here, pinned or not, and which one is the carrier
-python3 ui/models.py use Qwen3-0.6B-Q8_0.gguf   # switch the carrier (rolls back if the new model fails)
+python3 ui/models.py use Qwen3-1.7B-Q8_0.gguf   # switch (rolls back if the new model fails)
 ```
 
-The **Models** tab offers the same in the UI:
-- installed models, with **Use this model**;
-- the **catalogue**: Bonsai-8B 1-bit (the default), Ternary-Bonsai-8B, Bonsai-4B and 1.7B, Qwen3 0.6B / 1.7B / 4B / 8B,
-  SmolLM2-1.7B, SmolLM3-3B and Granite-3.3-2B;
-- **Hugging Face**: paste any repository or file URL, look it up, and choose a GGUF;
-- **Ollama**: search ollama.com and pick a model and tag, or adopt what the local Ollama already holds.
+An import is kept only if its sha256 equals the one its publisher lists, `bankml guard` passes, and a `FORK.json`
+pin is written; `bankml serve` checks that pin before every start. Only open-source models are accepted (Gemma and
+Llama are refused), and an import that would not fit this machine's RAM or disk is refused with the numbers.
 
-**How an import is trusted.**
-- Every file streams to disk and is hashed on the way. It is kept only if its sha256 equals the one its publisher
-  lists: the Hugging Face repository's LFS sha256 at the resolved revision, or the Ollama registry's layer digest.
-- The catalogue records those values too, and an import refuses if the repository no longer agrees.
-- `bankml guard` must then say play, and a FORK.json pin is written to `~/.local/share/bankml/forks/`. From then on,
-  `bankml serve` verifies the file against that pin before every start.
-- An interrupted or cancelled download resumes (**Cancel download** keeps the partial file). One import or switch runs at
-  a time; a switch waits for bankml to hash the whole file, and succeeds only when the chosen model answers verified.
-- **Open source only.** The licence is read from the repository (Hugging Face) or from the registry's licence layer
-  (Ollama). A model that is not open source is refused, not merely flagged. That includes Gemma and Llama.
-- **The machine's limits are respected.** An import that would leave less than 1.5 GB free on disk, or whose weights
-  exceed about 70 % of RAM, is refused with the numbers. On a 6 GB laptop that rules out Qwen3-8B at Q4_K_M (5 GB).
+## 6. By hand: build, verify, serve
 
-**By hand**, the same checks:
+What the installer does, step by step:
 
 ```sh
-mkdir -p .models
-# put Bonsai-8B-Q1_0.gguf and the fork's FORK.json in .models/ (or anywhere)
-target/release/bankml guard  .models/Bonsai-8B-Q1_0.gguf                  # play | refuse (reason) | need_more
-target/release/bankml verify .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json --json
+cargo build --release && cargo test --release
+target/release/bankml guard  .models/Bonsai-8B-Q1_0.gguf                   # play | refuse (reason) | need_more
+target/release/bankml verify .models/Bonsai-8B-Q1_0.gguf --fork FORK.json  # guard, then the sha256 pin
+target/release/bankml serve  .models/Bonsai-8B-Q1_0.gguf --fork FORK.json \
+    --spawn /path/to/llama-b11192/llama-server --threads 3 --ctx 2048
+python3 ui/savante.py --mode interact
 ```
 
-`verify` prints `{"verdict": "play", …, "model_sha256": "284a335a…"}` and exits 0. Anything else refuses, gives its
-reason, and exits 2 (1 for an I/O error, 3 for a truncated file).
-
-## 5. Start `bankml serve`
-
-Either let bankml launch llama-server on the verified file (recommended: the identity holds by construction):
+`verify` exits 0 on play, 2 on refuse, 1 on an I/O error, 3 on a truncated file. `serve` can also sit in front of a
+llama-server you started (`--upstream 127.0.0.1:18092`); it then checks through `/props` that the server runs the
+verified file. It listens on `127.0.0.1:18093` and speaks the OpenAI API:
 
 ```sh
-target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json \
-    --spawn /path/to/llama-b11192/llama-server --upstream 127.0.0.1:18092 --threads 3 --ctx 4096
-```
-
-or put it in front of a llama-server that is already running. bankml then checks, through the server's `/props`,
-that it serves the same file:
-
-```sh
-/path/to/llama-b11192/llama-server -m .models/Bonsai-8B-Q1_0.gguf --host 127.0.0.1 --port 18092 \
-    -c 4096 -t 3 -np 1 --jinja --reasoning off --no-webui &
-target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json --upstream 127.0.0.1:18092
-```
-
-It listens on `127.0.0.1:18093` (`--listen` to change). Check it:
-
-```sh
-curl -s 127.0.0.1:18093/bankml          # what was verified, when, and what is upstream
-```
-
-It is an OpenAI-compatible endpoint, so any client works:
-
-```sh
+curl -s 127.0.0.1:18093/bankml     # what was verified, when, and what is upstream
 curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"Say hello. /no_think"}],"max_tokens":32}'
 ```
 
-## 6. Talk to Savante (interact mode)
-
-```sh
-python3 ui/savante.py --mode interact          # then open http://127.0.0.1:7873
-```
-
-The page, left to right. The side panel's grip (**⠿ panel**) drags it to either side of the chat: drop zones appear
-over the two halves while you drag. Its **⇄** button swaps sides with a click. The slim corner handles resize the side
-panel (width and height) and the chat (height). Your layout is remembered in your browser.
-
-**The aivatar.** Click the agent's portrait in the side panel to open its card. The card holds the name, mantra and
-description; the oath, office and beliefs; the verifiable identity (persona sha256, doctrine root, THOT identity and
-generation, the ledger check); every aspect of the persona in collapsible sections; and every ledgered file with its
-sha256. Close it with ✕ or by clicking outside. **In the card, Savante speaks.** **Introduction**: eight chapters she reads to a new participant. Seven are verbatim from her
-canon: who she is, her oath, what she believes, her system prompt, why she exists, the manifesto, and `Savante.md`.
-One is bankml's own note, `ui/voice/readings/scientific.md`. It covers SCIEN·TIFIC, whose supply is 2²⁵⁶ − 1, the
-largest number one EVM word holds, taken as the measure of accuracy (scientific.pythai.net).
-**▶ PLAY THE INTRODUCTION** plays all of it. **▶ chapter** plays one, and a sentence's ▶ plays from there.
-**The reading**: Savante reads bankml's thesis and the binary / ternary argument from `TECHNICAL.md`, verbatim, with
-the notation read aloud. It has five chapters: the thesis, binary and ternary weights (§II.1), the binary choice
-`Q1_0` (§III.2), the ternary kernel `Q2_0_g64` (§III.5), and *can a binary computer perform a ternary operation?*
-(§III.8). It has its own **▶ PLAY THE READING**.
-**Export**: **⤓ Savante.opus** is the voice examples plus the whole introduction, and **⤓ Savante-reading.opus** is
-the reading. Each is one Ogg Opus file with a chapter mark per chapter. Each is offered only when complete (every
-sentence rendered) and current (built from exactly today's clips), and is rebuilt when a clip changes. Both files
-and every clip are committed in the repository (`ui/voice/export/`, `ui/voice/cache/savante/`), so a fresh clone
-plays without rendering anything. **Voice examples**: her statements, with **PLAY ALL**. Her name is said sav-ont. The card also links to her public places: the Hugging Face Space, the sAGI
-skill, her loop dataset, and the sAGI engine, her canon and bankml on GitHub.
-
-**VOICE knobs** (DreamKnob, in the VOICE dock described below): **SPEED** (0.5–2.5×, snap points, her pitch kept),
-**FM RATE** (Hz) and **FM DEPTH** (%) apply frequency modulation to her voice (0 = as rendered), **GAIN** (±12 dB)
-and **VOLUME**. They act live and are remembered.
-
-**Her voice** is her own, built from open parts. The body is Piper's `en_GB-cori-high` (public-domain LibriVox
-recordings), rendered slower and steadier. It is pitched onto Jaimla's measured 182 Hz with formants preserved (Jaimla
-is the template, never the source: her dataset's licence is custom). SAVANTE's octave-below resonance and EQ come from
-the house recipe. Set it up once (no sudo):
-
-```sh
-mkdir -p ~/.local/share/bankml/piper && cd ~/.local/share/bankml/piper
-gh release download 2023.11.14-2 -R rhasspy/piper -p piper_linux_x86_64.tar.gz && tar xzf piper_linux_x86_64.tar.gz
-for f in en_GB-cori-high.onnx en_GB-cori-high.onnx.json MODEL_CARD; do
-  curl -sSfLO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/$f; done
-```
-
-Without it, the house eSpeak stand-in is used. Pre-render everything once with `python3 ui/speak.py`. It renders the
-voice examples, the introduction and the reading, then writes both exports; `--prune` also drops clips no current
-text uses. Run one render at a time on a small machine: `--shard i/n` exists, but two Pipers need about 2 GB; otherwise the UI renders what is missing in the background, and the card
-fills in as it goes. The DreamKnob controls (SPEED, FM RATE, FM DEPTH, GAIN, VOLUME) stay hidden until she speaks. Press any PLAY and they
-emerge in a **VOICE dock** beside the card: a vertical stack in the side column. Move it with ⤒ (top of the card), ⤓
-(bottom, where the knobs lie in a row) or ⇥ (back to the side), or drag it by ⠿ onto the drop zone you want. Drag its
-corner to resize the knobs (40–96 px). The place and size are remembered in this browser.
-
-**Playing.**
-- **▶ PLAY beside her name** reads who she is (the card's description) and ends.
-- **▶ PLAY THE INTRODUCTION** continues from wherever you left off and runs on until **■ STOP**.
-- A sentence's **▶** plays from that sentence onward.
-- A playing button turns into **❚❚ PAUSE**, and then into **▶ RESUME**.
-
-**Agents → aivatar** chooses the portrait: one of Savante's canon
-images (kept outside the canon), or an upload for a derived agent (PNG/JPEG/WebP, at most 2 MB), which becomes a
-ledgered facet of its THOT bundle.
-
-- **The chat.** Type a question and press **Send** (or Enter). **Stop** cancels the answer being written; **New
-  session** starts a fresh conversation. The last session's history reloads on start.
-- **The timer.** It starts at the press of Send and ticks every second. It shows first *reading the prompt
-  (prefill)* and then *writing · first token at N s*. On a laptop CPU the first turn spends most of its time reading
-  Savante's roughly 300-token system prompt: expect about 2 minutes, then a few tokens per second.
-- **Under every answer:** `⏱ sent HH:MM:SS · first token N s · answered in N s`, then the receipt (§9), then which
-  system prompt carried the turn. Every answer is labelled **draft · not a finding**, because Savante is an office and
-  a draft is not a verdict.
-- **`.prompt`** picks the system prompt:
-
-  | choice | what it is | ledgered? |
-  |---|---|---|
-  | persona · system_prompt (the default) | `savante.persona` → `system_prompt`, exactly as in the canon | yes — refused if it does not verify |
-  | sAGI.prompt | the canon's sAGI facet | yes |
-  | Savante.prompt | the Hugging Face Space's template prompt, fetched once and cached | no — said so under each answer |
-
-- **max tokens** and **temperature** are the usual sampling controls. Low temperature suits verdicts.
-- **Resources · CPU and RAM for the engine** (0.1.8): two sliders.
-  - **CPU threads**, from 1 to this machine's count.
-  - **RAM budget (GB)**. bankml turns the budget into the largest context that fits: the model's weights stay
-    resident, the engine needs about 0.25 GB, and the rest becomes KV cache, at the per-token size `bankml guard`
-    reports for the model's architecture (147,456 bytes for Qwen3-8B). The line under the sliders shows the result,
-    e.g. "weights 1.16 GB + engine 0.25 GB + KV cache 0.57 GB → a 3840-token context", or how much a model needs at
-    least.
-  - **Apply** restarts the engine with those settings, using the same verified switch as the Models tab. It is
-    saved but not applied while an answer is being written (the engine restarts with them at the next switch). If
-    the engine will not start with them, **your previous settings** are restored and both errors are reported. The
-    choice is remembered for every later start, and re-planned for each model's own size.
-  - **Usage now** reads what the engine uses: resident memory and CPU per process, and free memory. The numbers come
-    from `bankml serve` itself (`GET /bankml/usage`, `sys.rs`), which reads `/proc` the way psutil does, with no
-    dependencies.
-- **The bankml serve card** shows the verified model, its full sha256, the bankml version and the engine. **Refresh
-  carrier** re-reads it.
-
-- **use .memory** (side panel, on by default) appends your `.memory` notes to the system prompt, newest first, within
-  2,400 characters. They are labelled as the operator's notes, not evidence, and the footer says how many went in.
-
-The other tabs:
-- **.history**: every exchange, newest first: its time, session, time to first token, response time, tokens, and
-  whether the answer's sha256 matches its receipt. At the top is the **ragebar**: type, and the exchanges are
-  ranked by RAGE retrieval as you type, each with a relevance meter. It uses mindX's `rage.py` when present
-  (`RAGE_PATH`) and the same BM25 built in otherwise; the engine is named above the results.
-- **Responses**: one answer at a time. **⤒ first**, **▲ previous**, **▼ next**, **⤓ latest** step through every
-  response in `.history`. **📋 copy** puts the answer on the clipboard, **➕ save to .memory** keeps it as a note
-  (with its source: session, send time, answer sha256), and **🔏 proof** gives its inclusion proof (§8a).
-- **.memory**: your notes, numbered. Add one by typing, remove one by number.
-- **Metrics**: computed from `.history`. It shows the number of exchanges and sessions, and the median, p90, mean,
-  minimum and maximum of the time to first token, the response time, the prompt-reading (prefill) speed and the
-  writing speed. It also shows a bar per exchange, how many answers match their receipt, the last 25 exchanges, and
-  the commitments (§8a). Times come from the press of Send where recorded (0.0.7+); older exchanges use the receipt's
-  gateway times, and each row says which.
-- **Testing (live), Results, Office, Integrity** are the same as view mode (§7).
-- **Verifier** runs `~/savante/bind/savante_verify.py` offline. Exit 0 means APPROVE: the ledger, the doctrine root,
-  the thot bundle and the mirror all agree.
-
-To ask for a review, say so: *"review: is Bonsai-8B ready to serve mindX?"*. Savante then answers under her verdict
-contract (FINDINGS / VERDICT / RATIONALE / CONDITIONS / RISKS WATCHED). A plain question gets a short answer in the same
-voice. The 1-bit Bonsai-8B carrier was graded REJECT for review duty in the sAGI carrier test, so treat its verdicts as
-drafts.
-
 ## 7. Let others watch (view mode, on the LAN)
 
 ```sh
-python3 ui/view.py --host 0.0.0.0 --port 7874   # others open http://<this computer's LAN address>:7874
-ip -4 addr | grep inet                          # find the LAN address
+./install.sh start --view          # or: python3 ui/view.py --host 0.0.0.0 --port 7874
 ```
 
-- **Testing — live**: the running step (a green *running* pill, or *idle*) and the last 80 lines of
-  `testing/live.log`, which the release gate and `testing/live.sh` append to. It refreshes every 2 s and follows the
-  bottom unless you scroll up.
-- **This laptop**: CPU, load, free RAM, swap. When swap is full the page says measurements may be disturbed.
-- **bankml serve**: verified or not, the model, its sha256.
-- **Release records**: every `testing/results/<version>.txt`.
-- **CI**: the last five GitHub Actions runs.
-- **Savante**: name, mantra, card status (`not_yet_minted`), doctrine root, and the ledger check, file by file.
-- **Listen to Savante**: her introduction, the reading and her voice examples, for anyone watching. When complete,
-  **⤓ Savante.opus** and **⤓ Savante-reading.opus** download from fixed routes (`/export/<name>.opus`). Play all, a chapter, or from any
-  line; the line being read is highlighted. Pressing play brings out the same DreamKnob controls as the card (SPEED,
-  FM RATE, FM DEPTH, GAIN, VOLUME), kept in each listener's own browser.
-- **Private data — commitments only**: the count, Merkle root and CID of `.history`, and the count and root of
-  `.memory`. Never their content (§8a).
-
-Every panel can be dragged by its title to a new place and resized from its corner. **Reset layout** puts them back.
-The layout lives in each viewer's own browser.
-
-**Why view mode is not Gradio:** the Gradio installed here (3.37) has path-traversal bugs that let a client read files
-from the host (e.g. CVE-2023-51449, fixed in 4.11). `ui/view.py` is the Python standard library with seven fixed GET
-routes: `/`, `/api/state`, `/api/result?name=` (a listed record only), `/knobs.js`, `/audio/<clip>.ogg` (a clip the
-voice manifest lists), `/export/<name>.opus` (a complete, current export only) and `/savante.png`. Every other path is a
-404, POST is refused, and the page renders all data as text under a strict Content-Security-Policy. Keep interact mode
-on `127.0.0.1`.
+Others open `http://<this computer's LAN address>:7874` (`ip -4 addr` shows it). The page is read-only: the live
+testing log, this machine's load, the verified model, the release records, CI, Savante's office and ledger, and her
+recordings (see [playback.md](playback.md)). It never shows the content of `.history` or `.memory`, only their
+commitments (§8a). It is the Python standard library, not Gradio, because the Gradio installed for the chat has
+path-traversal bugs and must stay on this computer.
 
 ## 8. The files Savante keeps: `.history`, `.memory`, `.prompt`
 
@@ -560,7 +419,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 
 | symptom | cause | fix |
 |---|---|---|
-| chat says *Cannot reach bankml serve* | serve not running | §5; `curl 127.0.0.1:18093/bankml` |
+| chat says *Cannot reach bankml serve* | serve not running | `./install.sh status`, then `./install.sh model` (§3) |
+| the installer stops at a step | that step's prerequisite is missing | it says which; fix it and run `./install.sh` again (steps already done are quick) |
 | serve prints `refuse: … != pinned` | the file is not the one the fork pinned | re-download; `bankml sha256 FILE` |
 | serve prints `upstream … serves X, not the verified Y` | the llama-server on that port runs another file | restart it with the verified file, or use `--spawn` |
 | serve prints `upstream … not healthy` | llama-server not up (a cold load can take a minute) | wait; check its log |
@@ -573,6 +433,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 
 | command | what |
 |---|---|
+| `./install.sh [step …] [--skip-tests] [--no-start] [--view] [--voice]` | install and start (§1); steps: check build engine python canon model voice start stop status |
 | `bankml guard FILE [--engine mainline\|prism] [--json]` | header check: play / refuse / need_more |
 | `bankml sha256 FILE` | the file's sha256 |
 | `bankml pin FILE --fork FORK.json` | sha256 against the fork's record |

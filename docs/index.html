@@ -159,7 +159,8 @@ article p[align="center"] { text-align: center; }
   const GROUPS = [
     ["Start", [
       ["readme", "README.md", "Overview", "what bankml is, results, releases"],
-      ["usage", "docs/usage.md", "Usage guide", "install, run, Savante, models, settings"],
+      ["usage", "docs/usage.md", "Usage guide", "install, run, models, settings"],
+      ["playback", "docs/playback.md", "New to Savante", "her page, her card, listening to her"],
     ]],
     ["Understand", [
       ["technical", "docs/TECHNICAL.md", "Technical report", "design, method, proofs, thesis"],
@@ -208,7 +209,9 @@ article p[align="center"] { text-align: center; }
     let md = cache[path];
     if (md === undefined) {
       try {
-        const r = await fetch(SRC + path);
+        let r = await fetch(SRC + path);
+        // a document newer than the release (on GitHub Pages) is read from main
+        if (!r.ok && SRC.startsWith(RAW)) r = await fetch(RAW + "main/" + path);
         if (!r.ok) throw new Error(r.status);
         md = cache[path] = await r.text();
       } catch (e) {

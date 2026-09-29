@@ -37,7 +37,9 @@ Start here, then go where your question is. The same documents read as a website
 
 | if you want to… | read |
 |---|---|
-| install, run and use bankml and Savante (both modes, models, `.history`, receipts, voice, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
+| install and start everything with one command | **`./install.sh`** ([usage.md §1](docs/usage.md#1-install)) |
+| install, run and use bankml and Savante (both modes, models, `.history`, receipts, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
+| meet Savante's page for the first time: asking, her card, listening to her | **[docs/playback.md](docs/playback.md)** |
 | understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
 | read the thesis: the design intent of bankml's authors, in their own words | **[the Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson)**, in TECHNICAL.md (Savante reads it aloud: `Savante-reading.opus`) |
 | meet Savante, the agent bankml runs | **[Using Savante](#using-savante)**, with her public places (Hugging Face, canon, sAGI) |
@@ -173,20 +175,18 @@ runs on your own computer, and every answer she gives carries a receipt.
 - [the sAGI engine](https://github.com/cryptoAGI/sagi): the verdict contract, enforced in code;
 - [Savante's canon](https://github.com/cryptoAGI/savante): persona, charter, facets and ledger.
 
-Four steps (details in **[usage.md](docs/usage.md)**):
+**Install and start** (details in **[usage.md](docs/usage.md)**; new to Savante? **[playback.md](docs/playback.md)**):
 
-**1. Build bankml and verify the model**
 ```sh
-cargo build --release
-target/release/bankml verify .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json    # → play, sha256 284a335a…
+git clone https://github.com/cryptoAGI/bankml && cd bankml
+./install.sh        # check, build, fetch llama.cpp b11192 (sha256-checked), import and verify Bonsai-8B, start Savante
 ```
 
-**2. Start the gate** (bankml launches llama.cpp b11192 on the verified file, or checks a running one via `--upstream`)
-```sh
-target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json --spawn /path/to/llama-server
-```
+The installer runs the same steps you can run by hand: build bankml, verify the model
+(`bankml verify … --fork FORK.json` → play), and start the gate (`bankml serve … --spawn llama-server`), which
+refuses any file but the verified one.
 
-**3. Talk to Savante**: `python3 ui/savante.py --mode interact`, then open **http://127.0.0.1:7873**.
+**Talk to Savante**: open **http://127.0.0.1:7873** (`./install.sh start` if it is not running).
 Type a question and press **Send**. A timer runs from the press of Send until the answer is complete: the first turn on
 a laptop spends about 2 minutes reading Savante's system prompt, then writes a few tokens a second. Under each answer
 you see when it was sent, the time to the first token, the total time, and the receipt: the verified model's sha256
@@ -217,12 +217,9 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   is kept only if its sha256 equals the publisher's, then guarded and pinned, and the carrier switches with rollback.
   Open-source licences only: Gemma and Llama are refused. Standard formats (Q4_K_M, Q8_0, …) play through the same
   verified gateway as bankml's 1-bit and ternary models.
-- **Savante speaks**: in the card, her introduction for new participants (her canon, plus a note on SCIEN·TIFIC's
-  2²⁵⁶ − 1 as the measure of accuracy), **the reading** (bankml's thesis and *can a binary computer perform a ternary
-  operation?* from docs/TECHNICAL.md), and her voice examples, all pre-rendered in her own voice and committed to this
-  repository. There is PLAY ALL, per chapter, and from any line, and **⤓ Savante.opus** / **⤓ Savante-reading.opus**
-  export each set as one file with chapter marks. DreamKnob **SPEED**, **FM**, **GAIN** and **VOLUME** appear in a
-  dockable, resizable VOICE dock when she speaks. View mode on the LAN plays and exports them too.
+- **Savante speaks**: her card plays an introduction for new participants, **the reading** (bankml's thesis from
+  docs/TECHNICAL.md) and her voice examples, pre-rendered in her own voice and committed to this repository, with
+  one-file exports. How to listen: **[playback.md](docs/playback.md)**.
 - **The aivatar**: click the portrait for the agent's card, with every aspect of its persona, its verifiable identity
   (hashes, doctrine root, THOT) and its ledgered files. Choose the portrait, or upload one for a derived agent.
 - Panels resize from a refined corner handle. The side panel drags to either side (drop zones appear) or swaps with ⇄.
@@ -239,6 +236,8 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 
 | file | what |
 |---|---|
+| `install.sh` | the installer: check, build, engine, python, canon, model, start (and stop, status, voice) |
+| `tools/bashmoji.sh` | the installer's glyphs and colour, vendored from [cryptoAGI/bashmoji](https://github.com/cryptoAGI/bashmoji) |
 | `bankml.rs` | the crate: the plan of record (header checklist), `guard`, `pin`, `verify`, `Receipt` |
 | `gguf.rs` | header-only GGUF v3 parse, the guard, a read-only memory map |
 | `q1_0.rs` | the 1-bit kernel: dequantize, `q8_0` activations, scalar model, AVX2, decode and prefill |
@@ -255,7 +254,8 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `ui/embed.py` | embeddings with bge-m3 (the model mindX uses) through the local Ollama — see [embedding.md](docs/embedding.md) |
 | `ui/speak.py` | Savante's voice: rendering, the introduction and the reading, the exports |
 | `ui/chain.py` | iNFT: ABI, JSON-RPC, mint planning, simulation, unsigned transactions, devnet, load from a token |
-| `docs/usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
+| `docs/usage.md` | the full guide: install, both modes, `.history`, receipts, the canon, troubleshooting |
+| `docs/playback.md` | new to Savante: her page, her card, listening to her |
 | `docs/embedding.md` | the embedding model: why, how, the cache, the ranking, PostgreSQL, settings |
 | `docs/research.md` | the state of the field and bankml's place in it, with links and papers |
 | `docs/oracles.md` | every oracle bankml is checked against: what, how, where, and what it last found |
