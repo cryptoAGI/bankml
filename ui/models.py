@@ -30,6 +30,7 @@ LISTEN = os.environ.get("BANKML_SERVE_LISTEN", "127.0.0.1:18093")
 UPSTREAM = os.environ.get("BANKML_UPSTREAM", "127.0.0.1:18092")
 LOG = Path(os.environ.get("BANKML_UI_STATE", HOME / ".local" / "share" / "bankml" / "savante")).expanduser() / "carrier.log"
 DISK_MARGIN = 1_500_000_000  # never fill the disk: keep 1.5 GB free after an import
+EMBEDDING_ARCHS = {"bert", "nomic-bert", "jina-bert-v2", "xlm-roberta", "modern-bert", "neo-bert", "t5encoder"}  # encoders: they embed, they do not chat
 UA = {"User-Agent": "bankml-importer (+https://github.com/cryptoAGI/bankml)"}
 
 # OSI-approved licences (SPDX ids as Hugging Face tags them), plus public-domain dedications
@@ -510,7 +511,11 @@ def _stop_carrier():
         raise RuntimeError(f"the carrier's ports are still held by {sorted(set(_listeners().values()))}; stop them by hand")
 
 
-def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads=3, ctx=4096, wait=1800) -> dict:
+CTX = int(os.environ.get("BANKML_CTX", "2048"))  # the engine's context: 2048 keeps an 8B model's KV cache near 0.3 GB
+THREADS = int(os.environ.get("BANKML_THREADS_SERVE", "3"))
+
+
+def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads=None, ctx=None, wait=1800) -> dict:
     """Start `bankml serve --spawn` and wait until it answers verified, with `want_sha` when given. bankml hashes the
     whole file before it binds, so the wait is on the process, not on the ports: it fails only when the process exits
     or the wait runs out, and then the process group is killed so no second carrier is left behind."""
@@ -520,7 +525,7 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
         log.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} bankml serve {model.name}\n".encode())
         log.flush()
         proc = subprocess.Popen([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM,
-                                 "--listen", LISTEN, "--threads", str(threads), "--ctx", str(ctx)], stdout=log, stderr=log,
+                                 "--listen", LISTEN, "--threads", str(threads or THREADS), "--ctx", str(ctx or CTX)], stdout=log, stderr=log,
                                 stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO))
     t0 = time.time()
     why = "timed out"
@@ -571,6 +576,9 @@ def switch(file: str, busy=lambda: False) -> dict:
     ok, why = fits_memory(p.stat().st_size)
     if not ok:
         raise RuntimeError(why)
+    arch = guard(p).get("arch")
+    if arch in EMBEDDING_ARCHS:
+        raise RuntimeError(f"{file} is an embedding model ({arch}); it cannot be the chat carrier (see embedding.md)")
     pins = forks()
     if file not in pins:
         adopt(file)

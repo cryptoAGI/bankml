@@ -90,6 +90,21 @@ try:
     f["memory"].write_text(f["memory"].read_text() + '{"ts": 4, "text": "another"}\n', encoding="utf-8")
     r3 = connectors.publish(slug, dsn=dsn)
     check("a facet change makes the next publish a new THOT generation", r3["generation"] == g1 + 1 and not thot.verify(slug))
+    connectors.publish(slug, include_private=True, dsn=dsn)
+    before = connectors.psql("SELECT generation, (SELECT count(*) FROM bankml_exchanges) FROM bankml_agents;", dsn=dsn).strip()
+    f["history"].write_text(f["history"].read_text() + "not json at all\n", encoding="utf-8")  # the line's ::jsonb cast fails mid-publish
+    try:
+        connectors.publish(slug, include_private=True, dsn=dsn)
+        check("a publish that fails part-way changes nothing (one transaction)", False)
+    except RuntimeError:
+        after = connectors.psql("SELECT generation, (SELECT count(*) FROM bankml_exchanges) FROM bankml_agents;", dsn=dsn).strip()
+        check("a publish that fails part-way changes nothing (one transaction)", before == after)
+    cr = json.loads((agents.agent_dir(slug) / f"{slug}.thot.json").read_text())["identity"]["contentRoot"]
+    try:
+        connectors.load(slug, as_slug="ada_anchor", dsn=dsn, expect_content_root="0x" + "00" * 32)
+        check("load anchored to a contentRoot refuses a row that does not match it", False)
+    except ValueError:
+        check("load anchored to a contentRoot refuses a row that does not match it", True)
 finally:
     subprocess.run([BIN / "pg_ctl", "-D", data, "-m", "fast", "-w", "stop"], capture_output=True)
     shutil.rmtree(tmp, ignore_errors=True)

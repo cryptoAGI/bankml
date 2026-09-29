@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.1.7 — 2026-09-29
+
+A second audit, of the parts the first did not cover (the gateway, the chat path, commitments, agents, PostgreSQL,
+the chain), with every finding fixed and tested. Savante gains the embedding model mindX uses (bge-m3), and
+`research.md` places bankml among its peers. Record: `testing/results/0.1.7.txt`.
+
+### Fixed — `bankml serve` (Rust)
+- **A loopback caller could crash it or pile up threads.** Its limits are now:
+  - at most 32 connections;
+  - a 30 s read and 120 s write timeout;
+  - request-head lines of at most 16 KiB and at most 100 headers;
+  - upstream bodies and chunks of at most 64 MiB;
+  - chunked requests refused.
+- **A receipt could name a model the engine was not running.**
+  - `--spawn` now refuses when the port already answers, so it can no longer bind to a leftover engine.
+  - A spawned llama-server that dies is noticed at once, not after the 900 s health timeout. That timeout was what
+    made a failed model switch take 15 minutes.
+  - SIGTERM, SIGINT and SIGHUP stop the spawned engine too.
+  - Before every answer, serve re-checks the file's identity (device, inode, size, mtime) and the engine's
+    `/props` path. If either changed it refuses (503) rather than receipt weights it did not verify.
+- **Receipts name the request.** A new `request_sha256` field hashes the request body, and a `"signed": false`
+  field says what the receipt is. The docs now say plainly that receipts prove integrity between a client and its
+  own gateway, not to a third party.
+- **Web pages cannot drive it.** It requires a loopback `Host`, which blocks DNS rebinding, and a JSON
+  `Content-Type` on POST, which blocks the simple cross-origin form POST.
+- **Correctness.**
+  - A final SSE line without its newline is forwarded and counted.
+  - Unpaired `\u` surrogates decode to U+FFFD, the same way the UI hashes them, and an escape after an unpaired
+    high surrogate is no longer swallowed.
+  - HTTP reason phrases are right (403, 413, 415, 500, 503, 504), and a garbled upstream status becomes 502.
+
+### Fixed — the chat, `.history` and commitments (Python)
+- **One torn line no longer blanks `.history` or `.memory`.** Damaged lines are skipped and counted. Each record is
+  one locked, fsynced write, and it starts on a new line if the file ends mid-line. Rewrites of `.memory` are
+  atomic.
+- **Model switches can no longer be blocked forever.** Busy tracking is a per-request in-flight table with stale
+  expiry, instead of one global that a closed tab or an exception in `system_prompt()` could leave set, and one
+  tab's `finally` could clear for another. A timer left running by a lost request expires.
+- **Receipt checks no longer fail on answers with a `<think>` block or surrounding whitespace.** The raw text is
+  stored as `assistant_raw` and checked; the docs had said this was already so. The text is `choices[0]` only, as
+  the receipt hashes it.
+- **An exchange cannot land in the wrong agent's history.** The `.history` path is fixed when an answer starts.
+- **The Merkle tree is now RFC 6962.**
+  - Leaves are sha256(0x00 ‖ line) and nodes are sha256(0x01 ‖ l ‖ r), so an interior node can no longer pass as a
+    record.
+  - The tree is split at the largest power of two, so an odd node is promoted, and 3 records and 4 records with the
+    last repeated no longer share a root.
+  - Proofs carry the index and the tree size and are verified as RFC 9162 §2.1.3.2 prescribes.
+  - The roots match the Certificate Transparency reference vectors.
+  - Scheme `rfc6962-sha256`. Roots differ from 0.1.6's.
+- **Interact mode is loopback only, enforced.** `--mode interact --host 0.0.0.0` is refused, and a non-loopback
+  `Host` header gets a 400.
+
+### Fixed — agents, PostgreSQL, the chain
+- **The 15 doctrine clauses are now fixed at derivation, as the docs said.** `save()` refuses a persona edit that
+  changes them and names the clauses. `verify()` uses bankml's pointer list, not the one inside the ledger it is
+  checking, and also checks that the root is unchanged since derivation.
+- **Publishing to PostgreSQL is one transaction.** A failure part-way changes nothing. `load()` can be anchored to an
+  outside contentRoot (a token's), and says whether it checked against one or only for self-consistency.
+- **`chain.py`.**
+  - A devnet send goes only to a node on this machine, since a remote node can report chain 31337.
+  - Addresses must be 20 bytes; a short one would have shifted every argument the owner signs.
+  - The `cast` line quotes every argument.
+
+### Fixed — view mode
+- A 20 s socket timeout, so a slow LAN client cannot hold a thread.
+- `/api/state` is computed at most every 2 s, however many viewers poll.
+
+### Added
+- **Embedding with bge-m3, the model mindX uses** (1024-d, MIT; served by the local Ollama). See `embedding.md`.
+  - The `.history` ragebar ranks by words (BM25) and meaning (bge-m3) together, by reciprocal rank fusion.
+  - PostgreSQL publishing fills `bankml_exchanges.embedding` in the same transaction.
+  - Vectors are cached beside `.history`, keyed by the sha256 of the embedded text and tied to the model's digest.
+  - It is optional and guarded: without the model or the memory to load it, search is BM25 alone.
+  - On this laptop, with other applications holding memory, the guard refused to load bge-m3 (1.0 GB free, 1.3 GB
+    needed), which is what it is for.
+  - An embedding model is never offered as the chat carrier.
+- **`oracles.md`**: every oracle bankml is checked against, what each checks and how, and what it found in this
+  gate. The oracles are the compiled llama.cpp kernels, the scalar models, the Python guard, FIPS 180-4 and RFC 6962
+  vectors, published roots and CIDs, the THOT spec, and the iNFT contract. It also states the rule: the same bits
+  first, then the speed.
+- **`research.md`**: Rust inference engines, 1-bit and ternary inference, and verifiable inference as of
+  2026-09-29, with links and 26 papers. Its verdict:
+  - bankml's bit-exact oracle against the compiled llama.cpp, and its plain-AVX2 `Q2_0` kernel, have no public
+    equivalent;
+  - others are ahead on a native forward pass, GPUs, breadth of formats, ARM and attestation.
+
+### Tests
+- Rust:
+  - bounded heads and bodies;
+  - loopback hosts only;
+  - unpaired surrogates;
+  - file-identity changes;
+  - in the CLI test against a mock engine: 403 for a foreign Host, 415 for a non-JSON POST, 503 without a receipt
+    once the model file changes, and `request_sha256`.
+- `test_ui.py`:
+  - RFC 6962 reference roots and second-preimage cases;
+  - a torn line;
+  - raw-text receipts;
+  - stale in-flight expiry;
+  - fixed doctrine;
+  - the offline embedding path (a fake Ollama).
+- `test_connectors.py`: an atomic publish, and an anchored load.
+- `test_chain.py`: a remote devnet refused, a short address refused, and a quoted cast line.
+
 ## 0.1.6 — 2026-09-29
 
 An audit of 0.1.5, and every finding fixed with a test that would have caught it. Record:

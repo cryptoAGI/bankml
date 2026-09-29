@@ -44,7 +44,10 @@ def selector(sig: str) -> bytes:
 
 def _word(t: str, v) -> bytes:
     if t == "address":
-        return bytes(12) + bytes.fromhex(v[2:] if v.startswith("0x") else v)
+        b = bytes.fromhex(v[2:] if v.startswith("0x") else v)
+        if len(b) != 20:  # a short or long address would shift every later argument in calldata the owner signs
+            raise ValueError(f"an address is 20 bytes, not {len(b)}: {v}")
+        return bytes(12) + b
     if t == "bytes32":
         b = bytes.fromhex(v[2:] if isinstance(v, str) else v.hex())
         assert len(b) == 32, "bytes32 must be 32 bytes"
@@ -179,14 +182,20 @@ def unsigned_tx(url: str, contract: str, frm: str, plan: dict) -> dict:
         tx["gas"] = rpc(url, "eth_estimateGas", [{k: tx[k] for k in ("from", "to", "value", "data")}])
     except RPCError as e:
         tx["gas_estimate_error"] = str(e)
+    import shlex
     a = plan["args"]
-    cast = (f'cast send {contract} "{MINT_SIG}" {a["to"]} {a["contentRoot"]} "{a["storageURI"]}" {a["metadataRoot"]} '
-            f'{a["dimensions"]} {a["parallelUnits"]} "{a["tokenURI"]}" --rpc-url <RPC> --account <your keystore>')
+    q = shlex.quote  # every argument quoted: a storage or token URI cannot break out of the command the owner pastes
+    cast = (f'cast send {q(contract)} {q(MINT_SIG)} {q(a["to"])} {q(a["contentRoot"])} {q(a["storageURI"])} {q(a["metadataRoot"])} '
+            f'{q(str(a["dimensions"]))} {q(str(a["parallelUnits"]))} {q(a["tokenURI"])} --rpc-url <RPC> --account <your keystore>')
     return {"tx": tx, "cast": cast}
 
 
 def send_devnet(url: str, contract: str, frm: str, plan: dict) -> dict:
     """Send on a local devnet only (anvil's unlocked accounts). Refused on every other chain."""
+    from urllib.parse import urlsplit
+    host = (urlsplit(url).hostname or "").lower()
+    if host not in ("127.0.0.1", "localhost", "::1"):  # a remote node can report any chain id; a devnet is on this machine
+        raise PermissionError(f"{url} is not on this machine: bankml sends only to a local devnet; the owner signs everything else")
     cid = chain_id(url)
     if cid not in DEVNET_CHAIN_IDS:
         raise PermissionError(f"chain {cid} is not a local devnet: the owner signs this mint in their own wallet (unsigned_tx)")

@@ -190,8 +190,13 @@ fn mock_one(mut c: TcpStream, model: &str) {
 }
 
 fn http(addr: &str, method: &str, path: &str, body: &str) -> String {
+    http_h(addr, method, path, body, "Host: 127.0.0.1\r\nContent-Type: application/json\r\n")
+}
+
+fn http_h(addr: &str, method: &str, path: &str, body: &str, headers: &str) -> String {
     let mut s = TcpStream::connect(addr).unwrap();
-    write!(s, "{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(20))).unwrap();
+    write!(s, "{method} {path} HTTP/1.1\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
     let mut o = String::new();
     s.read_to_string(&mut o).unwrap();
     o
@@ -248,6 +253,17 @@ fn serve_gates_and_signs_answers() {
     assert!(receipt.contains(&format!("\"response_sha256\": \"{}\"", sha_hex(b"Savante knows."))), "{receipt}");
     assert!(st.find("bankml_receipt").unwrap() < st.find("[DONE]").unwrap(), "receipt before DONE");
     assert!(st.contains("\"content\":\"Savante \""), "the stream itself passes through untouched");
+    let body = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    assert!(one.contains(&format!("\"request_sha256\": \"{}\"", sha_hex(body.as_bytes()))), "the receipt names the request: {one}");
+    // a web page cannot drive it: a foreign Host (DNS rebinding) and a form-style POST are refused
+    let r = http_h(&addr, "POST", "/v1/chat/completions", body, "Host: evil.example\r\nContent-Type: application/json\r\n");
+    assert!(r.starts_with("HTTP/1.1 403"), "{r}");
+    let r = http_h(&addr, "POST", "/v1/chat/completions", body, "Host: 127.0.0.1\r\nContent-Type: text/plain\r\n");
+    assert!(r.starts_with("HTTP/1.1 415"), "{r}");
+    // the model file changes after verification: no answer, no receipt
+    std::fs::write(&m, b"replaced weights").unwrap();
+    let r = http(&addr, "POST", "/v1/chat/completions", body);
+    assert!(r.starts_with("HTTP/1.1 503") && !r.contains("bankml_receipt"), "{r}");
     let _ = child.kill();
     let _ = child.wait();
 }

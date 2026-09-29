@@ -92,6 +92,17 @@ def audio_file(key: str):
     return f if key in man and f.is_file() else None
 
 
+_STATE = {"t": 0.0, "body": None}
+
+
+def state_json() -> bytes:
+    """/api/state, computed at most every 2 s however many viewers poll (serve_status alone can wait 3 s)."""
+    import time as _t
+    if _STATE["body"] is None or _t.time() - _STATE["t"] > 2:
+        _STATE.update(t=_t.time(), body=json.dumps(state()).encode())
+    return _STATE["body"]
+
+
 def state() -> dict:
     p, card = CANON.persona, CANON.card
     serve = S.serve_status()
@@ -265,6 +276,7 @@ tick();setInterval(tick,2000);setInterval(rec,15000);
 
 class H(BaseHTTPRequestHandler):
     server_version = "bankml-view"
+    timeout = 20  # a LAN client that sends nothing (slowloris) releases its thread after 20 s
 
     def send(self, code, ctype, body: bytes, cache="no-store", disp=None):
         self.send_response(code)
@@ -309,7 +321,7 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/":
             return self.send(200, "text/html; charset=utf-8", PAGE.encode())
         if u.path == "/api/state":
-            return self.send(200, "application/json", json.dumps(state()).encode())
+            return self.send(200, "application/json", state_json())
         if u.path == "/api/result":
             name = (urllib.parse.parse_qs(u.query).get("name") or [""])[0]
             if name in S.results_list():  # only names the directory listing produced

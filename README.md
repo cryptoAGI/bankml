@@ -45,7 +45,9 @@ three threads, less than llama.cpp needs for the *1-bit* model's (0.34 s). Every
 
 Every number above is measured and reproducible — the tables, machines and commands are in
 **[PERFORMANCE.md](PERFORMANCE.md)**. The design, the method and the literature are in the technical report,
-**[TECHNICAL.md](TECHNICAL.md)**.
+**[TECHNICAL.md](TECHNICAL.md)**. Where bankml stands among Rust engines, 1-bit and ternary kernels and verifiable
+inference (with the papers) is in **[research.md](research.md)**; every oracle it is checked against, in
+**[oracles.md](oracles.md)**.
 
 ## The three design goals
 
@@ -174,8 +176,14 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `ui/agents.py` | custom agents: derive, edit, ledger; keccak256 and the doctrine root |
 | `ui/thot.py` | THOT manifests (`sagi.thot_manifest/1`), checked against the spec's test vectors |
 | `ui/connectors.py` | PostgreSQL (pgvector / pgvectorscale): publish and load agents, verified |
+| `ui/models.py` | the model importer: catalogue, Hugging Face, Ollama; sha256 pins; the carrier switch |
+| `ui/embed.py` | embeddings with bge-m3 (the model mindX uses) through the local Ollama — see [embedding.md](embedding.md) |
+| `ui/speak.py` | Savante's voice: rendering, the introduction and the reading, the exports |
 | `ui/chain.py` | iNFT: ABI, JSON-RPC, mint planning, simulation, unsigned transactions, devnet, load from a token |
 | `usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
+| `embedding.md` | the embedding model: why, how, the cache, the ranking, PostgreSQL, settings |
+| `research.md` | the state of the field and bankml's place in it, with links and papers |
+| `oracles.md` | every oracle bankml is checked against: what, how, where, and what it last found |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
 

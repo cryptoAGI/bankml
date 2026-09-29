@@ -308,11 +308,15 @@ file's tensor types.
 ### III.6 Proof of data without the data
 
 The runtime's records are private by default and verifiable by construction. Every exchange is one line in a local
-JSONL file (`.history`); the operator's notes are another (`.memory`). Each line's sha256 is a leaf. The leaves form a
-Merkle tree (an odd node is paired with itself), and the whole file has a sha256 and a CIDv1: raw codec, sha2-256,
+JSONL file (`.history`); the operator's notes are another (`.memory`). Each line is a leaf, hashed as
+sha256(0x00 ‖ line). The leaves form an RFC 6962 Merkle tree: interior nodes are sha256(0x01 ‖ left ‖ right), and
+the tree is split at the largest power of two, so an odd node is promoted and never paired with itself. Leaves and
+nodes cannot be confused, and trees of different sizes do not share a root; the tree before 0.1.7 had neither
+property. The whole file also has a sha256 and a CIDv1: raw codec, sha2-256,
 base32, the construction Savante's iNFT ledger uses for her canon files. Only these commitments leave the machine. The
 LAN view shows the root, the count and the CID, never a line. For any single exchange, the UI emits an inclusion proof:
-the leaf, the sibling path and the root. A holder of the root can check that exchange (and detect a changed byte in it)
+the leaf, its index, the tree size, the sibling path and the root, checked as RFC 9162 §2.1.3.2 prescribes. A holder
+of the root and the count can check that exchange (and detect a changed byte in it)
 without the rest of the history. The browser's local storage plays the same part on the client side: the viewer's
 layout stays in their own browser. The tests (`testing/test_ui.py`) check that every proof verifies, that a changed byte
 or a proof for another record fails, that the CID equals the house implementation's, and that the view's state carries

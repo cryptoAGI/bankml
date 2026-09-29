@@ -38,12 +38,13 @@ def _esc(v) -> str:
     return str(v).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
 
 
-def psql(script: str, rows: list | None = None, dsn: str | None = None) -> str:
-    """Run a script; `rows` ([(k, v), …]) are COPY-ed into temp table _in(k text, v text) first. Returns stdout."""
+def psql(script: str, rows: list | None = None, dsn: str | None = None, atomic: bool = False) -> str:
+    """Run a script; `rows` ([(k, v), …]) are COPY-ed into temp table _in(k text, v text) first. Returns stdout.
+    atomic: the whole script, COPY included, is one transaction (psql --single-transaction): all of it or none."""
     head = ""
     if rows is not None:
         head = "CREATE TEMP TABLE _in(k text, v text);\nCOPY _in FROM STDIN;\n" + "".join(f"{_esc(k)}\t{_esc(v)}\n" for k, v in rows) + "\\.\n"
-    p = subprocess.run(["psql", "-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-d", dsn or DSN, "-f", "-"],
+    p = subprocess.run(["psql", "-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"] + (["--single-transaction"] if atomic else []) + ["-d", dsn or DSN, "-f", "-"],
                        input=head + script, capture_output=True, text=True, timeout=120)
     if p.returncode:
         raise RuntimeError(p.stderr.strip() or f"psql exit {p.returncode}")
@@ -93,7 +94,7 @@ def _lines(p):
 
 def publish(slug: str, include_private: bool = False, dsn: str | None = None) -> dict:
     """Upsert the agent (and, if asked, its history and memory lines). The THOT manifest is rebuilt first."""
-    ensure_schema(dsn)
+    sch = ensure_schema(dsn)
     f = agents.files(slug)
     m = thot.build(slug)
     bad = thot.verify(slug)
@@ -106,6 +107,36 @@ def publish(slug: str, include_private: bool = False, dsn: str | None = None) ->
             ("thot_cid", m["identity"]["cid"]), ("content_root", m["identity"]["contentRoot"]), ("generation", str(m["bundle"]["generation"])),
             ("private", "true" if include_private else "false")]
     get = lambda k: f"(SELECT v FROM _in WHERE k='{k}')"  # noqa: E731 — fixed column names only; values stay in _in
+    hist = _lines(f["history"]) if include_private else []
+    mem = _lines(f["memory"]) if include_private else []
+    # k = "h:<position>" / "m:<position>"; v = the line's exact text (the bytes its sha256 and the Merkle proofs are over)
+    rows += [(f"h:{i}", l.decode("utf-8")) for i, l in enumerate(hist)] + [(f"m:{i}", l.decode("utf-8")) for i, l in enumerate(mem)]
+    emb_note, n_emb = "no private lines published", 0
+    if hist and sch.get("vector"):  # meaning-search in the database, as mindX's memories: bge-m3, 1024-d
+        import embed
+        try:
+            recs = [json.loads(l) for l in hist]
+            embed.index(f["history"], recs)
+            have = embed.cached(f["history"])
+            for i, r in enumerate(recs):
+                v = have.get(hashlib.sha256(embed.exchange_text(r).encode()).hexdigest())
+                if v is not None:
+                    rows.append((f"e:{i}", "[" + ",".join(f"{x:.7g}" for x in v) + "]"))
+                    n_emb += 1
+            emb_note = f"{n_emb} of {len(hist)} exchanges embedded with {embed.MODEL} ({embed.provenance().get('digest', '')[:12]}…)"
+        except (embed.Unavailable, ValueError) as e:
+            emb_note = f"not embedded: {e}"
+    elif hist:
+        emb_note = "not embedded: the database has no pgvector"
+    lines_sql = "".join(f"""
+DELETE FROM {table} WHERE agent = {get('slug')};
+INSERT INTO {table} (agent, seq, line_sha256, line, rec)
+SELECT {get('slug')}, substr(k, 3)::int, encode(sha256(convert_to(v, 'UTF8')), 'hex'), v, v::jsonb FROM _in WHERE k LIKE '{p}:%';
+""" for table, p in (("bankml_exchanges", "h"), ("bankml_memory", "m"))) + ("""
+UPDATE bankml_exchanges x SET embedding = i.v::vector FROM _in i
+ WHERE i.k LIKE 'e:%' AND x.agent = (SELECT v FROM _in WHERE k='slug') AND x.seq = substr(i.k, 3)::int;
+""" if n_emb else "")
+    # one transaction: the agent row and its lines change together or not at all
     psql(f"""
 INSERT INTO bankml_agents (slug, name, persona, persona_raw, prompt, card, commitments, manifest, thot_cid, content_root, generation, private_included)
 VALUES ({get('slug')}, {get('name')}, {get('persona')}::jsonb, {get('persona')}, {get('prompt')}, {get('card')}::jsonb, {get('commitments')}::jsonb,
@@ -113,21 +144,10 @@ VALUES ({get('slug')}, {get('name')}, {get('persona')}::jsonb, {get('persona')},
 ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, persona=EXCLUDED.persona, persona_raw=EXCLUDED.persona_raw, prompt=EXCLUDED.prompt, card=EXCLUDED.card,
   commitments=EXCLUDED.commitments, manifest=EXCLUDED.manifest, thot_cid=EXCLUDED.thot_cid, content_root=EXCLUDED.content_root,
   generation=EXCLUDED.generation, private_included=EXCLUDED.private_included, published_at=now();
-""", rows, dsn)
-    n_ex = n_mem = 0
-    for table, key in (("bankml_exchanges", "history"), ("bankml_memory", "memory")):
-        psql(f"DELETE FROM {table} WHERE agent = (SELECT v FROM _in WHERE k='slug');", [("slug", slug)], dsn)
-        if not include_private:
-            continue
-        lines = _lines(f[key])
-        # k = the line's position; v = its exact text (the bytes its sha256 and the Merkle proofs are over)
-        psql(f"""
-INSERT INTO {table} (agent, seq, line_sha256, line, rec)
-SELECT (SELECT v FROM _in WHERE k='slug'), k::int, encode(sha256(convert_to(v, 'UTF8')), 'hex'), v, v::jsonb FROM _in WHERE k <> 'slug';
-""", [("slug", slug)] + [(str(i), l.decode("utf-8")) for i, l in enumerate(lines)], dsn)
-        n_ex, n_mem = (len(lines), n_mem) if key == "history" else (n_ex, len(lines))
+{lines_sql}""", rows, dsn, atomic=True)
+    n_ex, n_mem = len(hist), len(mem)
     return {"slug": slug, "thot_cid": m["identity"]["cid"], "content_root": m["identity"]["contentRoot"], "generation": m["bundle"]["generation"],
-            "private_included": include_private, "exchanges": n_ex, "memory": n_mem}
+            "private_included": include_private, "exchanges": n_ex, "memory": n_mem, "embedded": n_emb, "embedding": emb_note}
 
 
 def published(dsn: str | None = None) -> list:
@@ -136,14 +156,19 @@ def published(dsn: str | None = None) -> list:
     return json.loads(out.strip() or "[]")
 
 
-def load(slug: str, as_slug: str | None = None, dsn: str | None = None) -> dict:
-    """Rebuild a published agent locally — refused unless every public file matches the stored THOT manifest."""
+def load(slug: str, as_slug: str | None = None, dsn: str | None = None, expect_content_root: str | None = None) -> dict:
+    """Rebuild a published agent locally — refused unless every public file matches the stored THOT manifest.
+    The manifest comes from the same row, so on its own that is self-consistency: whoever can write the database can
+    write a consistent row. Pass `expect_content_root` (an iNFT's contentRoot, or one published elsewhere) to anchor
+    the manifest outside the database; the result says which kind of check was made."""
     out = psql("SELECT row_to_json(a) FROM bankml_agents a WHERE slug = (SELECT v FROM _in WHERE k='slug');", [("slug", slug)], dsn).strip()
     if not out:
         raise KeyError(f"no published agent {slug!r}")
     row = json.loads(out)
     m = row["manifest"]
     findings = thot.check_structure(m)
+    if expect_content_root and (m.get("identity") or {}).get("contentRoot", "").lower() != expect_content_root.lower():
+        raise ValueError(f"refused: the stored manifest's contentRoot is not the expected {expect_content_root}")
     persona_b = row["persona_raw"].encode()  # the exact bytes; the jsonb copy is for queries
     want = {x["facet"]: x["sha256"] for x in m["facets"]}
     got = {"persona": hashlib.sha256(persona_b).hexdigest(), "prompt": hashlib.sha256(row["prompt"].encode()).hexdigest()}
@@ -168,4 +193,6 @@ def load(slug: str, as_slug: str | None = None, dsn: str | None = None) -> dict:
                 raise ValueError(f"refused: the stored {key} does not match the manifest's {facet} digest")
             f[key].write_bytes(b)
             n += len(lines)
-    return {"slug": target, "from": slug, "thot_cid": row["thot_cid"], "generation": row["generation"], "verified": True, "private_lines": n}
+    return {"slug": target, "from": slug, "thot_cid": row["thot_cid"], "generation": row["generation"], "verified": True, "private_lines": n,
+            "anchored": bool(expect_content_root), "check": "against the expected contentRoot" if expect_content_root else
+            "self-consistency (files against the manifest stored beside them)"}

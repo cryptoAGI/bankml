@@ -184,7 +184,13 @@ def save(slug: str, persona_text: str | None = None, prompt_text: str | None = N
         bad = preflight(p)
         if bad:
             raise ValueError("; ".join(bad[:5]))
-        doctrine_root(p)  # every doctrine clause present
+        new_root = doctrine_root(p)  # every doctrine clause present
+        fixed = fixed_root(slug)
+        if fixed and new_root != fixed:
+            changed = [ptr for ptr in DOCTRINE_POINTERS
+                       if canonical_bytes(pointer_get(p, ptr)) != canonical_bytes(pointer_get(json.loads(f["persona"].read_text(encoding="utf-8")), ptr))]
+            raise ValueError("the doctrine clauses are fixed when an agent is derived (" + ", ".join(changed[:6]) +
+                             " changed); derive a new agent to change them. The .prompt, voice examples and other fields stay editable.")
         f["persona"].write_text(json.dumps(p, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     if prompt_text is not None:
         f["prompt"].write_text(prompt_text.rstrip("\n") + "\n", encoding="utf-8")
@@ -216,12 +222,23 @@ def set_aivatar(slug: str, b: bytes) -> dict:
     return rebind(slug)
 
 
+def fixed_root(slug: str) -> str | None:
+    """The doctrine root recorded when the agent was derived (carried forward by every rebind, never recomputed)."""
+    try:
+        led = json.loads(files(slug)["commitments.json"].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    d = led.get("doctrine_root") or {}
+    return d.get("fixed_at_derivation") or d.get("value")
+
+
 def rebind(slug: str, derived_from: dict | None = None) -> dict:
     """Regenerate the agent card and the ledger from the files as they are now."""
     f = files(slug)
     p = json.loads(f["persona"].read_text(encoding="utf-8"))
     old = json.loads(f["commitments.json"].read_text(encoding="utf-8")) if f["commitments.json"].is_file() else {}
     derived_from = derived_from or old.get("derived_from")
+    fixed = (old.get("doctrine_root") or {}).get("fixed_at_derivation") or (old.get("doctrine_root") or {}).get("value") or doctrine_root(p)
     card = {"type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1", "name": p.get("name"),
             "description": ((p.get("token") or {}).get("public_metadata") or {}).get("description") or p.get("mantra", ""),
             "image": None, "external_url": None,
@@ -238,7 +255,7 @@ def rebind(slug: str, derived_from: dict | None = None) -> dict:
     ledger = {"schema": "bankml.agent.commitments v1", "agent": slug, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
               "derived_from": derived_from, "artifacts": arts,
               "card": {"path": f["agentcard.json"].name, **file_commitment(f["agentcard.json"].read_bytes())},
-              "doctrine_root": {"value": doctrine_root(p), "hash": "keccak256 (bankml, pure Python)", "pointers": DOCTRINE_POINTERS,
+              "doctrine_root": {"value": doctrine_root(p), "fixed_at_derivation": fixed, "hash": "keccak256 (bankml, pure Python)", "pointers": DOCTRINE_POINTERS,
                                 "canonicalization": "json.dumps(sort_keys=True, separators=(',', ':'), ensure_ascii=False), utf-8; "
                                                     "preimage = Σ pointer ‖ 0x1f ‖ canonical(value) ‖ 0x1e"},
               "onchain_slots": {"personaDigest": arts["persona"]["sha256"], "doctrineRoot": doctrine_root(p), "written": False},
@@ -256,5 +273,8 @@ def verify(slug: str) -> list:
         b = (agent_dir(slug) / a["path"]).read_bytes()
         rows.append((k, hashlib.sha256(b).hexdigest() == a["sha256"], a["path"]))
     p = json.loads(f["persona"].read_text(encoding="utf-8"))
-    rows.append(("doctrine root", doctrine_root(p, led["doctrine_root"]["pointers"]) == led["doctrine_root"]["value"], led["doctrine_root"]["value"]))
+    dr = led.get("doctrine_root") or {}
+    now = doctrine_root(p)  # always over bankml's own pointer list, never the list inside the ledger being checked
+    rows.append(("doctrine root", now == dr.get("value") and list(dr.get("pointers") or []) == DOCTRINE_POINTERS, dr.get("value")))
+    rows.append(("doctrine unchanged since derivation", now == (dr.get("fixed_at_derivation") or dr.get("value")), dr.get("fixed_at_derivation") or dr.get("value")))
     return rows

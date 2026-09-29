@@ -46,6 +46,7 @@ import uuid
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # never leave a cache next to anything we import
+import embed  # noqa: E402 — bge-m3 via the local Ollama (optional; BM25 stands alone without it)
 
 CANON = Path(os.environ.get("SAVANTE_CANON", Path.home() / "savante")).expanduser()
 SERVE = os.environ.get("BANKML_SERVE", "http://127.0.0.1:18093")
@@ -179,18 +180,61 @@ def system_prompt(canon: Canon, which: str):
 
 
 # ── .history ─────────────────────────────────────────────────────────────────────
-def history_append(rec: dict):
-    STATE.mkdir(parents=True, exist_ok=True)
-    with HISTORY.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+def jsonl_read(path: Path) -> list:
+    """Every record of a JSONL file, oldest first. A damaged line (a crash mid-write) is skipped and counted in
+    JSONL_BAD, never allowed to blank the whole file."""
+    out, bad = [], 0
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    for l in text.splitlines():
+        if not l.strip():
+            continue
+        try:
+            r = json.loads(l)
+        except ValueError:
+            bad += 1
+            continue
+        if isinstance(r, dict):
+            out.append(r)
+        else:
+            bad += 1
+    JSONL_BAD[str(path)] = bad
+    return out
+
+
+JSONL_BAD: dict = {}
+
+
+def jsonl_append(path: Path, rec: dict) -> None:
+    """One record as one write, under a lock, fsynced. If the file ends mid-line (a torn write), a newline goes first,
+    so the new record is never glued onto the damaged one."""
+    import fcntl
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        size = os.fstat(fd).st_size
+        if size:
+            with open(path, "rb") as f:
+                f.seek(size - 1)
+                if f.read(1) != b"\n":
+                    data = b"\n" + data
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def history_append(rec: dict, path: Path | None = None):
+    jsonl_append(path or HISTORY, rec)
 
 
 def history_load():
     """(session id, [[user, answer], …]) of the most recent session, or a new session."""
-    try:
-        lines = [json.loads(l) for l in HISTORY.read_text(encoding="utf-8").splitlines() if l.strip()]
-    except (OSError, ValueError):
-        lines = []
+    lines = jsonl_read(HISTORY)
     if not lines:
         return uuid.uuid4().hex[:12], []
     sid = lines[-1].get("session")
@@ -198,11 +242,8 @@ def history_load():
 
 
 def history_all() -> list:
-    """Every record in .history, oldest first (all sessions)."""
-    try:
-        return [json.loads(l) for l in HISTORY.read_text(encoding="utf-8").splitlines() if l.strip()]
-    except (OSError, ValueError):
-        return []
+    """Every record in .history, oldest first (all sessions); damaged lines skipped."""
+    return jsonl_read(HISTORY)
 
 
 def _timing(r: dict):
@@ -220,8 +261,10 @@ def _when(r: dict) -> str:
 
 
 def _hash_ok(r: dict):
+    """The receipt hashes the raw text the model wrote (think block and whitespace included): `assistant_raw` since
+    0.1.7; older records only kept the cleaned `assistant`, which matches whenever cleaning changed nothing."""
     h = (r.get("receipt") or {}).get("response_sha256")
-    return None if not h else h == sha256((r.get("assistant") or "").encode())
+    return None if not h else h == sha256((r.get("assistant_raw", r.get("assistant")) or "").encode())
 
 
 # ── proof of data without the data: sha256 leaves, a Merkle root, CIDv1 ─────────────
@@ -240,50 +283,91 @@ def _lines(path: Path) -> list:
         return []
 
 
-def _pair(a: str, b: str) -> str:
-    return hashlib.sha256(bytes.fromhex(a) + bytes.fromhex(b)).hexdigest()
+# RFC 6962 / RFC 9162 Merkle trees: leaf = H(0x00 ‖ line), node = H(0x01 ‖ left ‖ right), the tree split at the largest
+# power of two below n (an odd node is promoted, never paired with itself). Leaves and nodes cannot be confused, and a
+# proof binds the record's index and the tree's size.
+MERKLE_SCHEME = "rfc6962-sha256"
 
 
-def merkle(leaves: list) -> list:
-    """All levels, leaves first; an odd node is paired with itself."""
-    levels = [leaves]
-    while len(levels[-1]) > 1:
-        lv = levels[-1]
-        levels.append([_pair(lv[i], lv[i + 1] if i + 1 < len(lv) else lv[i]) for i in range(0, len(lv), 2)])
-    return levels
+def _leaf(line: bytes) -> str:
+    return hashlib.sha256(b"\x00" + line).hexdigest()
+
+
+def _node(a: str, b: str) -> str:
+    return hashlib.sha256(b"\x01" + bytes.fromhex(a) + bytes.fromhex(b)).hexdigest()
+
+
+def _split(n: int) -> int:
+    k = 1
+    while k * 2 < n:
+        k *= 2
+    return k
+
+
+def merkle_root(leaves: list) -> str | None:
+    if not leaves:
+        return None
+    if len(leaves) == 1:
+        return leaves[0]
+    k = _split(len(leaves))
+    return _node(merkle_root(leaves[:k]), merkle_root(leaves[k:]))
+
+
+def _audit_path(m: int, leaves: list) -> list:
+    """RFC 6962 PATH(m, D[n]): sibling hashes from the leaf up."""
+    n = len(leaves)
+    if n <= 1:
+        return []
+    k = _split(n)
+    if m < k:
+        return _audit_path(m, leaves[:k]) + [merkle_root(leaves[k:])]
+    return _audit_path(m - k, leaves[k:]) + [merkle_root(leaves[:k])]
 
 
 def commitment(path: Path) -> dict:
-    """{records, merkle_root, file_sha256, file_cid} for a JSONL file — shareable; reveals no content."""
+    """{records, merkle_root, scheme, file_sha256, file_cid} for a JSONL file — shareable; reveals no content."""
     lines = _lines(path)
-    leaves = [sha256(l) for l in lines]
     raw = b"".join(l + b"\n" for l in lines)
-    return {"file": path.name, "records": len(lines), "merkle_root": merkle(leaves)[-1][0] if leaves else None,
+    return {"file": path.name, "records": len(lines), "merkle_root": merkle_root([_leaf(l) for l in lines]), "scheme": MERKLE_SCHEME,
             "file_sha256": sha256(raw) if lines else None, "file_cid": cid_v1_raw(raw) if lines else None}
 
 
 def inclusion_proof(path: Path, k: int) -> dict:
-    """The proof that record k (0-based) is in the file whose root is `merkle_root`."""
+    """The proof that record k (0-based) of `records` is in the file whose root is `merkle_root`."""
     lines = _lines(path)
-    leaves = [sha256(l) for l in lines]
+    leaves = [_leaf(l) for l in lines]
     if not 0 <= k < len(leaves):
         return {}
-    levels, i, sib = merkle(leaves), k, []
-    for lv in levels[:-1]:
-        j = i ^ 1
-        sib.append({"side": "right" if j > i else "left", "hash": lv[j] if j < len(lv) else lv[i]})
-        i //= 2
-    return {"record": k, "leaf": leaves[k], "line_sha256_of": "the exact JSONL line, without its newline",
-            "path": sib, "merkle_root": levels[-1][0], "records": len(leaves)}
+    return {"scheme": MERKLE_SCHEME, "record": k, "records": len(leaves), "leaf": leaves[k],
+            "line_hashed_as": "sha256(0x00 ‖ the exact JSONL line, without its newline)",
+            "path": _audit_path(k, leaves), "merkle_root": merkle_root(leaves)}
 
 
 def verify_inclusion(line: bytes, proof: dict) -> bool:
-    h = sha256(line)
-    if h != proof.get("leaf"):
+    """RFC 9162 §2.1.3.2: recompute the root from the line, its index and the tree size; all three are bound."""
+    try:
+        fn, sn = int(proof["record"]), int(proof["records"]) - 1
+        path = list(proof["path"])
+    except (KeyError, TypeError, ValueError):
         return False
-    for step in proof.get("path", []):
-        h = _pair(h, step["hash"]) if step["side"] == "right" else _pair(step["hash"], h)
-    return h == proof.get("merkle_root")
+    if proof.get("scheme") != MERKLE_SCHEME or not 0 <= fn <= sn:
+        return False
+    r = _leaf(line)
+    if r != proof.get("leaf"):
+        return False
+    for p in path:
+        if sn == 0:
+            return False
+        if fn & 1 or fn == sn:
+            r = _node(p, r)
+            while not fn & 1 and fn != 0:
+                fn >>= 1
+                sn >>= 1
+        else:
+            r = _node(r, p)
+        fn >>= 1
+        sn >>= 1
+    return sn == 0 and r == proof.get("merkle_root")
 
 
 # ── RAGE over .history: the house index (mindX rage.py) when present, else the same BM25 shape here ──
@@ -354,25 +438,48 @@ def history_search(query: str, k: int = 8):
         if i not in seen:
             seen.add(i)
             out.append((sc, i, r))
-    return out[:k], engine
+    sem = _semantic(query, recs, k * 3)
+    if sem is None:
+        return out[:k], engine
+    ranked, note = sem
+    fused = embed.fuse([i for _, i, _ in out], ranked)
+    return [(sc, i, recs[i]) for i, sc in fused[:k]], f"{engine} + {embed.MODEL} (meaning, {note}), fused by reciprocal rank"
+
+
+def _semantic(query: str, recs: list, n: int):
+    """([record indices by meaning], note) from bge-m3, or None when it cannot run now (then BM25 stands alone).
+    Exchanges not yet embedded are indexed in the background; the ragebar never waits for them."""
+    try:
+        st = embed.status()
+    except Exception:  # noqa: BLE001
+        return None
+    if not st.get("ready"):
+        return None
+    have = embed.cached(HISTORY)
+    vecs = {i: have.get(hashlib.sha256(embed.exchange_text(r).encode()).hexdigest()) for i, r in enumerate(recs)}
+    missing = sum(1 for v in vecs.values() if v is None)
+    if missing:
+        embed.index_async(HISTORY, recs)
+    if len(query.strip()) < 3 or missing == len(recs):
+        return None
+    qv = embed.query_vector(query)
+    if qv is None:
+        return None
+    ranked = sorted((i for i, v in vecs.items() if v is not None), key=lambda i: -embed.cosine(qv, vecs[i]))[:n]
+    return ranked, f"{len(recs) - missing} of {len(recs)} embedded"
 
 
 # ── .memory: notes the operator keeps, outside the canon ──────────────────────────
 def memory_all() -> list:
-    try:
-        return [json.loads(l) for l in MEMORY.read_text(encoding="utf-8").splitlines() if l.strip()]
-    except (OSError, ValueError):
-        return []
+    return jsonl_read(MEMORY)
 
 
 def memory_add(text: str, source: dict | None = None) -> int:
     text = (text or "").strip()
     if not text:
         return len(memory_all())
-    STATE.mkdir(parents=True, exist_ok=True)
-    with MEMORY.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": round(time.time(), 3), "at": iso(time.time()), "text": text, "sha256": sha256(text.encode()),
-                            "source": source or {"kind": "typed"}}, ensure_ascii=False) + "\n")
+    jsonl_append(MEMORY, {"ts": round(time.time(), 3), "at": iso(time.time()), "text": text, "sha256": sha256(text.encode()),
+                          "source": source or {"kind": "typed"}})
     return len(memory_all())
 
 
@@ -381,7 +488,9 @@ def memory_remove(n: int) -> int:
     if 1 <= n <= len(m):
         del m[n - 1]
         STATE.mkdir(parents=True, exist_ok=True)
-        MEMORY.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in m), encoding="utf-8")
+        tmp = MEMORY.with_name(MEMORY.name + ".tmp")
+        tmp.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in m), encoding="utf-8")
+        os.replace(tmp, MEMORY)  # never half a .memory
     return len(memory_all())
 
 
@@ -480,8 +589,9 @@ def stream(messages, max_tokens, temperature):
                 if "bankml_receipt" in ev:
                     receipt = ev["bankml_receipt"]
                     continue
-                for ch in ev.get("choices") or []:
-                    acc += (ch.get("delta") or {}).get("content") or ""
+                ch = (ev.get("choices") or [{}])[0] or {}  # the receipt hashes choices[0], so the text is choices[0] only
+                # a lone surrogate (\ud800 without its pair) becomes U+FFFD, as bankml's JSON decoder makes it
+                acc += re.sub("[\ud800-\udfff]", "\ufffd", (ch.get("delta") or {}).get("content") or "")
                 yield acc, None
     except urllib.error.HTTPError as e:
         yield f"bankml serve refused: {e.read().decode('utf-8', 'replace')[:500]}", {"error": True}
@@ -676,8 +786,9 @@ def catalog_choices() -> list:
 
 
 def installed_choices() -> list:
+    """Chat models only: an embedding model (bge-m3 and the like) is listed in the table, not offered as a carrier."""
     import models
-    return [m["file"] for m in models.installed() if m["pinned"] or m["catalog"]]
+    return [m["file"] for m in models.installed() if (m["pinned"] or m["catalog"]) and models.guard(Path(m["path"])).get("arch") not in models.EMBEDDING_ARCHS]
 
 
 def carrier_md() -> str:
@@ -703,11 +814,24 @@ def carrier_md() -> str:
 
 
 # ── the timer: from the press of Send to the last token ──────────────────────────
-PENDING: dict = {"t0": None, "first": None}
+PENDING: dict = {"t0": None, "first": None}  # the timer's view of the latest Send
+INFLIGHT: dict = {}  # request id -> start time: every answer being written, in any tab
+STALE_S = 1800  # an entry older than this is a lost request (a closed tab), not an answer
+
+
+def chat_busy() -> bool:
+    now = time.time()
+    for k, t in list(INFLIGHT.items()):
+        if now - t > STALE_S:
+            INFLIGHT.pop(k, None)
+    return bool(INFLIGHT)
 
 
 def timer_md() -> str:
     t0, first = PENDING["t0"], PENDING["first"]
+    if t0 is not None and not INFLIGHT and time.time() - t0 > 120:  # Send was pressed but no answer started (a closed tab)
+        PENDING.update(t0=None, first=None)
+        t0 = None
     if t0 is None:
         return "<div class='bk-timer bk-idle'>⏱ ready</div>"
     el = time.time() - t0
@@ -1662,45 +1786,51 @@ def build(canon: Canon, mode: str):
                 if not h or h[-1][1] is not None:
                     yield h
                     return
-                system, why = system_prompt(canon, which)
+                rid = uuid.uuid4().hex
+                INFLIGHT[rid] = time.time()
                 t0 = PENDING["t0"] or time.time()
-                if system is None:
-                    h[-1][1] = f"refused: {why}"
-                    PENDING.update(t0=None, first=None)
-                    yield h
-                    return
-                mem = memory_block() if use_mem else ""
-                if mem:
-                    system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
-                st = serve_status()
-                arch = str((st.get("verified") or {}).get("arch") or "").lower()
-                qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
-                msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3)
-                text, rc = "", {}
+                hist, agent = HISTORY, ACTIVE["slug"] or "savante"  # where this exchange belongs, fixed at its start
                 try:
+                    system, why = system_prompt(canon, which)
+                    if system is None:
+                        h[-1][1] = f"refused: {why}"
+                        yield h
+                        return
+                    mem = memory_block() if use_mem else ""
+                    if mem:
+                        system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
+                    st = serve_status()
+                    arch = str((st.get("verified") or {}).get("arch") or "").lower()
+                    qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
+                    msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3)
+                    text, rc, first = "", {}, None
                     for text, r in stream(msgs, max_tokens, temperature):
-                        if text and PENDING["first"] is None:
-                            PENDING["first"] = time.time()
+                        if text and first is None:
+                            first = time.time()
+                            if PENDING["t0"] == t0:
+                                PENDING["first"] = first
                         h[-1][1] = show_answer(text)
                         rc = r if r is not None else rc
                         yield h
-                    t1, first = time.time(), PENDING["first"]
+                    t1 = time.time()
+                    answer = show_answer(text)
+                    timing = {"sent_at": iso(t0), "first_token_s": round(first - t0, 2) if first else None,
+                              "response_s": round(t1 - t0, 2), "answered_at": iso(t1)}
+                    clock = (f"⏱ sent {time.strftime('%H:%M:%S', time.localtime(t0))} · first token "
+                             f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
+                    foot = receipt_line(rc, text)
+                    h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + "</sub>"
+                    history_append({"ts": round(t0, 3), **timing, "agent": agent, "session": sess["id"], "user": h[-1][0], "assistant": answer,
+                                    "assistant_raw": text, "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc}, hist)
+                    yield h
                 finally:
-                    PENDING.update(t0=None, first=None)
-                answer = show_answer(text)
-                timing = {"sent_at": iso(t0), "first_token_s": round(first - t0, 2) if first else None,
-                          "response_s": round(t1 - t0, 2), "answered_at": iso(t1)}
-                clock = (f"⏱ sent {time.strftime('%H:%M:%S', time.localtime(t0))} · first token "
-                         f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
-                foot = receipt_line(rc, text)
-                h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + "</sub>"
-                history_append({"ts": round(t0, 3), **timing, "agent": ACTIVE["slug"] or "savante", "session": sess["id"], "user": h[-1][0], "assistant": answer,
-                                "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc})
-                yield h
+                    INFLIGHT.pop(rid, None)
+                    if PENDING["t0"] == t0:  # only this request's clock; another tab's stays
+                        PENDING.update(t0=None, first=None)
 
             ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], chat)
             ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], chat)
-            stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])
+            stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])  # a cancelled respond runs its finally
             which.change(lambda w: system_prompt(canon, w)[1], which, prov)
             new.click(lambda: ([], {"id": uuid.uuid4().hex[:12]}), None, [chat, session])
         stage, mach, log, ci = view_tabs(gr, canon)
@@ -1832,7 +1962,7 @@ def build(canon: Canon, mode: str):
                     loc_btn = gr.Button("Adopt", scale=1)
 
             def _busy():
-                return PENDING["t0"] is not None
+                return chat_busy()
 
             def _started(ok):
                 # the handler returns at once; the poll below follows the job (no queue worker held for a download)
@@ -2186,6 +2316,26 @@ def build(canon: Canon, mode: str):
     return demo
 
 
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def _trusted_hosts():
+    """Refuse any request whose Host is not loopback (a DNS-rebinding page cannot drive the UI): the middleware is
+    added where Gradio builds its app, before the server starts."""
+    from gradio import routes
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    orig = routes.App.create_app
+    if getattr(orig, "_bankml", False):
+        return
+
+    def create_app(*a, **k):
+        app = orig(*a, **k)
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "::1"])
+        return app
+    create_app._bankml = True
+    routes.App.create_app = staticmethod(create_app)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", type=int, default=7873)
@@ -2196,6 +2346,11 @@ def main():
         import view
         sys.argv = [sys.argv[0], "--host", a.host if a.host != "127.0.0.1" else "0.0.0.0", "--port", str(a.port if a.port != 7873 else 7874)]
         return view.main()
+    if a.mode == "interact" and a.host not in LOOPBACK:
+        # Gradio 3.37 has published path-traversal CVEs, and interact runs the Verifier, devnet mints and Postgres
+        # publishing: it is never offered to the network. view mode is the LAN page.
+        sys.exit(f"refused: interact mode serves loopback only ({', '.join(sorted(LOOPBACK))}); use --mode view for the LAN")
+    _trusted_hosts()
     canon = Canon(CANON)
     bad = [r for r in canon.rows if not r[2]]
     print(f"canon {CANON}: {len(canon.rows) - len(bad)}/{len(canon.rows)} ledger files verify" + (f"; FAILING: {bad}" if bad else ""))
@@ -2207,7 +2362,7 @@ def main():
     import models
     if a.mode == "interact" and "error" in serve_status() and os.environ.get("BANKML_FIRST_RUN", "1") != "0":
         # first run (or the carrier is down): bring in Bonsai-8B if absent, verify it, start it; the UI opens meanwhile
-        models.start_job("first run: Bonsai-8B as the carrier", models.first_run, lambda: PENDING["t0"] is not None)
+        models.start_job("first run: Bonsai-8B as the carrier", models.first_run, chat_busy)
         print("bankml serve not reachable: starting the first-run carrier in the background (Models tab shows progress)")
     import speak
     speak.VOICE_DIR.mkdir(parents=True, exist_ok=True)

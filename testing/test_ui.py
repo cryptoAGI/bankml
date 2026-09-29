@@ -32,6 +32,78 @@ check("every record's inclusion proof verifies", all(u.verify_inclusion(lines[k]
 check("a changed byte fails its proof", not u.verify_inclusion(lines[2].replace(b"answer 2", b"answer X"), u.inclusion_proof(u.HISTORY, 2)))
 check("a proof for another record fails", not u.verify_inclusion(lines[1], u.inclusion_proof(u.HISTORY, 3)))
 check("out-of-range proof is empty", u.inclusion_proof(u.HISTORY, 9) == {})
+# RFC 6962: the certificate-transparency reference roots, and the second-preimage cases the old tree allowed
+ct = [bytes.fromhex(x) for x in ["", "00", "10", "2021", "3031", "40414243", "5051525354555657", "606162636465666768696a6b6c6d6e6f"]]
+check("Merkle roots equal RFC 6962's reference vectors (1, 2, 3 and 8 leaves)",
+      u.merkle_root([u._leaf(x) for x in ct[:1]]) == "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      and u.merkle_root([u._leaf(x) for x in ct[:3]]) == "aeb6bcfe274b70a14fb067a5e5578264db0fa9b51af5e0ba159158f329e06e77"
+      and u.merkle_root([u._leaf(x) for x in ct]) == "5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328")
+lv = [u._leaf(l) for l in lines]
+node = bytes.fromhex(lv[0]) + bytes.fromhex(lv[1])  # an interior node's preimage, offered as a "line"
+fake = {"scheme": u.MERKLE_SCHEME, "record": 0, "records": 4, "leaf": u._leaf(node), "path": [u._node(lv[2], lv[3])], "merkle_root": u.merkle_root(lv[:4])}
+check("an interior node cannot pass as a record (leaves and nodes are domain-separated)", not u.verify_inclusion(node, fake))
+check("3 records and 4 records with the last repeated have different roots", u.merkle_root(lv[:3]) != u.merkle_root(lv[:3] + lv[2:3]))
+check("a proof moved to another index fails", not u.verify_inclusion(lines[1], {**u.inclusion_proof(u.HISTORY, 1), "record": 0}))
+
+# a torn last line (a crash mid-write) must not blank the history, and the next record must not be glued onto it
+import shutil as _sh
+torn = tmp / "torn.history"
+_sh.copy(u.HISTORY, torn)
+with open(torn, "ab") as f:
+    f.write(b'{"ts": 1, "user": "half a rec')
+u.jsonl_append(torn, {"ts": 2, "user": "after the crash"})
+recs = u.jsonl_read(torn)
+check("a torn line is skipped and counted, the rest survives, and the next append starts on a new line",
+      len(recs) == 6 and recs[-1]["user"] == "after the crash" and u.JSONL_BAD[str(torn)] == 1)
+check("a receipt is checked against the raw answer (think block and whitespace included)",
+      u._hash_ok({"assistant": "hi", "assistant_raw": "<think>x</think>\n hi ", "receipt": {"response_sha256": u.sha256("<think>x</think>\n hi ".encode())}})
+      and u._hash_ok({"assistant": "hi", "receipt": {"response_sha256": u.sha256(b"hi")}}))
+u.INFLIGHT.clear()
+u.INFLIGHT["lost"] = __import__("time").time() - u.STALE_S - 1
+check("a lost request (a closed tab) expires instead of blocking model switches forever", u.chat_busy() is False and not u.INFLIGHT)
+
+# embeddings (bge-m3 through Ollama), offline: a fake Ollama whose vectors are bags of words hashed into 1,024 dims
+import http.server as _hs, threading as _th, embed as _em, math as _m
+def _vec(t):
+    v = [0.0] * _em.DIMS
+    for w in __import__("re").findall(r"[a-z0-9]+", t.lower()):
+        v[int(__import__("hashlib").sha256(w.encode()).hexdigest(), 16) % _em.DIMS] += 1.0
+    return v
+class _FakeOllama(_hs.BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = json.dumps({"models": []}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def do_POST(self):
+        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        b = json.dumps({"embeddings": [_vec(t) for t in req["input"]]}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a):
+        pass
+_fo = _hs.ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllama)
+_th.Thread(target=_fo.serve_forever, daemon=True).start()
+_em.OLLAMA = f"http://127.0.0.1:{_fo.server_address[1]}"
+_em.provenance = lambda: {"model": "bge-m3", "digest": "d1" * 32, "bytes": 1, "licence": "mit", "open": True, "dims": _em.DIMS}
+_em._mem_available = lambda: 8 * 10 ** 9
+r_idx = _em.index(u.HISTORY, u.history_all())
+check("embed.index: every exchange embedded once, cached beside .history with the model digest",
+      r_idx["embedded"] == 5 and _em.index(u.HISTORY, u.history_all())["embedded"] == 0 and len(_em.cached(u.HISTORY)) == 5
+      and all(abs(sum(x * x for x in v) - 1) < 1e-5 for v in _em.cached(u.HISTORY).values()))
+_em.provenance = lambda: {"model": "bge-m3", "digest": "e2" * 32, "bytes": 1, "licence": "mit", "open": True, "dims": _em.DIMS}
+check("a cache written by other weights is not used (vectors are tied to the model's digest)", _em.cached(u.HISTORY) == {})
+_em.provenance = lambda: {"model": "bge-m3", "digest": "d1" * 32, "bytes": 1, "licence": "mit", "open": True, "dims": _em.DIMS}
+check("reciprocal rank fusion: first in both beats first in one", [i for i, _ in _em.fuse([1, 2, 3], [2, 3, 1])][0] == 2
+      and _em.fuse([7], [])[0][0] == 7)
+hits_h, eng_h = u.history_search("ternary kernels")
+check("the ragebar fuses BM25 and bge-m3 and says so", "bge-m3" in eng_h and "reciprocal rank" in eng_h and hits_h)
+_mem = _em._mem_available
+_em._mem_available = lambda: 10 ** 8
+_em._QCACHE.clear()
+hits_b, eng_b = u.history_search("verification")
+check("without the memory to load bge-m3, the ragebar is BM25 alone (and still answers)", "bge-m3" not in eng_b and hits_b)
+_em._mem_available = _mem
+_em.provenance = lambda: {}
+check("without bge-m3 in Ollama, embed says why and search stands on BM25", not _em.status()["ready"] and "bge-m3" not in u.history_search("verification")[1])
+_fo.shutdown()
 
 # search (built-in BM25 here: RAGE_PATH points nowhere)
 hits, engine = u.history_search("ternary kernels")
@@ -86,9 +158,22 @@ r0 = json.loads(f["commitments.json"].read_text())["doctrine_root"]["value"]
 led = agents.save(slug, prompt_text="You are Ada, revised.")
 check("editing .prompt re-ledgers (prompt hash changes; the doctrine root, over the persona, does not)", led["doctrine_root"]["value"] == r0
       and led["artifacts"]["prompt"]["sha256"] == u.sha256(b"You are Ada, revised.\n"))
-pd["mantra"] = "a new mantra"
+pd["voice_examples"] = ["I check before I speak."]
 led = agents.save(slug, persona_text=json.dumps(pd))
-check("editing a doctrine clause changes the doctrine root", led["doctrine_root"]["value"] != r0 and all(ok for _, ok, _ in agents.verify(slug)))
+check("editing a field outside the doctrine re-ledgers with the same doctrine root", led["doctrine_root"]["value"] == r0
+      and led["doctrine_root"]["fixed_at_derivation"] == r0 and all(ok for _, ok, _ in agents.verify(slug)))
+try:
+    agents.save(slug, persona_text=json.dumps(dict(pd, mantra="a new mantra")))
+    check("a doctrine clause cannot be edited after derivation (the docs' promise, now enforced)", False)
+except ValueError as e:
+    check("a doctrine clause cannot be edited after derivation (the docs' promise, now enforced)", "/mantra" in str(e)
+          and json.loads(f["persona"].read_text())["mantra"] != "a new mantra")
+led_p = f["commitments.json"]
+lj = json.loads(led_p.read_text())
+lj["doctrine_root"]["pointers"] = ["/name"]  # a ledger that narrows its own check
+led_p.write_text(json.dumps(lj))
+check("verify uses bankml's pointer list, not the one in the ledger it checks", not dict((n, ok) for n, ok, _ in agents.verify(slug))["doctrine root"])
+agents.rebind(slug)
 f["prompt"].write_text("tampered\n")
 check("a hand edit outside save() is caught by verify", not dict((n, ok) for n, ok, _ in agents.verify(slug))["prompt"])
 for bad, why in ((dict(pd, weight=0.5), "float"), ({k: v for k, v in pd.items() if k != "oath"}, "missing clause")):

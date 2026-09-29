@@ -297,15 +297,18 @@ Nothing is ever written into the canon (`~/savante`). What the UI writes lives i
   ```json
   {"ts": 1790633549.123, "sent_at": "2026-09-28T15:12:29.123-0700", "first_token_s": 113.02,
    "response_s": 125.11, "answered_at": "2026-09-28T15:14:34.233-0700", "session": "e2e-test",
-   "user": "In one sentence: …", "assistant": "Savante knows …", "shown": "… (with the footer)",
+   "user": "In one sentence: …", "assistant": "Savante knows …", "assistant_raw": "Savante knows …", "shown": "… (with the footer)",
    "prompt": "persona · system_prompt (canon, ledgered)", "prompt_provenance": "persona.system_prompt · persona sha256 d96556b11989… (ledgered)",
    "receipt": {"bankml": "0.0.7", "model_sha256": "284a335a…", "prompt_tokens": 316, "completion_tokens": 28,
                "ttft_ms": 113000, "wall_ms": 125100, "response_sha256": "80010408…"}}
   ```
 
   `sent_at` is the press of Send; `first_token_s` and `response_s` are measured from it. The receipt's
-  `ttft_ms`/`wall_ms` are measured by bankml serve from when it forwarded the request. The history is plain text:
-  back it up, grep it, or delete it.
+  `ttft_ms`/`wall_ms` are measured by bankml serve from when it forwarded the request. `assistant_raw` (0.1.7+) is
+  the text exactly as the model wrote it, which is what the receipt hashes; `assistant` is the same text with any
+  `<think>` block and surrounding whitespace removed. Each record is appended as one locked, fsynced write; a line
+  damaged by a crash is skipped (and counted), never allowed to hide the rest. The history is plain text: back it
+  up, grep it, or delete it.
 - **`savante.memory`**: one JSON object per note: `{"ts", "at", "text", "sha256", "source": {"kind": "typed" |
   "response", "session", "sent_at", "response_sha256"}}`.
 - **`Savante.prompt`**: the Space template's prompt, cached the first time it is chosen.
@@ -318,13 +321,14 @@ The model sees the last 12 exchanges (each cut to 4,000 characters), as in the H
 
 | part | what |
 |---|---|
-| leaf | sha256 of one JSONL line, exactly as written (without its newline) |
-| Merkle root | pairwise sha256 up the tree; an odd node is paired with itself |
+| leaf | sha256(0x00 ‖ one JSONL line, exactly as written, without its newline) |
+| Merkle root | RFC 6962 / RFC 9162: node = sha256(0x01 ‖ left ‖ right), the tree split at the largest power of two below n (an odd node is promoted, never paired with itself). Scheme `rfc6962-sha256`; 0.1.6 and earlier used an unprefixed tree, so their roots differ |
 | file sha256 / CIDv1 | of the whole file; CIDv1 raw (0x55), sha2-256, base32 lower: the construction Savante's iNFT ledger uses |
 
-**🔏 proof** (Responses tab) produces, for one exchange, `{"commitment": …, "proof": {"leaf", "path": [{"side",
-"hash"}, …], "merkle_root"}, "verifies": true}`. Give someone the exchange's line and the proof: they hash the line,
-fold in the path, and compare with the root you published. That proves the exchange is in your history, unchanged,
+**🔏 proof** (Responses tab) produces, for one exchange, `{"commitment": …, "proof": {"scheme", "record", "records",
+"leaf", "path": [hash, …], "merkle_root"}, "verifies": true}`. Give someone the exchange's line and the proof: they
+verify it as RFC 9162 §2.1.3.2 describes (the index and the tree size decide at each step which side the sibling is
+on) and compare the result with the root **and record count** you published; the pair is the commitment. That proves the exchange is in your history, unchanged,
 and reveals nothing else. The same works for any data kept in a browser's local storage: keep the data, publish the
 hash or CID. Metrics and the view page show the commitments; the view page never serves a line.
 
@@ -356,8 +360,11 @@ print(h == p["merkle_root"])
 
 **Use this agent** switches the chat, `.history`, `.memory`, Responses and Metrics to it. **Edit** (custom agents
 only) opens the `.persona` as JSON and the `.prompt` as text. **Save and re-ledger** refuses a persona that breaks
-the binder's preflight (non-ASCII keys, floats, integers beyond ±2⁵³) or lacks a doctrine clause, and otherwise
-regenerates the card and ledger. An agent whose files do not match its ledger refuses to speak.
+the binder's preflight (non-ASCII keys, floats, integers beyond ±2⁵³), lacks a doctrine clause, or **changes one**:
+the 15 doctrine clauses (name, source, format, system prompt, mantra, oath, beliefs, skills, safety, embodiment, tool
+allowlist …) are fixed when the agent is derived, and their root is recorded then and carried forward. To change them,
+derive a new agent. Everything else (the `.prompt` file, voice examples, description, the aivatar) stays editable.
+Otherwise it regenerates the card and ledger. An agent whose files do not match its ledger refuses to speak.
 
 The keccak256 is written in pure Python. It reproduces Savante's published doctrine root
 (`0x92fe83eb…ae137d0`) from her persona, and it equals pycryptodome's keccak for every input length from 0 to 400
@@ -460,11 +467,19 @@ Every answer from `bankml serve` carries:
 | `model_sha256`, `guard` | the file that was verified and pinned, and the guard's verdict |
 | `prompt_tokens`, `completion_tokens` | the engine's own counts |
 | `ttft_ms`, `wall_ms` | time to first token and total, at the gateway |
-| `response_sha256` | sha256 of the answer text exactly as the model produced it |
+| `response_sha256` | sha256 of the answer text exactly as the model produced it (`choices[0]`, UTF-8; an unpaired `\u` surrogate counts as U+FFFD) |
+| `request_sha256` | (0.1.7+) sha256 of the request body bankml forwarded: which prompt this answer is to |
 
 The UI recomputes the answer's sha256 and shows ✓ when it matches. A mismatch shows `(≠ received!)`. To check an
-answer yourself, hash the text from `.history` (`assistant` before `<think>` stripping; for Bonsai with reasoning off
-they are the same) and compare it with `receipt.response_sha256`.
+answer yourself, hash `assistant_raw` from `.history` (older records: `assistant`) and compare it with
+`receipt.response_sha256`.
+
+**What a receipt proves, and what it does not.** It binds an answer to the request it answered and to the sha256 of
+the model file bankml verified before serving, and it catches any change to the text afterwards. It is **not
+signed**: anyone can write a receipt, so it shows integrity between you and your own bankml serve, not to a third
+party who does not trust your machine. bankml serve also re-checks, before each answer, that the model file is the
+one it verified (device, inode, size and modification time) and that the engine still serves that file; if either
+changed, it refuses to answer rather than issue a receipt for weights it did not verify.
 
 ## 10. Savante's canon and the iNFT ledger
 
@@ -552,6 +567,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `BANKML_LLAMA_SERVER` | `~/sAGI/bonsai/llama-b11192/llama-server` | the engine the carrier spawns |
 | `BANKML_BIN` | `target/release/bankml` | the bankml binary the importer and switch call |
 | `BANKML_FIRST_RUN` | `1` | `0` stops interact from starting the Bonsai-8B carrier by itself |
+| `BANKML_CTX`, `BANKML_THREADS_SERVE` | `2048`, `3` | the engine's context and threads when the importer starts the carrier |
 | `BANKML_SERVE_LISTEN`, `BANKML_UPSTREAM` | `127.0.0.1:18093`, `127.0.0.1:18092` | the ports the switch manages |
 | `BANKML_VOICE_DIR`, `BANKML_EXPORT_DIR` | `ui/voice/cache`, `ui/voice/export` | voice clips and the two exports |
 | `BANKML_VOICE_ASYNC` | `1` | `0` stops the UI rendering missing clips in the background |

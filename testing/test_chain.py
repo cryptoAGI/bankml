@@ -94,6 +94,18 @@ try:
     finally:
         chain.DEVNET_CHAIN_IDS = saved
     try:
+        chain.send_devnet(url.replace("127.0.0.1", "devnet.example.com"), inft, minter, plan)
+        check("send is refused to a node that is not on this machine, whatever chain id it reports", False)
+    except PermissionError:
+        check("send is refused to a node that is not on this machine, whatever chain id it reports", True)
+    try:
+        chain.encode(["address"], ["0x" + "11" * 19])
+        check("a 19-byte address is refused (it would shift every later argument)", False)
+    except ValueError:
+        check("a 19-byte address is refused (it would shift every later argument)", True)
+    ut2 = chain.unsigned_tx(url, inft, minter, {**plan, "args": {**plan["args"], "tokenURI": "x\"; rm -rf ~; echo \""}})
+    check("the cast line quotes every argument", "'x\"; rm -rf ~; echo \"'" in ut2["cast"])
+    try:
         chain.plan_mint(slug, to=holder, dimensions=100)
         check("an invalid dimension is refused before any call", False)
     except ValueError:
