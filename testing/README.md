@@ -80,6 +80,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.12 | `results/0.2.12.txt` | batched prefill (checked by every prefill oracle); the GPU component's discovery |
 | 0.2.11 | `results/0.2.11.txt` | P3 step eleven: sampling — llama-server's chain, same seed, same tokens (40 of 40) |
 | 0.2.10 | `results/0.2.10.txt` | P3 step ten: long contexts — the split-KV kernel (14 of 14) and 600 tokens past 256 cells identical |
 | 0.2.9 | `results/0.2.9.txt` | P3 step nine: long prompts — the tiled kernel (150 of 150) and llama-server's tokens on 6 of 6 long prompts |

@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.2.12 — 2026-09-29
+
+**Batched prefill, and the video-card component.** Record: `testing/results/0.2.12.txt`.
+
+### Added
+- **Batched prefill** (`bankML/forward.rs`). A micro-batch now goes through each layer together:
+  - every matmul is one matrix–matrix product over the micro-batch's rows (`Weights::mm`, `Weights::quantize_rows`,
+    through `q1_0::mat_mul_act_par` and `q2_0::mat_mul_par`);
+  - the micro-batch's K and V enter the cache before its attention, as llama.cpp writes them;
+  - each row attends over the cells up to its own position (`Weights::attend`).
+
+  Every element of those products has the bits of the per-pair dot, so the result is the token-by-token result.
+  Every oracle that goes through `prefill` checks this: greedy, long, deep and sampling.
+- **`bankML/gpu/`: the video-card component.**
+  - `gpu/mod.rs` is the registry. Each backend is a module with one discovery function, listed in `BACKENDS`; a
+    new backend (CUDA, ROCm, Metal) is a new module and one line.
+  - Devices are described by merging the backend's view with the kernel's (`/sys/class/drm`: driver, VRAM, GTT,
+    PCI address, NUMA node).
+  - `selected()` uses every real GPU found, discrete cards first and the largest first. Software renderers (Mesa
+    llvmpipe) are refused. `BANKML_GPU=off` turns the component off, and `BANKML_GPU=0,2` picks cards.
+  - `gpu/vulkan.rs` opens `libvulkan.so.1` at run time: no crate and no link-time dependency, the entry points from
+    `vkGetInstanceProcAddr`, the few C structs declared from the Vulkan headers. It covers AMD, NVIDIA, Intel, Arm
+    and Qualcomm GPUs through one API.
+  - `gpu/hf.rs`, the first remote backend, lists the GPUs Hugging Face rents through Jobs
+    (`huggingface.co/api/jobs/hardware`, public). That is 22 NVIDIA flavors, T4 to 8× H200, provisioned on AWS,
+    Azure and GCP, each with its card count, memory and price per hour. They are read through the system `curl`
+    (bankml has no TLS of its own), **listed and never selected or provisioned**: a rented card is used by running
+    bankml on it as a Hugging Face Job, where the Vulkan backend finds it. NVIDIA agreed on 2026-09-02 to acquire
+    Hugging Face; closing is expected in the first half of 2027. mindX's `docs/HUGGINGFACE_INTEGRATION.md` carries
+    the dated addendum.
+  - **`bankml gpu [--remote]`** prints what was found and what will be used. Here it finds the Radeon Vega 3 (RADV, Vulkan
+    1.3, 5 compute queues, CPU-mappable memory, `amdgpu` at 0000:04:00.0) and refuses llvmpipe.
+  - **No kernels run on the GPU yet.** They come next, and each must reproduce the CPU kernels' bits on the card
+    before it is used, so a GPU changes the speed and never the tokens. Several cards will share every matrix by
+    rows, which keeps each element one card's exact dot product.
+
+### Also since 0.2.11 (separate commits)
+- **Savante's canon moved to `~/cryptoAGI/savante`**, beside jaimla and luvai (991ab1a). The installer and UI
+  default to it, and a machine with only the older `~/savante` keeps using that.
+- **Open-source coder models in the catalogue** (4e9f4de): Qwen2.5-Coder 1.5B and 7B, and Qwen3.8-27B (the newest
+  Qwen). StarCoder and WizardCoder are excluded because their licences (OpenRAIL-M, Llama 2) are not OSI.
+- **Two new agents**, `codephreak` (Professor Codephreak, aware of github.com/Professor-Codephreak and its orgmap)
+  and `simplecoder`. They were derived from Savante's template with bankml's own ledger, live in
+  `~/cryptoAGI/<name>` as private local repositories, and appear in the Agents tab.
+
 ## 0.2.11 — 2026-09-29
 
 **P3, step eleven: sampling. bankml draws llama.cpp's tokens with the same seed.** Record:

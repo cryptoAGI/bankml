@@ -32,6 +32,11 @@
 //! Step ten (0.2.10): long contexts. A single-token decode whose padded KV length (multiples of 256) reaches 512
 //! takes ggml's split-KV kernel: the padded cells cut into one chunk per llama.cpp thread, a partial reference pass per
 //! chunk, then a reduction — so the bits depend on llama.cpp's thread count (`Weights::llama_threads`).
+//!
+//! 0.2.12: batched prefill. A micro-batch goes through each layer together: every matmul is one matrix–matrix
+//! product over the micro-batch's rows (`q1_0::mat_mul_act_par`, `q2_0::mat_mul_par`: each element has the bits of
+//! the per-pair dot, so the result is the token-by-token result), the micro-batch's K and V enter the cache before
+//! its attention (as llama.cpp writes them), and each row attends over the cells up to its own position.
 
 use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
 use crate::par::Pool;
@@ -388,6 +393,12 @@ pub enum Act {
     Q2(Q8Act2),
 }
 
+/// Activation rows prepared for the model's weight type: one per token of a micro-batch.
+pub enum Acts {
+    Q1(Vec<Q8Act>),
+    Q2(Vec<Q8Act2>),
+}
+
 /// A weight matrix: its bytes, rows and type.
 pub struct Mat<'a> {
     bytes: &'a [u8],
@@ -489,6 +500,28 @@ impl Weights {
         if self.wtype == TYPE_Q1_0 { Act::Q1(Q8Act::quantize(x)) } else { Act::Q2(Q8Act2::quantize(x)) }
     }
 
+    /// Every row of `xs` quantized to q8_0, prepared for the model's kernel.
+    pub fn quantize_rows(&self, xs: &[Vec<f32>]) -> Acts {
+        if self.wtype == TYPE_Q1_0 {
+            Acts::Q1(xs.iter().map(|x| Q8Act::quantize(x)).collect())
+        } else {
+            Acts::Q2(xs.iter().map(|x| Q8Act2::quantize(x)).collect())
+        }
+    }
+
+    /// `m` times every prepared row, one matrix–matrix product on the pool; returns one output row per input row.
+    /// Each element has the bits of the per-pair dot, so the rows equal `mv` on each row.
+    pub fn mm(&self, m: &Mat, a: &Acts) -> Result<Vec<Vec<f32>>, String> {
+        let n = match a { Acts::Q1(v) => v.len(), Acts::Q2(v) => v.len() };
+        let mut out = vec![0.0f32; m.rows * n];
+        match (m.ty, a) {
+            (TYPE_Q1_0, Acts::Q1(cols)) => q1_0::mat_mul_act_par(&self.pool, m.bytes, m.rows, cols, &mut out),
+            (TYPE_Q2_0, Acts::Q2(cols)) => q2_0::mat_mul_par(&self.pool, m.bytes, m.rows, cols, &mut out),
+            _ => return Err("activations prepared for another weight type".into()),
+        }
+        Ok(out.chunks_exact(m.rows).map(<[f32]>::to_vec).collect())
+    }
+
     /// `out = m · a` on the pool (each type's `mat_vec_par`: the bits of ggml's per-row `vec_dot`).
     pub fn mv(&self, m: &Mat, a: &Act, out: &mut [f32]) -> Result<(), String> {
         if out.len() != m.rows {
@@ -534,22 +567,27 @@ impl Weights {
 
     /// `attention` with the kernel llama.cpp would choose for this row.
     pub fn attention_with(&self, il: usize, q: &[f32], cache: &KvCache, kernel: Kernel, kqv: &mut [f32], out: &mut [f32]) -> Result<(), String> {
+        self.attend(q, cache, cache.len(), kernel, kqv);
+        let m = self.matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
+        self.mv(&m, &self.quantize(kqv), out).map_err(|e| format!("attn_output: {e}"))?;
+        Ok(())
+    }
+
+    /// Every head of one query row over the first `visible` cached cells (causal: the row's own position + 1).
+    pub fn attend(&self, q: &[f32], cache: &KvCache, visible: usize, kernel: Kernel, kqv: &mut [f32]) {
         let hd = self.head_dim;
         let group = self.n_head / self.n_head_kv;
         let scale = 1.0f32 / (hd as f32).sqrt();
         for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
             let off = (h / group) * hd;
             match kernel {
-                Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh),
-                Kernel::Tiled => attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh),
+                Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
+                Kernel::Tiled => attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
                 Kernel::Split { padded, nth } => {
-                    attend_head_split(qh, &cache.k[off..], &cache.v[off..], cache.len(), padded, nth, cache.width, scale, oh)
+                    attend_head_split(qh, &cache.k[off..], &cache.v[off..], visible, padded, nth, cache.width, scale, oh)
                 }
             }
         }
-        let m = self.matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
-        self.mv(&m, &self.quantize(kqv), out).map_err(|e| format!("attn_output: {e}"))?;
-        Ok(())
     }
 
     /// Layer `il`'s feed-forward block on `ffn_inp` (the residual stream after attention), written back in place as
@@ -596,11 +634,80 @@ impl Weights {
         let mut rn = Vec::new();
         for ub in tokens.chunks(N_UBATCH) {
             let kernel = kernel_for(ub.len(), caches[0].len() + ub.len(), self.llama_threads)?;
-            for &t in ub {
-                let p = caches[0].len();
-                rn = self.step_with(caches, t, kernel, |il, l| each(p, il, l))?;
+            rn = self.ubatch(caches, ub, kernel, &mut each)?;
+        }
+        Ok(rn)
+    }
+
+    /// One micro-batch through every layer together (see the module notes: the same bits as token by token).
+    /// Returns the last row's `result_norm`.
+    fn ubatch(&self, caches: &mut [KvCache], toks: &[u32], kernel: Kernel, each: &mut impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String> {
+        let (n, p0, hd) = (toks.len(), caches[0].len(), self.head_dim);
+        let mut xs = vec![vec![0.0f32; self.n_embd]; n];
+        for (x, &t) in xs.iter_mut().zip(toks) {
+            self.embed(t, x)?;
+        }
+        let ropes: Vec<Vec<f32>> = (0..n).map(|i| {
+            let mut c = vec![0.0f32; hd];
+            self.rope.cache((p0 + i) as i32, &mut c);
+            c
+        }).collect();
+        let norm_rows = |xs: &[Vec<f32>], g: &[f32]| -> Vec<Vec<f32>> {
+            xs.iter().map(|x| {
+                let mut y = vec![0.0f32; x.len()];
+                rms_norm_mul(x, g, self.rms_eps, &mut y);
+                y
+            }).collect()
+        };
+        let mut tmp = vec![0.0f32; hd];
+        for (il, cache) in caches.iter_mut().enumerate() {
+            let a = self.quantize_rows(&norm_rows(&xs, &self.f32_vec(&format!("blk.{il}.attn_norm.weight"))?));
+            let mut q = self.mm(&self.matrix(&format!("blk.{il}.attn_q.weight"), self.n_embd)?, &a)?;
+            let mut k = self.mm(&self.matrix(&format!("blk.{il}.attn_k.weight"), self.n_embd)?, &a)?;
+            let v = self.mm(&self.matrix(&format!("blk.{il}.attn_v.weight"), self.n_embd)?, &a)?;
+            let (gq, gk) = (self.f32_vec(&format!("blk.{il}.attn_q_norm.weight"))?, self.f32_vec(&format!("blk.{il}.attn_k_norm.weight"))?);
+            for (rows, g) in [(&mut q, &gq), (&mut k, &gk)] {
+                for (row, rc) in rows.iter_mut().zip(&ropes) {
+                    for h in row.chunks_exact_mut(hd) {
+                        tmp.copy_from_slice(h);
+                        rms_norm_mul(&tmp, g, self.rms_eps, h);
+                        self.rope.apply(rc, h);
+                    }
+                }
+            }
+            for (kr, vr) in k.iter().zip(&v) {
+                cache.push(kr, vr); // the whole micro-batch's K and V first, as llama.cpp writes them; causality is `visible`
+            }
+            let mut kqv = vec![vec![0.0f32; self.n_head * hd]; n];
+            for (i, (qr, o)) in q.iter().zip(kqv.iter_mut()).enumerate() {
+                self.attend(qr, cache, p0 + i + 1, kernel, o);
+            }
+            let att = self.mm(&self.matrix(&format!("blk.{il}.attn_output.weight"), self.n_head * hd)?, &self.quantize_rows(&kqv))?;
+            for (x, a) in xs.iter_mut().zip(&att) {
+                for (xi, ai) in x.iter_mut().zip(a) {
+                    *xi += ai;
+                }
+            }
+            // the feed-forward block
+            let a = self.quantize_rows(&norm_rows(&xs, &self.f32_vec(&format!("blk.{il}.ffn_norm.weight"))?));
+            let gate = self.mm(&self.matrix(&format!("blk.{il}.ffn_gate.weight"), self.n_embd)?, &a)?;
+            let up = self.mm(&self.matrix(&format!("blk.{il}.ffn_up.weight"), self.n_embd)?, &a)?;
+            let h: Vec<Vec<f32>> = gate.iter().zip(&up).map(|(g, u)| {
+                let mut o = vec![0.0f32; g.len()];
+                swiglu(g, u, &mut o);
+                o
+            }).collect();
+            let n_ff = h[0].len();
+            let down = self.mm(&self.matrix(&format!("blk.{il}.ffn_down.weight"), n_ff)?, &self.quantize_rows(&h))?;
+            for (i, (x, d)) in xs.iter_mut().zip(&down).enumerate() {
+                for (xi, di) in x.iter_mut().zip(d) {
+                    *xi += di;
+                }
+                each(p0 + i, il, x);
             }
         }
+        let mut rn = vec![0.0f32; self.n_embd];
+        rms_norm_mul(&xs[n - 1], &self.f32_vec("output_norm.weight")?, self.rms_eps, &mut rn);
         Ok(rn)
     }
 

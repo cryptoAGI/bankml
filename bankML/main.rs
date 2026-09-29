@@ -16,6 +16,8 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
        bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
                                                               (bankml's own forward pass: greedy, or llama-server's sampler chain)
+       bankml gpu [--remote]                                   (every video card found, and which bankml will use;
+                                                              --remote adds the GPUs Hugging Face rents, listed only)
        bankml version";
 
 fn main() {
@@ -87,6 +89,11 @@ fn main() {
                     2
                 }
             }
+        }
+        (Some("gpu"), _) => {
+            // the video-card component: every GPU found (Vulkan, merged with the kernel's sysfs view) and the selection
+            println!("{}", bankml::gpu::report_json(flag("--remote")));
+            0
         }
         (Some("tokenize"), Some(file)) => {
             // bankml's tokenizer (P3, step one): token-identical to llama.cpp b11192 on its oracle; text from stdin
