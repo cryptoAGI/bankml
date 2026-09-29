@@ -206,6 +206,15 @@ every matrix, including the embedding and the output, is ternary:
 The greedy comparison now covers exactly the tokens the server generated. Its list includes the end-of-turn token
 when it produced one. Where it stopped otherwise, that is its stopping policy, not a token choice.
 
+**Step nine (0.2.9): long prompts and ggml's tiled kernel.** llama.cpp computes a prompt in micro-batches of up to
+512 tokens. A micro-batch of 64 rows or more takes `flash_attn_ext_tiled`, a different algorithm from the reference
+path: f32 Q, a SIMD GEMM per 64-cell KV tile, a vectorized softmax summed in double, and an f32 accumulator.
+- The forward oracle runs layer 0 on a 150-row micro-batch in the shipped ggml. `oracle_forward_attention_tiled`
+  requires **150 of 150 rows bit-exact**. The reference kernel would match only 1, the first row, so the kernel
+  choice is itself checked.
+- `greedy_oracle.py --long` records llama-server's continuations for 6 prompts of 111–116 tokens.
+  `oracle_greedy_llama_server_long` requires **the same tokens on all 6**.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

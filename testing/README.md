@@ -65,6 +65,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `oracle_forward_model` *(real)* | `forward.rs` | P3 step seven: the whole model (36 layers' `l_out`, `result_norm`, all 151,669 logits × 28 tokens) bit-exact against the shipped ggml, 1,064 of 1,064 rows |
 | `oracle_greedy_llama_server` *(real)* | `forward.rs` | end to end: bankml's greedy tokens == llama-server b11192's on 6 of 6 chat prompts (164 tokens) |
 | `oracle_forward_model_ternary`, `oracle_greedy_llama_server_ternary` *(real)* | `forward.rs` | P3 step eight: the ternary model, whole graph bit-exact (1,064 of 1,064 rows) and llama-server's greedy tokens on 6 of 6 prompts |
+| `oracle_forward_attention_tiled`, `oracle_greedy_llama_server_long` *(real)* | `bankML/forward.rs` | P3 step nine: ggml's tiled flash attention on a 150-row micro-batch (150 of 150 rows) and llama-server's tokens on 6 of 6 long prompts |
 | `oracle_forward_swiglu_sweep` | `forward.rs` | SwiGLU with ggml's vectorized expf on 24,600 values over ±120 and the edges, every output's bits |
 | `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
@@ -77,6 +78,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.9 | `results/0.2.9.txt` | P3 step nine: long prompts — the tiled kernel (150 of 150) and llama-server's tokens on 6 of 6 long prompts |
 | 0.2.8 | `results/0.2.8.txt` | P3 step eight: the ternary model, bit-exact and token-identical; about 8× llama-server end to end |
 | 0.2.7 | `results/0.2.7.txt` | P3 step seven: the whole model bit-exact (1,064 of 1,064 rows); greedy generation token-identical to llama-server (6 of 6 prompts) |
 | 0.2.6 | `results/0.2.6.txt` | P3 step six: the FFN block; layer 0 complete and bit-exact (112 of 112 rows), SwiGLU sweep 24,600 of 24,600 |

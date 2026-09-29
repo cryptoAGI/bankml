@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.9 — 2026-09-29
+
+**P3, step nine: long prompts.** Record: `testing/results/0.2.9.txt`. Built on the new layout: the Rust runtime is
+in `bankML/` and Savante's UI in `sAGI/` (ef65eb4).
+
+### Added
+- **`attend_head_tiled`: ggml's tiled flash attention** (`flash_attn_ext_tiled`), which llama.cpp runs for any
+  micro-batch of 64 rows or more. It is a different algorithm from the reference path:
+  - Q stays f32, and K and V are widened from f16;
+  - per 64-cell KV tile, the scores are a SIMD GEMM (one FMA chain over the head dimension), then `· scale + mask`;
+  - the tile's max joins the running max through `fmaxf`, and an `expf` rescales the f32 accumulator and the sum;
+  - `ggml_vec_soft_max_f32` uses ggml's `v_expf`, reduces each 8-lane group in f32, sums the groups in double, and
+    adds that to the float sum through double;
+  - the V GEMM is one FMA chain over the tile's cells;
+  - finally `acc · (1/S)`.
+
+  A row's result does not depend on which rows share its tile, so bankml computes it row by row.
+- **llama.cpp's kernel choice.**
+  - `kernel_for(rows, cells)` returns the tiled kernel for micro-batches of 64 rows or more and the reference kernel
+    otherwise. A single-token step whose padded KV length reaches 512 (`padded_kv`, multiples of 256, at least 256)
+    is llama.cpp's split-KV kernel; bankml refuses it with a reason rather than compute something different.
+  - `Weights::prefill` splits a prompt into micro-batches of `N_UBATCH` = 512, as llama-server does, with each
+    micro-batch's kernel.
+  - `Weights::decode` runs one generated token with the decode rule.
+- **Oracles, in the gate.**
+  - `oracle_forward_attention_tiled` checks layer 0's `kqv_out` for a 150-row micro-batch in the shipped ggml:
+    **150 of 150 rows bit-exact**. The reference kernel would match 1 of them, so the choice matters.
+  - `oracle_greedy_llama_server_long` uses `greedy_oracle.py --long` with a longer system prompt, so the prompts
+    are 111–116 tokens. **bankml generates llama-server's tokens on 6 of 6.**
+
+### Fixed
+- **`bankml generate`'s range check.** It warned at 512 cells; it now stops, with the reason, exactly where
+  llama.cpp would switch to the split-KV kernel (beyond 256 cells), and has no warning for long prompts because they
+  are now reproduced.
+
+### Limits
+- Contexts up to 256 cells. The split-KV decode kernel is next.
+- The long-prompt end-to-end check ran on the 1-bit model. Llama-server's ternary prefill runs at 0.35 tokens/s, so
+  a ternary long-prompt recording takes most of an hour. The tiled kernel is model-independent and is proven at the
+  kernel level.
+- Prefill still runs one token at a time. The long-prompt oracle takes 8 minutes. Batched prefill is the next speed
+  step.
+
 ## 0.2.8 — 2026-09-29
 
 **P3, step eight: the ternary model. bankml's own forward pass is token-identical to llama.cpp and about 8× faster

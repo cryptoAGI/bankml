@@ -9,12 +9,16 @@ Prompts stay under 64 tokens and prompt + continuation within 256 cells (llama.c
 reproduces (ggml's reference flash-attention path); the tiled and split-KV kernels are later steps.
 Writes .models/oracle-forward/greedy-<model stem>.jsonl ({"messages", "prompt_ids", "ids"} per case), the model
 named by the server's own /props.
-usage: python3 testing/greedy_oracle.py [http://127.0.0.1:18092] [N_PREDICT]"""
+With --long, the prompts are 64 tokens or more (a longer system prompt), so llama.cpp computes them with ggml's tiled
+flash attention; prompt + continuation still stay within 256 cells. Written to greedy-long-<stem>.jsonl.
+usage: python3 testing/greedy_oracle.py [http://127.0.0.1:18092] [N_PREDICT] [--long]"""
 import json, sys, urllib.request
 from pathlib import Path
 
-url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18092"
-n_predict = int(sys.argv[2]) if len(sys.argv) > 2 else 48
+long = "--long" in sys.argv
+argv = [a for a in sys.argv[1:] if a != "--long"]
+url = argv[0] if argv else "http://127.0.0.1:18092"
+n_predict = int(argv[1]) if len(argv) > 1 else 48
 out = Path(__file__).resolve().parents[1] / ".models" / "oracle-forward"
 
 
@@ -25,6 +29,11 @@ def post(path, body):
 
 
 SYSTEM = "You are Savante."
+if long:
+    SYSTEM = ("You are Savante, an autonomous research agent. You answer plainly and briefly, you say when you do not know, "
+              "and you never invent sources. You were built to run on a laptop with a one-bit or ternary model, so you keep "
+              "your answers short: one to three sentences unless the user asks for more. When a question has a single "
+              "correct answer, give it first and then, if it helps, one sentence of explanation.")
 questions = ["What does a bonsai need?", "Name three prime numbers.", "What is 2 + 2?", "Say hello in French.",
              "What colour is the sky on a clear day?", "Write one short sentence about the sea."]
 cases = []
@@ -32,7 +41,8 @@ for q in questions:
     msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]
     prompt = post("/apply-template", {"messages": msgs})["prompt"]
     ids = post("/tokenize", {"content": prompt, "add_special": False, "parse_special": True})["tokens"]
-    assert len(ids) < 64, (q, len(ids))
+    assert (64 <= len(ids) if long else len(ids) < 64), (q, len(ids))
+    assert len(ids) + n_predict <= 256, (q, len(ids))
     r = post("/completion", {"prompt": ids, "n_predict": n_predict, "temperature": 0, "top_k": 1, "samplers": ["top_k"],
                              "cache_prompt": False, "return_tokens": True})
     # the server's list includes the end-of-turn token when it produced one; why it stopped is kept for the record
@@ -42,6 +52,6 @@ for q in questions:
 with urllib.request.urlopen(url + "/props", timeout=60) as r:
     stem = Path(json.load(r)["model_path"]).stem
 out.mkdir(parents=True, exist_ok=True)
-dest = out / f"greedy-{stem}.jsonl"
+dest = out / f"greedy-{'long-' if long else ''}{stem}.jsonl"
 dest.write_text("".join(json.dumps(c) + "\n" for c in cases))
 print(f"{len(cases)} greedy continuations from llama-server b11192 ({stem}) → {dest}")

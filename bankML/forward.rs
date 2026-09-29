@@ -23,6 +23,11 @@
 //!
 //! Step eight (0.2.8): the ternary model. The same forward pass over either weight type — Q1_0 (1-bit, 128-weight
 //! blocks) or Q2_0_g64 (ternary, 64-weight blocks) — through each type's bit-exact kernel (§III.4, §III.6).
+//!
+//! Step nine (0.2.9): long prompts. llama.cpp computes a prompt in micro-batches of up to 512 tokens, and a
+//! micro-batch of 64 rows or more takes ggml's *tiled* flash attention (f32 Q, a SIMD GEMM over 64-cell KV tiles, a
+//! vectorized softmax summed in double, an f32 accumulator) instead of the reference path. `Weights::prefill` follows
+//! the same micro-batching and kernel choice.
 
 use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
 use crate::par::Pool;
@@ -169,6 +174,100 @@ pub fn attend_head(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, 
     let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
     for (o, &a) in out.iter_mut().zip(&acc) {
         *o = f16_to_f32(a) * inv;
+    }
+}
+
+/// One query head against a causal run of cached keys and values, as ggml's tiled flash attention
+/// (`ggml_compute_forward_flash_attn_ext_tiled`) computes one row: Q stays f32; per 64-cell KV tile the scores are
+/// `simd_gemm` (one FMA chain over the head dimension), `· scale`, `+ mask`; the tile's max (`ggml_vec_max_f32`),
+/// `fmaxf` with the running max, `expf` rescaling of the f32 accumulator and sum; `ggml_vec_soft_max_f32` (ggml's
+/// `v_expf`, each 8-lane group reduced in f32 and summed in double, the sum added to the float `S` through double);
+/// then the V GEMM (one FMA chain over the tile's cells); finally `acc · (1/S)`. A row's result does not depend on
+/// which rows share its tile; cells a row cannot see weigh 0 and are left out.
+pub fn attend_head_tiled(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, scale: f32, out: &mut [f32]) {
+    const T: usize = 64;
+    let hd = q.len();
+    let mut acc = vec![0.0f32; hd];
+    let (mut sum, mut max) = (0.0f32, f32::NEG_INFINITY);
+    let mut kq = [0.0f32; T];
+    for ic in (0..n_kv).step_by(T) {
+        let tile = T.min(n_kv - ic);
+        for (tk, s) in kq.iter_mut().enumerate() {
+            *s = if tk < tile {
+                let kr = &k[(ic + tk) * stride..(ic + tk) * stride + hd];
+                let mut a = 0.0f32;
+                for (&kd, &qd) in kr.iter().zip(q) {
+                    a = f16_to_f32(kd).mul_add(qd, a);
+                }
+                a * scale + 0.0 // the mask adds 0 to a visible cell
+            } else {
+                f32::NEG_INFINITY
+            };
+        }
+        let tile_max = kq.iter().fold(f32::NEG_INFINITY, |m, &x| if m > x { m } else { x });
+        if tile_max == f32::NEG_INFINITY {
+            continue;
+        }
+        let new_max = max.max(tile_max);
+        if new_max > max {
+            let ms = (max - new_max).exp();
+            for a in acc.iter_mut() {
+                *a *= ms;
+            }
+            sum *= ms;
+        }
+        max = new_max;
+        let mut tsum = 0.0f64;
+        for g in kq.chunks_exact_mut(8) {
+            for x in g.iter_mut() {
+                *x = v_expf(*x - new_max);
+            }
+            let h: [f32; 4] = std::array::from_fn(|l| g[l + 4] + g[l]);
+            tsum += ((h[0] + h[2]) + (h[1] + h[3])) as f64;
+        }
+        sum = (sum as f64 + tsum) as f32;
+        for (tk, &p) in kq.iter().enumerate().take(tile) {
+            let vr = &v[(ic + tk) * stride..(ic + tk) * stride + hd];
+            for (a, &vd) in acc.iter_mut().zip(vr) {
+                *a = f16_to_f32(vd).mul_add(p, *a);
+            }
+        }
+    }
+    let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
+    for (o, &a) in out.iter_mut().zip(&acc) {
+        *o = a * inv;
+    }
+}
+
+/// Which of ggml's CPU flash-attention kernels llama.cpp would run for a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kernel {
+    /// `flash_attn_ext_f16_one_chunk`: micro-batches of 2–63 rows, and single-token decodes over fewer than 512
+    /// padded KV cells
+    Reference,
+    /// `flash_attn_ext_tiled`: micro-batches of 64 rows or more
+    Tiled,
+}
+
+/// llama.cpp's micro-batch (`--ubatch-size`, default 512).
+pub const N_UBATCH: usize = 512;
+
+/// The KV length llama.cpp attends over with `cells` in use: padded to a multiple of 256, at least 256
+/// (`llama_kv_cache::get_n_kv`).
+pub fn padded_kv(cells: usize) -> usize {
+    cells.div_ceil(256).max(1) * 256
+}
+
+/// The kernel for a micro-batch of `rows` whose last row makes `cells` cells in use, or an error where llama.cpp
+/// would take the split-KV kernel (a single row over 512 or more padded cells), which is not reproduced yet.
+pub fn kernel_for(rows: usize, cells: usize) -> Result<Kernel, String> {
+    match rows {
+        64.. => Ok(Kernel::Tiled),
+        1 if padded_kv(cells) >= 512 => Err(format!(
+            "a single-token step at {cells} cells: llama.cpp decodes over {} padded cells with its split-KV kernel, which bankml does not reproduce yet",
+            padded_kv(cells)
+        )),
+        _ => Ok(Kernel::Reference),
     }
 }
 
@@ -375,12 +474,20 @@ impl Weights {
     /// Layer `il`'s attention for the newest position in `cache` (causal: every cached position is visible), then
     /// `wo`: writes `kqv_out` (`n_head · head_dim`) and returns nothing else; `attn_out` goes to `out` (`n_embd`).
     pub fn attention(&self, il: usize, q: &[f32], cache: &KvCache, kqv: &mut [f32], out: &mut [f32]) -> Result<(), String> {
+        self.attention_with(il, q, cache, Kernel::Reference, kqv, out)
+    }
+
+    /// `attention` with the kernel llama.cpp would choose for this row.
+    pub fn attention_with(&self, il: usize, q: &[f32], cache: &KvCache, kernel: Kernel, kqv: &mut [f32], out: &mut [f32]) -> Result<(), String> {
         let hd = self.head_dim;
         let group = self.n_head / self.n_head_kv;
         let scale = 1.0f32 / (hd as f32).sqrt();
         for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
             let off = (h / group) * hd;
-            attend_head(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh);
+            match kernel {
+                Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh),
+                Kernel::Tiled => attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh),
+            }
         }
         let m = self.matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
         self.mv(&m, &self.quantize(kqv), out).map_err(|e| format!("attn_output: {e}"))?;
@@ -421,7 +528,32 @@ impl Weights {
     /// One token through every layer at the next position (the caches' length), appending its K and V to each
     /// layer's cache. `each_layer(il, l_out)` sees every layer's output; returns `result_norm` (`output_norm` of the
     /// last layer's output), which `logits` turns into scores.
-    pub fn step(&self, caches: &mut [KvCache], token: u32, mut each_layer: impl FnMut(usize, &[f32])) -> Result<Vec<f32>, String> {
+    pub fn step(&self, caches: &mut [KvCache], token: u32, each_layer: impl FnMut(usize, &[f32])) -> Result<Vec<f32>, String> {
+        self.step_with(caches, token, Kernel::Reference, each_layer)
+    }
+
+    /// A prompt, as llama.cpp computes it: micro-batches of up to `N_UBATCH` tokens, each row's attention by the
+    /// kernel llama.cpp chooses for its micro-batch (`kernel_for`). Returns the last token's `result_norm`.
+    pub fn prefill(&self, caches: &mut [KvCache], tokens: &[u32], mut each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String> {
+        let mut rn = Vec::new();
+        for ub in tokens.chunks(N_UBATCH) {
+            let kernel = kernel_for(ub.len(), caches[0].len() + ub.len())?;
+            for &t in ub {
+                let p = caches[0].len();
+                rn = self.step_with(caches, t, kernel, |il, l| each(p, il, l))?;
+            }
+        }
+        Ok(rn)
+    }
+
+    /// One generated token (a micro-batch of one), with the kernel llama.cpp would use at this length.
+    pub fn decode(&self, caches: &mut [KvCache], token: u32) -> Result<Vec<f32>, String> {
+        let kernel = kernel_for(1, caches[0].len() + 1)?;
+        self.step_with(caches, token, kernel, |_, _| {})
+    }
+
+    /// `step` with the attention kernel given.
+    pub fn step_with(&self, caches: &mut [KvCache], token: u32, kernel: Kernel, mut each_layer: impl FnMut(usize, &[f32])) -> Result<Vec<f32>, String> {
         if caches.len() != self.n_layer {
             return Err(format!("{} caches for {} layers", caches.len(), self.n_layer));
         }
@@ -435,7 +567,7 @@ impl Weights {
             rms_norm_mul(&x, &self.f32_vec(&format!("blk.{il}.attn_norm.weight"))?, self.rms_eps, &mut xn);
             self.qkv(il, &xn, pos, &mut q, &mut k, &mut v)?;
             cache.push(&k, &v);
-            self.attention(il, &q, cache, &mut kqv, &mut att)?;
+            self.attention_with(il, &q, cache, kernel, &mut kqv, &mut att)?;
             for (xi, a) in x.iter_mut().zip(&att) {
                 *xi += a; // ggml: attn_out + inpSA; addition commutes
             }
@@ -705,11 +837,11 @@ mod tests {
 
     /// Greedy generation against llama-server b11192 itself (testing/greedy_oracle.py): the same chat prompts, the
     /// same continuations token for token, end-of-turn tokens included.
-    fn greedy_oracle(stem: &str) {
+    fn greedy_oracle(kind: &str, stem: &str) {
         use crate::serve::Json;
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
         let w = Weights::open(&dir.join(format!("{stem}.gguf"))).unwrap();
-        let cases = std::fs::read_to_string(dir.join(format!("oracle-forward/greedy-{stem}.jsonl"))).unwrap();
+        let cases = std::fs::read_to_string(dir.join(format!("oracle-forward/greedy-{kind}{stem}.jsonl"))).unwrap();
         let ids = |v: &Json, k: &str| -> Vec<u32> {
             match v.get(k) {
                 Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!("{k}: not a number") }).collect(),
@@ -723,10 +855,7 @@ mod tests {
             let v = Json::parse(line).unwrap();
             let (prompt, want) = (ids(&v, "prompt_ids"), ids(&v, "ids"));
             let mut caches = w.caches();
-            let mut rn = Vec::new();
-            for &t in &prompt {
-                rn = w.step(&mut caches, t, |_, _| {}).unwrap();
-            }
+            let mut rn = w.prefill(&mut caches, &prompt, |_, _, _| {}).unwrap();
             // exactly as many tokens as the server generated: its list includes the end-of-turn token when it
             // produced one, and where it stopped otherwise is its stopping policy, not a token choice
             let mut got = Vec::new();
@@ -734,7 +863,7 @@ mod tests {
                 let next = argmax(&w.logits(&rn).unwrap());
                 got.push(next);
                 if got.len() < want.len() {
-                    rn = w.step(&mut caches, next, |_, _| {}).unwrap();
+                    rn = w.decode(&mut caches, next).unwrap();
                 }
             }
             n_cases += 1;
@@ -746,7 +875,7 @@ mod tests {
                 eprintln!("  case {n_cases}: first difference at generated token {at:?} (got {:?}, want {:?})", &got[..got.len().min(12)], &want[..want.len().min(12)]);
             }
         }
-        eprintln!("greedy oracle: {stem}: {n_same} of {n_cases} chat prompts generate llama-server b11192's tokens exactly ({n_tok} tokens, ends of turn included) — {:.0} s, {} threads",
+        eprintln!("greedy oracle: {kind}{stem}: {n_same} of {n_cases} chat prompts generate llama-server b11192's tokens exactly ({n_tok} tokens, ends of turn included) — {:.0} s, {} threads",
                   t0.elapsed().as_secs_f64(), w.pool.threads());
         assert_eq!(n_same, n_cases);
     }
@@ -754,13 +883,71 @@ mod tests {
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its greedy-*.jsonl (testing/greedy_oracle.py); --release"]
     fn oracle_greedy_llama_server() {
-        greedy_oracle("Bonsai-8B-Q1_0");
+        greedy_oracle("", "Bonsai-8B-Q1_0");
     }
 
     /// The ternary model against llama-server running the ternary model.
     #[test]
     #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + its greedy-*.jsonl (testing/greedy_oracle.py); --release"]
     fn oracle_greedy_llama_server_ternary() {
-        greedy_oracle("Ternary-Bonsai-8B-Q2_0_g64");
+        greedy_oracle("", "Ternary-Bonsai-8B-Q2_0_g64");
+    }
+
+    /// ggml's tiled flash attention: layer 0's `kqv_out` for every row of a 150-row micro-batch, bit for bit.
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-forward/tiled.tsv (testing/forward_oracle.py); --release"]
+    fn oracle_forward_attention_tiled() {
+        use crate::sha256::{hex, Sha256};
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
+        let tsv = std::fs::read_to_string(dir.join("oracle-forward/tiled.tsv")).unwrap();
+        let toks: Vec<u32> = tsv.lines().next().unwrap().split("tokens ").nth(1).unwrap().split(' ').map(|t| t.parse().unwrap()).collect();
+        assert_eq!(kernel_for(toks.len(), toks.len()).unwrap(), Kernel::Tiled);
+        let sha = |v: &[f32]| {
+            let mut h = Sha256::default();
+            v.iter().for_each(|x| h.update(&x.to_le_bytes()));
+            hex(&h.finish())
+        };
+        let g = w.f32_vec("blk.0.attn_norm.weight").unwrap();
+        let (qd, kd) = (w.n_head * w.head_dim, w.n_head_kv * w.head_dim);
+        let mut cache = KvCache::new(kd);
+        let (mut x, mut xn) = (vec![0.0f32; w.n_embd], vec![0.0f32; w.n_embd]);
+        let (mut q, mut k, mut v) = (vec![0.0f32; qd], vec![0.0f32; kd], vec![0.0f32; kd]);
+        // the whole micro-batch's K and V are in the cache before attention, as in llama.cpp; causality is the mask
+        let mut qs = Vec::new();
+        for (p, &t) in toks.iter().enumerate() {
+            w.embed(t, &mut x).unwrap();
+            rms_norm_mul(&x, &g, w.rms_eps, &mut xn);
+            w.qkv(0, &xn, p as i32, &mut q, &mut k, &mut v).unwrap();
+            cache.push(&k, &v);
+            qs.push(q.clone());
+        }
+        let (hd, group, scale) = (w.head_dim, w.n_head / w.n_head_kv, 1.0f32 / (w.head_dim as f32).sqrt());
+        let (mut n, mut ok, mut ref_same) = (0, 0, 0);
+        let mut kqv = vec![0.0f32; qd];
+        for (line, (p, q)) in tsv.lines().skip(1).zip(qs.iter().enumerate()) {
+            for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
+                let off = (h / group) * hd;
+                attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], p + 1, cache.width, scale, oh);
+            }
+            let want = line.split('\t').nth(2).unwrap();
+            n += 1;
+            ok += (sha(&kqv) == want) as usize;
+            // the reference path on the same row, to show the two kernels really differ
+            for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
+                let off = (h / group) * hd;
+                attend_head(qh, &cache.k[off..], &cache.v[off..], p + 1, cache.width, scale, oh);
+            }
+            ref_same += (sha(&kqv) == want) as usize;
+        }
+        eprintln!("forward oracle: tiled flash attention {ok} of {n} rows bit-exact against the shipped ggml b11192 (the reference kernel would match {ref_same})");
+        assert_eq!(ok, n);
+    }
+
+    /// Prompts of 64 tokens or more, which llama.cpp computes with the tiled kernel, against llama-server itself.
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its greedy-long-*.jsonl (testing/greedy_oracle.py --long); --release"]
+    fn oracle_greedy_llama_server_long() {
+        greedy_oracle("long-", "Bonsai-8B-Q1_0");
     }
 }

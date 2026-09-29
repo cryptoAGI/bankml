@@ -212,15 +212,9 @@ fn generate(model: &Path, input: &str, max: usize) -> Result<(), String> {
     let prompt = tok.encode(&chat::render(&msgs)?, true);
     let w = Weights::open(model)?;
     let ends: Vec<u32> = ["<|im_end|>", "<|endoftext|>"].iter().filter_map(|t| tok.id(t)).collect();
-    if prompt.len() >= 64 {
-        eprintln!("bankml generate: a {}-token prompt: llama.cpp computes prompts of 64 tokens or more with its tiled attention kernel, which bankml does not reproduce yet; the tokens may differ from llama.cpp's", prompt.len());
-    }
     let t0 = std::time::Instant::now();
     let mut caches = w.caches();
-    let mut rn = Vec::new();
-    for &t in &prompt {
-        rn = w.step(&mut caches, t, |_, _| {})?;
-    }
+    let mut rn = w.prefill(&mut caches, &prompt, |_, _, _| {})?;
     let t_prompt = t0.elapsed().as_secs_f64();
     let (mut out, mut n) = (std::io::stdout(), 0);
     while n < max {
@@ -232,11 +226,13 @@ fn generate(model: &Path, input: &str, max: usize) -> Result<(), String> {
         let _ = out.write_all(&tok.token_bytes(next));
         let _ = out.flush();
         n += 1;
-        if caches[0].len() + 1 >= 512 {
-            eprintln!("\nbankml generate: 512 cells: llama.cpp decodes beyond this with its split-KV attention kernel, not reproduced yet; stopping");
-            break;
-        }
-        rn = w.step(&mut caches, next, |_, _| {})?;
+        rn = match w.decode(&mut caches, next) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("\nbankml generate: stopping: {e}");
+                break;
+            }
+        };
     }
     let dt = t0.elapsed().as_secs_f64() - t_prompt;
     println!();

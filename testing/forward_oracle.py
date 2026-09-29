@@ -219,3 +219,51 @@ with open(out / "swiglu.tsv", "w") as f:
         f.write(f"{struct.unpack('<I', struct.pack('<f', x))[0]:08x}\t{y:08x}\n")
 print(f"swiglu sweep: {m} values → {out / 'swiglu.tsv'}")
 
+# ---- step nine: a micro-batch of 64 rows or more takes ggml's TILED flash attention. Layer 0 on a 150-token prompt
+# (the chat prompt, then ids from the tokenizer's cases): projections, norms, RoPE, f16 K/V, causal mask, attention
+long_ids = list(prompt)
+for i in ids:
+    if len(long_ids) >= 150:
+        break
+    if i < n_vocab and i not in (151643, 151645):
+        long_ids.append(i)
+nl = len(long_ids)
+ctx2 = base.ggml_init(InitParams(emb_bytes + 4 * (n_embd * bpr) + (512 << 20), None, False))
+w2 = base.ggml_new_tensor_2d(ctx2, Q1_0, n_embd, n_vocab)
+C.memmove(base.ggml_get_data(w2), C.c_char_p(mm[data_start + emb["offset"]: data_start + emb["offset"] + emb_bytes]), emb_bytes)
+tl = base.ggml_new_tensor_1d(ctx2, I32, nl)
+C.memmove(base.ggml_get_data(tl), (C.c_int32 * nl)(*long_ids), 4 * nl)
+pl = base.ggml_new_tensor_1d(ctx2, I32, nl)
+C.memmove(base.ggml_get_data(pl), (C.c_int32 * nl)(*range(nl)), 4 * nl)
+xl = base.ggml_mul(ctx2, base.ggml_rms_norm(ctx2, base.ggml_get_rows(ctx2, w2, tl), C.c_float(eps)), tensor_1d("blk.0.attn_norm.weight", n_embd))
+
+
+def qk_long(wname, nname, nh):
+    r = base.ggml_reshape_3d(ctx2, base.ggml_mul_mat(ctx2, tensor_2d(wname, Q1_0, n_embd, nh * head, bpr), xl), head, nh, nl)
+    r = base.ggml_mul(ctx2, base.ggml_rms_norm(ctx2, r, C.c_float(eps)), tensor_1d(nname, head))
+    return base.ggml_rope_ext(ctx2, r, pl, None, head, 2, n_ctx_orig, C.c_float(freq_base), C.c_float(freq_scale),
+                              C.c_float(1.0), C.c_float(attn_factor), C.c_float(32.0), C.c_float(1.0))
+
+
+ql = qk_long("blk.0.attn_q.weight", "blk.0.attn_q_norm.weight", n_head)
+kl = qk_long("blk.0.attn_k.weight", "blk.0.attn_k_norm.weight", n_head_kv)
+vl = base.ggml_reshape_3d(ctx2, base.ggml_mul_mat(ctx2, tensor_2d("blk.0.attn_v.weight", Q1_0, n_embd, n_head_kv * head, bpr), xl), head, n_head_kv, nl)
+k16 = base.ggml_cpy(ctx2, kl, base.ggml_new_tensor_3d(ctx2, F16, head, n_head_kv, nl))
+v16 = base.ggml_cpy(ctx2, vl, base.ggml_new_tensor_3d(ctx2, F16, head, n_head_kv, nl))
+maskl = base.ggml_new_tensor_2d(ctx2, F16, nl, nl)
+C.memmove(base.ggml_get_data(maskl), (C.c_uint16 * (nl * nl))(*[0 if j <= i else 0xFC00 for i in range(nl) for j in range(nl)]), 2 * nl * nl)
+fal = base.ggml_flash_attn_ext(ctx2, base.ggml_permute(ctx2, ql, 0, 2, 1, 3), base.ggml_permute(ctx2, k16, 0, 2, 1, 3),
+                               base.ggml_permute(ctx2, v16, 0, 2, 1, 3), maskl, C.c_float(kq_scale), C.c_float(0.0), C.c_float(0.0))
+base.ggml_prec_set_acc(fal, 10)
+kqvl = base.ggml_reshape_2d(ctx2, fal, n_head * head, nl)
+gfl = base.ggml_new_graph(ctx2)
+base.ggml_build_forward_expand(gfl, kqvl)
+cpu.ggml_graph_compute_with_ctx(ctx2, gfl, 3)
+raw = C.string_at(base.ggml_get_data(kqvl), n_embd * 4 * nl)
+with open(out / "tiled.tsv", "w") as f:
+    f.write(f"# layer 0 kqv_out, one micro-batch of {nl} rows (ggml's tiled flash attention) · tokens {' '.join(map(str, long_ids))}\n")
+    for p_ in range(nl):
+        row = raw[p_ * n_embd * 4:(p_ + 1) * n_embd * 4]
+        f.write(f"kqv_out\t{p_}\t{hashlib.sha256(row).hexdigest()}\t{' '.join(f'{x:.6g}' for x in struct.unpack('<3f', row[:12]))}\n")
+print(f"tiled attention: layer 0 kqv_out for a {nl}-row micro-batch → {out / 'tiled.tsv'}")
+
