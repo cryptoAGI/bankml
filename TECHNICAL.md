@@ -1,6 +1,6 @@
 # bankml: verified low-bit inference on commodity CPUs — a technical report
 
-*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.0.8 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
+*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.1.0 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
 here with the command that reproduces it.*
 
 ## Abstract
@@ -25,6 +25,9 @@ memory floor (15–17 GB/s) shows both kernels are compute-bound, and five furth
 gain, which places them at the instruction-throughput limit of the test core (§IV.5). Since 0.0.6 the runtime answers
 through the reference behind its gates (phase P0). Every answer carries a receipt with the sha256 of its text, and the
 conversation's history is committed by a Merkle root and a CID, so it can be proven without being disclosed (§III.6).
+Custom agents derived from Savante's template are bundled as THOT manifests and minted as iNFTs, the mint prepared and
+simulated by the runtime and signed by the owner, and loaded back from a token with their lineage verified (§III.7).
+Every cryptographic construction is checked against a published value.
 
 ## Thesis — Professor Codephreak and Gregory L. Magnusson
 
@@ -131,6 +134,12 @@ and the measurements (PERFORMANCE.md).
     commitments, with an inclusion proof per exchange (§III.6).
 13. **The testing kept with the code.** A release gate, its record for every version, the end-to-end tests, the UI's
     data-layer tests, and the measured-and-rejected kernels (`testing/`).
+14. **Agents from a template, bound for an iNFT, checked against published values** (0.0.9–0.1.0). Custom agents
+    are derived from Savante's template without writing to her canon. Each carries a ledger whose keccak256 doctrine
+    root is built exactly as her binder builds hers (reproducing her published root). A THOT manifest to
+    `sagi.thot_manifest/1` reproduces the spec's three test vectors. A PostgreSQL connector loads an agent only if
+    every byte matches its manifest. The iNFT path mints from the manifest's contentRoot, loads a token back, and
+    walks the THOT lineage to the minted generation, tested end to end on a local EVM (§III.7).
 
 ## I. The problem
 
@@ -310,6 +319,31 @@ or a proof for another record fails, that the CID equals the house implementatio
 the commitment and none of the content. These commitments are what a THOT dataset bundle and an iNFT's storage
 reference will point to (§VI).
 
+### III.7 From a template to a token
+
+A custom agent is derived, never copied into place. Savante's canon is read as a template. The derived persona gets
+a new identity, and its token bindings start empty. The ledger commits each file by sha256 and CIDv1, and commits the
+fifteen clauses its owner may not edit by a keccak256 doctrine root. The construction is the one Savante's binder
+uses: pointer, 0x1f, canonical JSON, 0x1e, in a fixed order. The keccak256 is written here in the standard library.
+Two published values anchor it: it reproduces Savante's doctrine root (`0x92fe83eb…`) from her persona, and it
+agrees with an independent implementation on every input length from 0 to 400 bytes.
+
+The agent's dataset is its THOT manifest (`sagi.thot_manifest/1`). The persona and the prompt are core facets. The
+card, the history and the notes are declared custom facets, the last two committed by digest only, so the manifest
+can be published without disclosing a conversation. The bundle root, the 64-leaf keccak Merkle tree and the identity
+follow the specification to the byte: the builder reproduces the specification's own test vectors for three published
+bundles. Every facet change is a new generation whose parent is the previous manifest's CID.
+
+The mint uses the house ERC-7857 contract's `mintOpenAgent`. The token's `contentRoot` is the manifest's contentRoot,
+which the contract accepts once and never again, and its `metadataRoot` is the keccak256 of the card. The runtime
+builds and simulates the call, decodes the contract's own errors, and hands the owner an unsigned transaction. It
+sends only on a local development chain. Loading reads the token's payload, finds the manifest generation with that
+root, verifies the bundle, and walks the parent links from the agent's current generation back to the minted one.
+The genesis stays attached; what came after is proven to descend from it. The whole path is tested on a throwaway
+local chain (deploy, simulate, refuse without the role, mint, read back, refuse a second mint, load, evolve twice and
+load again). The contract is not deployed on a public chain, and its audit is not yet cleared: a real mint waits for
+both, and for a wallet with the minter role.
+
 ## IV. Results and testable propositions
 
 ### IV.1 Q1_0
@@ -418,11 +452,10 @@ The plan continues the phases in `bankml.rs`; each step ends in a measured, repr
 - **Commitments on chain.** Receipts carry the answer's sha256 today, and the history is committed by a Merkle root
   and a CID (§III.6). Next: an optional THOT8 ternary commitment of each output, whose Keccak-256 leaf matches the
   on-chain `THOTLib.sol`, and THOT dataset bundles of the history and notes for inclusion with an iNFT.
-- **Connectors, both ways.** Load a previous agent, and publish a new one, through the chain (reading an iNFT's
-  metadata and storage reference), THOT bundles, and PostgreSQL with pgvector or pgvectorscale for rows and
-  embeddings. Publishing ends in a mint that the owner signs; the runtime prepares and verifies everything before it.
-- **Custom agents from the Savante template.** Customizable `.persona` and `.prompt` files, each with its own ledger,
-  derived without touching Savante's canon.
+- **Connectors, done on this machine (0.0.9–0.1.0); next, the public ends.** The agent path is done end to end:
+  THOT bundles, PostgreSQL publish and load, and the iNFT mint and load on a local chain. Next: store bundles where
+  a `storageURI` can name them (Arweave through the permanence rungs), compute embeddings for the vector column, and
+  mint on a public chain once the contract is deployed and audited.
 - **Faster 1-bit, if a core allows it.** On the test core every bit-exact 1-bit variant tried (§IV.5) ran at the
   reference's speed or slower. A core with AVX-512 VNNI (a single-instruction byte dot product) is where the next
   measurement belongs.

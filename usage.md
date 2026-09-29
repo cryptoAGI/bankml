@@ -15,6 +15,7 @@ watch the testing on your network. It also says what each part does, what it che
 - [8b. Custom agents from the Savante template](#8b-custom-agents-from-the-savante-template)
 - [8c. THOT bundles: the dataset an iNFT points to](#8c-thot-bundles-the-dataset-an-inft-points-to)
 - [8d. PostgreSQL: publish an agent, load one back](#8d-postgresql-publish-an-agent-load-one-back)
+- [8e. iNFT: mint an agent, load one from a token](#8e-inft-mint-an-agent-load-one-from-a-token)
 - [9. Receipts, and how to check an answer](#9-receipts-and-how-to-check-an-answer)
 - [10. Savante's canon and the iNFT ledger](#10-savantes-canon-and-the-inft-ledger)
 - [11. Testing and the release gate](#11-testing-and-the-release-gate)
@@ -315,6 +316,44 @@ sudo -u postgres psql -d bankml -c "CREATE EXTENSION IF NOT EXISTS vector"
 - **Safety.** Values travel to psql as COPY data into a temporary table; no value is ever part of SQL text.
   `testing/test_connectors.py` runs every step against a throwaway cluster (initdb in a temp dir, pgvector, its own
   socket), including a tampered prompt, a tampered history line and an SQL-injection string, all handled.
+
+## 8e. iNFT: mint an agent, load one from a token
+
+**Agents → iNFT**, for the agent in use. Savante herself is not minted from here: her verdict on minting is DEFER.
+
+The contract is the house ERC-7857 `iNFT_7857` (DeltaVerse iNFT4), and an open (unsealed) agent is minted with:
+
+```
+mintOpenAgent(address to, bytes32 contentRoot, string storageURI, bytes32 metadataRoot,
+              uint256 dimensions, uint8 parallelUnits, string tokenURI)        — MINTER_ROLE only
+```
+
+| argument | from the agent |
+|---|---|
+| `contentRoot` | its THOT manifest's `identity.contentRoot` (keccak256 of the canonical manifest). The contract accepts a content root once, ever |
+| `metadataRoot` | keccak256 of the agent card's canonical bytes |
+| `storageURI`, `tokenURI` | `local://thot/<cid>` and `local://card/<cid>` until the bundle and card are stored somewhere (the rung stays `referenced`) |
+| `dimensions`, `parallelUnits` | one of 8 … 1048576 (768 by default), and 1 |
+
+- **Plan and simulate** builds the calldata and runs it as an `eth_call` from the minter. You get the token id it
+  would receive, or the decoded revert (`AccessControlUnauthorizedAccount`, `ContentRootAlreadyMinted`,
+  `InvalidDimension`, …).
+- **Unsigned transaction** gives the transaction (chain id, to, data, gas estimate) and the same call as a
+  `cast send … --account <your keystore>` line. **You sign it**, in your own wallet: bankml never signs on a
+  public chain.
+- **Mint on the local devnet** sends only when the chain id is 31337 (anvil). On any other chain it refuses.
+- **Load the agent from this token** reads `getPayload`, `tokenURI`, `ownerOf` and `openMint`, finds the agent whose
+  THOT generation has that `contentRoot` (every manifest is archived by CID in `<agent>/thot/`), verifies its
+  bundle, and walks the THOT parent links from the current generation back to the minted one. The genesis stays
+  attached to the token forever; later generations are proven to descend from it.
+- **Start a local devnet** runs anvil (127.0.0.1:8545, chain 31337), deploys `iNFT_7857` from its compiled artifact
+  (`DeltaVerse/deploy/iNFT4/out`) with account 0 as admin and minter, and fills in the fields. The whole path then
+  runs on this computer.
+
+Where it stands: `iNFT_7857` is **not deployed on any public chain**, its audit (`iNFT4/audit.json`) is not cleared,
+and a real mint needs a wallet holding MINTER_ROLE. `testing/test_chain.py` runs the whole path on a throwaway
+anvil: deploy, simulate (and the refusal without the role), unsigned transaction, mint, read-back, the double-mint
+refusal, load, two more generations and load again, and the refusal to send off a devnet.
 
 ## 9. Receipts, and how to check an answer
 

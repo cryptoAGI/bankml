@@ -215,8 +215,19 @@ def build(slug: str, template_manifest: dict | None = None, reason: str | None =
     elif prev and prev.get("relations"):
         m["relations"] = prev["relations"]
     m["identity"] = identity(m)
-    out.write_text(json.dumps(m, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(m, indent=1, ensure_ascii=False) + "\n"
+    out.write_text(text, encoding="utf-8")
+    arch = d / "thot"  # every manifest ever built, by its CID: a token commits to one generation forever
+    arch.mkdir(exist_ok=True)
+    (arch / f"{m['identity']['cid']}.json").write_text(text, encoding="utf-8")
     return m
+
+
+def generations(slug: str) -> list:
+    """All archived manifests of the agent, oldest generation first."""
+    arch = agent_dir(slug) / "thot"
+    ms = [json.loads(p.read_text(encoding="utf-8")) for p in arch.glob("*.json")] if arch.is_dir() else []
+    return sorted(ms, key=lambda m: (m["bundle"]["generation"], m["identity"]["cid"]))
 
 
 def verify(slug: str) -> list:

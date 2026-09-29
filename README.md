@@ -66,7 +66,7 @@ Every number above is measured and reproducible — the tables, machines and com
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9** |
-| iNFT | load an agent from chain, prepare and simulate a mint the owner signs | next (0.1.0) |
+| iNFT | mint an agent from its THOT bundle (prepared, simulated, signed by the owner), load one from a token | **0.1.0** — full path tested on a local devnet; the contract is not on a public chain yet |
 | P5 | ARM / NEON, handheld | planned |
 
 Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Its own forward
@@ -132,6 +132,8 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   (keccak256 doctrine root, built exactly as Savante's binder builds hers). Build its **THOT bundle** (the dataset an
   iNFT points to: history and memory committed by digest, lineage by generation), and **publish** it to PostgreSQL
   (pgvector/pgvectorscale) or **load** a published one back, verified byte for byte. Savante's canon is never written.
+- **iNFT**: plan and simulate an `iNFT_7857` mint from the agent's THOT bundle, get the unsigned transaction (you sign
+  it), mint on a local devnet, or load an agent back from a token, verified back to the minted generation.
 - Panels resize from their corner, and the side panel drags to either side.
 
 **4. Let others watch**: `python3 ui/view.py --host 0.0.0.0` gives a read-only page at
@@ -158,6 +160,7 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `ui/agents.py` | custom agents: derive, edit, ledger; keccak256 and the doctrine root |
 | `ui/thot.py` | THOT manifests (`sagi.thot_manifest/1`), checked against the spec's test vectors |
 | `ui/connectors.py` | PostgreSQL (pgvector / pgvectorscale): publish and load agents, verified |
+| `ui/chain.py` | iNFT: ABI, JSON-RPC, mint planning, simulation, unsigned transactions, devnet, load from a token |
 | `usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |

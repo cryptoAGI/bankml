@@ -54,7 +54,7 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>bankml · view</title>
 <style>
-:root{--bg:#0b0f14;--panel:#111821;--panel2:#0e141c;--line:#263241;--line2:#344457;--text:#e8eef5;--muted:#9fb0c3;
+:root{--bg:#0b0f14;--panel:rgba(148,163,184,.06);--panel2:rgba(148,163,184,.04);--line:#263241;--line2:#344457;--text:#e8eef5;--muted:#9fb0c3;
 --accent:#39d3c7;--gold:#d9a23a;--ok:#56d364;--bad:#ff6b6b;--warn:#f5b73b;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:light){:root{--bg:#f4f6f9;--panel:#ffffff;--panel2:#f8fafc;--line:#cfd8e3;--line2:#b6c3d1;--text:#0f1722;
 --muted:#4a5a6c;--accent:#0f8f86;--gold:#9a6a0b;--ok:#1a7f37;--bad:#c62828;--warn:#9a6700}}

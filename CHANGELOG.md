@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.1.0 — 2026-09-28 · milestone: Savante with bankml
+
+The first milestone. bankml is a verified low-bit runtime that answers on the computer at hand, behind its gate,
+with a receipt. Savante runs on it, and agents derived from her template can go from a prompt to a token and back,
+every construction checked against a published value. Record: `testing/results/0.1.0.txt`, the full gate: every
+kernel oracle, the A/Bs and budgets, and every test suite.
+
+### What 0.1.0 is (0.0.1 → 0.1.0)
+- **Kernels.** `Q1_0` and `Q2_0_g64`, bit-exact with llama.cpp b11192 on every weight of three real models.
+  Ternary runs 9.2–9.9× the reference per token on three threads (0.23–0.25 s, less than the reference's 1-bit
+  model). The measured memory floor shows both kernels compute-bound, at the laptop's instruction limit; five
+  further variants were measured and rejected, with their code kept.
+- **The gate in front of every answer.** Guard, sha256 pin, and `bankml serve` bound to the verified file, with a
+  receipt carrying the answer's sha256.
+- **Savante.**
+  - Interact mode, on loopback: chat, `.prompt`, `.history` with response times, a RAGE search bar, Responses,
+    `.memory`, Metrics, the verifier.
+  - View mode on the LAN: the stdlib server, read-only, with commitments only.
+  - Proof of data without the data: Merkle roots, CIDs, inclusion proofs.
+  - Her canon read, never written, and checked against her iNFT ledger before she speaks.
+- **Agents.**
+  - Derived from her template, each with a ledger whose keccak256 doctrine root matches her binder's construction.
+  - THOT manifests that reproduce the spec's test vectors.
+  - PostgreSQL publish and load, byte-verified.
+  - **The iNFT path (new in 0.1.0):** plan, simulate, unsigned transaction, devnet mint, and load from a token with
+    the lineage walked back to the minted generation.
+
+### Added in 0.1.0
+- **`ui/chain.py`**, stdlib: ABI encoding and decoding (byte-equal to Foundry's `cast` on selectors and calldata),
+  JSON-RPC, the `mintOpenAgent` plan from a THOT bundle (`contentRoot` = the manifest's, `metadataRoot` = keccak of
+  the card), `eth_call` simulation with the contract's custom errors decoded, the unsigned transaction and its
+  `cast send` line, a devnet-only send (chain 31337; refused elsewhere), `read_token` and `load_from_chain`. A local
+  devnet helper starts anvil and deploys `iNFT_7857` from its artifact.
+- **THOT generations archived by CID** (`<agent>/thot/<cid>.json`), so a token keeps resolving after the agent evolves.
+  Loading walks the parent links from the current generation to the minted one.
+- **UI: Agents → iNFT**: plan and simulate, unsigned transaction, mint on the local devnet, load from a token, and
+  start a local devnet.
+- **Dark mode**: transparent surfaces instead of white panels in interact mode, and translucent panels in view mode.
+- **`testing/test_chain.py`** (13 checks, a throwaway anvil). It covers: the deploy from the artifact; simulation as
+  minter and the decoded AccessControl refusal; the unsigned transaction; the mint and its read-back; the
+  double-mint refusal; the load; the load again after two more generations; the refusal off a devnet; and an
+  invalid dimension refused before any call. It skips where anvil or the artifact is absent (CI).
+- Documents: usage.md §8e (iNFT), README, TECHNICAL §III.7 and contribution 14.
+
+### The gate record, plainly
+Every kernel oracle is bit-exact, and every suite passes (37 unit, 6 CLI, 34 UI, 12 PostgreSQL, 13 iNFT-devnet, guard
+agreement 24/24). The 1-bit budget and both A/Bs measured normally. The **ternary decode budget could not be measured
+undisturbed in this gate**. With 1.7 GB of RAM available and swap full (other sessions and a browser resident), the
+2.13 GB ternary model no longer fits in page cache and each pass re-reads it from disk (about 0.5 GB/s): 4.0–5.9 s
+per token for bankml, 5.1–7.3 s for llama.cpp. The code is unchanged since 0.0.3; its undisturbed figures are in the
+0.0.5 and 0.0.6 records (0.44–0.45 s per token at 1 thread, 0.24 s at 3).
+
+### What 0.1.0 does not claim
+- bankml's own forward pass (P3): answers still come from llama.cpp's arithmetic, behind bankml's gate.
+- A public mint: `iNFT_7857` is not deployed on a public chain, its audit is not cleared, and a mint needs MINTER_ROLE
+  and the owner's signature. Savante's own verdict on minting remains DEFER.
+- Stored bundles: `storageURI` is a `local://` reference until a bundle is stored (the rung stays `referenced`).
+- Embeddings: the `vector(1024)` column and its index are ready; nothing computes them yet.
+- The laptop's own PostgreSQL still needs its one-time setup (sudo; usage.md §8d).
+
 ## 0.0.9 — 2026-09-28
 
 Custom agents, their THOT bundles, and a PostgreSQL connector. Every new cryptographic construction is checked against

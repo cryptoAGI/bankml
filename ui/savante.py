@@ -692,6 +692,16 @@ button.primary,button.lg.primary{background:#0f766e!important;border-color:#0f76
 .bk-t{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}.bk-t th,.bk-t td{border:1px solid #cbd5e1;padding:5px 8px;text-align:left;color:#0f172a}
 .bk-t th{background:#f1f5f9}.bk-spark{border:1px solid #cbd5e1;border-radius:8px;background:#fff}.bk-spark rect{fill:#0f766e}
 #bk-nav button{min-width:0}
+/* dark mode: transparent surfaces over the page, light text and borders — never white panels */
+.dark #bk-side,.dark .bk-card,.dark .bk-ex,.dark .bk-timer,.dark .bk-grip,.dark .bk-spark,.dark .bk-t th,.dark .bk-t td{background:transparent!important}
+.dark #bk-side{border-color:rgba(148,163,184,.35)!important;box-shadow:none}
+.dark .bk-card,.dark .bk-ex,.dark .bk-timer,.dark .bk-grip,.dark .bk-spark,.dark .bk-t th,.dark .bk-t td{border-color:rgba(148,163,184,.35)!important}
+.dark .bk-card,.dark .bk-card *,.dark .bk-ex,.dark .bk-ex *,.dark .bk-t th,.dark .bk-t td,.dark .bk-grip{color:#e2e8f0!important}
+.dark .bk-card dt,.dark .bk-exh,.dark .bk-note,.dark #bk-prov,.dark #bk-prov *,.dark .bk-idle,.dark .rb-stat{color:#94a3b8!important}
+.dark .bk-card .bk-ok,.dark .bk-okb{color:#4ade80!important}.dark .bk-badb,.dark .bk-bad b{color:#f87171!important}
+.dark .bk-live{border-color:#2dd4bf!important;color:#2dd4bf!important;background:rgba(45,212,191,.08)!important}
+.dark .bk-t th{background:rgba(148,163,184,.08)!important}.dark .rb-meter{background:rgba(148,163,184,.2)}
+.dark .bk-spark rect{fill:#2dd4bf}
 """
 
 
@@ -1150,6 +1160,59 @@ def build(canon: Canon, mode: str):
                             "choose it above and press *use this agent*", gr.update(choices=[SAV] + agents.list_agents()))
 
                 b_pgst.click(pg_status, None, pg_st)
+
+            import chain
+            with gr.Accordion("iNFT — mint the agent (prepared here, signed by the owner), or load one from a token", open=False):
+                gr.Markdown("The house ERC-7857 contract `iNFT_7857` (`mintOpenAgent`). contentRoot = the agent's THOT manifest "
+                            "contentRoot; metadataRoot = keccak256 of its card. **bankml never signs off a devnet**: it simulates, "
+                            "and hands you the unsigned transaction and the `cast send` line for your own wallet. The contract "
+                            "is not deployed on any public chain today, its audit is not cleared, and minting needs MINTER_ROLE. "
+                            "*Start a local devnet* runs anvil (chain 31337) and deploys the contract, to try the whole path here.")
+                with gr.Row():
+                    c_rpc = gr.Textbox(label="RPC URL", value="http://127.0.0.1:8545", scale=2)
+                    c_contract = gr.Textbox(label="iNFT_7857 contract", scale=2)
+                    c_from = gr.Textbox(label="minter (from)", scale=2)
+                with gr.Row():
+                    c_to = gr.Textbox(label="owner of the new token (to)", scale=2)
+                    c_dim = gr.Dropdown([str(d) for d in chain.VALID_DIMENSIONS], value="768", label="dimensions", scale=1)
+                    b_dev = gr.Button("start a local devnet (anvil + iNFT_7857)", scale=2)
+                with gr.Row():
+                    b_plan = gr.Button("plan and simulate", variant="primary")
+                    b_utx = gr.Button("unsigned transaction (owner signs)")
+                    b_mint = gr.Button("mint on the local devnet (31337 only)")
+                with gr.Row():
+                    c_tok = gr.Number(label="token id", precision=0, value=1, scale=1)
+                    b_read = gr.Button("load the agent from this token (verified)", scale=2)
+                c_out = gr.Code(language="json", label="result")
+
+                def _plan(to, dim):
+                    slug = ACTIVE["slug"]
+                    if not slug:
+                        raise ValueError("Savante is not minted from here (her verdict on minting is DEFER): use a derived agent")
+                    thot.build(slug, json.loads((CANON / "savante.thot.json").read_text(encoding="utf-8")))
+                    return chain.plan_mint(slug, to=to.strip(), dimensions=int(dim))
+
+                def _json(fn):
+                    def run(*a):
+                        try:
+                            return json.dumps(fn(*a), indent=1, ensure_ascii=False)
+                        except Exception as e:  # noqa: BLE001 — shown to the operator
+                            return json.dumps({"error": f"{type(e).__name__}: {e}"}, indent=1)
+                    return run
+
+                def dev():
+                    d = chain.devnet_up()
+                    return d["url"], d["contract"], d["accounts"][0], d["accounts"][1], json.dumps({"devnet": d}, indent=1)
+
+                b_dev.click(dev, None, [c_rpc, c_contract, c_from, c_to, c_out])
+                b_plan.click(_json(lambda r, c, f, t, d: {"plan": (p := _plan(t, d)), "simulation": chain.simulate(r, c.strip(), f.strip(), p)}),
+                             [c_rpc, c_contract, c_from, c_to, c_dim], c_out)
+                b_utx.click(_json(lambda r, c, f, t, d: chain.unsigned_tx(r, c.strip(), f.strip(), _plan(t, d))), [c_rpc, c_contract, c_from, c_to, c_dim], c_out)
+                b_mint.click(_json(lambda r, c, f, t, d: (lambda p: {"simulation": (sm := chain.simulate(r, c.strip(), f.strip(), p)),
+                                                                     "sent": chain.send_devnet(r, c.strip(), f.strip(), p) if sm["ok"] else None,
+                                                                     "token": chain.read_token(r, c.strip(), sm["tokenId"]) if sm["ok"] else None})(_plan(t, d))),
+                             [c_rpc, c_contract, c_from, c_to, c_dim], c_out)
+                b_read.click(_json(lambda r, c, k: chain.load_from_chain(r, c.strip(), int(k))), [c_rpc, c_contract, c_tok], c_out)
                 b_pub.click(do_pub, priv, pg_out)
                 b_list.click(do_list, None, [pub_pick, pg_out])
                 b_load.click(do_load, pub_pick, [pg_out, apick])
