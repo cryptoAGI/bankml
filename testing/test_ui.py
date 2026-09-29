@@ -167,12 +167,12 @@ try:  # an independent implementation, where installed: every length 0..400 cros
           _k.new(digest_bits=256, data=(bytes(range(256)) * 2)[:n]).digest() for n in range(401)))
 except ImportError:
     print("skip  keccak256 vs pycryptodome (not installed)")
-real = Path.home() / "savante"
+real = next((p for p in (Path.home() / "cryptoAGI" / "savante", Path.home() / "savante") if p.exists()), Path.home() / "cryptoAGI" / "savante")
 if (real / "savante.persona").is_file():
     sp, sl = json.loads((real / "savante.persona").read_bytes()), json.loads((real / "savante.commitments.json").read_bytes())
     check("doctrine root reproduces Savante's published ledger value", agents.doctrine_root(sp, sl["doctrine_root"]["pointers"]) == sl["doctrine_root"]["value"])
 else:
-    print("skip  doctrine root vs Savante (no ~/savante here)")
+    print("skip  doctrine root vs Savante (no ~/cryptoAGI/savante here)")
 tpl = {"persona": "tpl", "name": "Template", "source": "s", "format": "f", "system_prompt": "You are the template.", "mantra": "m", "oath": "o",
        "bdi": {"beliefs": [{"id": "b", "belief": "x"}]}, "skills": {"primary": "p", "taxonomy": [], "defer_triggers": [], "validation": []},
        "safety": {"scope": "s"}, "embodiment": {}, "token": {"intelligence": {"tool_allowlist": ["read"]}, "bindings": {"erc7857": "SECRET"}}}
@@ -234,7 +234,7 @@ for bad, why in ((b"not an image at all", "a non-image"), (b"\x89PNG\r\n\x1a\n" 
 
 # THOT manifests: the spec's test vectors (where those repositories are here), and a bankml bundle's lineage
 import subprocess, thot  # noqa: E402
-VEC = [("savante", Path.home() / "savante", "1fcca89", "savante.thot.json", "0x235da8e993dc8af2c077f50d698962446b872b17b1e5b033d5c5d976532b8880",
+VEC = [("savante", real, "1fcca89", "savante.thot.json", "0x235da8e993dc8af2c077f50d698962446b872b17b1e5b033d5c5d976532b8880",
         "0xdc1d80957cf831aee6638fd569e22cf0f6e5a1ec99ddde91cfecb5a15408fbe1", "bafkreieerglzkjrkmwrxhmrk53bf3tvhp3aut3qlatwpdtoutmspuxrh4i"),
        ("jaimla", Path.home() / "cryptoAGI" / "jaimla", "8b57ccf", "jaimla.thot.json", "0x7f5bcc69dc9d50854189762dba0a97b3a48090ee546a0423aa9722917740e086",
         "0xd7cb5363324645b4f6d0df19902fe9cd15dcb1c36ae925ee5ff2278315f6a258", "bafkreidczapw72pldcf5pxyoz2hhdleauto7ajvjgun7w2iiq7ccwwhvku"),

@@ -537,7 +537,7 @@ def cached(texts: list) -> list:
 
 if __name__ == "__main__":  # pre-render Savante's introduction and voice examples from the command line
     import sys
-    c = Path(os.environ.get("SAVANTE_CANON", HOME / "savante"))
+    c = Path(os.environ.get("SAVANTE_CANON", HOME / "cryptoAGI" / "savante" if (HOME / "cryptoAGI" / "savante").exists() or not (HOME / "savante").exists() else HOME / "savante"))
     per = json.loads((c / "savante.persona").read_text(encoding="utf-8"))
     crd = json.loads((c / "savante.agentcard.json").read_text(encoding="utf-8"))
     chs = intro_chapters(c, per, crd)

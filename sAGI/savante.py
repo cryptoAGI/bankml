@@ -7,7 +7,7 @@ persona's own `system_prompt`, the history is the last 12 exchanges (each ≤ 40
 labelled drafts, `<think>` blocks are stripped and Qwen3 carriers get ` /no_think`.
 
 What it adds:
-  · **iNFT compatibility.** Savante's canon (~/savante, or SAVANTE_CANON) is read and never written. At start
+  · **iNFT compatibility.** Savante's canon (~/cryptoAGI/savante, or SAVANTE_CANON) is read and never written. At start
     every file the ledger `savante.commitments.json` commits to — the nine artefacts, the agent card, the image —
     is re-hashed (sha256) and compared; if the persona does not verify, the UI refuses to speak as Savante.
     `bind/savante_verify.py` (the full offline verifier: doctrine root, thot, mirror) runs from a button.
@@ -49,7 +49,13 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # never leave a cache next to anything we import
 import embed  # noqa: E402 — bge-m3 via the local Ollama (optional; BM25 stands alone without it)
 
-CANON = Path(os.environ.get("SAVANTE_CANON", Path.home() / "savante")).expanduser()
+def _canon_default() -> Path:
+    """Savante's canon: ~/cryptoAGI/savante (beside jaimla and luvai), or an older ~/savante if that is the only one."""
+    new, old = Path.home() / "cryptoAGI" / "savante", Path.home() / "savante"
+    return old if (not new.exists() and old.exists()) else new
+
+
+CANON = Path(os.environ.get("SAVANTE_CANON", _canon_default())).expanduser()
 SERVE = os.environ.get("BANKML_SERVE", "http://127.0.0.1:18093")
 STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" / "bankml" / "savante")).expanduser()
 HISTORY = STATE / "savante.history"

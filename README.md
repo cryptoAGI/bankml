@@ -234,7 +234,7 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
 Savante's ledger, and the commitments of `.history` and `.memory` (never their content), in draggable, resizable
 panels. It is the standard library, not Gradio, so it is safe to put on a network.
 
-Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-hashes every file her iNFT ledger
+Savante's canon (`~/cryptoAGI/savante`) is only ever read. Before she speaks, the UI re-hashes every file her iNFT ledger
 (`savante.commitments.json`) commits to, and it refuses if her persona does not verify. Nothing is minted.
 
 ## Layout

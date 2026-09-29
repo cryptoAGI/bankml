@@ -24,7 +24,7 @@ corpus = []
 for p in sorted([*root.glob("*.md"), *root.glob("docs/*.md"), root / "testing/README.md", root / "upstream/README.md"]):
     t = p.read_text(encoding="utf-8")
     corpus += [t[i:i + 4000] for i in range(0, len(t), 4000)]  # whole documents, in chunks
-canon = Path(os.environ.get("SAVANTE_CANON", Path.home() / "savante"))
+canon = Path(os.environ.get("SAVANTE_CANON", next((p for p in (Path.home() / "cryptoAGI" / "savante", Path.home() / "savante") if p.exists()), Path.home() / "cryptoAGI" / "savante")))
 for name in ("savante.persona", "explanation.md", "MANIFESTO.md", "Savante.md"):
     try:
         t = (canon / name).read_text(encoding="utf-8")

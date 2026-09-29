@@ -16,7 +16,7 @@
 # Nothing here needs sudo. Every download is checked before it is used: llama.cpp b11192 against its published
 # sha256, and the model by the importer (the publisher's sha256, bankml guard, a FORK.json pin), as bankml serve
 # refuses anything else. Environment: BANKML_DIR, BANKML_DATA (~/.local/share/bankml), BANKML_LLAMA_SERVER,
-# SAVANTE_CANON (~/savante), BANKML_PYTHON, and every BANKML_* variable docs/usage.md §13 lists.
+# SAVANTE_CANON (~/cryptoAGI/savante, beside jaimla and luvai; an older ~/savante is still used if it is the only one), BANKML_PYTHON, and every BANKML_* variable docs/usage.md §13 lists.
 set -euo pipefail
 
 REPO_URL="https://github.com/cryptoAGI/bankml"
@@ -64,7 +64,9 @@ fi
 DATA="${BANKML_DATA:-$HOME/.local/share/bankml}"
 ENV_FILE="$DATA/install.env"       # what this installer chose (engine, python), read back by later runs
 BIN="$HERE/target/release/bankml"
-CANON="${SAVANTE_CANON:-$HOME/savante}"
+if [ -n "${SAVANTE_CANON:-}" ]; then CANON="$SAVANTE_CANON"
+elif [ ! -d "$HOME/cryptoAGI/savante" ] && [ -d "$HOME/savante" ]; then CANON="$HOME/savante"   # the pre-0.2.12 layout
+else CANON="$HOME/cryptoAGI/savante"; fi
 LOGS="$DATA/logs"
 
 # ── options ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -216,6 +218,7 @@ step_canon() {
     bm_ok "Savante's canon: $CANON (left as it is: the canon is read-only)"
   else
     bm_sub "cloning $CANON_URL into $CANON"
+    mkdir -p "$(dirname "$CANON")"
     git clone -q "$CANON_URL" "$CANON"
     bm_ok "Savante's canon: $CANON"
   fi

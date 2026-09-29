@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Custom agents from the Savante template — each with its own .persona, .prompt, card and ledger.
 
-Savante's canon (~/savante) is the template and is only ever read. `derive()` writes a new agent into
+Savante's canon (~/cryptoAGI/savante) is the template and is only ever read. `derive()` writes a new agent into
 BANKML_AGENTS (default ~/.local/share/bankml/agents/<slug>/):
 
   <slug>.persona            the persona (mindX .persona v1 shape), a fresh identity; the token bindings start empty

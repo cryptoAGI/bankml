@@ -47,7 +47,7 @@ It runs these steps in order, and stops at the first one that fails, saying why:
 | `build` | `cargo build --release` and `cargo test --release` |
 | `engine` | downloads llama.cpp b11192 (17 MB) and refuses it unless its sha256 is the published one |
 | `python` | uses your Python if it has Gradio and numpy; otherwise makes a venv with Gradio 3 |
-| `canon` | clones Savante's canon to `~/savante` if it is not there (an existing canon is left as it is) |
+| `canon` | clones Savante's canon to `~/cryptoAGI/savante` (beside jaimla and luvai) if it is not there; an existing canon is left as it is, and a machine that still has the older `~/savante` keeps using it |
 | `model` | imports Bonsai-8B (1.16 GB) if absent, verifies it, and starts `bankml serve` with llama-server behind it |
 | `start` | starts Savante on `http://127.0.0.1:7873` |
 
@@ -164,7 +164,7 @@ path-traversal bugs and must stay on this computer.
 
 ## 8. The files Savante keeps: `.history`, `.memory`, `.prompt`
 
-Nothing is ever written into the canon (`~/savante`). What the UI writes lives in `BANKML_UI_STATE` (default
+Nothing is ever written into the canon (`~/cryptoAGI/savante`). What the UI writes lives in `BANKML_UI_STATE` (default
 `~/.local/share/bankml/savante/`):
 
 - **`savante.history`**: one JSON object per exchange (JSONL):
@@ -378,7 +378,7 @@ changed, it refuses to answer rather than issue a receipt for weights it did not
 
 ## 10. Savante's canon and the iNFT ledger
 
-Savante is defined by her canon, `~/savante` (github.com/cryptoAGI/savante), bound for an iNFT by the ledger
+Savante is defined by her canon, `~/cryptoAGI/savante` (github.com/cryptoAGI/savante), bound for an iNFT by the ledger
 `savante.commitments.json`. The ledger commits by sha256 (and CIDv1) to:
 - the persona;
 - the charter;
@@ -425,7 +425,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | serve prints `upstream … serves X, not the verified Y` | the llama-server on that port runs another file | restart it with the verified file, or use `--spawn` |
 | serve prints `upstream … not healthy` | llama-server not up (a cold load can take a minute) | wait; check its log |
 | the first answer takes minutes | CPU prefill of the ~300-token system prompt (≈3 tok/s on a laptop) | expected; later turns reuse the cache |
-| *refused: savante.persona does not verify* | the canon was edited or is incomplete | `git -C ~/savante status`; run the Verifier |
+| *refused: savante.persona does not verify* | the canon was edited or is incomplete | `git -C ~/cryptoAGI/savante status`; run the Verifier |
 | view mode says *swap full* | the machine is under memory pressure | close other work before measuring |
 | view from another computer does not load | firewall, or bound to 127.0.0.1 | `--host 0.0.0.0`; allow TCP 7874 |
 
@@ -457,7 +457,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 
 | variable | default | meaning |
 |---|---|---|
-| `SAVANTE_CANON` | `~/savante` | Savante's canon (read-only) |
+| `SAVANTE_CANON` | `~/cryptoAGI/savante` | Savante's canon (read-only) |
 | `BANKML_SERVE` | `http://127.0.0.1:18093` | where the UI finds bankml serve |
 | `BANKML_UI_STATE` | `~/.local/share/bankml/savante` | `.history` and caches |
 | `BANKML_REPO` | the checkout | where view mode reads `testing/` |
