@@ -2970,17 +2970,6 @@
    "target_f0": 182.0
   }
  },
- "b24fad61da97ac993a819342": {
-  "text": "Some decisions belong to the operator's signature (Professor / OVERLORD), not to any evidence Savante can gather.",
-  "said": "Some decisions belong to the operator's signature (Professor over OVERLORD), not to any evidence Sav ont can gather.",
-  "seconds": 8.807,
-  "opus_sha256": "1474c2cd28987b308a0fc8a9a15ae0cd138c422eaca8d05b263eed6e250e5834",
-  "measured": {
-   "body_f0": 206.1,
-   "pitch_ratio": 0.8832,
-   "target_f0": 182.0
-  }
- },
  "668764d0f668292fd2439fde": {
   "text": "Doctrine forbids pinning (selector + cascade to local models), so Savante is written to be model-portable — the discipline must survive an engine swap, or it was never a discipline.",
   "said": "Doctrine forbids pinning (selector plus cascade to local models), so Sav ont is written to be model-portable — the discipline must survive an engine swap, or it was never a discipline.",
@@ -3278,17 +3267,6 @@
    "target_f0": 182.0
   }
  },
- "f23ef68da1ad98b3c15afcfb": {
-  "text": "— Savante Chairman, mindX DAIO · savante_sagi · core_command Rendered 2026-07-27, the day after the first verdict.",
-  "said": "— Sav ont Chairman, mindX DAIO times Sav ont sagi times core command Rendered 2026-07-27, the day after the first verdict.",
-  "seconds": 12.476,
-  "opus_sha256": "427781782784ee432353eafb2726134f43e0764c889b9a732577e788d7645617",
-  "measured": {
-   "body_f0": 196.9,
-   "pitch_ratio": 0.9244,
-   "target_f0": 182.0
-  }
- },
  "b2d23a59e7467cf7018bd87e": {
   "text": "The design intent this report tests is that of bankml's authors, Professor Codephreak and Gregory L.",
   "said": "The design intent this report tests is that of bank M L's authors, Professor Codephreak and Gregory L.",
@@ -3338,17 +3316,6 @@
   "said": "\"We prototyped in python and we switch to rust from working architecture\" (2026-07-04). bank M L was not begun from a design document.",
   "seconds": 11.187,
   "opus_sha256": "64622cbf48abf8a4760c1982c89f6c8a5db425bcb5dec6ae1271e6f6a2ac722c",
-  "measured": {
-   "body_f0": 206.1,
-   "pitch_ratio": 0.8832,
-   "target_f0": 182.0
-  }
- },
- "482a765257090dae2a6c8377": {
-  "text": "It was begun, on the instruction to \"create llama.cpp rust version todo as bankml.rs\" (2026-09-25), after a working architecture existed and had been measured: a 1-bit Bonsai-8B served by llama.cpp b11192 on a two-core server.",
-  "said": "It was begun, on the instruction to \"create llama.cpp rust version todo as bank M L.rs\" (2026-09-25), after a working architecture existed and had been measured: a 1-bit Bonsai-8B served by llama.cpp b11192 on a two-core server.",
-  "seconds": 20.638,
-  "opus_sha256": "5cf714c4ecf80033d477de9ffec93542ba0c1bfc7cd329c0bf1e8cd4cf5360d0",
   "measured": {
    "body_f0": 206.1,
    "pitch_ratio": 0.8832,
@@ -3553,17 +3520,6 @@
    "target_f0": 182.0
   }
  },
- "fed0895dbfadfb6406d89d98": {
-  "text": "The negative results are part of the evidence: they are how the limit of §IV.5 is known rather than assumed.",
-  "said": "The negative results are part of the evidence: they are how the limit of is known rather than assumed.",
-  "seconds": 5.963,
-  "opus_sha256": "391701253f2167b926b6ec28f12b9a5397afc41025c4b64990ae38a5fb038c20",
-  "measured": {
-   "body_f0": 215.1,
-   "pitch_ratio": 0.846,
-   "target_f0": 182.0
-  }
- },
  "4cbf6764374a938364c9f985": {
   "text": "Use the machine at hand.",
   "said": "Use the machine at hand.",
@@ -3718,17 +3674,6 @@
    "target_f0": 182.0
   }
  },
- "1a035f31e8a7c1c5e494e7ff": {
-  "text": "Since 0.0.6 every answer carries a receipt: model hash, guard verdict, token counts, timings, and the sha256 of the answer text (serve.rs).",
-  "said": "Since 0.0.6 every answer carries a receipt: model hash, guard verdict, token counts, timings, and the sha256 of the answer text (serve.rs).",
-  "seconds": 13.057,
-  "opus_sha256": "0f7c9794885b44744b3fe029c0f0a619568d1adb3e5f7caa44c1247c6c4952fa",
-  "measured": {
-   "body_f0": 212.0,
-   "pitch_ratio": 0.8584,
-   "target_f0": 182.0
-  }
- },
  "5b6827a5560d996f2c331c7d": {
   "text": "The contribution is the ordering: correctness is established before speed is measured, and a model that cannot be verified does not answer (§III.1).",
   "said": "The contribution is the ordering: correctness is established before speed is measured, and a model that cannot be verified does not answer.",
@@ -3762,33 +3707,11 @@
    "target_f0": 182.0
   }
  },
- "2a5080f65d271a53d153045a": {
-  "text": "It refuses (1) fork-only types (PQ2_0 = 142, PTQ1_0 = 143), which mainline rejects safely;",
-  "said": "It refuses (1) fork-only types (PQ2 0 equals 142, PTQ1 0 equals 143), which mainline rejects safely;",
-  "seconds": 11.42,
-  "opus_sha256": "e82a185ced9486a4a6e08ab2e45bf6caa5da5cbd302c849d131ca71c8e0dc0f7",
-  "measured": {
-   "body_f0": 216.2,
-   "pitch_ratio": 0.8419,
-   "target_f0": 182.0
-  }
- },
  "e500078847f61d745f31b086": {
   "text": "(2) legacy Q2_0 whose group-128 bytes are filed under type 42, which mainline reads as group-64 — detectable as a size mismatch; and (3) Bonsai 2 Q2_0 in a rotated basis, which mainline loads and answers in fluent nonsense — the dangerous case, visible only by name.",
   "said": "(2) legacy Q two zero whose group-128 bytes are filed under type 42, which mainline reads as group-64 — detectable as a size mismatch; and (3) Bonsai 2 Q two zero in a rotated basis, which mainline loads and answers in fluent nonsense — the dangerous case, visible only by name.",
   "seconds": 24.829,
   "opus_sha256": "d2967b8e51647f6cc0f9a440fdce54c9ee2281db58ea7c7ad29cc776af2daa18",
-  "measured": {
-   "body_f0": 208.0,
-   "pitch_ratio": 0.8749,
-   "target_f0": 182.0
-  }
- },
- "4cdb34184d08548de9584aa9": {
-  "text": "The Python original (vendored as testing/gguf_guard.py) and the Rust port (gguf.rs) agree JSON-for-JSON on every case (20 of 20 with the real file;",
-  "said": "The Python original (vendored as testing/gguf guard.py) and the Rust port (gguf.rs) agree JSON-for-JSON on every case (20 of 20 with the real file;",
-  "seconds": 13.126,
-  "opus_sha256": "9cd9fdd83b3549e0086c53dfb930e230a40eede6fcb3e5319f29dbbad7d70142",
   "measured": {
    "body_f0": 208.0,
    "pitch_ratio": 0.8749,
@@ -3814,17 +3737,6 @@
   "measured": {
    "body_f0": 209.0,
    "pitch_ratio": 0.8708,
-   "target_f0": 182.0
-  }
- },
- "60d23e6d1ec6776a963d06c5": {
-  "text": "The models are forked with provenance to PYTHAI/Bonsai-8B-gguf-fork and PYTHAI/Ternary-Bonsai-8B-gguf-fork, each with a FORK.json recording the upstream revision and every file's sha256; bankml pin refuses a file whose hash differs and names both hashes (sha256.rs, FIPS 180-4 vectors).",
-  "said": "The models are forked with provenance to Pith AI/Bonsai-8B-gguf-fork and Pith AI/Ternary-Bonsai-8B-gguf-fork, each with a FORK.json recording the upstream revision and every file's sha256; bank M L pin refuses a file whose hash differs and names both hashes (sha256.rs, FIPS 180-4 vectors).",
-  "seconds": 27.314,
-  "opus_sha256": "ec751a330c886840032d3fcf8c298e5744be5cc0eaef364aaf16e9db7744a828",
-  "measured": {
-   "body_f0": 208.0,
-   "pitch_ratio": 0.8749,
    "target_f0": 182.0
   }
  },
@@ -3872,17 +3784,6 @@
    "target_f0": 182.0
   }
  },
- "7eb4c63dc258bb4faff2ed5b": {
-  "text": "Prefill is 1.2–1.3× faster through a 1×4 selection tile over prepared activations (q1_0.rs, 0.0.4).",
-  "said": "Prefill is 1.2–1.3 times faster through a 1 times 4 selection tile over prepared activations (q1 0.rs, 0.0.4).",
-  "seconds": 12.209,
-  "opus_sha256": "b201e8ef2e187e70be04b1effce787830694b64cd4fec89fdcfb5df77c0ffa26",
-  "measured": {
-   "body_f0": 208.0,
-   "pitch_ratio": 0.8749,
-   "target_f0": 182.0
-  }
- },
  "c5747c62ff5e86eb85ab323c": {
   "text": "The finding that explains the ternary gap. llama.cpp b11192 ships no vectorised x86 kernel for Q2_0: the generic C is renamed to the x86 symbol in arch-fallback.h, there is no repack or sgemm case, and the shipped library runs scalar code with 64 integer multiplies per block.",
   "said": "The finding that explains the ternary gap. llama.cpp b11192 ships no vectorised x86 kernel for Q two zero: the generic C is renamed to the x86 symbol in arch-fallback.h, there is no repack or sgemm case, and the shipped library runs scalar code with 64 integer multiplies per block.",
@@ -3891,17 +3792,6 @@
   "measured": {
    "body_f0": 208.0,
    "pitch_ratio": 0.8749,
-   "target_f0": 182.0
-  }
- },
- "ebce52779d844c6eb43c65b1": {
-  "text": "The better ternary model is slow for want of a kernel, not because ternary weights are expensive (§III.5). **A bit-exact ternary (Q2_0_g64) kernel, 9.5–9.8× the reference.** Two blocks per 256-bit register, the activation re-laid-out once per token so the inner loop has no shuffles, and ggml's float chain kept serial for exactness: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8× the reference per projection and 12.5× in prefill (q2_0.rs).",
-  "said": "The better ternary model is slow for want of a kernel, not because ternary weights are expensive. A bit-exact ternary (Q two zero, g sixty-four) kernel, 9.5–9.8 times the reference. Two blocks per 256-bit register, the activation re-laid-out once per token so the inner loop has no shuffles, and ggml's float chain kept serial for exactness: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8 times the reference per projection and 12.5 times in prefill (q2 0.rs).",
-  "seconds": 43.658,
-  "opus_sha256": "51f1cf7c9ca886b30d3550791074085c0473c9e1868692b4f2ec9ac4cca50b2d",
-  "measured": {
-   "body_f0": 210.0,
-   "pitch_ratio": 0.8667,
    "target_f0": 182.0
   }
  },
@@ -3924,17 +3814,6 @@
   "measured": {
    "body_f0": 220.5,
    "pitch_ratio": 0.8254,
-   "target_f0": 182.0
-  }
- },
- "d52ff609d67cec3b825bdc0f": {
-  "text": "On a zero-dependency thread pool (par.rs) bankml's ternary products take 0.23–0.25 s at three threads, bounding a complete forward pass at about 4 tokens per second against the reference's 0.4 (§IV.3).",
-  "said": "On a zero-dependency thread pool (par.rs) bank M L's ternary products take 0.23–0.25 s at three threads, bounding a complete forward pass at about 4 tokens per second against the reference's 0.4.",
-  "seconds": 15.541,
-  "opus_sha256": "b8c6e87c0d603db5003fa8645a50b410f61afb6fc5f404a2f902b0bc2069c0c2",
-  "measured": {
-   "body_f0": 208.0,
-   "pitch_ratio": 0.8749,
    "target_f0": 182.0
   }
  },
@@ -4290,28 +4169,6 @@
    "target_f0": 182.0
   }
  },
- "714119eb58dde5e5df4b323a": {
-  "text": "d · (Σ_{sᵢ=+1} *x*ᵢ − Σ_{sᵢ=−1} *x*ᵢ),",
-  "said": "d times (the sum over plus signs of x i minus the sum over minus signs of x i),",
-  "seconds": 8.111,
-  "opus_sha256": "a7a2e29045755ff87241340eb214b49344a0f9c13fa950fd86ff80f876261ea2",
-  "measured": {
-   "body_f0": 212.0,
-   "pitch_ratio": 0.8584,
-   "target_f0": 182.0
-  }
- },
- "676dfad4a3a4c1ee9d0d4d83": {
-  "text": "a signed sum requiring no multiplication by weights at all. ggml does not compute this on real activations: it first quantizes the activation row to q8_0 (blocks of 32 signed bytes with their own half-precision scale, computed as 127 / max|x| with round-half-to-even), and the kernel ggml_vec_dot_q1_0_q8_0 accumulates integer products of ±1 and signed bytes, applying both scales at the end.",
-  "said": "a signed sum requiring no multiplication by weights at all. ggml does not compute this on real activations: it first quantizes the activation row to Q eight zero (blocks of 32 signed bytes with their own half-precision scale, computed as 127 over max|x| with round-half-to-even), and the kernel ggml vec dot q1 0 Q eight zero accumulates integer products of ±1 and signed bytes, applying both scales at the end.",
-  "seconds": 29.705,
-  "opus_sha256": "4e44b012f4d227921d7b775c9260fa581c67af80aa4663e0cf8191789b02475d",
-  "measured": {
-   "body_f0": 208.0,
-   "pitch_ratio": 0.8749,
-   "target_f0": 182.0
-  }
- },
  "da1354cf66493bb1811f199a": {
   "text": "To be bit-exact, bankml reproduces both steps: the same activation quantizer, the same integer accumulation, and the same order of floating-point operations on the scales.",
   "said": "To be bit-exact, bank M L reproduces both steps: the same activation quantizer, the same integer accumulation, and the same order of floating-point operations on the scales.",
@@ -4364,17 +4221,6 @@
   "measured": {
    "body_f0": 198.6,
    "pitch_ratio": 0.9162,
-   "target_f0": 182.0
-  }
- },
- "c86a86b6766d65f5b7c1df18": {
-  "text": "A code c ∈ {0, 1, 2, 3} decodes to (c − 1) · d, so the format admits {−1, 0, +1, +2} — not strictly ternary; in the real Ternary-Bonsai-8B file the code for +2 never occurs (the observed split is 31 % / 38 % / 31 % / 0 %).",
-  "said": "A code c in {0, 1, 2, 3} decodes to (c minus 1) times d, so the format admits minus one, zero, plus one, or plus two — not strictly ternary; in the real Ternary-Bonsai-8B file the code for plus 2 never occurs (the observed split is 31 % over 38 % over 31 % over 0 %).",
-  "seconds": 24.434,
-  "opus_sha256": "41320888a2f355571ddbecee1416fc2923be50233d06844dd5719a7794731cab",
-  "measured": {
-   "body_f0": 191.7,
-   "pitch_ratio": 0.9492,
    "target_f0": 182.0
   }
  },
@@ -4642,17 +4488,6 @@
    "target_f0": 182.0
   }
  },
- "0f3b9bb502d49e33e49bdd30": {
-  "text": "The stored code is c = w + 1 ∈ {0, 1, 2}, so Σ w·x = Σ c·x − Σ x.",
-  "said": "The stored code is c equals w plus 1 in {0, 1, 2}, so the sum of w times x equals the sum of c times x minus the sum of x.",
-  "seconds": 12.163,
-  "opus_sha256": "11d5f6828863f41f758ecd1bb8301a3fb3a27fdb7469f4d284e87b2b712e5ba0",
-  "measured": {
-   "body_f0": 191.7,
-   "pitch_ratio": 0.9492,
-   "target_f0": 182.0
-  }
- },
  "84d440893424c50319747a8d": {
   "text": "The AVX2 kernel multiplies the unsigned codes by the signed activation bytes with vpmaddubsw, and then subtracts Σ x.",
   "said": "The AVX2 kernel multiplies the unsigned codes by the signed activation bytes with vpmaddubsw, and then subtracts the sum of x.",
@@ -4661,17 +4496,6 @@
   "measured": {
    "body_f0": 196.9,
    "pitch_ratio": 0.9244,
-   "target_f0": 182.0
-  }
- },
- "4031f6d87b78f3d570d997e2": {
-  "text": "That sum depends only on the activation, so it is computed once per token and shared by every weight row (q2_0.rs).",
-  "said": "That sum depends only on the activation, so it is computed once per token and shared by every weight row (q2 0.rs).",
-  "seconds": 9.249,
-  "opus_sha256": "055d8e47ab34729e10be2c3e32d1da386bccee105047ed213489c818034d189d",
-  "measured": {
-   "body_f0": 214.1,
-   "pitch_ratio": 0.8502,
    "target_f0": 182.0
   }
  },
@@ -4848,6 +4672,182 @@
   "measured": {
    "body_f0": 198.6,
    "pitch_ratio": 0.9162,
+   "target_f0": 182.0
+  }
+ },
+ "d0b874a00ee9cf099bdca119": {
+  "text": "Some decisions belong to the operator's signature (Professor / OVERLORD), not to any evidence Savante can gather.",
+  "said": "Some decisions belong to the operator's signature (Professor / OVERLORD), not to any evidence Sav ont can gather.",
+  "seconds": 9.132,
+  "opus_sha256": "50c79fee3d78e0d5f5e4b30b2f0515891f2a496097427e7f7a4d5e34aff7e87f",
+  "measured": {
+   "body_f0": 200.5,
+   "pitch_ratio": 0.9079,
+   "target_f0": 182.0
+  }
+ },
+ "a2023418d4798b50dce6e4d1": {
+  "text": "— Savante Chairman, mindX DAIO · savante_sagi · core_command Rendered 2026-07-27, the day after the first verdict.",
+  "said": "— Sav ont Chairman, mindX DAIO · Sav ont sagi · core command Rendered 2026-07-27, the day after the first verdict.",
+  "seconds": 10.99,
+  "opus_sha256": "dce7f91e14b61c548968054fbfa5ee07e1f83bf6a89c022fc0c97871cfbac22c",
+  "measured": {
+   "body_f0": 196.9,
+   "pitch_ratio": 0.9244,
+   "target_f0": 182.0
+  }
+ },
+ "2ee7032e0d046187d8003ec8": {
+  "text": "It was begun, on the instruction to \"create llama.cpp rust version todo as bankml.rs\" (2026-09-25), after a working architecture existed and had been measured: a 1-bit Bonsai-8B served by llama.cpp b11192 on a two-core server.",
+  "said": "It was begun, on the instruction to \"create llama.cpp rust version todo as bank M L dot R S\" (2026-09-25), after a working architecture existed and had been measured: a 1-bit Bonsai-8B served by llama.cpp b11192 on a two-core server.",
+  "seconds": 21.253,
+  "opus_sha256": "5f0bc1313d745076bde60ec444ec9fa06b916436e251be5eb194f404cc796750",
+  "measured": {
+   "body_f0": 208.0,
+   "pitch_ratio": 0.8749,
+   "target_f0": 182.0
+  }
+ },
+ "6f9d8dafaee29d962c938b48": {
+  "text": "The negative results are part of the evidence: they are how the limit of §IV.5 is known rather than assumed.",
+  "said": "The negative results are part of the evidence: they are how the limit of section four point five is known rather than assumed.",
+  "seconds": 7.217,
+  "opus_sha256": "fb72a4153418b693a682672788d6586bfd116fdedd36fbf652de0b0e01aa1de4",
+  "measured": {
+   "body_f0": 214.1,
+   "pitch_ratio": 0.8502,
+   "target_f0": 182.0
+  }
+ },
+ "2ac843211f176aeb7dd775be": {
+  "text": "Since 0.0.6 every answer carries a receipt: model hash, guard verdict, token counts, timings, and the sha256 of the answer text (serve.rs).",
+  "said": "Since 0.0.6 every answer carries a receipt: model hash, guard verdict, token counts, timings, and the sha256 of the answer text.",
+  "seconds": 12.557,
+  "opus_sha256": "ffd35a19fcfa8d39736bb250d1d1adf120726503f99dd5efb6f1b7ccd819917b",
+  "measured": {
+   "body_f0": 216.2,
+   "pitch_ratio": 0.8419,
+   "target_f0": 182.0
+  }
+ },
+ "c90a55a801bfae4eef1576b1": {
+  "text": "It refuses (1) fork-only types (PQ2_0 = 142, PTQ1_0 = 143), which mainline rejects safely;",
+  "said": "It refuses (1) fork-only types (P Q two zero equals 142, P T Q one zero equals 143), which mainline rejects safely;",
+  "seconds": 11.71,
+  "opus_sha256": "f7efa0459ce75f776f8e7ed01d0766b1e73659f4ded6e574d61251d4f17eff1d",
+  "measured": {
+   "body_f0": 216.2,
+   "pitch_ratio": 0.8419,
+   "target_f0": 182.0
+  }
+ },
+ "df39cb56cd1fc728aa550420": {
+  "text": "The Python original (vendored as testing/gguf_guard.py) and the Rust port (gguf.rs) agree JSON-for-JSON on every case (20 of 20 with the real file;",
+  "said": "The Python original (vendored as testing/gguf guard.py) and the Rust port agree JSON-for-JSON on every case (20 of 20 with the real file;",
+  "seconds": 12.314,
+  "opus_sha256": "5e0b604d9c462eee361f183a9335af9f5b97da39bb85a13946fbb5dc7291a974",
+  "measured": {
+   "body_f0": 206.1,
+   "pitch_ratio": 0.8832,
+   "target_f0": 182.0
+  }
+ },
+ "ac9a783d225832c2e256ab6d": {
+  "text": "The models are forked with provenance to PYTHAI/Bonsai-8B-gguf-fork and PYTHAI/Ternary-Bonsai-8B-gguf-fork, each with a FORK.json recording the upstream revision and every file's sha256; bankml pin refuses a file whose hash differs and names both hashes (sha256.rs, FIPS 180-4 vectors).",
+  "said": "The models are forked with provenance to Pith AI/Bonsai-8B-gguf-fork and Pith AI/Ternary-Bonsai-8B-gguf-fork, each with a FORK.json recording the upstream revision and every file's sha256; bank M L pin refuses a file whose hash differs and names both hashes.",
+  "seconds": 21.358,
+  "opus_sha256": "777de5f94fe149ff8cea88e404e91f2ae09c8f3ce1755486f58a81c338d7c58a",
+  "measured": {
+   "body_f0": 202.3,
+   "pitch_ratio": 0.8997,
+   "target_f0": 182.0
+  }
+ },
+ "2e6bf3b8ca64e68da8456d57": {
+  "text": "Prefill is 1.2–1.3× faster through a 1×4 selection tile over prepared activations (q1_0.rs, 0.0.4).",
+  "said": "Prefill is 1.2–1.3 times faster through a 1 times 4 selection tile over prepared activations.",
+  "seconds": 8.622,
+  "opus_sha256": "d6b952cb0677e12633825b28c6e4f60a2604fa9a9c2f7cb8891da7e99882c44b",
+  "measured": {
+   "body_f0": 201.4,
+   "pitch_ratio": 0.9038,
+   "target_f0": 182.0
+  }
+ },
+ "a7f6efddc95db7fc954f3126": {
+  "text": "The better ternary model is slow for want of a kernel, not because ternary weights are expensive (§III.5). **A bit-exact ternary (Q2_0_g64) kernel, 9.5–9.8× the reference.** Two blocks per 256-bit register, the activation re-laid-out once per token so the inner loop has no shuffles, and ggml's float chain kept serial for exactness: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8× the reference per projection and 12.5× in prefill (q2_0.rs).",
+  "said": "The better ternary model is slow for want of a kernel, not because ternary weights are expensive. A bit-exact ternary (Q two zero, g sixty-four) kernel, 9.5–9.8 times the reference. Two blocks per 256-bit register, the activation re-laid-out once per token so the inner loop has no shuffles, and ggml's float chain kept serial for exactness: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8 times the reference per projection and 12.5 times in prefill.",
+  "seconds": 42.149,
+  "opus_sha256": "0d8c707234fb22a362bc455f55102f11ff4f444de1b25b3d1cb80cf73f416951",
+  "measured": {
+   "body_f0": 210.0,
+   "pitch_ratio": 0.8667,
+   "target_f0": 182.0
+  }
+ },
+ "2e007f063c81839efa91dfed": {
+  "text": "On a zero-dependency thread pool (par.rs) bankml's ternary products take 0.23–0.25 s at three threads, bounding a complete forward pass at about 4 tokens per second against the reference's 0.4 (§IV.3).",
+  "said": "On a zero-dependency thread pool bank M L's ternary products take 0.23–0.25 s at three threads, bounding a complete forward pass at about 4 tokens per second against the reference's 0.4.",
+  "seconds": 14.949,
+  "opus_sha256": "1a94369d051a06067ca69a8a7e3e0f61c81e6d613af9dae68301c66693d5e77f",
+  "measured": {
+   "body_f0": 206.1,
+   "pitch_ratio": 0.8832,
+   "target_f0": 182.0
+  }
+ },
+ "2dadc4f70247b7b44f274304": {
+  "text": "d · (Σ_{sᵢ=+1} *x*ᵢ − Σ_{sᵢ=−1} *x*ᵢ),",
+  "said": "d · (the sum over plus signs of x i minus the sum over minus signs of x i),",
+  "seconds": 7.681,
+  "opus_sha256": "4336d2163f22a6098f2b25cb9e9a194823faca4ef24b4cbc30a8cf5ca1c2dfa7",
+  "measured": {
+   "body_f0": 214.1,
+   "pitch_ratio": 0.8502,
+   "target_f0": 182.0
+  }
+ },
+ "a8ca8b75fdef76d7c847a4be": {
+  "text": "a signed sum requiring no multiplication by weights at all. ggml does not compute this on real activations: it first quantizes the activation row to q8_0 (blocks of 32 signed bytes with their own half-precision scale, computed as 127 / max|x| with round-half-to-even), and the kernel ggml_vec_dot_q1_0_q8_0 accumulates integer products of ±1 and signed bytes, applying both scales at the end.",
+  "said": "a signed sum requiring no multiplication by weights at all. ggml does not compute this on real activations: it first quantizes the activation row to Q eight zero (blocks of 32 signed bytes with their own half-precision scale, computed as 127 / max|x| with round-half-to-even), and the kernel ggml vec dot q1 0 q8 0 accumulates integer products of ±1 and signed bytes, applying both scales at the end.",
+  "seconds": 28.904,
+  "opus_sha256": "1369883f0f42c5a698df113f53dd69d817212143cf31c515969562b989efab58",
+  "measured": {
+   "body_f0": 208.0,
+   "pitch_ratio": 0.8749,
+   "target_f0": 182.0
+  }
+ },
+ "53d203071711fa944b9dca23": {
+  "text": "A code c ∈ {0, 1, 2, 3} decodes to (c − 1) · d, so the format admits {−1, 0, +1, +2} — not strictly ternary; in the real Ternary-Bonsai-8B file the code for +2 never occurs (the observed split is 31 % / 38 % / 31 % / 0 %).",
+  "said": "A code c in {0, 1, 2, 3} decodes to (c minus 1) · d, so the format admits minus one, zero, plus one, or plus two — not strictly ternary; in the real Ternary-Bonsai-8B file the code for plus 2 never occurs (the observed split is 31 % / 38 % / 31 % / 0 %).",
+  "seconds": 24.388,
+  "opus_sha256": "a490e06c250eeabb7f7dcf45d54f6b6e1d9c366a1cad88c9500469e08ed03917",
+  "measured": {
+   "body_f0": 198.6,
+   "pitch_ratio": 0.9162,
+   "target_f0": 182.0
+  }
+ },
+ "3ecb2451f93c395b84b1c352": {
+  "text": "The stored code is c = w + 1 ∈ {0, 1, 2}, so Σ w·x = Σ c·x − Σ x.",
+  "said": "The stored code is c equals w plus 1 in {0, 1, 2}, so the sum of w·x equals the sum of c·x minus the sum of x.",
+  "seconds": 10.584,
+  "opus_sha256": "1915721bea2bb2cdffea0b7aa600367a4f8a66f2de4639eff4f0cc5d5d618087",
+  "measured": {
+   "body_f0": 188.5,
+   "pitch_ratio": 0.9657,
+   "target_f0": 182.0
+  }
+ },
+ "d171b3268a4ab421963a6003": {
+  "text": "That sum depends only on the activation, so it is computed once per token and shared by every weight row (q2_0.rs).",
+  "said": "That sum depends only on the activation, so it is computed once per token and shared by every weight row.",
+  "seconds": 8.308,
+  "opus_sha256": "0181071f42596277bdf94cc20773dee562205c7a5e6df4f0cdee5adfec70045d",
+  "measured": {
+   "body_f0": 213.0,
+   "pitch_ratio": 0.8543,
    "target_f0": 182.0
   }
  }

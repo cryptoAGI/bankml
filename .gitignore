@@ -6,3 +6,5 @@ __pycache__/
 testing/live.log
 ui/voice/cache/**/.*.lock
 ui/voice/cache/**/.manifest.lock
+ui/voice/export/.bankml-export-*/
+ui/voice/**/*.tmp

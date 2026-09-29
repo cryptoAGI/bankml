@@ -43,12 +43,25 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         body = BLOB
         rng = self.headers.get("Range")
-        if rng and self.path != "/norange":
+        cr = None
+        if self.path == "/oversend":
+            body = BLOB + b"\0" * 4096
+            self.send_response(200)
+        elif rng and self.path != "/norange":
             a = int(rng.split("=")[1].split("-")[0])
+            if a >= len(BLOB):
+                self.send_response(416)
+                self.end_headers()
+                return
+            if self.path == "/badrange":  # a 206 that starts somewhere else than asked
+                a = 0
             self.send_response(206)
             body = BLOB[a:]
+            cr = f"bytes {a}-{len(BLOB) - 1}/{len(BLOB)}"
         else:
             self.send_response(200)
+        if cr:
+            self.send_header("Content-Range", cr)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -74,6 +87,18 @@ try:
         check("hf_parse refuses what is not a repo id", False)
     except ValueError:
         check("hf_parse refuses what is not a repo id", True)
+    bad = 0
+    for u in ("https://huggingface.co/../..", "hf://a/b/blob/../x.gguf", "https://huggingface.co/a/b/resolve/main/../../x", "https://huggingface.co/a/b/blob/ma%2Fin/x.gguf"):
+        try:
+            M.hf_parse(u)
+        except ValueError:
+            bad += 1
+    for n in ("qwen3:../../x", "a/../b", "qwen3:a/b"):
+        try:
+            M._ollama_name(n)
+        except ValueError:
+            bad += 1
+    check("'.' and '..' segments, slashes in a revision and odd Ollama tags are refused", bad == 7)
     check("licence gate: OSI licences pass; gemma, llama and none are refused", M.licence_open("apache-2.0") and M.licence_open(["license:mit"])
           and not M.licence_open("gemma") and not M.licence_open("llama3.2") and not M.licence_open(None) and not M.licence_open([]))
     check("Ollama licence text: Apache and MIT recognised; Gemma's terms named and refused",
@@ -118,6 +143,63 @@ try:
     (M.MODELS / "restart.gguf.part").write_bytes(BLOB[:100])
     M.import_spec(spec(file="restart.gguf", url=url.rsplit("/", 1)[0] + "/norange"))
     check("a server that ignores Range: the download starts over and verifies", (M.MODELS / "restart.gguf").read_bytes() == BLOB)
+    (M.MODELS / "whole.gguf.part").write_bytes(BLOB)  # the process died between the last byte and the rename
+    M.import_spec(spec(file="whole.gguf", url="http://127.0.0.1:9/unreachable"))
+    check("a complete .part is verified and kept without asking the server again (no 416 loop)", (M.MODELS / "whole.gguf").read_bytes() == BLOB)
+    (M.MODELS / "badrange.gguf.part").write_bytes(BLOB[:100])
+    M.import_spec(spec(file="badrange.gguf", url=url.rsplit("/", 1)[0] + "/badrange"))
+    check("a 206 whose Content-Range starts elsewhere is not appended: the download starts over and verifies",
+          (M.MODELS / "badrange.gguf").read_bytes() == BLOB)
+    try:
+        M.import_spec(spec(file="oversend.gguf", url=url.rsplit("/", 1)[0] + "/oversend"))
+        check("a source that sends more than the published size is cut off and discarded", False)
+    except RuntimeError as e:
+        check("a source that sends more than the published size is cut off and discarded", "more than" in str(e) and not list(M.MODELS.glob("oversend*")))
+    M.JOB.update(state="idle")
+    ev = threading.Event()
+    first = M.start_job("hold", ev.wait, 5)
+    second = M.start_job("second", lambda: None)
+    ev.set()
+    import time
+    for _ in range(50):
+        if M.JOB["state"] != "running":
+            break
+        time.sleep(0.05)
+    check("one job at a time: a second import or switch is refused while one runs", first and not second and M.JOB["state"] == "done")
+    with um.patch.object(M, "fits_memory", lambda n: (False, "too big for memory")):
+        try:
+            M.import_spec(spec(file="adopted2.gguf", local=str(tmp / "ollama-blob"), url=""))
+            check("the memory check applies to adoption too (not only to downloads)", False)
+        except RuntimeError as e:
+            check("the memory check applies to adoption too (not only to downloads)", "memory" in str(e))
+    ss = ("LISTEN 0 128 0.0.0.0:18293 0.0.0.0:* users:((\"bankml\",pid=%d,fd=3))\n"
+          "LISTEN 0 128 127.0.0.1:18292 0.0.0.0:* users:((\"llama-server\",pid=%d,fd=3))\n"
+          "LISTEN 0 128 127.0.0.1:182930 0.0.0.0:* users:((\"x\",pid=1,fd=3))\n") % (os.getpid(), os.getpid())
+    with um.patch.object(M.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": ss})()), \
+         um.patch.object(M, "LISTEN", "127.0.0.1:18293"):
+        l1 = M._listeners()
+    with um.patch.object(M.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": ss})()), \
+         um.patch.object(M, "LISTEN", "0.0.0.0:18293"):
+        l2 = M._listeners()
+    check("_listeners matches the configured host exactly, and only this user's bankml / llama-server", l1 == {} and l2 == {})
+    fake = tmp / "fake-bankml"
+    fake.write_text("#!/bin/sh\nsleep 30\n")
+    fake.chmod(0o755)
+    with um.patch.object(M, "BANKML", fake), um.patch.object(M, "serve_status",
+                                                              lambda timeout=3: {"verified": {"model_sha256": "a" * 64}}):
+        try:
+            M._start_carrier(M.MODELS / "tiny.gguf", M.FORKS / "tiny.gguf.FORK.json", want_sha=SHA, wait=5)
+            check("a different model answering is not success, and the new carrier is killed", False)
+        except RuntimeError as e:
+            check("a different model answering is not success, and the new carrier is killed", "another carrier answers" in str(e))
+    with um.patch.object(M, "BANKML", fake), um.patch.object(M, "serve_status", lambda timeout=3: {"error": "down"}):
+        import time as _t
+        t0 = _t.time()
+        try:
+            M._start_carrier(M.MODELS / "tiny.gguf", M.FORKS / "tiny.gguf.FORK.json", want_sha=SHA, wait=25)
+            check("a slow start is waited for (no 20 s port heuristic), then killed at the deadline", False)
+        except RuntimeError as e:
+            check("a slow start is waited for (no 20 s port heuristic), then killed at the deadline", "timed out" in str(e) and _t.time() - t0 >= 24)
     bad = gguf(ty=99)
     SHA_BAD = hashlib.sha256(bad).hexdigest()
     BLOB, keep = bad, BLOB

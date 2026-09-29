@@ -237,6 +237,32 @@ mod tests {
     }
 
     #[test]
+    fn verified_json_escapes_what_the_header_says() {
+        // the name and arch come from the model file: a hostile header must not break /bankml's JSON
+        let v = Verified {
+            model_sha256: "ab".repeat(32),
+            guard: "play",
+            engine: "mainline",
+            arch: Some("qwen3".into()),
+            name: Some("a\"b\\c\nd\u{1}".into()),
+            types: vec![("Q4_K".into(), 155), ("Q6_K".into(), 15)],
+        };
+        let j = v.to_json();
+        assert!(j.contains(r#""name": "a\"b\\c\nd\u0001""#), "{j}");
+        assert!(j.contains(r#""arch": "qwen3""#) && j.contains(r#""types": {"Q4_K": 155, "Q6_K": 15}"#), "{j}");
+        let none = Verified { arch: None, name: None, types: vec![], ..v };
+        assert!(none.to_json().contains(r#""arch": null, "name": null, "types": {}"#));
+        // balanced: every quote outside an escape opens or closes a string
+        let mut n = 0;
+        let mut esc = false;
+        for c in j.chars() {
+            if esc { esc = false } else if c == '\\' { esc = true } else if c == '"' { n += 1 }
+        }
+        assert_eq!(n % 2, 0);
+        assert!(j.starts_with('{') && j.ends_with('}'));
+    }
+
+    #[test]
     fn verify_runs_guard_then_pin() {
         let dir = std::env::temp_dir().join(format!("bankml-verify-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

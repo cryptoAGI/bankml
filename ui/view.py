@@ -34,7 +34,25 @@ import re  # noqa: E402
 import speak  # noqa: E402
 
 
+_LISTEN = {"key": None, "t": 0.0, "data": None}
+
+
 def listen() -> dict:
+    """listen_uncached(), recomputed when the voice manifest, an export or TECHNICAL.md changes (or every 30 s)."""
+    import time as _t
+    def mt(p):
+        try:
+            return p.stat().st_mtime_ns
+        except OSError:
+            return 0
+    key = (mt(speak.VOICE_DIR / "savante" / "manifest.json"), mt(speak.REPO / "TECHNICAL.md"),
+           tuple(mt(speak.EXPORT_DIR / f"{n}.json") for n in speak.EXPORTS))
+    if key != _LISTEN["key"] or _t.time() - _LISTEN["t"] > 30 or _LISTEN["data"] is None:
+        _LISTEN.update(key=key, t=_t.time(), data=listen_uncached())
+    return _LISTEN["data"]
+
+
+def listen_uncached() -> dict:
     """Savante's introduction and voice examples, as far as they are rendered (keys only; audio via /audio/)."""
     chs = speak.intro_chapters(S.CANON, CANON.persona, CANON.card)
     ex = [x for x in CANON.persona.get("voice_examples") or [] if isinstance(x, str)]
@@ -58,9 +76,8 @@ def export_file(name: str):
     """Only a named export (speak.EXPORTS) that is complete and current."""
     if name not in speak.EXPORTS:
         return None
-    lead, cs = speak.export_sets(S.CANON, CANON.persona, CANON.card)[name]
-    st = speak.export_state(name, ([("Voice examples", lead)] if lead else []) + cs)
-    return st["file"] if st["current"] else None
+    cur = any(x["name"] == name and x["current"] for x in listen()["exports"])  # the same (cached) judgement /api/state shows
+    return speak.EXPORT_DIR / f"{name}.opus" if cur else None
 
 
 def audio_file(key: str):
@@ -262,7 +279,32 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_file(self, f, ctype, disp=None):
+        """A large file in 1 MiB chunks, not read into memory whole."""
+        size = f.stat().st_size
+        self.send_response(200)
+        for k, v in (("Content-Type", ctype), ("Content-Length", str(size)), ("Cache-Control", "no-cache"), ("X-Content-Type-Options", "nosniff"),
+                     ("Referrer-Policy", "no-referrer"), ("Content-Security-Policy", "default-src 'none'")):
+            self.send_header(k, v)
+        if disp:
+            self.send_header("Content-Disposition", disp)
+        self.end_headers()
+        with open(f, "rb") as fh:
+            while b := fh.read(1 << 20):
+                self.wfile.write(b)
+
     def do_GET(self):
+        try:
+            return self.route()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:  # noqa: BLE001 — one bad file must not drop every viewer's connection
+            try:
+                self.send(500, "text/plain", f"error: {type(e).__name__}".encode())
+            except OSError:
+                pass
+
+    def route(self):
         u = urllib.parse.urlsplit(self.path)
         if u.path == "/":
             return self.send(200, "text/html; charset=utf-8", PAGE.encode())
@@ -285,7 +327,7 @@ class H(BaseHTTPRequestHandler):
             f = export_file(u.path[len("/export/"):-len(".opus")])
             if not f:
                 return self.send(404, "text/plain", b"no such export (it exists only when complete)")
-            return self.send(200, "audio/ogg", f.read_bytes(), cache="no-cache", disp=f'attachment; filename="{f.name}"')
+            return self.send_file(f, "audio/ogg", disp=f'attachment; filename="{f.name}"')
         if u.path == "/savante.png":
             rel = (CANON.ledger.get("image_candidate") or {}).get("path") or "gfx/Savante3.png"
             b = CANON.file(rel)

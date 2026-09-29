@@ -94,9 +94,14 @@ def mem_total() -> int:
 
 
 def fits(nbytes: int, have: bool = False) -> tuple:
-    """(ok, why): disk for the file plus the margin, and a model the memory can hold (weights ≲ 70 % of RAM)."""
+    """(ok, why): disk for the file plus the margin (skipped when the file is already here), and a model the memory
+    can hold (weights ≲ 70 % of RAM; always checked)."""
     if not have and nbytes + DISK_MARGIN > free_bytes():
         return False, f"needs {nbytes / 1e9:.1f} GB + {DISK_MARGIN / 1e9:.1f} GB margin; {free_bytes() / 1e9:.1f} GB free on disk"
+    return fits_memory(nbytes)
+
+
+def fits_memory(nbytes: int) -> tuple:
     mt = mem_total()
     if mt and nbytes > 0.7 * mt:
         return False, f"{nbytes / 1e9:.1f} GB of weights on a {mt / 1e9:.1f} GB machine would page to swap"
@@ -168,12 +173,15 @@ def hf_parse(url: str) -> tuple:
     u = re.sub(r"^https?://(www\.)?(huggingface\.co|hf\.co)/", "", u)
     u = u.split("?")[0].split("#")[0].strip("/")
     parts = u.split("/")
-    if len(parts) < 2 or not all(re.fullmatch(r"[A-Za-z0-9._-]+", x) for x in parts[:2]):
+    seg = lambda x: bool(re.fullmatch(r"[A-Za-z0-9._-]+", x)) and x not in (".", "..")
+    if len(parts) < 2 or not all(seg(x) for x in parts[:2]):
         raise ValueError("not a Hugging Face model: give https://huggingface.co/OWNER/REPO (optionally …/blob/REV/FILE.gguf)")
     repo = "/".join(parts[:2])
     if len(parts) >= 4 and parts[2] in ("blob", "resolve", "tree"):
-        rev, f = parts[3], "/".join(parts[4:]) or None
-        return repo, urllib.parse.unquote(rev), urllib.parse.unquote(f) if f else None
+        rev, f = urllib.parse.unquote(parts[3]), urllib.parse.unquote("/".join(parts[4:])) if parts[4:] else None
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", rev) or rev in (".", "..") or (f and any(x in ("", ".", "..") for x in f.split("/"))):
+            raise ValueError("a revision is a branch, tag or commit; a file path has no '.' or '..' segments")
+        return repo, rev, f
     return repo, None, None
 
 
@@ -189,15 +197,17 @@ def hf_resolve(url: str) -> dict:
     if file and not any(x["file"] == file for x in files):
         raise ValueError(f"{file} is not a GGUF in {repo}@{sha[:10]}")
     return {"repo": repo, "revision": sha, "licence": lic, "open": licence_open(lic), "files": files, "chosen": file,
-            "gated": bool(m.get("gated"))}
+            "gated": bool(m.get("gated"))}  # gated repositories need an account and an accepted agreement: not imported
 
 
 # ── Ollama ────────────────────────────────────────────────────────────────────────────────────────────────
 def _ollama_name(name: str) -> tuple:
     n = name.strip().removeprefix("https://ollama.com/").removeprefix("library/")
     n, _, tag = n.partition(":")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)?", n):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)?", n) or ".." in n:
         raise ValueError(f"not an Ollama model name: {name}")
+    if tag and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag) or ".." in tag):
+        raise ValueError(f"not an Ollama tag: {tag}")
     return n, tag or "latest"
 
 
@@ -264,6 +274,25 @@ def ollama_resolve(name: str) -> dict:
             "local": str(OLLAMA_STORE / "blobs" / f"sha256-{d}") if (OLLAMA_STORE / "blobs" / f"sha256-{d}").is_file() else None}
 
 
+def ollama_local_spec(name: str) -> dict:
+    """The same record as ollama_resolve(), built from the local Ollama's own manifest and licence layer: offline, and
+    pinned to what was actually pulled (the registry's tag may have moved since)."""
+    n, tag = _ollama_name(name)
+    ns, base = (n.split("/", 1) if "/" in n else ("library", n))
+    f = OLLAMA_STORE / "manifests" / "registry.ollama.ai" / ns / base / tag
+    man = json.loads(f.read_text())
+    layers = man.get("layers") or []
+    model = [l for l in layers if l.get("mediaType") == "application/vnd.ollama.image.model"]
+    if not model:
+        raise ValueError(f"{n}:{tag}: the local manifest has no model layer")
+    blob = OLLAMA_STORE / "blobs" / model[0]["digest"].replace(":", "-")
+    lic_layer = [l for l in layers if l.get("mediaType") == "application/vnd.ollama.image.license"]
+    lic = _licence_of_text((OLLAMA_STORE / "blobs" / lic_layer[0]["digest"].replace(":", "-")).read_text(errors="replace")) if lic_layer else None
+    d = model[0]["digest"].removeprefix("sha256:")
+    return {"repo": f"ollama:{ns}/{base}", "tag": tag, "file": _safe_name(f"{n.replace('/', '-')}-{tag}"), "bytes": model[0]["size"], "sha256": d,
+            "licence": lic or "unrecognised", "open": bool(lic and licence_open(lic)), "url": "", "local": str(blob) if blob.is_file() else None}
+
+
 def ollama_local() -> list:
     """Models the local Ollama already holds: [{name, tag, sha256, bytes, blob}]."""
     out = []
@@ -284,7 +313,7 @@ def ollama_local() -> list:
 
 
 # ── the import job (one at a time; the UI polls JOB) ──────────────────────────────────────────────────────
-JOB = {"state": "idle", "what": "", "done": 0, "total": 0, "error": None, "result": None, "started": None}
+JOB = {"state": "idle", "what": "", "done": 0, "total": 0, "error": None, "result": None, "started": None, "seq": 0, "cancel": False}
 _LOCK = threading.Lock()
 
 
@@ -299,7 +328,8 @@ def _hash_file(p: Path, on=None) -> str:
 
 
 def _download(url: str, dest: Path, nbytes: int, want: str) -> None:
-    """Stream url → dest.part, hashing on the way; rename only if the sha256 is the published one. Resumes a .part."""
+    """Stream url → dest.part, hashing on the way; rename only if the sha256 is the published one. Resumes a .part;
+    never writes past the published size."""
     part = dest.with_name(dest.name + ".part")
     h = hashlib.sha256()
     have = part.stat().st_size if part.exists() else 0
@@ -311,19 +341,25 @@ def _download(url: str, dest: Path, nbytes: int, want: str) -> None:
             while b := f.read(1 << 22):
                 h.update(b)
     JOB["done"] = have
-    req = urllib.request.Request(url, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        if have and r.status != 206:  # the server ignored the range: start over
-            have = 0
-            h = hashlib.sha256()
-            JOB["done"] = 0
-        with open(part, "ab" if have else "wb") as f:
-            while b := r.read(1 << 20):
-                if JOB.get("cancel"):
-                    raise RuntimeError("cancelled (the partial file is kept; importing again resumes it)")
-                f.write(b)
-                h.update(b)
-                JOB["done"] += len(b)
+    if have < nbytes:
+        req = urllib.request.Request(url, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            cr = r.headers.get("Content-Range") or ""
+            if have and (r.status != 206 or not cr.startswith(f"bytes {have}-")):  # the range was ignored or misplaced: start over
+                have = 0
+                h = hashlib.sha256()
+                JOB["done"] = 0
+            with open(part, "ab" if have else "wb") as f:
+                while b := r.read(1 << 20):
+                    if JOB.get("cancel"):
+                        raise RuntimeError("cancelled (the partial file is kept; importing again resumes it)")
+                    if JOB["done"] + len(b) > nbytes:
+                        f.close()
+                        part.unlink(missing_ok=True)
+                        raise RuntimeError(f"the source sent more than the published {nbytes} bytes: discarded")
+                    f.write(b)
+                    h.update(b)
+                    JOB["done"] += len(b)
     got = h.hexdigest()
     if got != want:
         part.unlink(missing_ok=True)
@@ -339,7 +375,7 @@ def import_spec(spec: dict) -> dict:
         raise ValueError("no published sha256 for this file: nothing to pin it to, refused")
     dest = MODELS / _safe_name(spec["file"])
     ok, why = fits(spec["bytes"], have=dest.exists() or bool(spec.get("local")))
-    if not ok and not (dest.exists() or spec.get("local")):
+    if not ok:
         raise RuntimeError(why)
     MODELS.mkdir(parents=True, exist_ok=True)
     JOB.update(total=spec["bytes"], done=0)
@@ -376,7 +412,7 @@ def spec_catalog(cid: str) -> dict:
 def spec_hf(r: dict, file: str) -> dict:
     f = next(x for x in r["files"] if x["file"] == file)
     lic = r["licence"] if isinstance(r["licence"], str) else ",".join(t.removeprefix("license:") for t in r["licence"])
-    return {"file": Path(file).name, "bytes": f["bytes"], "sha256": f["sha256"], "repo": r["repo"], "revision": r["revision"], "licence": lic,
+    return {"file": _safe_name(file.replace("/", "-")), "bytes": f["bytes"], "sha256": f["sha256"], "repo": r["repo"], "revision": r["revision"], "licence": lic,
             "url": f"https://huggingface.co/{r['repo']}/resolve/{r['revision']}/{urllib.parse.quote(file)}",
             "page": f"https://huggingface.co/{r['repo']}/blob/{r['revision']}/{file}", "pinned_from": f"Hugging Face LFS sha256 of {file} at {r['revision']}"}
 
@@ -400,8 +436,18 @@ def start_job(what: str, fn, *a) -> bool:
             JOB["state"] = "done"
         except Exception as e:  # noqa: BLE001
             JOB.update(state="error", error=f"{type(e).__name__}: {e}")
+        finally:
+            JOB["seq"] += 1  # the UI refreshes its lists when this moves
     threading.Thread(target=run, daemon=True).start()
     return True
+
+
+def cancel_job() -> bool:
+    """Ask a running download to stop at its next chunk (the .part is kept for resume)."""
+    if JOB["state"] == "running":
+        JOB["cancel"] = True
+        return True
+    return False
 
 
 # ── the carrier: bankml serve + llama-server ──────────────────────────────────────────────────────────────
@@ -414,84 +460,136 @@ def serve_status(timeout=3) -> dict:
 
 
 def _listeners() -> dict:
-    """port -> pid for the carrier's two ports (from ss), only if the process is llama-server or bankml."""
+    """port -> pid for the carrier's two ports (from ss), only if the process is this user's llama-server or bankml.
+    Matches the configured host (127.0.0.1, 0.0.0.0, [::1] …) exactly."""
     out = {}
     try:
         s = subprocess.run(["ss", "-ltnpH"], capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return out
-    for port in (LISTEN.rsplit(":", 1)[1], UPSTREAM.rsplit(":", 1)[1]):
-        m = re.search(rf"127\.0\.0\.1:{port}\s.*?pid=(\d+)", s)
-        if m:
+    for addr in (LISTEN, UPSTREAM):
+        host, port = addr.rsplit(":", 1)
+        hosts = {host, f"[{host.strip('[]')}]", "*"} if host in ("0.0.0.0", "::", "[::]") else {host, f"[{host.strip('[]')}]"}
+        for line in s.splitlines():
+            cols = line.split()
+            h, _, pt = cols[3].rpartition(":") if len(cols) >= 4 else ("", "", "")
+            if pt != port or h not in hosts:
+                continue
+            m = re.search(r"pid=(\d+)", line)
+            if not m:
+                continue
             pid = int(m.group(1))
             try:
                 exe = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0].decode()
+                mine = os.stat(f"/proc/{pid}").st_uid == os.getuid()
             except OSError:
                 continue
-            if Path(exe).name in ("llama-server", "bankml"):
+            if mine and Path(exe).name in ("llama-server", "bankml"):
                 out[port] = pid
     return out
 
 
+def _kill(pid: int, sig) -> None:
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 def _stop_carrier():
-    pids = set(_listeners().values())
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+    for pid in set(_listeners().values()):
+        _kill(pid, signal.SIGTERM)
     for _ in range(100):
         if not _listeners():
             return
         time.sleep(0.2)
     for pid in set(_listeners().values()):
-        os.kill(pid, signal.SIGKILL)
+        _kill(pid, signal.SIGKILL)
     time.sleep(0.5)
+    if _listeners():
+        raise RuntimeError(f"the carrier's ports are still held by {sorted(set(_listeners().values()))}; stop them by hand")
 
 
-def _start_carrier(model: Path, fork: Path, threads=3, ctx=4096, wait=900) -> dict:
+def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads=3, ctx=4096, wait=1800) -> dict:
+    """Start `bankml serve --spawn` and wait until it answers verified, with `want_sha` when given. bankml hashes the
+    whole file before it binds, so the wait is on the process, not on the ports: it fails only when the process exits
+    or the wait runs out, and then the process group is killed so no second carrier is left behind."""
     LOG.parent.mkdir(parents=True, exist_ok=True)
-    log = open(LOG, "ab")
-    at = log.seek(0, 2)
-    log.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} bankml serve {model.name}\n".encode())
-    log.flush()
-    subprocess.Popen([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM, "--listen", LISTEN,
-                      "--threads", str(threads), "--ctx", str(ctx)], stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO))
+    with open(LOG, "ab") as log:
+        at = log.seek(0, 2)
+        log.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} bankml serve {model.name}\n".encode())
+        log.flush()
+        proc = subprocess.Popen([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM,
+                                 "--listen", LISTEN, "--threads", str(threads), "--ctx", str(ctx)], stdout=log, stderr=log,
+                                stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO))
     t0 = time.time()
+    why = "timed out"
     while time.time() - t0 < wait:
         st = serve_status(2)
-        if "verified" in st:
+        v = st.get("verified") or {}
+        if v and (want_sha is None or v.get("model_sha256") == want_sha):
             return st
-        if not _listeners() and time.time() - t0 > 20:  # both gone: it refused or crashed
+        if v:
+            why = f"another carrier answers (sha256 {str(v.get('model_sha256'))[:12]}…), not {model.name}"
+            break
+        if proc.poll() is not None:
+            why = f"exited with {proc.returncode}"
             break
         time.sleep(1)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)  # serve and the llama-server it spawned share the group
+    except ProcessLookupError:
+        pass
+    proc.wait(timeout=10)
     with open(LOG, "rb") as f:
         f.seek(at)
         said = [l for l in f.read().decode(errors="replace").splitlines()[1:] if l.strip()]
-    raise RuntimeError(f"bankml serve did not come up with {model.name}: " + (" / ".join(said[-3:])[-400:] or "no output"))
+    raise RuntimeError(f"bankml serve did not come up with {model.name} ({why}): " + (" / ".join(said[-3:])[-400:] or "no output"))
+
+
+def _pinned_path(sha: str, model: str | None, pins: dict):
+    """(path, fork) for a verified sha256: a file in MODELS first, else the carrier's own path if a pin names it."""
+    for f, (fk, rec) in pins.items():
+        if rec["sha256"] == sha and (MODELS / f).exists():
+            return MODELS / f, fk
+    if model:
+        m = Path(model)
+        rec = pins.get(m.name)
+        if rec and rec[1]["sha256"] == sha and m.exists():
+            return m, rec[0]
+    return None, None
 
 
 def switch(file: str, busy=lambda: False) -> dict:
-    """Make `file` (in MODELS, pinned) the carrier. Rolls back to the previous model if the new one fails."""
+    """Make `file` (in MODELS, pinned) the carrier: success only when bankml serve answers verified with this file's
+    sha256. If the new one fails, the previous model is restored (found by its verified sha256)."""
     if busy():
         raise RuntimeError("an answer is being written; switch when it is done")
     p = MODELS / file
+    if not p.exists():
+        raise FileNotFoundError(f"{file} is not in {MODELS}")
+    ok, why = fits_memory(p.stat().st_size)
+    if not ok:
+        raise RuntimeError(why)
     pins = forks()
     if file not in pins:
         adopt(file)
         pins = forks()
-    prev = serve_status()  # found again by its verified sha256: serve reports canonical paths (a symlink's target)
+    want = pins[file][1]["sha256"]
+    prev = serve_status()
     prev_sha = (prev.get("verified") or {}).get("model_sha256")
-    prev_file = next((f for f, (_, rec) in pins.items() if rec["sha256"] == prev_sha and (MODELS / f).exists()), None)
-    JOB["what"] = f"stopping the carrier, starting {file} (verifies the whole file, then loads it)"
-    _stop_carrier()
+    if prev_sha == want:
+        return prev
+    prev_path, prev_fork = _pinned_path(prev_sha, prev.get("model"), pins) if prev_sha else (None, None)
+    JOB["what"] = f"stopping the carrier, starting {file} (bankml hashes the whole file, then llama-server loads it)"
     try:
-        return _start_carrier(p, pins[file][0])
+        _stop_carrier()
+        return _start_carrier(p, pins[file][0], want)
     except Exception:
-        if prev_file and prev_file != file:
-            JOB["what"] = f"{file} failed; restoring {prev_file}"
+        if prev_path:
+            JOB["what"] = f"{file} failed; restoring {prev_path.name}"
             _stop_carrier()
-            _start_carrier(MODELS / prev_file, pins[prev_file][0])
+            _start_carrier(prev_path, prev_fork, prev_sha)
         raise
 
 
@@ -514,7 +612,10 @@ def first_run(busy=lambda: False) -> dict:
     if "verified" in st:
         return st
     c = next(x for x in CATALOG if x.get("default"))
-    if not (MODELS / c["file"]).exists():
+    p = MODELS / c["file"]
+    if p.is_symlink() and not p.exists():  # a dangling link (the target moved): replace it with the real file
+        p.unlink()
+    if not p.exists():
         import_spec(spec_catalog(c["id"]))
     return switch(c["file"], busy)
 
@@ -534,7 +635,9 @@ if __name__ == "__main__":  # python3 ui/models.py [list | catalog | import ID|U
             print(f"{r['name']:24} {','.join(r['sizes']):20} {r['description'][:80]}")
     elif a[0] == "import":
         t = a[1]
-        spec = (spec_ollama(ollama_resolve(t.removeprefix("ollama:"))) if t.startswith("ollama:") else
+        loc = {f"{m['name']}:{m['tag']}" for m in ollama_local()}
+        name = t.removeprefix("ollama:")
+        spec = (spec_ollama(ollama_local_spec(name) if name in loc or f"{name}:latest" in loc else ollama_resolve(name)) if t.startswith("ollama:") else
                 spec_catalog(t) if any(c["id"] == t for c in CATALOG) else None)
         if spec is None:
             r = hf_resolve(t)

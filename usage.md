@@ -98,7 +98,8 @@ The **Models** tab offers the same in the UI:
 - The catalogue records those values too, and an import refuses if the repository no longer agrees.
 - `bankml guard` must then say play, and a FORK.json pin is written to `~/.local/share/bankml/forks/`. From then on,
   `bankml serve` verifies the file against that pin before every start.
-- An interrupted download resumes.
+- An interrupted or cancelled download resumes (**Cancel download** keeps the partial file). One import or switch runs at
+  a time; a switch waits for bankml to hash the whole file, and succeeds only when the chosen model answers verified.
 - **Open source only.** The licence is read from the repository (Hugging Face) or from the registry's licence layer
   (Ollama). A model that is not open source is refused, not merely flagged. That includes Gemma and Llama.
 - **The machine's limits are respected.** An import that would leave less than 1.5 GB free on disk, or whose weights

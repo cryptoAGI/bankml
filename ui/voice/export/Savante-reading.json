@@ -1,5 +1,5 @@
 {
- "sig": "0aa6a19aaff9405c",
+ "sig": "980beae52b785d78",
  "sentences": 142,
  "chapters": [
   "The thesis",
@@ -8,6 +8,6 @@
   "The ternary kernel: Q2_0_g64",
   "Can a binary computer perform a ternary operation?"
  ],
- "seconds": 1551.9,
- "sha256": "1a4c51af14c416e3fdaefd562245437b8bb371f1648b35f1d3a6af2a6a458927"
+ "seconds": 1537.3,
+ "sha256": "bb63907a3374e6abb9d360686da3faa8272c04c5f23720122a817f9912bdb267"
 }

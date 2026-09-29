@@ -643,7 +643,8 @@ def job_html() -> str:
         return f"<div class='bk-card bk-bad'><b>refused / failed</b><br>{E(j['error'])}</div>"
     r = j.get("result") or {}
     what = (r.get("verified") or {}).get("name") or r.get("file") or "done"
-    return f"<div class='bk-card'><b class='bk-okb'>done</b> · {E(str(what))}</div>"
+    note = f"<br>{E(r['note'])}" if r.get("note") else ""
+    return f"<div class='bk-card'><b class='bk-okb'>done</b> · {E(str(what))}{note}</div>"
 
 
 def models_html() -> str:
@@ -1798,8 +1799,11 @@ def build(canon: Canon, mode: str):
             with gr.Row():
                 use_dd = gr.Dropdown(installed_choices(), label="installed models", scale=3)
                 use_btn = gr.Button("Use this model", variant="primary", scale=1)
-            then_use = gr.Checkbox(value=True, label="switch to a model when its import finishes")
+            with gr.Row():
+                then_use = gr.Checkbox(value=True, label="switch to a model when its import finishes", scale=3)
+                cancel_btn = gr.Button("Cancel download", scale=1)
             mjob = gr.HTML(job_html())
+            seen = gr.State(-1)
             with gr.Accordion("Catalogue: open-source models, pinned to their publishers' sha256", open=True):
                 with gr.Row():
                     cat_dd = gr.Dropdown(catalog_choices(), label="catalogue", scale=3)
@@ -1830,18 +1834,27 @@ def build(canon: Canon, mode: str):
             def _busy():
                 return PENDING["t0"] is not None
 
+            def _started(ok):
+                # the handler returns at once; the poll below follows the job (no queue worker held for a download)
+                msg = job_html() if ok else "<div class='bk-card bk-bad'>another import or switch is running; wait for it</div>"
+                yield msg, gr.update(), gr.update(), gr.update()
+
             def _watch(started):
-                if not started:
-                    yield job_html() if MD.JOB["state"] == "running" else "<div class='bk-card bk-bad'>another import or switch is running; wait for it</div>", models_html(), gr.update(), carrier_md()
-                    return
-                while MD.JOB["state"] == "running":
-                    yield job_html(), models_html(), gr.update(), carrier_md()
-                    time.sleep(1)
-                yield job_html(), models_html(), gr.update(choices=installed_choices()), carrier_md()
+                yield from _started(started)
+
+            def poll(last):
+                j = MD.JOB
+                if j["state"] == "running":
+                    return job_html(), gr.update(), gr.update(), gr.update(), last
+                if j["seq"] != last:
+                    return job_html(), models_html(), gr.update(choices=installed_choices()), carrier_md(), j["seq"]
+                return gr.update(), gr.update(), gr.update(), gr.update(), last
 
             def _import_then(spec_fn, use):
                 def run():
                     r = MD.import_spec(spec_fn())
+                    if use and _busy():  # the import stands; the switch waits for the answer being written
+                        return {**r, "note": "imported; an answer is being written, so press Use this model when it is done"}
                     return MD.switch(r["file"], _busy) if use else r
                 return run
 
@@ -1864,6 +1877,9 @@ def build(canon: Canon, mode: str):
                 except Exception as e:  # noqa: BLE001
                     return f"<div class='bk-card bk-bad'>{E(str(e))}</div>", {}, gr.update(choices=[], value=None)
                 lic = r["licence"] if isinstance(r["licence"], str) else ", ".join(r["licence"]) or "none stated"
+                if r.get("gated"):
+                    return (f"<div class='bk-card bk-bad'><b>{E(r['repo'])}</b> is gated (it needs an account and an accepted "
+                            "agreement); bankml imports only openly downloadable models.</div>", {}, gr.update(choices=[], value=None))
                 if not r["open"]:
                     return (f"<div class='bk-card bk-bad'><b>{E(r['repo'])}</b>: licence <b>{E(lic)}</b> is not open source; bankml does not "
                             "import it.</div>", {}, gr.update(choices=[], value=None))
@@ -1907,6 +1923,9 @@ def build(canon: Canon, mode: str):
                 yield from _watch(MD.start_job(f"importing {name}:{tag}", _import_then(lambda: MD.spec_ollama(MD.ollama_resolve(f"{name}:{tag}")), use)))
 
             outs_m = [mjob, mlist, use_dd, carrier]
+            demo.load(poll, seen, outs_m + [seen], every=2)
+            cancel_btn.click(lambda: ("<div class='bk-card'>cancelling at the next chunk; the partial file is kept for resume</div>"
+                                      if MD.cancel_job() else job_html()), None, mjob)
             use_btn.click(do_use, use_dd, outs_m)
             cat_btn.click(do_cat, [cat_dd, then_use], outs_m)
             hf_look.click(do_hf_look, hf_url, [hf_info, hf_state, hf_dd])

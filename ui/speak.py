@@ -95,31 +95,65 @@ def table() -> dict:
 
 
 # said, not shown: the token's split name, the runtime's name, and a web address read as "dot"
-LOCAL_SAY = ((r"SCIEN·TIFIC", "Sci-en, Tiffic"), (r"\bbankml\b", "bank M L"),
-             (r"\b([a-z0-9-]+)\.(pythai)\.(net)\b", r"\1 dot \2 dot \3"),
-             # the notation of TECHNICAL.md, read the way a lecturer reads it
-             (r"\s*\((?:§[^)]*|PERFORMANCE\.md[^)]*|`?q2_0\.rs`?|q1_0\.rs[^)]*)\)", ""), (r"\bof\s+§\s*I\.2\b", "described earlier"), (r",?\s*§\s*[IVX]+\.\d+", ""), (r"\*", ""),
-             (r"\bQ1 0\b", "Q one zero"), (r"\bQ2 0 g64\b", "Q two zero, g sixty-four"), (r"\bQ2 0\b", "Q two zero"), (r"\bq8 0\b", "Q eight zero"),
-             (r"\+ or −", "plus or minus"), (r"\s\+\s", " plus "), (r"\s=\s", " equals "), (r"\s/\s", " over "), (r"log₂\s*3", "log base two of three"), (r"3⁵", "three to the fifth"),
-             (r"Σ_\{w=\+1\}", "the sum over plus-one weights of"), (r"Σ_\{w=−1\}", "the sum over minus-one weights of"),
-             (r"Σ_\{sᵢ=\+1\}", "the sum over plus signs of"), (r"Σ_\{sᵢ=−1\}", "the sum over minus signs of"),
-             (r"Σ", "the sum of "), (r"≈", " about "), (r"≤", " at most "), (r"∈", " in "), (r"×", " times "),
-             (r"\{\s*−1,\s*0,\s*\+1\s*\}", "minus one, zero, or plus one"), (r"\{\s*−1,\s*\+1\s*\}", "minus one or plus one"),
-             (r"\{−1, 0, \+1, \+2\}", "minus one, zero, plus one, or plus two"), (r"−", " minus "), (r"(?<![\w])\+(?=\d)", "plus "),
-             (r"ᵢ", " i"), (r"·", " times "), (r"\s{2,}", " "))
+_NUM = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+        "16": "sixteen", "32": "thirty-two", "64": "sixty-four", "128": "one twenty-eight"}
+_ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
+
+
+def _quant(m) -> str:
+    """Q1_0 → "Q one zero", Q2_0_g64 → "Q two zero, g sixty-four", Q4_K_M → "Q four K M" (a ggml type, spelled)."""
+    out = []
+    for part in m.group(0).split("_"):
+        mm = re.fullmatch(r"([A-Za-z]*)(\d*)", part)
+        if mm and mm.group(2) and mm.group(1).lower() == "g":
+            out.append(", g " + _NUM.get(mm.group(2), mm.group(2)))
+        elif mm:
+            out.append(" ".join(list(mm.group(1).upper()) + ([_NUM.get(mm.group(2), mm.group(2))] if mm.group(2) else [])))
+        else:
+            out.append(part)
+    return " ".join(out).replace(" ,", ",")
+
+
+def _section(m) -> str:
+    return f"section {_NUM.get(str(_ROMAN.get(m.group(1), 0)), m.group(1))} point {_NUM.get(m.group(2), m.group(2))}"
+
+
+# said, not shown; applied in order, before the underscore rule and the house table. Maths symbols are read only in a
+# maths context (between numbers or single-letter variables), so a name such as "Professor / OVERLORD" or "DAIO ·
+# savante_sagi" keeps its separator.
+LOCAL_SAY = (
+    (r"SCIEN·TIFIC", "Sci-en, Tiffic"), (r"(?i)\bbankml\.rs\b", "bank M L dot R S"), (r"(?i)\bbankml\b", "bank M L"),
+    (r"\b([a-z0-9-]+)\.(pythai)\.(net)\b", r"\1 dot \2 dot \3"),
+    # TECHNICAL.md's references: a parenthesis that only points somewhere is dropped; a section named in a sentence is read
+    (r"\s*\((?:see\s+)?(?:§[^()]*|PERFORMANCE\.md[^()]*|`?[a-z0-9_]+\.rs`?(?:,[^()]*)?)\)", ""), (r"\bof\s+§\s*I\.2\b", "described earlier"),
+    (r"§\s*([IVX]+)\.(\d+)", _section), (r"\b(?:[a-z0-9_]+)\.rs\b", lambda m: m.group(0)[:-3].replace("_", " ") + " dot R S"),
+    (r"\b(?:PT|P|T|I)?Q\d(?:_[A-Za-z0-9]+)+\b", _quant), (r"(?i)\bq8_0\b", "Q eight zero"), (r"\*", ""),
+    (r"\+ or −", "plus or minus"), (r"(?<=[\dA-Za-z)])\s\+\s(?=[\d(A-Za-z])", " plus "), (r"(?<=[\w)])\s=\s", " equals "),
+    (r"(?<=\d)\s/\s(?=\d)", " over "), (r"log₂\s*3", "log base two of three"), (r"3⁵", "three to the fifth"),
+    (r"Σ_\{w=\+1\}", "the sum over plus-one weights of"), (r"Σ_\{w=−1\}", "the sum over minus-one weights of"),
+    (r"Σ_\{sᵢ=\+1\}", "the sum over plus signs of"), (r"Σ_\{sᵢ=−1\}", "the sum over minus signs of"),
+    (r"Σ", "the sum of "), (r"≈", " about "), (r"≤", " at most "), (r"∈", " in "), (r"(?<=[\d\w)])\s?×\s?(?=[\d\w(])", " times "),
+    (r"\{−1, 0, \+1, \+2\}", "minus one, zero, plus one, or plus two"),
+    (r"\{\s*−1,\s*0,\s*\+1\s*\}", "minus one, zero, or plus one"), (r"\{\s*−1,\s*\+1\s*\}", "minus one or plus one"),
+    (r"−(?=\s?\d)", " minus "), (r"\s−\s", " minus "), (r"(?<![\w])\+(?=\d)", "plus "), (r"ᵢ", " i"),
+    (r"(?<=\b[a-z\d])\s·\s(?=[a-z\d]\b)", " times "), (r"\s{2,}", " "))
+_RX_CACHE: dict = {}
 
 
 def say(text: str, t: dict | None = None) -> str:
     """The respelling the synthesiser hears: one pass, case-insensitive, longest match first."""
     t = t or table()
-    ents = sorted(t["entries"], key=lambda e: -len(e["match"]))
+    for m_, s_ in LOCAL_SAY:  # bankml's own words first, while Q1_0 and q1_0.rs still have their underscores
+        text = re.sub(m_, s_, text)
+    text = re.sub(r"(?<=\w)_(?=\w)", " ", text).strip()  # savante_sagi, APPROVE_WITH_CONDITIONS: said as words, shown as written
+    ents = t["entries"]
     if not ents:
         return text
-    rx = re.compile("|".join(re.escape(e["match"]) for e in ents), re.I)
-    by = {e["match"].lower(): e["say"] for e in ents}
-    text = re.sub(r"(?<=\w)_(?=\w)", " ", text)  # savante_sagi, APPROVE_WITH_CONDITIONS: said as words, shown as written
-    for m_, s_ in LOCAL_SAY:  # bankml's own words, before the house table
-        text = re.sub(m_, s_, text)
+    key = (id(t), t.get("version"), len(ents))
+    if key not in _RX_CACHE:  # the table compiled once, not per sentence
+        es = sorted(ents, key=lambda e: -len(e["match"]))
+        _RX_CACHE[key] = (re.compile("|".join(re.escape(e["match"]) for e in es), re.I), {e["match"].lower(): e["say"] for e in es})
+    rx, by = _RX_CACHE[key]
     return rx.sub(lambda m: by[m.group(0).lower()], text)
 
 
@@ -256,7 +290,7 @@ def render(texts: list, state: Path | None = None) -> list:
     man["_voice"] = {**v, "engine": v.get("engine") or ENGINE, "variant_sha": _variant_sha(v["voice"]), "pronunciation": {"path": str(PRON), "version": t.get("version")},
                      "note": "Savante's own voice (Cori body, Jaimla template, SAVANTE resonance), rendered on this computer" if v.get("model")
                      else "the house stand-in for SAVANTE's layered voice (docspeech_voices.json id savante), rendered on this computer"}
-    man_p.write_text(json.dumps(man, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    _atomic(man_p, json.dumps(man, indent=1, ensure_ascii=False) + "\n")  # readers never see half a manifest
     fcntl.flock(lock, fcntl.LOCK_UN)
     lock.close()
     return items
@@ -343,6 +377,20 @@ EXPORT_DIR = Path(os.environ.get("BANKML_EXPORT_DIR", Path(__file__).resolve().p
 GAP_S = 0.7  # silence between sentences; 2.0 between chapters
 
 
+def _duration(f) -> float:
+    p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)], capture_output=True, text=True, timeout=60)
+    try:
+        return float(p.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def _atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def export_state(name: str, chapters: list) -> dict:
     """{"file", "ready", "total", "current"}: current means the file on disk was built from exactly these clips."""
     items = [i for _, s in chapters for i in cached(s)]
@@ -350,7 +398,10 @@ def export_state(name: str, chapters: list) -> dict:
     sig = hashlib.sha256("|".join(k or "-" for k in keys).encode()).hexdigest()[:16]
     f = EXPORT_DIR / f"{name}.opus"
     meta = EXPORT_DIR / f"{name}.json"
-    cur = f.is_file() and meta.is_file() and json.loads(meta.read_text(encoding="utf-8")).get("sig") == sig
+    try:
+        cur = f.is_file() and json.loads(meta.read_text(encoding="utf-8")).get("sig") == sig
+    except (OSError, ValueError):  # absent or damaged: not current (it is rebuilt), never an error for the caller
+        cur = False
     return {"file": f, "ready": sum(1 for k in keys if k), "total": len(keys), "current": cur, "sig": sig, "items": items}
 
 
@@ -364,7 +415,8 @@ def export(name: str, chapters: list, lead: list = ()) -> dict:
     if st["ready"] < st["total"]:
         raise RuntimeError(f"{name}: {st['ready']}/{st['total']} sentences rendered; an export is complete or it is not made")
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="bankml-export-") as tmp:
+    q = lambda p: "file '" + str(p).replace("'", "'\\''") + "'"  # the concat demuxer's quoting
+    with tempfile.TemporaryDirectory(prefix=".bankml-export-", dir=EXPORT_DIR) as tmp:  # same filesystem: the rename is atomic
         tmp = Path(tmp)
         for n, secs in (("gap", GAP_S), ("chap", 2.0)):
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"anullsrc=r=48000:cl=mono", "-t", str(secs),
@@ -372,17 +424,17 @@ def export(name: str, chapters: list, lead: list = ()) -> dict:
         lines, meta, t, k = [], [";FFMETADATA1"], 0.0, 0
         for ci, (title, sents) in enumerate(chs):
             if ci:
-                lines.append(f"file '{tmp / 'chap.ogg'}'")
+                lines.append(q(tmp / "chap.ogg"))
                 t += 2.0
             start = t
             for j, _ in enumerate(sents):
                 i = st["items"][k]
                 k += 1
                 if j:
-                    lines.append(f"file '{tmp / 'gap.ogg'}'")
+                    lines.append(q(tmp / "gap.ogg"))
                     t += GAP_S
-                lines.append(f"file '{i['file']}'")
-                t += i["seconds"] or 0
+                lines.append(q(i["file"]))
+                t += i["seconds"] if i["seconds"] is not None else _duration(i["file"])  # a clip missing from the manifest is measured
             meta += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(start * 1000)}", f"END={int(t * 1000)}", "title=" + title.replace("=", "\\=")]
         (tmp / "list.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         (tmp / "meta.txt").write_text("\n".join(meta) + "\n", encoding="utf-8")
@@ -392,9 +444,9 @@ def export(name: str, chapters: list, lead: list = ()) -> dict:
                         "-metadata", f"title=Savante: {name}", "-metadata", "artist=Savante (bankml; Cori body, Jaimla template)",
                         "-f", "ogg", str(out)], check=True, timeout=1800)
         os.replace(out, st["file"])
-    (EXPORT_DIR / f"{name}.json").write_text(json.dumps({"sig": st["sig"], "sentences": st["total"], "chapters": [c for c, _ in chs],
+    _atomic(EXPORT_DIR / f"{name}.json", json.dumps({"sig": st["sig"], "sentences": st["total"], "chapters": [c for c, _ in chs],
                                                         "seconds": round(t, 1), "sha256": hashlib.sha256(st["file"].read_bytes()).hexdigest()},
-                                                       indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+                                                       indent=1, ensure_ascii=False) + "\n")
     return export_state(name, chs)
 
 
@@ -454,12 +506,26 @@ def render_async(texts: list):
     threading.Thread(target=run, daemon=True).start()
 
 
+_MAN = {"mtime": None, "data": {}}
+
+
+def _manifest() -> dict:
+    """The voice manifest, re-read only when it changes on disk (view mode polls every few seconds); {} if damaged."""
+    p = VOICE_DIR / "savante" / "manifest.json"
+    try:
+        mt = p.stat().st_mtime_ns
+        if mt != _MAN["mtime"]:
+            _MAN.update(mtime=mt, data=json.loads(p.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
+    return _MAN["data"]
+
+
 def cached(texts: list) -> list:
     """render() without rendering: the items whose audio already exists (None where it does not)."""
     v, t = savante_voice(), table()
     salt = _salt(v, t)
-    man_p = VOICE_DIR / "savante" / "manifest.json"
-    man = json.loads(man_p.read_text(encoding="utf-8")) if man_p.is_file() else {}
+    man = _manifest()
     out = []
     for text in texts:
         key = hashlib.sha256((salt + "\x1f" + say(text, t)).encode()).hexdigest()[:24]

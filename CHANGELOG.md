@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.1.6 — 2026-09-29
+
+An audit of 0.1.5, and every finding fixed with a test that would have caught it. Record:
+`testing/results/0.1.6.txt`.
+
+### Fixed — the carrier switch (ui/models.py)
+- **A slow start was declared failed, leaving two carriers running.** bankml serve hashes the whole model before it
+  binds a port, so a 5 GB file on a cold cache took longer than the 20 s "no ports, so it died" heuristic. The switch
+  then rolled back while the new serve kept going, and both fought over 18092/18093. The switch now waits on the
+  process itself: it stops only if the process exits or the deadline (30 min) passes, and then kills the process
+  group (serve and the llama-server it spawned).
+- **Success now means the chosen model.** A carrier that answers counts only if its verified sha256 is the chosen
+  file's. An old carrier still holding the port is reported, not mistaken for success.
+- **Ports are matched on the configured host** (127.0.0.1, 0.0.0.0, [::1] …) and only for this user's
+  `bankml` / `llama-server`. Stopping never crashes on a process that has already gone. If the ports cannot be freed,
+  the switch says so.
+- **Rollback also restores a previous carrier outside `.models`** (for example `~/sAGI/bonsai/…`), found by its
+  verified sha256 and its pin.
+- **Memory is checked before any switch and any adoption,** not only before a download.
+
+### Fixed — downloads
+- **A complete `.part`** (the process died between the last byte and the rename) is verified and kept. Previously
+  every retry asked for `bytes=N-` and got 416.
+- **A 206 whose `Content-Range` starts elsewhere** is not appended; the download starts over.
+- **A source that sends more than the published size** is cut off and discarded, not written until the disk fills.
+- **Ollama adoption is really offline.** It reads the local manifest and licence layer, so it is pinned to what was
+  pulled even if the registry's tag has moved since.
+- **Input.** `.`/`..` segments, slashes in a revision, and odd Ollama tags are refused. Hugging Face files in
+  sub-folders keep their folder in the local name, so two `model.gguf` files no longer collide.
+- **Gated repositories** are refused with a reason, not a raw 401.
+- **If an answer is streaming when an import finishes,** the import stands and the switch waits, instead of the whole
+  job failing.
+- **Cancel download** in the Models tab. The partial file is kept, and importing again resumes it.
+
+### Fixed — the UI and view mode
+- **The Models tab no longer holds a queue worker** for a whole download. Handlers return at once, and a light
+  2-second poll follows the job, so chat and the timers keep their workers.
+- **One damaged file no longer breaks `/api/state` for the whole LAN.** A damaged export record reads as "not
+  current". The voice manifest and export records are written atomically. Any unexpected error returns a 500
+  instead of a dropped connection.
+- **Exports stream** in 1 MiB chunks instead of being read into memory whole.
+- **`/api/state` is cached** until the voice manifest, an export or TECHNICAL.md changes (at most 30 s). The voice
+  manifest is re-read only when it changes, and the pronunciation table is compiled once, not per sentence.
+- **Export robustness.** Exports are built beside their destination, so the final rename is atomic even where `/tmp`
+  is tmpfs. The concat list quotes paths safely. A clip missing from the manifest is measured with ffprobe, so the
+  chapter marks don't drift.
+
+### Fixed — pronunciation
+- bankml's respellings now run **before** underscores become spaces, so `Q1_0`, `Q2_0_g64`, `Q4_K_M` and `q1_0.rs`
+  are read as formats and files ("Q one zero", "Q four K M", "bank M L dot R S").
+- Maths symbols are read **only in maths**:
+  - "Professor / OVERLORD" and "DAIO · savante_sagi" keep their separators;
+  - "8 / 128" still becomes "8 over 128".
+- Section references read as "section three point four"; a parenthesis that only points somewhere is dropped.
+- Names are matched case-insensitively ("Bankml").
+- The 18 sentences whose spoken form changed were re-rendered, and both exports rebuilt.
+
+### Tests
+- `test_models.py` gains 9 checks (28 in all with the carrier):
+  - input refusal (`..` segments, revisions with slashes, odd tags);
+  - complete `.part`;
+  - misplaced 206;
+  - over-send;
+  - one job at a time;
+  - memory on adoption;
+  - exact listener matching;
+  - a different model answering is not success;
+  - a slow start is waited for, then killed.
+- `test_ui.py` gains pronunciation regressions and a damaged export record.
+- Rust: `Verified::to_json` stays valid JSON with a hostile model name (quote, backslash, newline, control
+  character).
+
 ## 0.1.5 — 2026-09-28
 
 Models come in without friction, and only open-source, sha256-pinned ones: Bonsai-8B on first run, then the

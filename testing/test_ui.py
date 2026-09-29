@@ -165,6 +165,13 @@ check("say(): SCIEN·TIFIC, bankml and a pythai address are said, not spelled", 
       == "Sci-en, Tiffic at scientific dot Pith AI dot net runs bank M L")
 check("say(): TECHNICAL.md notation read aloud", speak.say("w ∈ {−1, 0, +1}; 3⁵ = 243 ≤ 256 (§III.5)", t2)
       == "w in minus one, zero, or plus one; three to the fifth equals 243 at most 256")
+check("say(): names keep their separators; files, formats and references are read properly",
+      speak.say("Professor / OVERLORD", t2) == "Professor / OVERLORD"
+      and speak.say("mindX DAIO · savante_sagi", t2) == "mindX DAIO · Sav ont sagi"
+      and speak.say("see (q1_0.rs, 0.0.4) now", t2) == "see now" and speak.say("bankml.rs", t2) == "bank M L dot R S"
+      and speak.say("PQ2_0 = 142 and Q4_K_M", t2) == "P Q two zero equals 142 and Q four K M"
+      and speak.say("Bankml, as in §III.4.", t2) == "bank M L, as in section three point four."
+      and speak.say("(16 + 2) × 8 / 128", t2) == "(16 plus 2) times 8 over 128")
 check("speech(): list markers only at line starts; an inline + survives", speak.speech("- item one\n\nThe cost is (16 + 2) bits.") == ["item one", "The cost is (16 + 2) bits."])
 rc = speak.reading_chapters()
 check("the reading: thesis, II.1, III.2, III.5 and III.8 from TECHNICAL.md", [t for t, _ in rc][0] == "The thesis" and len(rc) == 5
@@ -174,6 +181,10 @@ try:
     check("an export is refused until every sentence is rendered", False)
 except RuntimeError:
     check("an export is refused until every sentence is rendered", not (speak.EXPORT_DIR / "t-incomplete.opus").exists())
+(speak.EXPORT_DIR).mkdir(parents=True, exist_ok=True)
+(speak.EXPORT_DIR / "t-broken.opus").write_bytes(b"OggS")
+(speak.EXPORT_DIR / "t-broken.json").write_text('{"sig": "abc', encoding="utf-8")
+check("a damaged export record means not current, never an error", speak.export_state("t-broken", [("c", ["x"])])["current"] is False)
 if ok_v:
     speak.render(["It ends."])
     e = speak.export("t-set", [("one", ["I am Savante."]), ("two", ["It ends."])])
