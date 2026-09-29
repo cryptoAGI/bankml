@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.5 — 2026-09-29
+
+**P3, step five: layer 0's attention, the output projection and the residual, bit-exact against llama.cpp's.**
+Record: `testing/results/0.2.5.txt`.
+
+### Added
+- **`forward.rs`.**
+  - `KvCache` holds one layer's K and V in f16, one row per position, rounded as llama.cpp's cache stores them.
+  - `attend_head` and `Weights::attention` compute llama-server's default attention, ggml's CPU flash attention
+    (`flash_attn_ext`), in its reference path:
+    - Q rounded to f16;
+    - each score is `ggml_vec_dot_f16` as the AVX2 build computes it: four 8-lane FMA accumulators over 32-element
+      steps, then a fixed reduction tree;
+    - the score is multiplied by `1/√128`;
+    - an online softmax whose V accumulator is **f16**, with every step rounded back: `f16(fma(v, w, acc))` and
+      `f16(acc · ms)`;
+    - finally `acc · (1/S)`.
+
+    Grouped-query attention maps 4 query heads to each KV head. Then `wo` runs through the proven Q1_0 kernel, and
+    the residual adds the layer's input.
+- **The oracle extended** (`oracle_forward_attention`, in the gate). The shipped ggml's `cpy` to f16, a causal f16
+  mask, `flash_attn_ext` (with F32 accumulation set, as llama-graph sets it), `mul_mat` and `add` run on the 28-token
+  prompt. **84 of 84 rows bit-exact** (`kqv_out`, `attn_out`, `ffn_inp`). The check discriminates: with the softmax
+  sum contracted into an FMA, only 59 of 84 match. The binary computes `S·ms + vs` unfused.
+
+### Scope
+- ggml switches attention to other kernels in two cases, which are the next attention steps:
+  - a batch of 64 or more query rows (a long prompt) takes the **tiled** kernel;
+  - a single-token decode over 512 or more KV cells takes the **split-KV** kernel, whose partial sums depend on the
+    thread count.
+
+  Cells masked out are skipped, so padding the cache does not change a result.
+
 ## 0.2.4 — 2026-09-29
 
 **P3, step four: layer 0's attention inputs (Q, K and V projected, the head norms, YaRN RoPE), bit-exact against

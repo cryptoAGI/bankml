@@ -74,7 +74,7 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 - [x] **P3, step one (0.2.1): the tokenizer.** GPT-2 byte-level BPE with the Qwen2 pre-tokenizer, no crates,
   token-identical to llama.cpp on 4,258 of 4,258 recorded cases (a 2,000-string Unicode fuzz set included).
 - [ ] **P3: the Qwen3 forward pass, token-identical to llama.cpp at temperature 0** (TECHNICAL §VI). Next steps, each
-  with its oracle: ~~the chat template~~ (done 0.2.2, 317 of 317 byte-identical) → ~~the embedding lookup and RMSNorm~~ (done 0.2.3, 300 of 300 bit-exact) → ~~Q/K/V, head norms and YaRN RoPE~~ (done 0.2.4, 140 of 140 bit-exact, positions to 63,214) → attention (KV cache, softmax, `wo`) →
+  with its oracle: ~~the chat template~~ (done 0.2.2, 317 of 317 byte-identical) → ~~the embedding lookup and RMSNorm~~ (done 0.2.3, 300 of 300 bit-exact) → ~~Q/K/V, head norms and YaRN RoPE~~ (done 0.2.4, 140 of 140 bit-exact, positions to 63,214) → ~~attention (f16 KV cache, flash-attention reference path, `wo`, residual)~~ (done 0.2.5, 84 of 84) → the FFN block (`ffn_norm`, SwiGLU) → the tiled (≥ 64 query rows) and split-KV (decode over ≥ 512 cells) attention kernels →
   one full layer → the whole model's logits → greedy tokens. Design notes from
   V: kernels must be **batch-invariant** (each row reduced in the same order whatever the batch size) or prefill,
   chunked prefill and speculative verification will not be token-identical.

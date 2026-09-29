@@ -153,6 +153,20 @@ matched only 30 of 84 rows, while the projections and norms before it were exact
 `libggml-cpu-haswell.so` shows GCC's FMA contraction of the rotation, the YaRN mix and the magnitude term. With those
 three written as the same `mul_add`s, every row matches.
 
+**Step five (0.2.5): attention.** The oracle stores K and V through `cpy` to f16, as llama.cpp's cache does. It
+builds the causal f16 mask and runs `flash_attn_ext`, which is llama-server's default attention on the CPU, with F32
+accumulation set as llama-graph sets it. The output then goes through `wo` (`mul_mat`) and the residual `add`.
+`oracle_forward_attention` requires **84 of 84 rows bit-exact** (`kqv_out`, `attn_out`, `ffn_inp`, 28 tokens).
+
+The reproduction follows ggml's reference path:
+- the f16 dot's four 8-lane FMA accumulators and their reduction tree;
+- an online softmax whose V accumulator is rounded to f16 at every step.
+
+The oracle rejects a near miss: with the softmax sum written as an FMA, only 59 of 84 rows match. Two other kernels
+are not yet covered, and each will get its own oracle:
+- the tiled kernel, for 64 or more query rows;
+- the split-KV kernel, for a decode over 512 or more cells.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

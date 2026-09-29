@@ -9,9 +9,13 @@
 //! Step four (0.2.4): layer 0's attention inputs — the Q, K and V projections (`mul_mat` of a Q1_0 weight with the
 //! q8_0-quantized normed row, bankml's bit-exact kernel), the per-head RMS norms of Q and K (`attn_q_norm`,
 //! `attn_k_norm`), and RoPE (`rope_ext`, NEOX pairs, YaRN) with the parameters llama.cpp's context derives.
+//!
+//! Step five (0.2.5): attention — K and V kept in f16 as llama.cpp's cache keeps them, the causal flash attention of
+//! ggml's CPU reference path (`flash_attn_ext`, fewer than 64 query rows and fewer than 512 KV cells), then `wo` and
+//! the residual (`kqv_out`, `attn_out`, `ffn_inp`).
 
 use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
-use crate::q1_0::{dequantize_row, mat_vec, Q8Act, Q1_0_BYTES, QK1_0};
+use crate::q1_0::{dequantize_row, f16_to_f32, f32_to_f16, mat_vec, Q8Act, Q1_0_BYTES, QK1_0};
 use std::path::Path;
 
 /// `ggml_compute_forward_rms_norm_f32` followed by `mul` (fused or not, the same arithmetic): the sum of squares is
@@ -101,6 +105,83 @@ impl Rope {
             head[ic] = c.mul_add(x0, -(x1 * s));
             head[ic + half] = s.mul_add(x0, x1 * c);
         }
+    }
+}
+
+/// `ggml_vec_dot_f16` as the AVX2 build computes it: four 8-lane f32 accumulators fed by FMAs over 32-element
+/// steps, reduced as `(a0 + a2) + (a1 + a3)`, then low half + high half, then two horizontal adds. `n % 32 == 0`.
+pub fn dot_f16(x: &[u16], y: &[u16]) -> f32 {
+    assert!(x.len() == y.len() && x.len().is_multiple_of(32));
+    let mut acc = [[0.0f32; 8]; 4];
+    for (xs, ys) in x.chunks_exact(32).zip(y.chunks_exact(32)) {
+        for (j, a) in acc.iter_mut().enumerate() {
+            for (l, al) in a.iter_mut().enumerate() {
+                *al = f16_to_f32(xs[8 * j + l]).mul_add(f16_to_f32(ys[8 * j + l]), *al);
+            }
+        }
+    }
+    let mut r = [0.0f32; 8];
+    for l in 0..8 {
+        r[l] = (acc[0][l] + acc[2][l]) + (acc[1][l] + acc[3][l]);
+    }
+    let t: [f32; 4] = std::array::from_fn(|l| r[l] + r[l + 4]);
+    (t[0] + t[1]) + (t[2] + t[3])
+}
+
+/// One query head against a causal run of cached keys and values (f16, `hd` wide, `stride` apart), as ggml's
+/// `flash_attn_ext_f16_one_chunk`: Q rounded to f16; each score `dot · scale`; an online softmax whose V accumulator
+/// is f16 (`vec_mad_f16`: `f16(fma(v, w, acc))`, `vec_scale_f16`: `f16(acc · ms)`); finally `acc · (1/S)` in f32.
+pub fn attend_head(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, scale: f32, out: &mut [f32]) {
+    let hd = q.len();
+    let q16: Vec<u16> = q.iter().map(|&x| f32_to_f16(x)).collect();
+    let mut acc = vec![0u16; hd];
+    let (mut sum, mut max) = (0.0f32, f32::NEG_INFINITY);
+    for ic in 0..n_kv {
+        let s = dot_f16(&k[ic * stride..ic * stride + hd], &q16) * scale;
+        let (mut ms, mut vs) = (1.0f32, 1.0f32);
+        if s > max {
+            let old = max;
+            max = s;
+            ms = (old - max).exp();
+            for a in acc.iter_mut() {
+                *a = f32_to_f16(f16_to_f32(*a) * ms);
+            }
+        } else {
+            vs = (s - max).exp();
+        }
+        for (a, &vv) in acc.iter_mut().zip(&v[ic * stride..ic * stride + hd]) {
+            *a = f32_to_f16(f16_to_f32(vv).mul_add(vs, f16_to_f32(*a)));
+        }
+        sum = sum * ms + vs;
+    }
+    let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
+    for (o, &a) in out.iter_mut().zip(&acc) {
+        *o = f16_to_f32(a) * inv;
+    }
+}
+
+/// One layer's K/V cache, f16, one row of `n_head_kv · head_dim` per position (llama.cpp's `cache_k_l*`/`cache_v_l*`
+/// without the transposed-V layout, which flash attention does not use).
+pub struct KvCache {
+    pub k: Vec<u16>,
+    pub v: Vec<u16>,
+    pub width: usize,
+}
+
+impl KvCache {
+    pub fn new(width: usize) -> Self {
+        KvCache { k: Vec::new(), v: Vec::new(), width }
+    }
+    pub fn len(&self) -> usize {
+        self.k.len() / self.width
+    }
+    pub fn is_empty(&self) -> bool {
+        self.k.is_empty()
+    }
+    /// Store a position's K and V as the cache stores them (`set_rows` f32 → f16, round to nearest even).
+    pub fn push(&mut self, k: &[f32], v: &[f32]) {
+        self.k.extend(k.iter().map(|&x| f32_to_f16(x)));
+        self.v.extend(v.iter().map(|&x| f32_to_f16(x)));
     }
 }
 
@@ -199,6 +280,24 @@ impl Weights {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Layer `il`'s attention for the newest position in `cache` (causal: every cached position is visible), then
+    /// `wo`: writes `kqv_out` (`n_head · head_dim`) and returns nothing else; `attn_out` goes to `out` (`n_embd`).
+    pub fn attention(&self, il: usize, q: &[f32], cache: &KvCache, kqv: &mut [f32], out: &mut [f32]) -> Result<(), String> {
+        let hd = self.head_dim;
+        let group = self.n_head / self.n_head_kv;
+        let scale = 1.0f32 / (hd as f32).sqrt();
+        for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
+            let off = (h / group) * hd;
+            attend_head(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh);
+        }
+        let (m, rows) = self.q1_matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
+        if out.len() != rows {
+            return Err(format!("attn_output: {rows} rows, buffer {}", out.len()));
+        }
+        mat_vec(m, rows, &Q8Act::quantize(kqv), out);
         Ok(())
     }
 
@@ -307,6 +406,56 @@ mod tests {
         }
         eprintln!("forward oracle: layer-0 Qcur/Kcur/Vcur {ok} of {n} rows ({} tokens at positions 0–{} and {}–{}, YaRN attn_factor {}) bit-exact against the shipped ggml b11192",
                   toks.len(), toks.len() - 1, far[0], far[far.len() - 1], w.rope.attn_factor);
+        assert_eq!(ok, n);
+    }
+
+    /// Layer 0's attention over a 28-token chat prompt (f16 cache, causal), `wo` and the residual, bit for bit.
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-forward (testing/forward_oracle.py); --release"]
+    fn oracle_forward_attention() {
+        use crate::sha256::{hex, Sha256};
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
+        let tsv = std::fs::read_to_string(dir.join("oracle-forward/qkv.tsv")).unwrap();
+        let head = tsv.lines().next().unwrap();
+        let bits = head.split("kq_scale bits ").nth(1).unwrap().split(' ').next().unwrap();
+        assert_eq!(format!("{:08x}", (1.0f32 / (w.head_dim as f32).sqrt()).to_bits()), bits, "kq_scale differs from llama.cpp's");
+        let toks: Vec<u32> = head.split("tokens ").nth(1).unwrap().split(' ').map(|t| t.parse().unwrap()).collect();
+        let sha = |v: &[f32]| {
+            let mut h = Sha256::default();
+            v.iter().for_each(|x| h.update(&x.to_le_bytes()));
+            hex(&h.finish())
+        };
+        let g = w.f32_vec("blk.0.attn_norm.weight").unwrap();
+        let (qd, kd) = (w.n_head * w.head_dim, w.n_head_kv * w.head_dim);
+        let mut cache = KvCache::new(kd);
+        let mut got = std::collections::HashMap::new();
+        let (mut x, mut xn) = (vec![0.0f32; w.n_embd], vec![0.0f32; w.n_embd]);
+        let (mut q, mut k, mut v) = (vec![0.0f32; qd], vec![0.0f32; kd], vec![0.0f32; kd]);
+        let (mut kqv, mut att) = (vec![0.0f32; qd], vec![0.0f32; w.n_embd]);
+        for (p, &t) in toks.iter().enumerate() {
+            w.embed(t, &mut x).unwrap();
+            rms_norm_mul(&x, &g, w.rms_eps, &mut xn);
+            w.qkv(0, &xn, p as i32, &mut q, &mut k, &mut v).unwrap();
+            cache.push(&k, &v);
+            w.attention(0, &q, &cache, &mut kqv, &mut att).unwrap();
+            let res: Vec<f32> = att.iter().zip(&x).map(|(a, b)| a + b).collect();
+            got.insert(("kqv_out", p), sha(&kqv));
+            got.insert(("attn_out", p), sha(&att));
+            got.insert(("ffn_inp", p), sha(&res));
+        }
+        let (mut n, mut ok) = (0, 0);
+        for line in tsv.lines().skip(1) {
+            let f: Vec<&str> = line.split('\t').collect();
+            let key = match f[0] { "kqv_out" => "kqv_out", "attn_out" => "attn_out", "ffn_inp" => "ffn_inp", _ => continue };
+            n += 1;
+            let good = got[&(key, f[1].parse::<usize>().unwrap())] == f[2];
+            ok += good as usize;
+            if !good && n - ok <= 6 {
+                eprintln!("  {key} position {} differs (ggml first values {})", f[1], f[3]);
+            }
+        }
+        eprintln!("forward oracle: layer-0 kqv_out/attn_out/ffn_inp {ok} of {n} rows ({} tokens, causal, f16 K/V) bit-exact against the shipped ggml b11192", toks.len());
         assert_eq!(ok, n);
     }
 }

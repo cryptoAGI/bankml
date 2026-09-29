@@ -145,14 +145,38 @@ for nm, wname, nh, qn in (("Q", "blk.0.attn_q.weight", n_head, "blk.0.attn_q_nor
                                                 C.c_float(1.0), C.c_float(attn_factor), C.c_float(32.0), C.c_float(1.0))
         outs[nm + "_rope_far"] = base.ggml_rope_ext(ctx2, normed, pos_far, None, head, 2, n_ctx_orig, C.c_float(freq_base), C.c_float(freq_scale),
                                                     C.c_float(1.0), C.c_float(attn_factor), C.c_float(32.0), C.c_float(1.0))
+# ---- step five: layer 0's attention — the K/V cache in f16, causal mask, flash attention (the CPU reference path:
+# fewer than 64 query rows and fewer than 512 KV cells), then wo and the residual (llama.cpp's kqv_out, attn_out, ffn_inp)
+F16 = 1
+for f, args in (("ggml_permute", [P, P, C.c_int, C.c_int, C.c_int, C.c_int]), ("ggml_cpy", [P, P, P]),
+                ("ggml_new_tensor_3d", [P, C.c_int, C.c_int64, C.c_int64, C.c_int64]), ("ggml_reshape_2d", [P, P, C.c_int64, C.c_int64]),
+                ("ggml_add", [P, P, P]),
+                ("ggml_flash_attn_ext", [P, P, P, P, P, C.c_float, C.c_float, C.c_float])):
+    getattr(base, f).restype = P
+    getattr(base, f).argtypes = args
+base.ggml_prec_set_acc.argtypes = [P, C.c_int]
+k16 = base.ggml_cpy(ctx2, outs["K_rope"], base.ggml_new_tensor_3d(ctx2, F16, head, n_head_kv, n))
+v16 = base.ggml_cpy(ctx2, base.ggml_reshape_3d(ctx2, outs["V"], head, n_head_kv, n), base.ggml_new_tensor_3d(ctx2, F16, head, n_head_kv, n))
+mask = base.ggml_new_tensor_2d(ctx2, F16, n, n)
+C.memmove(base.ggml_get_data(mask), (C.c_uint16 * (n * n))(*[0 if j <= i else 0xFC00 for i in range(n) for j in range(n)]), 2 * n * n)
+kq_scale = f32(1.0 / f32(head ** 0.5))
+fa = base.ggml_flash_attn_ext(ctx2, base.ggml_permute(ctx2, outs["Q_rope"], 0, 2, 1, 3), base.ggml_permute(ctx2, k16, 0, 2, 1, 3),
+                              base.ggml_permute(ctx2, v16, 0, 2, 1, 3), mask, C.c_float(kq_scale), C.c_float(0.0), C.c_float(0.0))
+base.ggml_prec_set_acc(fa, 10)  # GGML_PREC_F32, as llama-graph sets it
+kqv = base.ggml_reshape_2d(ctx2, fa, n_head * head, n)
+attn_out = base.ggml_mul_mat(ctx2, tensor_2d("blk.0.attn_output.weight", Q1_0, n_head * head, n_embd, (n_head * head) // 128 * 18), kqv)
+emb0 = base.ggml_get_rows(ctx2, w2, tok2)
+outs["kqv_out"] = kqv
+outs["attn_out"] = attn_out
+outs["ffn_inp"] = base.ggml_add(ctx2, attn_out, emb0)
 gf2 = base.ggml_new_graph(ctx2)
 for k in outs:
     base.ggml_build_forward_expand(gf2, outs[k])
 cpu.ggml_graph_compute_with_ctx(ctx2, gf2, 3)
 with open(out / "qkv.tsv", "w") as f:
-    f.write(f"# attn_factor {attn_factor!r} bits {struct.unpack('<I', struct.pack('<f', attn_factor))[0]:08x} · freq_scale {freq_scale} · n_ctx_orig {n_ctx_orig} · freq_base {freq_base} · far {' '.join(map(str, far))} · tokens {' '.join(map(str, prompt))}\n")
+    f.write(f"# attn_factor {attn_factor!r} bits {struct.unpack('<I', struct.pack('<f', attn_factor))[0]:08x} · freq_scale {freq_scale} · n_ctx_orig {n_ctx_orig} · freq_base {freq_base} · kq_scale bits {struct.unpack('<I', struct.pack('<f', kq_scale))[0]:08x} · far {' '.join(map(str, far))} · tokens {' '.join(map(str, prompt))}\n")
     for k in outs:
-        width = (n_head if k.startswith("Q") else n_head_kv) * head
+        width = n_embd if k in ("kqv_out", "attn_out", "ffn_inp") else (n_head if k.startswith("Q") else n_head_kv) * head
         raw = C.string_at(base.ggml_get_data(outs[k]), width * 4 * n)
         for p_ in range(n):
             row = raw[p_ * width * 4:(p_ + 1) * width * 4]
