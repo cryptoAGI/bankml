@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.0.7 — 2026-09-28
+
+Savante's UI, made to be watched and used: a LAN view, a professional look, response times, layout you can arrange,
+and a guide. No Rust code changed (the kernels and their 0.0.6 gate records stand). Record: `testing/results/0.0.7.txt`.
+
+### Added
+- **View mode on the LAN: `ui/view.py`**, the Python standard library, not Gradio. The installed Gradio 3.37 has
+  path-traversal bugs that let a client read files from the host (e.g. CVE-2023-51449, fixed in 4.11), so it stays
+  on loopback. The view server has four fixed GET routes: the page; `/api/state`; `/api/result?name=`, for a name the
+  results directory lists; and `/savante.png`. Every other path gets 404, POST gets 405, the page renders all data as
+  text, and a strict Content-Security-Policy applies. It shows the live testing, the release records, CI, the
+  laptop's load and swap, `bankml serve`'s verification and Savante's office and ledger. Light and dark themes.
+- **Modular layout.** In view mode every panel can be dragged by its title to a new position and resized from its
+  corner; the layout is kept per browser, with a *reset layout* button. In interact mode the chat and side panels
+  resize, and the side panel drags to either side of the chat.
+- **A response timer** that starts at the press of Send and ticks every second: *reading the prompt (prefill)*, then
+  *writing · first token at N s*. Each answer's footer reads `⏱ sent HH:MM:SS · first token N s · answered in N s`.
+- **Response times in `.history`**: every record carries `sent_at` and `answered_at` (ISO 8601 with milliseconds and
+  offset), `first_token_s` and `response_s`, next to the receipt.
+- **`usage.md`**, the full guide: what runs where, setup, verifying the model, `serve`, both modes, `.history`,
+  receipts and how to check an answer, the canon and its ledger, testing, troubleshooting, and a reference of
+  commands, ports and variables. The README gains a four-step *Using Savante*.
+
+### Changed
+- Interact mode uses one light professional theme: bordered panels and forced text contrast over Gradio's styles.
+  The `bankml serve` panel was a raw JSON block that overflowed the side column; it is now a compact card that wraps
+  inside its border.
+- The Gradio queue runs 4 events at once, so the timer ticks while an answer streams.
+
 ## 0.0.6 — 2026-09-28
 
 bankml answers on this laptop. The answers come through the reference engine (P0), behind the gate, with a receipt,

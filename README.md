@@ -89,19 +89,40 @@ target/release/bankml guard MODEL.gguf                 # play | refuse (with the
 target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then the sha256 pin: one gate
 ```
 
-## Run it on this computer (0.0.6)
+## Using Savante
 
+Savante is the review office of the mindX DAIO: an agent defined by a signed canon, not by a model. With bankml she
+runs on your own computer, and every answer she gives carries a receipt. Four steps (details in **[usage.md](usage.md)**):
+
+**1. Build bankml and verify the model**
 ```sh
 cargo build --release
-# answers through llama.cpp b11192's llama-server, behind the guard, the pin and a receipt (P0)
-target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork FORK.json --upstream 127.0.0.1:18092   # or --spawn /path/to/llama-server
-python3 ui/savante.py --mode interact            # http://127.0.0.1:7873  Savante: chat, .prompt, .history, verifier
-python3 ui/savante.py --mode view --port 7874    # http://127.0.0.1:7874  read-only: watch the testing live
+target/release/bankml verify .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json    # → play, sha256 284a335a…
 ```
 
-`serve` refuses to start unless the file verifies and the upstream serves that very file. Every answer carries a
-`bankml_receipt` with the sha256 of the text. The UI reads Savante's canon (`~/savante`, or `SAVANTE_CANON`) without
-writing to it, and checks it against the iNFT ledger `savante.commitments.json` before it speaks as Savante.
+**2. Start the gate** (bankml launches llama.cpp b11192 on the verified file, or checks a running one via `--upstream`)
+```sh
+target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork .models/FORK.json --spawn /path/to/llama-server
+```
+
+**3. Talk to Savante**: `python3 ui/savante.py --mode interact`, then open **http://127.0.0.1:7873**.
+Type a question and press **Send**. A timer runs from the press of Send until the answer is complete: the first turn on
+a laptop spends about 2 minutes reading Savante's system prompt, then writes a few tokens a second. Under each answer
+you see when it was sent, the time to the first token, the total time, and the receipt: the verified model's sha256
+and the sha256 of the answer, checked ✓. To ask for a review, start with *"review:"*.
+- **`.prompt`** chooses what carries the conversation: the persona's own system prompt (default), the `sAGI.prompt`
+  facet, or the Hugging Face Space's template.
+- **`.history`** (`~/.local/share/bankml/savante/savante.history`) records every exchange with its timestamps,
+  response times and receipt.
+- Panels resize from their corner, and the side panel drags to either side.
+
+**4. Let others watch**: `python3 ui/view.py --host 0.0.0.0` gives a read-only page at
+**http://&lt;your LAN address&gt;:7874**. It shows the live testing, the release records, CI, the machine's load and
+Savante's ledger, with draggable, resizable panels. It is the standard library, not Gradio, so it is safe to put on
+a network.
+
+Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-hashes every file her iNFT ledger
+(`savante.commitments.json`) commits to, and it refuses if her persona does not verify. Nothing is minted.
 
 ## Layout
 
@@ -114,7 +135,9 @@ writing to it, and checks it against the iNFT ledger `savante.commitments.json` 
 | `sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
 | `par.rs` | the thread pool and row scheduler (0.0.3) |
 | `serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
-| `ui/savante.py` | the Savante UI, view and interact modes (0.0.6) |
+| `ui/savante.py` | the Savante UI, interact mode (Gradio, loopback) |
+| `ui/view.py` | the read-only view page for the LAN (standard library) |
+| `usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
 
