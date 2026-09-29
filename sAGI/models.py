@@ -68,6 +68,21 @@ CATALOG = [
     {"id": "granite-3.3-2b", "title": "Granite-3.3-2B-Instruct · Q4_K_M", "repo": "ibm-granite/granite-3.3-2b-instruct-GGUF",
      "file": "granite-3.3-2b-instruct-Q4_K_M.gguf", "revision": "7cdf86ccd1f1bb3491c9b7017b033f2e51367397", "bytes": 1545303328, "sha256": "ac71e9e32c0bea919b409c5918f69ca74339854b0319c5065e4e9fb6d95c4852",
      "licence": "apache-2.0", "note": "IBM's open model, tuned for instructions and tools"},
+    # coders (the codephreak and simplecoder agents): open-source only, so StarCoder and WizardCoder are not here
+    # (OpenRAIL-M / Llama 2 licences). The newest coder, Qwen3-Coder-Next (80B, Apache-2.0), ships as four files of
+    # 48 GB in all; it is named in those agents' .model as the latest, not offered for import here.
+    {"id": "qwen2.5-coder-1.5b", "title": "Qwen2.5-Coder-1.5B-Instruct · Q4_K_M · coder", "repo": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+     "file": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", "revision": "f86cb2c1fa58255f8052cc32aeede1b7482d4361", "bytes": 1117320768,
+     "sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046", "licence": "apache-2.0", "coder": True,
+     "note": "the coder agents' default on a small machine: Qwen's own GGUF, 1.1 GB"},
+    {"id": "qwen2.5-coder-7b", "title": "Qwen2.5-Coder-7B-Instruct · Q4_K_M · coder", "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+     "file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf", "revision": "13fb94bfda8c8cf22497dc57b78f391a9acb426a", "bytes": 4683073536,
+     "sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c", "licence": "apache-2.0", "coder": True,
+     "note": "the stronger small coder; needs about 5 GB of disk and memory"},
+    {"id": "qwen3.8-27b", "title": "Qwen3.8-27B · UD-Q4_K_M · latest Qwen (code and general)", "repo": "unsloth/Qwen3.8-27B-GGUF",
+     "file": "Qwen3.8-27B-UD-Q4_K_M.gguf", "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502", "bytes": 16464440224,
+     "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482", "licence": "apache-2.0", "coder": True,
+     "note": "the newest Qwen (Aug 2026), strong at code; 16.5 GB, for a machine with 24 GB or more"},
 ]
 
 
