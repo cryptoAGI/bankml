@@ -648,7 +648,8 @@ def timer_md() -> str:
         return "<div class='bk-timer bk-idle'>⏱ ready</div>"
     el = time.time() - t0
     phase = f"writing · first token at {first - t0:.1f} s" if first else "reading the prompt (prefill)"
-    return f"<div class='bk-timer bk-live'>⏱ {el:5.1f} s · {phase}</div>"
+    # the browser counts the seconds from the moment of Send (data-t0); the server only changes the phase
+    return (f"<div class='bk-timer bk-live' data-t0='{int(t0 * 1000)}'>⏱ <span class='bk-el'>{el:.1f}</span> s · {E(phase)}</div>")
 
 
 def iso(t: float) -> str:
@@ -668,6 +669,7 @@ CSS = """
 .bk-card dl{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:8px 0 0 0}.bk-card dt{color:#475569!important}.bk-card dd{margin:0;min-width:0}
 .bk-mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .bk-card .bk-ok{color:#15803d!important;font-weight:700}.bk-bad{border-left-color:#b91c1c!important}.bk-bad b{color:#b91c1c!important}
+.bk-el{display:inline-block;min-width:4.2ch;text-align:right;font-variant-numeric:tabular-nums}
 .bk-timer{border:1px solid #cbd5e1;border-radius:8px;padding:9px 12px;font:700 16px ui-monospace,Menlo,Consolas,monospace;text-align:center;background:#ffffff}
 .bk-live{border:2px solid #0f766e;color:#0f766e!important;background:#f0fdfa}.bk-idle{color:#475569!important}
 #bk-prov, #bk-prov *{font-size:12px;color:#334155!important;overflow-wrap:anywhere}
@@ -1317,6 +1319,12 @@ LAYOUT_JS = """() => {
     }, { passive: true });
     return true;
   })();
+  // the timer: real seconds going by, counted here from the moment Send was pressed
+  if (!window.bkClock) window.bkClock = setInterval(() => {
+    for (const t of document.querySelectorAll('.bk-timer[data-t0]')) {
+      const el = t.querySelector('.bk-el'); if (el) el.textContent = ((Date.now() - +t.dataset.t0) / 1000).toFixed(1);
+    }
+  }, 100);
   handle(side, 'side', 'xy');
   if (chat) handle(chat, 'chat', 'y');
   if (st.side === 'left') row.prepend(side);

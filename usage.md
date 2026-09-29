@@ -224,7 +224,8 @@ ip -4 addr | grep inet                          # find the LAN address
 - **CI**: the last five GitHub Actions runs.
 - **Savante**: name, mantra, card status (`not_yet_minted`), doctrine root, and the ledger check, file by file.
 - **Listen to Savante**: her introduction and voice examples, for anyone watching. Play all, a chapter, or from any
-  line; the line being read is highlighted.
+  line; the line being read is highlighted. Pressing play brings out the same DreamKnob controls as the card (SPEED,
+  FM RATE, FM DEPTH, GAIN, VOLUME), kept in each listener's own browser.
 - **Private data — commitments only**: the count, Merkle root and CID of `.history`, and the count and root of
   `.memory`. Never their content (§8a).
 

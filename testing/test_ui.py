@@ -182,6 +182,8 @@ check("view /api/state carries the .history commitment", st == 200 and state["pr
 check("view /api/state carries no .history content", b"question 1" not in body and b"answer 3" not in body)
 check("view refuses traversal and unknown paths", get("/api/result?name=../../etc/passwd")[0] == 404 and get("/etc/passwd")[0] == 404)
 check("view refuses POST", get("/api/state", "POST")[0] == 405)
+st_k, body_k = get("/knobs.js")
+check("view serves the DreamKnob bundle at /knobs.js", st_k == 200 and b"SavanteKnobs" in body_k)
 srv.shutdown()
 
 print(f"{'all ok' if not fails else f'{fails} FAILED'}")

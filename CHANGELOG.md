@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.4 — 2026-09-28
+
+The knobs in view mode, and a timer that counts real seconds. No Rust code changed. Record: `testing/results/0.1.4.txt`.
+
+### Added
+- **Knobs in view mode.** Anyone listening on the LAN gets the same DreamKnob controls (SPEED, FM RATE, FM DEPTH,
+  GAIN, VOLUME), hidden until they press play, then emerging in the Listen panel. They run the same voice chain as the
+  card: GAIN, then the FM delay line, then VOLUME, with speed pitch-preserved. Each listener's settings stay in their
+  own browser. The bundle is served from a fixed `/knobs.js`, and the view's CSP allows `'self'` scripts for it.
+  Verified in headless Firefox against a test instance of the view server:
+  - hidden before play, emerged after it, with five knobs;
+  - audio playing through the chain;
+  - a SPEED change reached the audio (1.5×);
+  - the line being read highlighted.
+
+### Fixed
+- **The timer's seconds.** It was redrawn by the server once a second, so its tenths never moved (it always ended in
+  ".4"). The browser now counts from the moment Send was pressed, ten times a second, and the server only changes the
+  phase. Verified in a browser: a timer stamped 12.3 s earlier read 24.6 s after the page was held for 12 s.
+
 ## 0.1.3 — 2026-09-28
 
 Savante gets a voice of her own: calm, confident, slower and more thoughtful. The DreamKnob controls are now in the

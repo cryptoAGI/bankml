@@ -1,0 +1,12 @@
+# bankml 0.1.4 — 2026-09-29T02:30:58Z · laptop (Ryzen 3 3200U). No Rust code changed since 0.1.0 (version only).
+unittests: test result: ok. 37 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.45s
+testing/cli.rs: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+clippy: clean
+## testing/test_ui.py
+ok   view refuses POST
+ok   view serves the DreamKnob bundle at /knobs.js
+all ok
+## browser tests (headless Firefox)
+view mode: knobs hidden before play=true · emerged after play=true · knob widgets=6 · playing=true · chain=true · speed applied=1.5 · line="Savante is the read-only oversight offic"
+timer: stamped 12.3 s earlier, held 12 s → read 24.6 s (tenths live, no longer fixed at .4)
+# live: interact 127.0.0.1:7873 · view 10.0.0.153:7874 · /knobs.js 200

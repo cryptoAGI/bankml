@@ -1,6 +1,6 @@
 [package]
 name = "bankml"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["Professor Codephreak", "Gregory L. Magnusson"]
 repository = "https://github.com/cryptoAGI/bankml"

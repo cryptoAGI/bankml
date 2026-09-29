@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import savante as S  # noqa: E402  (stdlib-only at import; gradio is imported only by its build())
 
 CANON = S.Canon(S.CANON)
+KNOBS = Path(__file__).resolve().parent / "voice" / "knobs" / "savante_knobs.js"
 import re  # noqa: E402
 import speak  # noqa: E402
 
@@ -111,6 +112,10 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 th{color:var(--muted);font-weight:600;background:var(--panel2)}tr:last-child td{border-bottom:0}
 select{background:var(--panel2);color:var(--text);border:1px solid var(--line2);border-radius:6px;padding:6px 8px;font:inherit}
 .mantra{color:var(--gold);font-style:italic}
+.kn{max-width:520px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);max-height:0;opacity:0;overflow:hidden;
+padding:0 10px;margin:0;transform:translateY(-6px) scale(.97);transition:max-height .45s ease,opacity .35s ease,transform .45s cubic-bezier(.2,.9,.3,1.2),padding .3s,margin .3s}
+.kn.on{max-height:150px;opacity:1;padding:8px 10px 4px;margin:0 0 10px;transform:none;box-shadow:0 0 20px rgba(57,211,199,.18)}
+@media (prefers-reduced-motion:reduce){.kn{transition:none}}
 .lbar{display:flex;gap:8px;margin:6px 0 10px}.lbar button,.lch button{cursor:pointer;border-radius:8px;border:1px solid var(--accent);background:transparent;
 color:var(--accent);font:600 12px var(--mono);padding:5px 12px}.lbar button:hover,.lch button:hover{background:rgba(57,211,199,.12)}
 .lch{border:1px solid var(--line);border-radius:10px;margin:6px 0}.lch summary{cursor:pointer;padding:7px 10px;display:flex;gap:10px;align-items:center}
@@ -134,6 +139,7 @@ color:var(--accent);font:600 12px var(--mono);padding:5px 12px}.lbar button:hove
 <p style="margin-top:0;color:var(--muted)">New here? Savante reads herself to you — who she is, her oath, what she believes, how she
 works, why she exists — verbatim from her canon, in her voice (<span id="lv"></span>).</p>
 <div class="lbar"><button type="button" id="lall">▶ play the introduction</button><button type="button" id="lstop">■ stop</button></div>
+<div id="lknobs" class="kn" aria-label="voice controls"></div>
 <div id="lchaps"></div></div></section>
 <section class="card w6" id="p-proof"><h2>Private data — commitments only</h2><div class="body">
 <p style="margin-top:0;color:var(--muted)">.history and .memory stay on this laptop. What is shown is their commitment: anyone given one
@@ -143,6 +149,7 @@ exchange and its inclusion proof can check it against this root, without seeing 
 <dl id="scard"></dl><table style="margin-top:10px"><thead><tr><th>ledger entry</th><th>check</th></tr></thead><tbody id="ledger"></tbody></table></div></section>
 </main>
 <div class="foot">bankml · verified low-bit inference · cryptoAGI · this page serves no chat and no history</div>
+<script src="/knobs.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 function dl(el,rows){el.replaceChildren();for(const [k,v,cls] of rows){const dt=document.createElement('dt');dt.textContent=k;
@@ -172,10 +179,23 @@ async function tick(){$('clock').textContent=new Date().toLocaleTimeString();
 $('pick').addEventListener('change',e=>{picked=e.target.value;rec()});
 // Listen to Savante: one audio element, a queue of clips, the line being read highlighted
 const AU=new Audio();AU.preload='none';let LQ=[],lnow=null,lshown='';
+// the card's voice controls: DreamKnob SPEED · FM RATE · FM DEPTH · GAIN · VOLUME, emerging when play is pressed
+let AX=null;const VD={speed:1,fmRate:5,fmDepth:0,gain:0,volume:80};
+function vset(){const x=Object.assign({},VD,window.bkVoice||{});AU.preservesPitch=true;AU.mozPreservesPitch=true;AU.playbackRate=+x.speed||1;
+ if(!AX){AU.volume=Math.max(0,Math.min(1,x.volume/100));return}const t=AX.ctx.currentTime;
+ AX.lfo.frequency.setTargetAtTime(Math.max(.01,+x.fmRate||0),t,.02);AX.depth.gain.setTargetAtTime(.0025*Math.max(0,Math.min(100,+x.fmDepth||0))/100,t,.02);
+ AX.pre.gain.setTargetAtTime(Math.pow(10,Math.max(-12,Math.min(12,+x.gain||0))/20),t,.02);AX.vol.gain.setTargetAtTime(Math.max(0,Math.min(100,+x.volume))/100,t,.02)}
+function vchain(){if(AX)return;try{const ctx=new(window.AudioContext||window.webkitAudioContext)(),src=ctx.createMediaElementSource(AU),
+ pre=ctx.createGain(),delay=ctx.createDelay(.05),lfo=ctx.createOscillator(),depth=ctx.createGain(),vol=ctx.createGain();
+ delay.delayTime.value=.006;lfo.connect(depth);depth.connect(delay.delayTime);lfo.start();src.connect(pre);pre.connect(delay);delay.connect(vol);vol.connect(ctx.destination);
+ AX={ctx,lfo,depth,pre,vol}}catch(e){console.warn('voice chain',e)}}
+function vemerge(){vchain();if(AX&&AX.ctx.state==='suspended')AX.ctx.resume();const el=$('lknobs');
+ if(window.SavanteKnobs)SavanteKnobs.mount(el,58);el.classList.add('on');vset()}
+window.addEventListener('bk-voice',vset);
 function lmark(li){if(lnow)lnow.classList.remove('now');lnow=li;if(li){li.classList.add('now');const d=li.closest('details');if(d)d.open=true;li.scrollIntoView({block:'nearest',behavior:'smooth'})}}
 function lnext(){const li=LQ.shift();if(!li){lmark(null);return}lmark(li);AU.src='/audio/'+li.dataset.k+'.ogg';AU.play().catch(()=>{})}
-AU.addEventListener('ended',lnext);
-function lplay(lis){AU.pause();LQ=[...lis];lnext()}
+AU.addEventListener('ended',lnext);AU.addEventListener('play',vset);
+function lplay(lis){AU.pause();vemerge();LQ=[...lis];lnext()}
 $('lall').addEventListener('click',()=>lplay(document.querySelectorAll('#lchaps li')));
 $('lstop').addEventListener('click',()=>{LQ=[];AU.pause();lmark(null)});
 function lrender(L){const sig=JSON.stringify(L.chapters.map(c=>[c.title,!!c.rendering]));if(sig===lshown)return;lshown=sig;
@@ -218,7 +238,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; media-src 'self'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -233,6 +253,11 @@ class H(BaseHTTPRequestHandler):
             if name in S.results_list():  # only names the directory listing produced
                 return self.send(200, "text/plain; charset=utf-8", S.results_read(name).encode())
             return self.send(404, "text/plain", b"no such record")
+        if u.path == "/knobs.js":  # the DreamKnob voice controls, the same bundle the card uses
+            try:
+                return self.send(200, "text/javascript; charset=utf-8", KNOBS.read_bytes(), cache="max-age=3600")
+            except OSError:
+                return self.send(404, "text/plain", b"no knobs")
         if u.path.startswith("/audio/") and u.path.endswith(".ogg"):
             f = audio_file(u.path[len("/audio/"):-len(".ogg")])
             return self.send(200, "audio/ogg", f.read_bytes(), cache="max-age=86400") if f else self.send(404, "text/plain", b"no such clip")
