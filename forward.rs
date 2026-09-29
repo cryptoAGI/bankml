@@ -20,10 +20,14 @@
 //! Step seven (0.2.7): the whole model — every layer in turn with its own K/V cache, `output_norm` and the logits
 //! (`Weights::step`, `Weights::logits`). Each matmul runs on a thread pool; `mat_vec_par` has the same bits at any
 //! thread count.
+//!
+//! Step eight (0.2.8): the ternary model. The same forward pass over either weight type — Q1_0 (1-bit, 128-weight
+//! blocks) or Q2_0_g64 (ternary, 64-weight blocks) — through each type's bit-exact kernel (§III.4, §III.6).
 
 use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
 use crate::par::Pool;
-use crate::q1_0::{dequantize_row, f16_to_f32, f32_to_f16, mat_vec_par, Q8Act, Q1_0_BYTES, QK1_0};
+use crate::q1_0::{self, f16_to_f32, f32_to_f16, Q8Act, Q1_0_BYTES, QK1_0};
+use crate::q2_0::{self, Q8Act2, Q2_0_BYTES, QK2_0};
 use std::path::Path;
 
 /// `ggml_compute_forward_rms_norm_f32` followed by `mul` (fused or not, the same arithmetic): the sum of squares is
@@ -223,6 +227,28 @@ impl KvCache {
     }
 }
 
+/// GGUF tensor types bankml's forward pass runs.
+pub const TYPE_Q1_0: u32 = 41;
+pub const TYPE_Q2_0: u32 = 42;
+
+/// An activation row quantized to q8_0 and prepared for the model's weight type (shared by every matrix that reads
+/// the same row: Q, K and V; gate and up).
+pub enum Act {
+    Q1(Q8Act),
+    Q2(Q8Act2),
+}
+
+/// A weight matrix: its bytes, rows and type.
+pub struct Mat<'a> {
+    bytes: &'a [u8],
+    pub rows: usize,
+    ty: u32,
+}
+
+fn row_bytes(ty: u32, n: usize) -> usize {
+    if ty == TYPE_Q1_0 { n / QK1_0 * Q1_0_BYTES } else { n / QK2_0 * Q2_0_BYTES }
+}
+
 /// The model's tensors by name, read through bankml's own memory map.
 pub struct Weights {
     mm: Mmap,
@@ -236,6 +262,8 @@ pub struct Weights {
     pub head_dim: usize,
     pub rope: Rope,
     pub n_layer: usize,
+    /// the matrices' type: `TYPE_Q1_0` or `TYPE_Q2_0`
+    pub wtype: u32,
     pool: Pool,
 }
 
@@ -266,8 +294,12 @@ impl Weights {
         let n_ctx_orig = num("rope.scaling.original_context_length").or_else(|| num("context_length")).ok_or("no context length")? as u32;
         let rope = Rope::new(head_dim, num("rope.freq_base").unwrap_or(10000.0) as f32, yarn, n_ctx_orig);
         let n_layer = num("block_count").ok_or("no block count")? as usize;
+        let wtype = emb.ty;
+        if wtype != TYPE_Q1_0 && wtype != TYPE_Q2_0 {
+            return Err(format!("token_embd is type {wtype}; the forward pass runs Q1_0 and Q2_0_g64 models"));
+        }
         let mm = Mmap::open(path).map_err(|e| e.to_string())?;
-        Ok(Weights { mm, tensors: h.tensors, data_start: h.data_start, n_embd, n_vocab, rms_eps, n_head, n_head_kv, head_dim, rope, n_layer,
+        Ok(Weights { mm, tensors: h.tensors, data_start: h.data_start, n_embd, n_vocab, rms_eps, n_head, n_head_kv, head_dim, rope, n_layer, wtype,
                      pool: Pool::from_env() })
     }
 
@@ -288,31 +320,46 @@ impl Weights {
         Ok(b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect())
     }
 
-    /// A Q1_0 weight matrix's bytes and its row count, checked against the input width.
-    pub fn q1_matrix(&self, name: &str, n_in: usize) -> Result<(&[u8], usize), String> {
+    /// A weight matrix of the model's type, checked against the input width.
+    pub fn matrix(&self, name: &str, n_in: usize) -> Result<Mat<'_>, String> {
         let (t, b) = self.tensor(name)?;
-        if t.ty != 41 || t.dims[0] as usize != n_in {
-            return Err(format!("{name}: type {} dims {:?}; expected Q1_0 with {n_in} columns", t.ty, t.dims));
+        if t.ty != self.wtype || t.dims[0] as usize != n_in {
+            return Err(format!("{name}: type {} dims {:?}; expected type {} with {n_in} columns", t.ty, t.dims, self.wtype));
         }
         let rows = t.dims[1] as usize;
-        Ok((b.get(..rows * (n_in / QK1_0 * Q1_0_BYTES)).ok_or("tensor truncated")?, rows))
+        Ok(Mat { bytes: b.get(..rows * row_bytes(t.ty, n_in)).ok_or("tensor truncated")?, rows, ty: t.ty })
+    }
+
+    /// `x` quantized to q8_0 as ggml quantizes a matmul's activation, prepared for the model's kernel.
+    pub fn quantize(&self, x: &[f32]) -> Act {
+        if self.wtype == TYPE_Q1_0 { Act::Q1(Q8Act::quantize(x)) } else { Act::Q2(Q8Act2::quantize(x)) }
+    }
+
+    /// `out = m · a` on the pool (each type's `mat_vec_par`: the bits of ggml's per-row `vec_dot`).
+    pub fn mv(&self, m: &Mat, a: &Act, out: &mut [f32]) -> Result<(), String> {
+        if out.len() != m.rows {
+            return Err(format!("{} rows, buffer {}", m.rows, out.len()));
+        }
+        match (m.ty, a) {
+            (TYPE_Q1_0, Act::Q1(a)) => q1_0::mat_vec_par(&self.pool, m.bytes, m.rows, a, out),
+            (TYPE_Q2_0, Act::Q2(a)) => q2_0::mat_vec_par(&self.pool, m.bytes, m.rows, a, out),
+            _ => return Err("activation prepared for another weight type".into()),
+        }
+        Ok(())
     }
 
     /// Layer `il`'s attention inputs for one token at position `pos`, from its normed row `xn` (`attn_norm-il`):
     /// Q (`n_head · head_dim`), K and V (`n_head_kv · head_dim`) — projected, Q and K normed per head and roped,
     /// as `Qcur`, `Kcur`, `Vcur` in llama.cpp's qwen3 graph.
     pub fn qkv(&self, il: usize, xn: &[f32], pos: i32, q: &mut [f32], k: &mut [f32], v: &mut [f32]) -> Result<(), String> {
-        let a = Q8Act::quantize(xn);
+        let a = self.quantize(xn);
         let hd = self.head_dim;
         let mut cache = vec![0.0f32; hd];
         self.rope.cache(pos, &mut cache);
         let mut tmp = vec![0.0f32; hd];
         for (w, norm, out) in [("attn_q", Some("attn_q_norm"), &mut *q), ("attn_k", Some("attn_k_norm"), &mut *k), ("attn_v", None, &mut *v)] {
-            let (m, rows) = self.q1_matrix(&format!("blk.{il}.{w}.weight"), self.n_embd)?;
-            if out.len() != rows {
-                return Err(format!("{w}: {rows} rows, buffer {}", out.len()));
-            }
-            mat_vec_par(&self.pool, m, rows, &a, out);
+            let m = self.matrix(&format!("blk.{il}.{w}.weight"), self.n_embd)?;
+            self.mv(&m, &a, out).map_err(|e| format!("{w}: {e}"))?;
             if let Some(norm) = norm {
                 let g = self.f32_vec(&format!("blk.{il}.{norm}.weight"))?;
                 for h in out.chunks_exact_mut(hd) {
@@ -335,11 +382,8 @@ impl Weights {
             let off = (h / group) * hd;
             attend_head(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh);
         }
-        let (m, rows) = self.q1_matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
-        if out.len() != rows {
-            return Err(format!("attn_output: {rows} rows, buffer {}", out.len()));
-        }
-        mat_vec_par(&self.pool, m, rows, &Q8Act::quantize(kqv), out);
+        let m = self.matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
+        self.mv(&m, &self.quantize(kqv), out).map_err(|e| format!("attn_output: {e}"))?;
         Ok(())
     }
 
@@ -349,22 +393,20 @@ impl Weights {
         let g = self.f32_vec(&format!("blk.{il}.ffn_norm.weight"))?;
         let mut xn = vec![0.0f32; x.len()];
         rms_norm_mul(x, &g, self.rms_eps, &mut xn);
-        let a = Q8Act::quantize(&xn);
-        let (wg, n_ff) = self.q1_matrix(&format!("blk.{il}.ffn_gate.weight"), self.n_embd)?;
-        let (wu, n_ff_u) = self.q1_matrix(&format!("blk.{il}.ffn_up.weight"), self.n_embd)?;
-        if n_ff != n_ff_u {
-            return Err(format!("ffn_gate has {n_ff} rows, ffn_up {n_ff_u}"));
+        let a = self.quantize(&xn);
+        let wg = self.matrix(&format!("blk.{il}.ffn_gate.weight"), self.n_embd)?;
+        let wu = self.matrix(&format!("blk.{il}.ffn_up.weight"), self.n_embd)?;
+        let n_ff = wg.rows;
+        if wu.rows != n_ff {
+            return Err(format!("ffn_gate has {n_ff} rows, ffn_up {}", wu.rows));
         }
         let (mut gate, mut up, mut h) = (vec![0.0f32; n_ff], vec![0.0f32; n_ff], vec![0.0f32; n_ff]);
-        mat_vec_par(&self.pool, wg, n_ff, &a, &mut gate);
-        mat_vec_par(&self.pool, wu, n_ff, &a, &mut up);
+        self.mv(&wg, &a, &mut gate)?;
+        self.mv(&wu, &a, &mut up)?;
         swiglu(&gate, &up, &mut h);
-        let (wd, rows) = self.q1_matrix(&format!("blk.{il}.ffn_down.weight"), n_ff)?;
-        if rows != x.len() {
-            return Err(format!("ffn_down: {rows} rows for a {}-wide stream", x.len()));
-        }
-        let mut down = vec![0.0f32; rows];
-        mat_vec_par(&self.pool, wd, rows, &Q8Act::quantize(&h), &mut down);
+        let wd = self.matrix(&format!("blk.{il}.ffn_down.weight"), n_ff)?;
+        let mut down = vec![0.0f32; x.len()];
+        self.mv(&wd, &self.quantize(&h), &mut down).map_err(|e| format!("ffn_down: {e}"))?;
         for (xi, d) in x.iter_mut().zip(&down) {
             *xi += d; // ggml adds ffn_out + ffn_inp; IEEE addition commutes, so the bits are the same
         }
@@ -407,25 +449,23 @@ impl Weights {
 
     /// The logits: `output.weight` (Q1_0, one row per vocabulary entry) times the q8_0-quantized `result_norm`.
     pub fn logits(&self, result_norm: &[f32]) -> Result<Vec<f32>, String> {
-        let (m, rows) = self.q1_matrix("output.weight", self.n_embd)?;
-        let mut out = vec![0.0f32; rows];
-        mat_vec_par(&self.pool, m, rows, &Q8Act::quantize(result_norm), &mut out);
+        let m = self.matrix("output.weight", self.n_embd)?;
+        let mut out = vec![0.0f32; m.rows];
+        self.mv(&m, &self.quantize(result_norm), &mut out)?;
         Ok(out)
     }
 
-    /// `get_rows(token_embd, [id])`: the id's row of the Q1_0 table, dequantized (bit-exact with
-    /// `dequantize_row_q1_0`, §III.4).
+    /// `get_rows(token_embd, [id])`: the id's row of the table, dequantized (bit-exact with ggml's
+    /// `dequantize_row_q1_0` / `dequantize_row_q2_0`, §III.4, §III.6).
     pub fn embed(&self, id: u32, out: &mut [f32]) -> Result<(), String> {
         let (t, b) = self.tensor("token_embd.weight")?;
-        if t.ty != 41 {
-            return Err(format!("token_embd is type {}; only Q1_0 is implemented", t.ty));
-        }
+        let ty = t.ty;
         if id as usize >= self.n_vocab || out.len() != self.n_embd {
             return Err(format!("token {id} outside the vocabulary of {}", self.n_vocab));
         }
-        let rb = self.n_embd / QK1_0 * Q1_0_BYTES;
+        let rb = row_bytes(ty, self.n_embd);
         let row = b.get(id as usize * rb..(id as usize + 1) * rb).ok_or("tensor truncated")?;
-        dequantize_row(row, out);
+        if ty == TYPE_Q1_0 { q1_0::dequantize_row(row, out) } else { q2_0::dequantize_row(row, out) }
         Ok(())
     }
 }
@@ -601,13 +641,11 @@ mod tests {
 
     /// The whole model on a 28-token chat prompt: every layer's `l_out` (36 × 28 rows), `result_norm` and the
     /// logits (151,669 per token), bit for bit against the shipped ggml (testing/model_oracle.py).
-    #[test]
-    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-forward/model.tsv (testing/model_oracle.py); --release"]
-    fn oracle_forward_model() {
+    fn model_oracle(stem: &str) {
         use crate::sha256::{hex, Sha256};
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
-        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
-        let tsv = std::fs::read_to_string(dir.join("oracle-forward/model.tsv")).unwrap();
+        let w = Weights::open(&dir.join(format!("{stem}.gguf"))).unwrap();
+        let tsv = std::fs::read_to_string(dir.join(format!("oracle-forward/model-{stem}.tsv"))).unwrap();
         let toks: Vec<u32> = tsv.lines().next().unwrap().split("tokens ").nth(1).unwrap().split(' ').map(|t| t.parse().unwrap()).collect();
         let sha = |v: &[f32]| {
             let mut h = Sha256::default();
@@ -644,7 +682,7 @@ mod tests {
             let am = logits.iter().enumerate().fold(0, |b, (i, &v)| if v > logits[b] { i } else { b });
             argmax_ok += (want[&("logits".to_string(), String::new(), p)].1 == am.to_string()) as usize;
         }
-        eprintln!("forward oracle: whole model {ok} of {n} rows ({} layers' l_out, result_norm, logits × {} tokens; greedy token {argmax_ok} of {}) bit-exact against the shipped ggml b11192 — {:.1} s, {} threads",
+        eprintln!("forward oracle: {stem}: whole model {ok} of {n} rows ({} layers' l_out, result_norm, logits × {} tokens; greedy token {argmax_ok} of {}) bit-exact against the shipped ggml b11192 — {:.1} s, {} threads",
                   w.n_layer, toks.len(), toks.len(), t0.elapsed().as_secs_f64(), w.pool.threads());
         if let Some(b) = first_bad {
             eprintln!("  first difference: {b}");
@@ -652,15 +690,26 @@ mod tests {
         assert_eq!(ok, n);
     }
 
-    /// Greedy generation against llama-server b11192 itself (testing/greedy_oracle.py): the same chat prompts, the
-    /// same continuations token for token, and where the server stopped early, bankml's next token ends the turn.
     #[test]
-    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-forward/greedy.jsonl (testing/greedy_oracle.py); --release"]
-    fn oracle_greedy_llama_server() {
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its model-*.tsv (testing/model_oracle.py); --release"]
+    fn oracle_forward_model() {
+        model_oracle("Bonsai-8B-Q1_0");
+    }
+
+    /// The ternary model, the same way.
+    #[test]
+    #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + its model-*.tsv (testing/model_oracle.py); --release"]
+    fn oracle_forward_model_ternary() {
+        model_oracle("Ternary-Bonsai-8B-Q2_0_g64");
+    }
+
+    /// Greedy generation against llama-server b11192 itself (testing/greedy_oracle.py): the same chat prompts, the
+    /// same continuations token for token, end-of-turn tokens included.
+    fn greedy_oracle(stem: &str) {
         use crate::serve::Json;
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
-        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
-        let cases = std::fs::read_to_string(dir.join("oracle-forward/greedy.jsonl")).unwrap();
+        let w = Weights::open(&dir.join(format!("{stem}.gguf"))).unwrap();
+        let cases = std::fs::read_to_string(dir.join(format!("oracle-forward/greedy-{stem}.jsonl"))).unwrap();
         let ids = |v: &Json, k: &str| -> Vec<u32> {
             match v.get(k) {
                 Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!("{k}: not a number") }).collect(),
@@ -678,30 +727,40 @@ mod tests {
             for &t in &prompt {
                 rn = w.step(&mut caches, t, |_, _| {}).unwrap();
             }
+            // exactly as many tokens as the server generated: its list includes the end-of-turn token when it
+            // produced one, and where it stopped otherwise is its stopping policy, not a token choice
             let mut got = Vec::new();
-            loop {
+            while got.len() < want.len() {
                 let next = argmax(&w.logits(&rn).unwrap());
-                if got.len() == want.len() {
-                    // the server stopped here: at its token limit, or because the turn ended
-                    if want.len() < 48 {
-                        got.push(next);
-                    }
-                    break;
-                }
                 got.push(next);
-                rn = w.step(&mut caches, next, |_, _| {}).unwrap();
+                if got.len() < want.len() {
+                    rn = w.step(&mut caches, next, |_, _| {}).unwrap();
+                }
             }
             n_cases += 1;
             n_tok += want.len();
-            let same = got[..want.len()] == want[..] && (got.len() == want.len() || matches!(got[want.len()], 151643 | 151645));
+            let same = got == want;
             n_same += same as usize;
             if !same {
                 let at = got.iter().zip(&want).position(|(a, b)| a != b);
                 eprintln!("  case {n_cases}: first difference at generated token {at:?} (got {:?}, want {:?})", &got[..got.len().min(12)], &want[..want.len().min(12)]);
             }
         }
-        eprintln!("greedy oracle: {n_same} of {n_cases} chat prompts generate llama-server b11192's tokens exactly ({n_tok} tokens, ends of turn included) — {:.0} s, {} threads",
+        eprintln!("greedy oracle: {stem}: {n_same} of {n_cases} chat prompts generate llama-server b11192's tokens exactly ({n_tok} tokens, ends of turn included) — {:.0} s, {} threads",
                   t0.elapsed().as_secs_f64(), w.pool.threads());
         assert_eq!(n_same, n_cases);
+    }
+
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its greedy-*.jsonl (testing/greedy_oracle.py); --release"]
+    fn oracle_greedy_llama_server() {
+        greedy_oracle("Bonsai-8B-Q1_0");
+    }
+
+    /// The ternary model against llama-server running the ternary model.
+    #[test]
+    #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + its greedy-*.jsonl (testing/greedy_oracle.py); --release"]
+    fn oracle_greedy_llama_server_ternary() {
+        greedy_oracle("Ternary-Bonsai-8B-Q2_0_g64");
     }
 }

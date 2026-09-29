@@ -165,7 +165,8 @@ The reproduction follows ggml's reference path:
 The oracle rejects a near miss: with the softmax sum written as an FMA, only 59 of 84 rows match. Two other kernels
 are not yet covered, and each will get its own oracle:
 - the tiled kernel, for 64 or more query rows;
-- the split-KV kernel, for a decode over 512 or more cells.
+- the split-KV kernel, for a decode whose padded KV length reaches 512 (llama.cpp pads to multiples of 256, so from
+  257 cells in use).
 
 **Step six (0.2.6): the feed-forward block; layer 0 complete.** The oracle continues from `ffn_inp`:
 - `rms_norm` and `mul` by `ffn_norm`;
@@ -193,7 +194,17 @@ of the difference, while the sweep matched only 19,245 of 24,600.
   (`/completion`, top-k 1, prompt cache off). `oracle_greedy_llama_server` requires bankml's own forward pass to
   produce the **same tokens on every prompt (6 of 6, 164 tokens)**, and to end the turn where the server did.
 
-Both stay inside the range bankml reproduces: prompts under 64 tokens, contexts under 512 cells.
+Both stay inside the range bankml reproduces: prompts under 64 tokens, contexts up to 256 cells (the largest case
+uses 80). llama.cpp pads the KV length to multiples of 256, so a decode beyond 256 cells takes the split-KV kernel.
+
+**Step eight (0.2.8): the ternary model.** Both whole-model checks run again on Ternary-Bonsai-8B (Q2_0_g64), whose
+every matrix, including the embedding and the output, is ternary:
+- `oracle_forward_model_ternary` checks bankml against the shipped ggml graph: **1,064 of 1,064 rows**.
+- `oracle_greedy_llama_server_ternary` checks against llama-server running the ternary model, with Savante's flags,
+  on a spare port: **6 of 6 prompts, 140 tokens**.
+
+The greedy comparison now covers exactly the tokens the server generated. Its list includes the end-of-turn token
+when it produced one. Where it stopped otherwise, that is its stopping policy, not a token choice.
 
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.

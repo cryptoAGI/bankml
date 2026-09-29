@@ -8,7 +8,7 @@ flash-attention path, as testing/forward_oracle.py's layer-0 checks do).
 The graph is computed one layer at a time, each in its own context, carrying the residual stream between them as
 f32 bytes, so memory stays near one layer's weights; the arithmetic is the same as one graph's.
 
-Writes .models/oracle-forward/model.tsv: a header line (the tokens), then per token and layer the sha256 of l_out's
+Runs Q1_0 (1-bit) and Q2_0_g64 (ternary) models. Writes .models/oracle-forward/model-<gguf stem>.tsv: a header line (the tokens), then per token and layer the sha256 of l_out's
 f32 row, per token the sha256 of result_norm and of the logits row, the argmax, and the top five ids with their
 logits (for eyes).
 usage: python3 testing/model_oracle.py GGUF LIBDIR [OUT]"""
@@ -47,7 +47,8 @@ base.ggml_build_forward_expand.argtypes = [P, P]
 base.ggml_free.argtypes = [P]
 base.ggml_prec_set_acc.argtypes = [P, C.c_int]
 cpu.ggml_graph_compute_with_ctx.argtypes = [P, P, C.c_int]
-F32, F16, I32, Q1_0 = 0, 1, 26, 41
+F32, F16, I32, Q1_0, Q2_0 = 0, 1, 26, 41, 42
+QK = {Q1_0: 128, Q2_0: 64}
 
 fh = open(gguf, "rb")
 mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
@@ -81,8 +82,8 @@ n = len(prompt)
 assert n < 64, "the reference attention path needs fewer than 64 query rows"
 
 
-def q1_bytes(t):
-    return t["dims"][1] * (t["dims"][0] // 128) * 18
+def q1_bytes(t):  # a quantized matrix's bytes: 18-byte blocks of 128 (Q1_0) or 64 (Q2_0_g64) weights
+    return t["dims"][1] * (t["dims"][0] // QK[t["type"]]) * 18
 
 
 def load(ctx, name):
@@ -91,8 +92,8 @@ def load(ctx, name):
         x = base.ggml_new_tensor_1d(ctx, F32, t["dims"][0])
         nb = 4 * t["dims"][0]
     else:
-        assert t["type"] == Q1_0, (name, t["type"])
-        x = base.ggml_new_tensor_2d(ctx, Q1_0, t["dims"][0], t["dims"][1])
+        assert t["type"] in QK, (name, t["type"])
+        x = base.ggml_new_tensor_2d(ctx, t["type"], t["dims"][0], t["dims"][1])
         nb = q1_bytes(t)
     C.memmove(base.ggml_get_data(x), C.c_char_p(mm[data_start + t["offset"]: data_start + t["offset"] + nb]), nb)
     return x
@@ -127,7 +128,7 @@ mask_vals = (C.c_uint16 * (n * n))(*[0 if j <= i else 0xFC00 for i in range(n) f
 for il in range(n_layer):
     names = [f"blk.{il}.{w}.weight" for w in ("attn_norm", "attn_q", "attn_k", "attn_v", "attn_q_norm", "attn_k_norm", "attn_output",
                                               "ffn_norm", "ffn_gate", "ffn_up", "ffn_down")]
-    ctx = new_ctx(sum(q1_bytes(T[m]) if T[m]["type"] == Q1_0 else 4 * T[m]["dims"][0] for m in names))
+    ctx = new_ctx(sum(q1_bytes(T[m]) if T[m]["type"] in QK else 4 * T[m]["dims"][0] for m in names))
     W = {m.split(".")[2]: load(ctx, m) for m in names}
     inp = base.ggml_new_tensor_2d(ctx, F32, n_embd, n)
     C.memmove(base.ggml_get_data(inp), C.c_char_p(stream), len(stream))
@@ -175,7 +176,8 @@ for p, r in enumerate(rows(logits, n_vocab)):
     top = sorted(range(n_vocab), key=lambda i: -vals[i])[:5]
     lines.append(f"logits\t{top[0]}\t{p}\t{hashlib.sha256(r).hexdigest()}\t{' '.join(f'{i}:{vals[i]:.6g}' for i in top)}")
 base.ggml_free(ctx)
-with open(out / "model.tsv", "w") as f:
+dest = out / f"model-{Path(gguf).stem}.tsv"
+with open(dest, "w") as f:
     f.write(f"# {n_layer} layers · tokens {' '.join(map(str, prompt))}\n")
     f.write("\n".join(lines) + "\n")
-print(f"\n{n_layer} layers, result_norm and logits for {n} tokens → {out / 'model.tsv'}")
+print(f"\n{n_layer} layers, result_norm and logits for {n} tokens → {dest}")

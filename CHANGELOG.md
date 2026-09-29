@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.8 — 2026-09-29
+
+**P3, step eight: the ternary model. bankml's own forward pass is token-identical to llama.cpp and about 8× faster
+end to end.** Record: `testing/results/0.2.8.txt`.
+
+### Added
+- **`forward.rs` runs Q1_0 and Q2_0_g64 models.**
+  - `Weights::matrix`, `Weights::quantize` and `Weights::mv` replace the Q1_0-only path. The q8_0 activation is
+    prepared once for the model's type (`Act::Q1` or `Act::Q2`) and shared by the matrices that read it. Each type
+    goes through its own proven kernel (`q1_0::mat_vec_par`, `q2_0::mat_vec_par`).
+  - The embedding dequantizes either type.
+  - `bankml generate` takes either model.
+- **Ternary oracles, in the gate.**
+  - `oracle_forward_model_ternary`: the whole ternary graph in the shipped ggml (`testing/model_oracle.py`, now
+    type-general). **1,064 of 1,064 rows bit-exact**, including all 151,669 logits for each of 28 tokens.
+  - `oracle_greedy_llama_server_ternary`: llama-server b11192 running the ternary model, with Savante's flags.
+    **6 of 6 chat prompts token-identical (140 tokens).**
+  - The oracle files are now named per model (`model-<stem>.tsv`, `greedy-<stem>.jsonl`).
+
+### Speed (this laptop, 3 threads, same prompt, sequential runs)
+| | llama-server b11192 | bankml 0.2.8 |
+|---|---|---|
+| ternary, decode | 0.30 tokens/s | **2.32–2.41 tokens/s** |
+| ternary, prompt | 0.35 tokens/s | **2.8 tokens/s** (one token at a time) |
+| 1-bit, decode | 2.80 tokens/s | 1.80 tokens/s |
+
+The ternary lead is the kernel's (§III.6). On the 1-bit model bankml is still behind, because prefill runs one token
+at a time and the per-token overheads are not tuned yet.
+
+### Fixed
+- **The stated context limit was wrong: 256 cells, not 512.** llama.cpp pads the KV length it attends over to a
+  multiple of 256, with a minimum of 256 (`llama_kv_cache::get_n_kv`). A single-token decode switches to the
+  split-KV kernel when that padded length reaches 512, which happens once more than 256 cells are in use. 0.2.7 said
+  "under 512 cells". No oracle result changes, since the largest case uses 80 cells, but the limit in the docs does.
+  `bankml generate`'s warning threshold is corrected in 0.2.9.
+- **The greedy oracle's stopping rule.** The server's token list already includes the end-of-turn token when it
+  produces one. The 0.2.7 test then also required bankml's *next* token to end the turn, which is a check with no
+  meaning. It passed on the 1-bit model by coincidence and failed on two ternary cases where the server had stopped
+  at 16 tokens for its own reasons. The test now generates exactly as many tokens as the server did and compares
+  them all. `greedy_oracle.py` now also records the server's `stop_type`.
+
 ## 0.2.7 — 2026-09-29
 
 **P3, step seven: the whole model. bankml's own forward pass generates llama.cpp's tokens.** Record:

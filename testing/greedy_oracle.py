@@ -5,9 +5,10 @@ prompts. The model's graph checks (forward_oracle.py, model_oracle.py) compare b
 this one compares with the server Savante actually runs, as a whole: the prompt rendered by /apply-template,
 tokenized by /tokenize, and the continuation from /completion with cache_prompt off.
 
-Prompts stay under 64 tokens and prompt + continuation under 512 cells, the range whose attention bankml
+Prompts stay under 64 tokens and prompt + continuation within 256 cells (llama.cpp pads the KV length to 256s), the range whose attention bankml
 reproduces (ggml's reference flash-attention path); the tiled and split-KV kernels are later steps.
-Writes .models/oracle-forward/greedy.jsonl: {"messages", "prompt_ids", "ids"} per case.
+Writes .models/oracle-forward/greedy-<model stem>.jsonl ({"messages", "prompt_ids", "ids"} per case), the model
+named by the server's own /props.
 usage: python3 testing/greedy_oracle.py [http://127.0.0.1:18092] [N_PREDICT]"""
 import json, sys, urllib.request
 from pathlib import Path
@@ -34,8 +35,13 @@ for q in questions:
     assert len(ids) < 64, (q, len(ids))
     r = post("/completion", {"prompt": ids, "n_predict": n_predict, "temperature": 0, "top_k": 1, "samplers": ["top_k"],
                              "cache_prompt": False, "return_tokens": True})
-    cases.append({"messages": msgs, "prompt_ids": ids, "ids": r["tokens"], "text": r["content"]})
+    # the server's list includes the end-of-turn token when it produced one; why it stopped is kept for the record
+    cases.append({"messages": msgs, "prompt_ids": ids, "ids": r["tokens"], "text": r["content"],
+                  "stop_type": r.get("stop_type"), "stopping_word": r.get("stopping_word")})
     print(f"{len(ids)} + {len(r['tokens'])} tokens: {r['content'][:70]!r}")
+with urllib.request.urlopen(url + "/props", timeout=60) as r:
+    stem = Path(json.load(r)["model_path"]).stem
 out.mkdir(parents=True, exist_ok=True)
-(out / "greedy.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cases))
-print(f"{len(cases)} greedy continuations from llama-server b11192 → {out / 'greedy.jsonl'}")
+dest = out / f"greedy-{stem}.jsonl"
+dest.write_text("".join(json.dumps(c) + "\n" for c in cases))
+print(f"{len(cases)} greedy continuations from llama-server b11192 ({stem}) → {dest}")
