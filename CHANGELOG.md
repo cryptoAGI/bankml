@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.2.13 — 2026-09-29
+
+**The first GPU kernels, bit-exact on the card; mindXtrain begins in Rust; bankML branding.** Record:
+`testing/results/0.2.13.txt`.
+
+### Added
+- **GPU kernels, and bankml's own SPIR-V.**
+  - `gpu/spirv.rs` is a small SPIR-V assembler, so bankml needs no shader compiler at build time or run time. Every
+    float multiply and add it emits is decorated `NoContraction`, and every fused step is an explicit `Fma`, so a
+    driver cannot change the float order.
+  - `gpu/kernels.rs` has two Q1_0 matrix–vector kernels that follow the CPU kernel's recipe step by step:
+    `q1_0_mat_vec` uses one invocation per row, and `q1_0_mat_vec8` uses eight per row, one per accumulation lane,
+    with the lanes summed in the CPU's order through workgroup memory. Weights are repacked once, exactly
+    (scales f16→f32, bits as words).
+  - `gpu/compute.rs` is the Vulkan compute runtime (device, buffers, pipelines, dispatch), again through the
+    run-time loader and structs declared in-crate.
+  - **On the Radeon Vega 3, both kernels are bit-exact against the CPU kernel**, which matches ggml, at every shape
+    tried: 64×128 to 12288×4096, with −128 quants included.
+  - **`bankml gpu --verify`** runs that check on every card found. A card that fails is named and never used; this
+    is how bankml puts a card to work only after proving it gives the same bits.
+  - Speed, honestly: on this integrated GPU the eight-lane kernel matches one CPU thread (1.7–2.0 ms per
+    4096×4096). It becomes an extra worker next to the CPU's threads when rows are shared (next step). On a
+    discrete card the same kernel has far more hardware.
+- **mindXtrain in Rust (`bankML/train/`).** A stage registry for the proof loop (author → imprint → probe → score
+  → classroom → boardroom), built one verified stage at a time against mindXtrain's own Python
+  (`testing/train_oracle.py`, run with mindXtrain's interpreter):
+  - `train/script.rs`, the author stage: persona + exchanges → chat-JSONL script. **84 of 84 scripts
+    byte-identical** to `scripts.py`, over every persona in mindX and cryptoAGI plus edge cases.
+  - `train/imprint.rs`, the score stage (lexical path): the recall gate's voice score, shift and verdict. **3,000
+    of 3,000 reports identical** to `score_imprint`.
+  - Next come the probe on bankml's forward pass (it needs the Llama architecture, since mindXtrain imprints
+    SmolLM2, and adapter loading), the verdicts, and LoRA training on the CPU.
+- **The Savante UI is branded bankML** ("bankML · Savante — verified low-bit inference on this computer") and
+  carries the DeltaVerse **$** as its tab icon (deltaverse.pythai.net/favicon.ico, MIT; served by both the interact
+  and view pages).
+- **Install docs** now show `chmod +x install.sh` before `./install.sh`, for copies that lost the executable bit.
+
 ## 0.2.12 — 2026-09-29
 
 **Batched prefill, and the video-card component.** Record: `testing/results/0.2.12.txt`.

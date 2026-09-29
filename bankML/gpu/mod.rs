@@ -19,7 +19,10 @@
 //! The kernel's own view (`/sys/class/drm/card*/device`: driver, VRAM, GTT, PCI address) is merged with the
 //! backend's, so a card is described by what the driver says, not only by what the API reports.
 
+pub mod compute;
 pub mod hf;
+pub mod kernels;
+pub mod spirv;
 pub mod vulkan;
 
 use std::path::PathBuf;

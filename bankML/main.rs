@@ -16,8 +16,9 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
        bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
                                                               (bankml's own forward pass: greedy, or llama-server's sampler chain)
-       bankml gpu [--remote]                                   (every video card found, and which bankml will use;
-                                                              --remote adds the GPUs Hugging Face rents, listed only)
+       bankml gpu [--remote | --verify]                        (every video card found, and which bankml will use;
+                                                              --remote adds the GPUs Hugging Face rents, listed only;
+                                                              --verify runs the bit-exact kernel oracle on each card)
        bankml version";
 
 fn main() {
@@ -92,8 +93,27 @@ fn main() {
         }
         (Some("gpu"), _) => {
             // the video-card component: every GPU found (Vulkan, merged with the kernel's sysfs view) and the selection
-            println!("{}", bankml::gpu::report_json(flag("--remote")));
-            0
+            if flag("--verify") {
+                // the on-card oracle: each selected card runs bankml's kernels and must give the CPU kernels' bits
+                let sel = bankml::gpu::selected(&bankml::gpu::discover().0);
+                if sel.is_empty() {
+                    println!("bankml gpu --verify: no usable GPU found; bankml runs on the CPU");
+                }
+                let mut bad = 0;
+                for d in &sel {
+                    match bankml::gpu::compute::Gpu::open(d.index).and_then(|g| bankml::gpu::kernels::verify_q1_0(&g)) {
+                        Ok(lines) => lines.iter().for_each(|l| println!("{}: {l}", d.name)),
+                        Err(e) => {
+                            bad += 1;
+                            println!("{}: NOT VERIFIED — {e}; bankml will not use this card", d.name);
+                        }
+                    }
+                }
+                if bad > 0 { 2 } else { 0 }
+            } else {
+                println!("{}", bankml::gpu::report_json(flag("--remote")));
+                0
+            }
         }
         (Some("tokenize"), Some(file)) => {
             // bankml's tokenizer (P3, step one): token-identical to llama.cpp b11192 on its oracle; text from stdin

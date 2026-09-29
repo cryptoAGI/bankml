@@ -30,8 +30,13 @@ One command, from a fresh machine to Savante answering on your own CPU:
 
 ```sh
 git clone https://github.com/cryptoAGI/bankml && cd bankml
+chmod +x install.sh
 ./install.sh
 ```
+
+`chmod +x install.sh` makes the installer executable. A `git clone` keeps the bit already, so the line is harmless
+there; a copy that arrived another way (a zip download, a USB stick, some file systems) may have lost it, and then
+`./install.sh` answers *permission denied*. `bash install.sh` works either way.
 
 or, without cloning first (the installer clones bankml to `~/bankml`, or to `$BANKML_DIR`):
 
@@ -440,6 +445,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml verify FILE --fork FORK.json [--engine mainline\|prism] [--json]` | guard, then pin |
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
+| `bankml gpu --verify` | runs the bit-exact kernel oracle on every usable card (0.2.13); a card that fails is named and never used |
 | `bankml gpu [--remote]` | every video card found (Vulkan, merged with `/sys/class/drm`) and which bankml will use; `--remote` adds the GPUs Hugging Face rents (22 NVIDIA flavors with card counts and prices; listed, never started); `BANKML_GPU=off` turns the component off, `BANKML_GPU=0,2` picks cards (0.2.12; the GPU kernels are the next steps) |
 | `bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json` (or plain text) | bankml's own forward pass, greedy, or with `--sample` llama-server's sampler chain (the model's defaults unless given; same seed, same tokens as llama-server, 0.2.11), streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts of any length and contexts of any length (all three of ggml's CPU attention kernels, since 0.2.10); `BANKML_LLAMA_THREADS` (default 3) must equal the `-t` of the llama.cpp being matched, because its long-context decode kernel chunks by thread; `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |

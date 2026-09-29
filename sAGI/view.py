@@ -126,7 +126,8 @@ def state() -> dict:
 
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>bankml · view</title>
+<title>bankML · view</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
 <style>
 :root{--bg:#0b0f14;--panel:rgba(148,163,184,.06);--panel2:rgba(148,163,184,.04);--line:#263241;--line2:#344457;--text:#e8eef5;--muted:#9fb0c3;
 --accent:#39d3c7;--gold:#d9a23a;--ok:#56d364;--bad:#ff6b6b;--warn:#f5b73b;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -168,7 +169,7 @@ color:var(--accent);font:600 12px var(--mono);padding:5px 12px}.lbar button:hove
 .lch li:hover{background:rgba(57,211,199,.06)}.lch li.now{background:rgba(217,162,58,.16);box-shadow:inset 3px 0 0 var(--gold)}
 .lwait{color:var(--muted);font-size:13px;padding:6px 10px}.foot{color:var(--muted);font-size:12px;padding:0 20px 24px;text-align:center}
 </style></head><body>
-<header><img id="av" alt="Savante" src="/savante.png"><div><h1>bankml · view — watching the testing live</h1>
+<header><img id="av" alt="Savante" src="/savante.png"><div><h1>bankML · view — watching the testing live</h1>
 <div class="sub">Read-only. A speed counts only if every oracle passed on the same code. Refreshes every 2 s · <span id="clock"></span></div></div>
 <button class="tool" id="reset" title="put every panel back">reset layout</button></header>
 <main>
@@ -193,7 +194,7 @@ exchange and its inclusion proof can check it against this root, without seeing 
 <p><strong id="sname"></strong> <span id="skind" style="color:var(--muted)"></span><br><span id="smantra" class="mantra"></span></p>
 <dl id="scard"></dl><table style="margin-top:10px"><thead><tr><th>ledger entry</th><th>check</th></tr></thead><tbody id="ledger"></tbody></table></div></section>
 </main>
-<div class="foot">bankml · verified low-bit inference · cryptoAGI · this page serves no chat and no history</div>
+<div class="foot">bankML · verified low-bit inference · cryptoAGI · this page serves no chat and no history</div>
 <script src="/knobs.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -321,6 +322,8 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlsplit(self.path)
         if u.path == "/":
             return self.send(200, "text/html; charset=utf-8", PAGE.encode())
+        if u.path == "/favicon.ico":  # the DeltaVerse $ (deltaverse.pythai.net, MIT)
+            return self.send(200, "image/x-icon", (Path(__file__).with_name("favicon.ico")).read_bytes())
         if u.path == "/api/state":
             return self.send(200, "application/json", state_json())
         if u.path == "/api/result":

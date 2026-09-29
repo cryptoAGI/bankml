@@ -9,7 +9,7 @@ use std::ffi::{c_char, c_void, CStr};
 
 type VkResult = i32;
 type Pfn = unsafe extern "C" fn();
-type GetInstanceProcAddr = unsafe extern "C" fn(*mut c_void, *const c_char) -> Option<Pfn>;
+pub(super) type GetInstanceProcAddr = unsafe extern "C" fn(*mut c_void, *const c_char) -> Option<Pfn>;
 
 #[link(name = "dl")]
 extern "C" {
@@ -101,6 +101,25 @@ fn loader() -> Result<GetInstanceProcAddr, String> {
 unsafe fn proc<T>(gipa: GetInstanceProcAddr, inst: *mut c_void, name: &CStr) -> Result<T, String> {
     let f = gipa(inst, name.as_ptr()).ok_or_else(|| format!("the Vulkan loader has no {}", name.to_string_lossy()))?;
     Ok(std::mem::transmute_copy::<Pfn, T>(&f))
+}
+
+/// A Vulkan instance for compute (kept for the life of the process) and the loader's `vkGetInstanceProcAddr`.
+pub(super) fn instance() -> Result<(GetInstanceProcAddr, *mut c_void), String> {
+    let gipa = loader()?;
+    unsafe {
+        let create: unsafe extern "C" fn(*const InstanceCreateInfo, *const c_void, *mut *mut c_void) -> VkResult =
+            proc(gipa, std::ptr::null_mut(), c"vkCreateInstance")?;
+        let app = ApplicationInfo { s_type: STYPE_APPLICATION_INFO, p_next: std::ptr::null(), app_name: c"bankml".as_ptr(), app_version: 1,
+                                    engine_name: c"bankml".as_ptr(), engine_version: 1, api_version: make_version(1, 1) };
+        let ci = InstanceCreateInfo { s_type: STYPE_INSTANCE_CREATE_INFO, p_next: std::ptr::null(), flags: 0, app_info: &app,
+                                      layer_count: 0, layers: std::ptr::null(), ext_count: 0, exts: std::ptr::null() };
+        let mut inst = std::ptr::null_mut();
+        let r = create(&ci, std::ptr::null(), &mut inst);
+        if r != 0 || inst.is_null() {
+            return Err(format!("vkCreateInstance failed ({r})"));
+        }
+        Ok((gipa, inst))
+    }
 }
 
 /// Every physical device the Vulkan loader enumerates.

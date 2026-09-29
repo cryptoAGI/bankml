@@ -137,6 +137,7 @@ pub mod q2_0;
 pub mod sampler;
 pub mod sha256;
 pub mod sys;
+pub mod train;
 pub mod tokenizer;
 pub mod unicode_letters;
 

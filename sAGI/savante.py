@@ -1978,10 +1978,10 @@ def build(canon: Canon, mode: str):
 
     sid0, turns0 = history_load()
     theme = gr.themes.Base(primary_hue="teal", secondary_hue="amber", neutral_hue="slate") if hasattr(gr, "themes") else None
-    with gr.Blocks(title="bankml · Savante", css=CSS, theme=theme) as demo:
+    with gr.Blocks(title="bankML · Savante", css=CSS, theme=theme) as demo:
         session = gr.State({"id": sid0})
-        gr.Markdown("## bankml · Savante — verified low-bit inference on this computer\n"
-                    "Every answer is a **draft**, carried by a local model behind bankml's guard and sha256 pin, "
+        gr.Markdown("## bankML · Savante — verified low-bit inference on this computer\n"
+                    "Every answer is a **draft**, carried by a local model behind bankML's guard and sha256 pin, "
                     "with a receipt. Savante's canon is read-only and checked against its ledger.", elem_id="bk-head")
         with gr.Tab("Interaction"):
             with gr.Row(elem_id="bk-row"):
@@ -2623,7 +2623,9 @@ def main():
         print("bankml serve not reachable: starting the first-run carrier in the background (Models tab shows progress)")
     import speak
     speak.VOICE_DIR.mkdir(parents=True, exist_ok=True)
-    demo.launch(server_name=a.host, server_port=a.port, show_api=False, allowed_paths=[str(speak.VOICE_DIR), str(speak.EXPORT_DIR)])
+    # the DeltaVerse $ (deltaverse.pythai.net/favicon.ico, MIT) as the tab icon
+    demo.launch(server_name=a.host, server_port=a.port, show_api=False, allowed_paths=[str(speak.VOICE_DIR), str(speak.EXPORT_DIR)],
+                favicon_path=str(Path(__file__).with_name("favicon.ico")))
 
 
 if __name__ == "__main__":

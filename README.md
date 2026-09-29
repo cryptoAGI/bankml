@@ -118,6 +118,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [0.2.13](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.13) | the first GPU kernels (bankml's own SPIR-V, no shader compiler): Q1_0 matrix–vector bit-exact on the Radeon Vega 3, `bankml gpu --verify`; mindXtrain in Rust begins (author and score stages identical to mindXtrain: 84 of 84, 3,000 of 3,000); bankML branding and the DeltaVerse $ |
 | [0.2.12](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.12) | batched prefill (same bits, a micro-batch per matrix–matrix product); `bankML/gpu/`, the video-card component: every GPU found through Vulkan (no crates, loaded at run time) merged with the kernel's view, and the GPUs Hugging Face rents (`bankml gpu --remote`, listed never started); GPU kernels next, bit-exact before use |
 | [0.2.11](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.11) | P3 step eleven: sampling — llama-server's sampler chain reproduced, same seed, same tokens on 40 of 40 continuations (temperatures 0–1.5, top-k 5–128, top-p, min-p); `bankml generate --sample` |
 | [0.2.10](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.10) | P3 step ten: long contexts — ggml's split-KV decode kernel (14 of 14 rows at 3 and 4 threads; its reduction is FMA-contracted in the binary); llama-server's tokens on 3 of 3 continuations running to ~300 cells (600 tokens) |
@@ -185,6 +186,7 @@ runs on your own computer, and every answer she gives carries a receipt.
 
 ```sh
 git clone https://github.com/cryptoAGI/bankml && cd bankml
+chmod +x install.sh # once, if your copy lost the executable bit (a zip download, some file systems)
 ./install.sh        # check, build, fetch llama.cpp b11192 (sha256-checked), import and verify Bonsai-8B, start Savante
 ```
 

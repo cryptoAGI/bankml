@@ -232,6 +232,15 @@ replays them through bankml's forward pass and `sampler.rs` and requires **every
 The cases range over temperature 0–1.5, top-k 5–128, top-p and min-p. Top-k is libstdc++'s `partial_sort`, ported
 line for line, because the order it leaves tied logits in decides which token a draw lands on.
 
+**0.2.13: the GPU and mindXtrain.**
+- `gpu_q1_0_mat_vec_bit_exact` runs both Q1_0 GPU kernels on every usable card against the CPU kernel, which is
+  bit-exact against ggml: on the Vega 3, every row of every shape from 64×128 to 12288×4096. `bankml gpu --verify`
+  runs the same check for a user, and bankml trusts a card only after it passes.
+- `oracle_train_script` checks bankml's author stage against mindXtrain's `scripts.py` on 84 scripts, byte for
+  byte.
+- `oracle_train_imprint` checks the score stage against `score_imprint` on 3,000 randomized cases, value for
+  value.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 
