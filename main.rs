@@ -14,6 +14,7 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
        bankml tokenize MODEL.gguf [--no-special] < text      (token ids, as llama.cpp's /tokenize)
        bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
+       bankml generate MODEL.gguf [--max N] < messages.json|text  (bankml's own forward pass, greedy)
        bankml version";
 
 fn main() {
@@ -49,6 +50,20 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("bankml chat-template: {e}");
+                    2
+                }
+            }
+        }
+        (Some("generate"), Some(file)) => {
+            // P3: bankml's own forward pass, greedy — token-identical to llama-server b11192 on its oracle (prompts
+            // under 64 tokens, contexts under 512 cells); stdin is OpenAI-style messages, or plain text for one user turn
+            let mut text = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+            let max: usize = opt("--max").and_then(|v| v.parse().ok()).unwrap_or(256);
+            match generate(Path::new(file), &text, max) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("bankml generate: {e}");
                     2
                 }
             }
@@ -182,3 +197,50 @@ fn main() {
     };
     std::process::exit(code);
 }
+
+/// `bankml generate`: render, tokenize, run the prompt through bankml's forward pass, then greedy tokens to stdout as
+/// they come, until the turn ends or `max` tokens.
+fn generate(model: &Path, input: &str, max: usize) -> Result<(), String> {
+    use bankml::{chat, forward::Weights, serve::Json, tokenizer::Tokenizer};
+    use std::io::Write;
+    chat::check_template(model)?;
+    let msgs = match Json::parse(input.trim()) {
+        Some(v) if matches!(v, Json::Arr(_)) || v.get("messages").is_some() => chat::messages_from_json(v.get("messages").unwrap_or(&v))?,
+        _ => vec![chat::Message::new("user", input.trim_end_matches('\n'))],
+    };
+    let tok = Tokenizer::from_gguf(model)?;
+    let prompt = tok.encode(&chat::render(&msgs)?, true);
+    let w = Weights::open(model)?;
+    let ends: Vec<u32> = ["<|im_end|>", "<|endoftext|>"].iter().filter_map(|t| tok.id(t)).collect();
+    if prompt.len() >= 64 {
+        eprintln!("bankml generate: a {}-token prompt: llama.cpp computes prompts of 64 tokens or more with its tiled attention kernel, which bankml does not reproduce yet; the tokens may differ from llama.cpp's", prompt.len());
+    }
+    let t0 = std::time::Instant::now();
+    let mut caches = w.caches();
+    let mut rn = Vec::new();
+    for &t in &prompt {
+        rn = w.step(&mut caches, t, |_, _| {})?;
+    }
+    let t_prompt = t0.elapsed().as_secs_f64();
+    let (mut out, mut n) = (std::io::stdout(), 0);
+    while n < max {
+        let l = w.logits(&rn)?;
+        let next = l.iter().enumerate().fold(0, |b, (i, &v)| if v > l[b] { i } else { b }) as u32;
+        if ends.contains(&next) {
+            break;
+        }
+        let _ = out.write_all(&tok.token_bytes(next));
+        let _ = out.flush();
+        n += 1;
+        if caches[0].len() + 1 >= 512 {
+            eprintln!("\nbankml generate: 512 cells: llama.cpp decodes beyond this with its split-KV attention kernel, not reproduced yet; stopping");
+            break;
+        }
+        rn = w.step(&mut caches, next, |_, _| {})?;
+    }
+    let dt = t0.elapsed().as_secs_f64() - t_prompt;
+    println!();
+    eprintln!("bankml generate: {} prompt tokens in {t_prompt:.1} s, {n} generated in {dt:.1} s ({:.2} tok/s)", prompt.len(), n as f64 / dt.max(1e-9));
+    Ok(())
+}
+

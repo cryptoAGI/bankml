@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.7 — 2026-09-29
+
+**P3, step seven: the whole model. bankml's own forward pass generates llama.cpp's tokens.** Record:
+`testing/results/0.2.7.txt`.
+
+### Added
+- **`forward.rs`.**
+  - `Weights::step` runs one token through all 36 layers at the next position. Each layer appends to its own f16
+    K/V cache (`Weights::caches`), and the step returns `result_norm`.
+  - `Weights::logits` is `output.weight` (Q1_0, 151,669 rows) times the q8_0-quantized `result_norm`.
+  - Every matmul runs on the thread pool (`mat_vec_par`, same bits at any thread count; `BANKML_THREADS`).
+- **`bankml generate MODEL.gguf [--max N] < messages.json | text`.** It renders the conversation (0.2.2), tokenizes
+  it (0.2.1), runs the prompt through the forward pass and streams greedy tokens until the turn ends. It warns when a
+  prompt or context leaves the range verified against llama.cpp (see Limits).
+  - `Tokenizer::token_bytes` gives a token's bytes as llama.cpp's detokenizer does without special tokens.
+- **The whole-model oracle** (`testing/model_oracle.py` → `oracle_forward_model`, in the gate). The shipped ggml
+  computes every layer of the Qwen3 graph, `output_norm` and the logits for the 28-token prompt. It works one layer
+  per context and carries the residual stream between contexts, so memory stays near one layer's weights. **1,064 of
+  1,064 rows bit-exact**: 36 layers' `l_out`, `result_norm` and all 151,669 logits, for each of 28 tokens. The
+  greedy token matches at 28 of 28 positions. Time: 14 s on 3 threads.
+- **The end-to-end oracle** (`testing/greedy_oracle.py` → `oracle_greedy_llama_server`, in the gate). It records
+  llama-server b11192's own greedy continuations (top-k 1, prompt cache off) for 6 chat prompts rendered by
+  `/apply-template` and tokenized by `/tokenize`. **bankml generates the same tokens on 6 of 6 prompts** (164
+  tokens). Where the server stopped before its limit, bankml's next token also ends the turn.
+
+### Limits (stated, and warned about by `bankml generate`)
+- Verified range: prompts under 64 tokens, contexts under 512 cells. Outside it, llama.cpp switches to its tiled
+  (prefill) and split-KV (decode) attention kernels, which are the next steps.
+- The 1-bit model only. The ternary model's forward pass, where bankml's kernel is 9× llama.cpp's, is next.
+- **Speed:** measured on this laptop, the 1-bit model decodes at 1.80 tokens/s against llama-server's 2.80. The
+  prefill runs one token at a time, against llama-server's batched 3.27 tokens/s. The forward pass is correct first;
+  batched prefill and the ternary path are where its speed will come from.
+
 ## 0.2.6 — 2026-09-29
 
 **P3, step six: the feed-forward block. With it, all of layer 0 is bit-exact against llama.cpp's.** Record:

@@ -89,7 +89,7 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON; `bankml verify` = guard + pin as one gate (0.0.2) |
 | P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B + 8.19 B weights (1.7B and 8B); decode at parity (1.02×), prefill 1.23× (0.2.2 gate) |
 | P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.4–10.0× decode per matrix, 12.9× prefill; one whole token 9.46× on three threads (0.2.2 gate) |
-| P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | **tokenizer (0.2.1), chat template (0.2.2), embedding and first RMS norm (0.2.3), Q/K/V with head norms and YaRN RoPE (0.2.4), attention with `wo` and the residual (0.2.5), the feed-forward block (0.2.6) done: **layer 0 complete** — identical to llama.cpp on every oracle case (4,258; 317; 300; 140; 112; 24,600); all 36 layers and the logits next, each step against its oracle |
+| P3 | Qwen3 forward pass (tokenizer, template, YaRN RoPE, GQA, f16 KV cache, flash attention, SwiGLU, greedy) | **token-identical to llama.cpp for the 1-bit model (0.2.7)** — `bankml generate` produces llama-server b11192's greedy tokens on 6 of 6 chat prompts (164 tokens); the whole model is bit-exact against the shipped ggml (1,064 of 1,064 rows: every layer, `result_norm`, all 151,669 logits). Built in steps 0.2.1–0.2.7, each against its oracle. **Limits:** prompts under 64 tokens and contexts under 512 cells (ggml's tiled and split-KV attention kernels come next); the ternary model's forward pass next. **Speed:** 1.8 tokens/s against llama-server's 2.8 on the 1-bit model, with prefill one token at a time; not yet faster |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
@@ -99,8 +99,9 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | iNFT | mint an agent from its THOT bundle (prepared, simulated, signed by the owner), load one from a token | **0.1.0** — full path tested on a local devnet; the contract is not on a public chain yet |
 | P5 | ARM / NEON, handheld | planned |
 
-Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Its own forward
-pass is the next phase. The whole-model budget says what that can reach: the ternary matrix work for one token takes
+Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Since 0.2.7 it also
+has its own forward pass (`bankml generate`), token-identical to llama.cpp on its oracle, for the 1-bit model. The
+whole-model budget says what it can reach once it runs the ternary model: the ternary matrix work for one token takes
 **0.233 s** against llama.cpp's **2.204 s** on three threads, a matmul-bound ceiling of about **4.3 tokens/s**
 against **0.45** (0.2.2 gate, model resident). Five more bit-exact kernel variants were measured in 0.0.4–0.0.5, and
 none was reliably faster. On the test laptop bankml's ternary token runs about twice the memory floor (0.124 s), and
@@ -114,6 +115,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [**0.2.7**](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.7) | **P3 step seven: the whole model.** Every layer, `output_norm` and the logits bit-exact against the shipped ggml (1,064 of 1,064 rows); greedy generation token-identical to llama-server b11192 on 6 of 6 chat prompts; `bankml generate` |
 | [0.2.6](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.6) | P3 step six: the feed-forward block (SwiGLU with ggml's own vectorized expf); all of layer 0 bit-exact against the shipped ggml, 112 of 112 rows, and a 24,600-value SwiGLU sweep |
 | [0.2.5](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.5) | P3 step five: layer 0's attention (f16 K/V cache, ggml's flash attention reference path, grouped-query), `wo` and the residual, bit-exact against the shipped ggml, 84 of 84 rows |
 | [0.2.4](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.4) | P3 step four: layer 0's Q, K and V (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows at positions to 63,214; matching needed ggml's compiled FMAs, read from the binary |

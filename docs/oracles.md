@@ -182,6 +182,19 @@ A second check, `oracle_forward_swiglu_sweep`, feeds 24,600 values across ±120 
 alone was not enough: with libm's `expf`, `l_out` still matched 27 of 28 rows, since q8_0 quantization absorbs most
 of the difference, while the sweep matched only 19,245 of 24,600.
 
+**Step seven (0.2.7): the whole model, and llama-server itself.**
+- [`testing/model_oracle.py`](../testing/model_oracle.py) computes the whole Qwen3 graph in the shipped ggml: every
+  layer, `output_norm` and `mul_mat` by `output.weight`. It runs one layer per ggml context and carries the residual
+  stream between contexts as f32 bytes, which is the same arithmetic as one graph in a fraction of the memory.
+  `oracle_forward_model` requires **1,064 of 1,064 rows bit-exact**: 36 × 28 `l_out` rows, 28 `result_norm` rows,
+  and 28 logit rows of 151,669 values each.
+- [`testing/greedy_oracle.py`](../testing/greedy_oracle.py) steps outside the graph. It asks the running
+  llama-server to render 6 chat prompts (`/apply-template`), tokenize them (`/tokenize`) and continue them greedily
+  (`/completion`, top-k 1, prompt cache off). `oracle_greedy_llama_server` requires bankml's own forward pass to
+  produce the **same tokens on every prompt (6 of 6, 164 tokens)**, and to end the turn where the server did.
+
+Both stay inside the range bankml reproduces: prompts under 64 tokens, contexts under 512 cells.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

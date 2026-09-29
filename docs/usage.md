@@ -579,6 +579,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml verify FILE --fork FORK.json [--engine mainline\|prism] [--json]` | guard, then pin |
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
+| `bankml generate MODEL.gguf [--max N] < messages.json` (or plain text) | bankml's own forward pass, greedy, streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit model, prompts under 64 tokens and contexts under 512 cells (it warns outside that range); `BANKML_THREADS` sets the threads. Correct first: 1.8 tokens/s against llama-server's 2.8 today |
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
 | `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage` |
 | `python3 ui/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |

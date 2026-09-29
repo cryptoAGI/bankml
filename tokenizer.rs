@@ -169,6 +169,20 @@ impl Tokenizer {
     }
 
     /// Token ids of `text`, as llama.cpp's `llama_tokenize(…, add_special = false, parse_special)`.
+    /// A token's bytes, as llama.cpp's detokenizer gives them without special tokens: a normal token's GPT-2
+    /// characters mapped back to bytes, a user-defined token's text as written, a control token nothing.
+    pub fn token_bytes(&self, id: u32) -> Vec<u8> {
+        let Some(t) = self.tokens.get(id as usize) else { return Vec::new() };
+        match self.types.get(id as usize) {
+            Some(3) => Vec::new(),
+            Some(4) => t.as_bytes().to_vec(),
+            _ => {
+                let chars = byte_chars();
+                t.chars().map(|c| chars.iter().position(|&b| b == c).map(|b| b as u8).unwrap_or(b'?')).collect()
+            }
+        }
+    }
+
     pub fn encode(&self, text: &str, parse_special: bool) -> Vec<u32> {
         // 1. cut out special tokens, longest first, from the spans that are still raw text
         let mut parts: Vec<Result<u32, &str>> = vec![Err(text)];
