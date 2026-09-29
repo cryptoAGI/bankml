@@ -1,6 +1,6 @@
 # bankml: verified low-bit inference on commodity CPUs — a technical report
 
-*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.0.2 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
+*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.0.8 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
 here with the command that reproduces it.*
 
 ## Abstract
@@ -15,7 +15,16 @@ describe bankml, a zero-dependency Rust runtime for the ggml `Q1_0` (1-bit) and 
 verification discipline (a header guard, a sha256 pin, and an oracle that calls the reference library's exported
 symbols in-process); and its measured results against llama.cpp b11192. For `Q1_0` the kernel is bit-exact on all
 1.72 billion weights of a real model and matches or exceeds the reference speed (1.01× decode, 1.10× prefill, single
-thread). For `Q2_0_g64` the reference ships no vectorised x86 kernel at all; bankml's kernel is bit-exact on all 8.19 billion weights of Ternary-Bonsai-8B and 9.5–9.8× faster per projection (12.5× in prefill), and since these products are about 98 % of the reference's time per token, the gap between the better ternary model and the faster 1-bit one is a kernel gap, now closed at the kernel level.
+thread; 1.2–1.3× in prefill over prepared activations since 0.0.4, and bit-exact on all 8.19 billion weights of the 8B
+1-bit model). For `Q2_0_g64` the reference ships no vectorised x86 kernel at all; bankml's kernel is bit-exact on all
+8.19 billion weights of Ternary-Bonsai-8B and 9.5–9.8× faster per projection (12.5× in prefill). Since these products
+are about 98 % of the reference's time per token, the gap between the better ternary model and the faster 1-bit one is
+a kernel gap, now closed at the kernel level: with a zero-dependency thread pool, one ternary token's products take
+0.23–0.25 s on three threads of a laptop, less than the reference needs for the *1-bit* model's (0.34 s). A measured
+memory floor (15–17 GB/s) shows both kernels are compute-bound, and five further bit-exact variants measured no reliable
+gain, which places them at the instruction-throughput limit of the test core (§IV.5). Since 0.0.6 the runtime answers
+through the reference behind its gates (phase P0). Every answer carries a receipt with the sha256 of its text, and the
+conversation's history is committed by a Merkle root and a CID, so it can be proven without being disclosed (§III.6).
 
 ## Thesis — Professor Codephreak and Gregory L. Magnusson
 
@@ -49,15 +58,31 @@ runtime this reads two ways, both implemented: it knows the limits of what it ma
 reason, a file that would load and answer in nonsense, rather than serving it — and where the reference engine is
 slow, the answer is not to accept the limit but to write the kernel that removes it.
 
+**Improve by increments, with the oracle in the loop.** "Audit and improve with three more incremental release pushes
+focusing on optimization and performance including oracle feedback" (2026-09-28). Each release ran a gate whose record
+is published (`testing/results/`). A speed counts only when every oracle has passed on the same code, and a variant that
+is bit-exact but not reliably faster is recorded and not shipped (`testing/experiments/`). The negative results are
+part of the evidence: they are how the limit of §IV.5 is known rather than assumed.
+
+**Use the machine at hand.** "Use this laptop hardware" (2026-09-28). Every measurement in this report was taken on
+a two-core laptop, and the runtime serves Savante there. Where the machine disturbs a measurement (swap full, other
+load), the record says so and the measurement is re-run rather than smoothed.
+
+**Prove the data; keep the data.** "Localstorage and hash and CID can work as data reference for proof of data while
+keeping local data private and still verifiable" (2026-09-28). The transcript, the operator's notes and a viewer's
+layout stay where they were made: on disk, or in the browser's local storage. What travels is a commitment: a sha256,
+a CIDv1, a Merkle root. Whoever holds the root can check any single exchange they are shown against it, without holding
+the rest (§III.6). The same construction binds Savante's canon to her iNFT ledger.
+
 ### Contributions
 
 What this work contributes, stated so each can be checked against the code (file names are in this repository)
 and the measurements (PERFORMANCE.md).
 
-1. **A verified-response runtime architecture.** A model is admitted only through three gates — a header guard, a
-   provenance pin, and a bit-exactness oracle — and every answer is designed to carry a receipt (model hash, guard
-   verdict, token counts, timings). The contribution is the ordering: correctness is established before speed is
-   measured, and a model that cannot be verified does not answer (`bankml.rs`, §III.1).
+1. **A verified-response runtime architecture.** A model is admitted only through three gates: a header guard, a
+   provenance pin, and a bit-exactness oracle. Since 0.0.6 every answer carries a receipt: model hash, guard verdict,
+   token counts, timings, and the sha256 of the answer text (`serve.rs`). The contribution is the ordering: correctness
+   is established before speed is measured, and a model that cannot be verified does not answer (§III.1).
 2. **A header-only GGUF guard for the three low-bit traps.** From the file header alone, without reading tensor data,
    the guard returns *play*, *refuse* or *need more* against a named engine. It refuses (1) fork-only types
    (`PQ2_0` = 142, `PTQ1_0` = 143), which mainline rejects safely; (2) legacy `Q2_0` whose group-128 bytes are filed
@@ -73,9 +98,10 @@ and the measurements (PERFORMANCE.md).
    binary exposed that its compiler contracts multiply-add pairs into single FMA instructions; a source-faithful port
    disagrees in the last bit. bankml models both reference builds — the haswell build and the baseline x64 build,
    which themselves disagree on 19 of 762 ternary cases — so the oracle demonstrably distinguishes float orders.
-5. **A bit-exact 1-bit (`Q1_0`) kernel at reference speed.** All 1.72 billion weights of a real 1.7B model and 788 of
-   788 dot products match; decode is level with the reference (1.01–1.03×) and prefill 1.10–1.16× faster, through
-   per-token activation scales and a 1×4 prefill tile (`q1_0.rs`).
+5. **A bit-exact 1-bit (`Q1_0`) kernel at reference speed.** Every weight of two real models (1.72 billion in the 1.7B,
+   8.19 billion in the 8B) and every recorded dot product match. Decode is level with the reference (0.93–1.13× across
+   releases and thread counts). Prefill is 1.2–1.3× faster through a 1×4 selection tile over prepared activations
+   (`q1_0.rs`, 0.0.4).
 6. **The finding that explains the ternary gap.** llama.cpp b11192 ships no vectorised x86 kernel for `Q2_0`: the
    generic C is renamed to the x86 symbol in `arch-fallback.h`, there is no repack or sgemm case, and the shipped
    library runs scalar code with 64 integer multiplies per block. The better ternary model is slow for want of a
@@ -84,9 +110,11 @@ and the measurements (PERFORMANCE.md).
    activation re-laid-out once per token so the inner loop has no shuffles, and ggml's float chain kept serial for
    exactness: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8× the
    reference per projection and 12.5× in prefill (`q2_0.rs`).
-8. **A whole-model decode budget.** Timing one token's worth of every matrix product at the same clock as the
-   reference's own end-to-end benchmark shows those products are about 98 % of its time per token, and bounds what a
-   complete bankml forward pass can reach on this CPU: about 2.8 tokens per second against 0.39 (§IV.3).
+8. **A whole-model decode budget and its floor.** Timing one token's worth of every matrix product at the same clock
+   as the reference's own end-to-end benchmark shows those products are about 98 % of its time per token. On a
+   zero-dependency thread pool (`par.rs`) bankml's ternary products take 0.23–0.25 s at three threads, bounding a
+   complete forward pass at about 4 tokens per second against the reference's 0.4 (§IV.3). A measured read-bandwidth
+   floor (§IV.5) shows the remaining time is compute, not memory.
 9. **Succinctness as a budget.** One crate, zero dependencies — SHA-256, the GGUF parse, half-precision conversion,
    a read-only memory map and all kernels are in-crate — so the whole runtime is auditable end to end.
 10. **Measurement that travels with the model.** End-to-end baselines on three machines (a laptop, a one-core server,
@@ -96,6 +124,13 @@ and the measurements (PERFORMANCE.md).
 11. **The runtime's first consumers.** The sAGI engine (a code-enforced verdict contract that any OpenAI-compatible
     backend can carry) and the improve.skill loop (every measured answer an iteration toward a published skill
     version) are built to run on this runtime; they define what "verified response" must mean in production.
+12. **Savante on the runtime, with proof of data** (0.0.6–0.0.8). A gateway (`bankml serve`) answers only for a
+    verified file, and only through an upstream that is serving that file. A Savante UI reads her canon without
+    writing to it and checks it against her iNFT ledger before she speaks. It records each exchange with its
+    timings and receipt, searches the history with RAGE, keeps the operator's notes (`.memory`), and publishes only
+    commitments, with an inclusion proof per exchange (§III.6).
+13. **The testing kept with the code.** A release gate, its record for every version, the end-to-end tests, the UI's
+    data-layer tests, and the measured-and-rejected kernels (`testing/`).
 
 ## I. The problem
 
@@ -188,8 +223,13 @@ verified does not answer.* Three gates enforce it.
 2. **The pin.** The file's sha256 (FIPS 180-4) must equal the value recorded in the provenance manifest of the model's
    fork. A mislabelled file is refused with both hashes named.
 3. **The oracle.** A kernel is admitted only when it is bit-exact against the reference library on real tensors
-   (§III.4). Receipts — the model's hash, the guard verdict, the token counts and timings, attached to each answer —
-   complete the design once an answer exists (phases P0/P3, §IV.4).
+   (§III.4).
+
+Since 0.0.6 a fourth element closes the loop at the answer. `bankml serve` starts only after the guard and the pin
+pass. It binds the upstream engine to the verified path (it launches it, or checks that the running engine's `/props`
+names the same file). It attaches a receipt to each answer: model hash, guard verdict, token counts, time to first
+token, wall time, and the sha256 of the answer text, which the client re-computes. The arithmetic in P0 is still the
+reference's; P3 replaces it with bankml's kernels behind the same receipt.
 
 ### III.2 The Q1_0 format and its arithmetic
 
@@ -256,13 +296,31 @@ result bit-identical. A read-only memory map (`gguf::Mmap`, no dependency) lets 
 2.3 GB file without copying it. The oracle (§III.4) was extended rather than forked: it selects `Q1_0` or `Q2_0` by the
 file's tensor types.
 
+### III.6 Proof of data without the data
+
+The runtime's records are private by default and verifiable by construction. Every exchange is one line in a local
+JSONL file (`.history`); the operator's notes are another (`.memory`). Each line's sha256 is a leaf. The leaves form a
+Merkle tree (an odd node is paired with itself), and the whole file has a sha256 and a CIDv1: raw codec, sha2-256,
+base32, the construction Savante's iNFT ledger uses for her canon files. Only these commitments leave the machine. The
+LAN view shows the root, the count and the CID, never a line. For any single exchange, the UI emits an inclusion proof:
+the leaf, the sibling path and the root. A holder of the root can check that exchange (and detect a changed byte in it)
+without the rest of the history. The browser's local storage plays the same part on the client side: the viewer's
+layout stays in their own browser. The tests (`testing/test_ui.py`) check that every proof verifies, that a changed byte
+or a proof for another record fails, that the CID equals the house implementation's, and that the view's state carries
+the commitment and none of the content. These commitments are what a THOT dataset bundle and an iNFT's storage
+reference will point to (§VI).
+
 ## IV. Results and testable propositions
 
 ### IV.1 Q1_0
 
 On a single thread of an AMD Ryzen 3 3200U the bankml decode kernel runs a 12288×4096 matrix–vector product at
 14.32 ns per block against the reference's 14.43 (1.01×, minima; 1.03× at the median), and the prefill tile at 12.95
-against 14.22 ns per block-column (1.10×; 1.16× at the median), with every result bit-identical (§III.4).
+against 14.22 ns per block-column (1.10×; 1.16× at the median), with every result bit-identical (§III.4). (Later runs
+on the same laptop at a higher boost clock read about 10 ns per block for both kernels: the ratio is the result.) Since
+0.0.4 a 1×4 selection tile over prepared activations (`mat_mul_act`) brings prefill to 1.2–1.3× the reference. The
+oracle now also covers the 8B 1-bit model: all 254 tensors (8,188,239,872 weights) are bit-exact, as are 762 of 762
+rows and dot products.
 
 ### IV.2 Q2_0_g64
 
@@ -283,15 +341,20 @@ Timing one token's worth of all 253 ternary matrix products (2.13 GB of weights)
 reference's own end-to-end benchmark at the same clock: on three threads the reference spends 2.54–2.64 s of its
 2.59–2.68 s per token in these products — about 98 % of the wall — and bankml computes the same products in 0.36–0.37 s,
 a matmul-bound ceiling of about 2.8 tokens per second against the reference's 0.37–0.39. On one thread the figures are
-4.2–4.4 s against 0.49 s. The consequence is specific: bankml's single-thread ternary matmuls take about as long as the
-reference needs for a whole *1-bit* token on three threads. What remains — attention with a key–value cache,
-normalisation, rotary embedding, sampling — is the forward pass (§IV.4), and the ceiling stands until it exists.
+4.2–4.4 s against 0.49 s. With the persistent thread pool of 0.0.3 (both engines on the same scheduler), the three-thread
+figure is 0.23–0.25 s against the reference's 2.18–2.36 s (9.2–9.9×), a ceiling of about 4 tokens per second. That
+is less time than the reference spends on the *1-bit* model's products (0.34–0.37 s). What remains — attention with a
+key–value cache, normalisation, rotary embedding, sampling — is the forward pass (§IV.4), and the ceiling stands until
+it exists.
 
-### IV.4 What remains before bankml answers
+### IV.4 What bankml answers with today, and what remains
 
-bankml does not yet produce an answer: the transformer forward pass (normalization, rotary embedding, attention with
-a quantized key–value cache, the feed-forward block, sampling) is phase P3, and a thin wrapper over the reference
-library is phase P0. The propositions this report makes testable are therefore stated at the kernel level:
+Since 0.0.6 bankml answers, through the reference (phase P0). `bankml serve` verifies the file and binds the reference
+engine to it, and every answer carries a receipt. Its own transformer forward pass (normalization, rotary embedding,
+attention with a quantized key–value cache, the feed-forward block, sampling) is phase P3. On the laptop a Savante
+turn under her roughly 300-token system prompt took 125 s, 113 s of it prefill at 2.8 tokens per second in the
+reference. That is the wall P3 and the prefill kernels are aimed at. The propositions this report makes testable are
+stated at the kernel level:
 
 - **P1.** A low-bit kernel proven bit-exact against the compiled reference can match its speed without giving up
   exactness (supported for `Q1_0`, §IV.1).
@@ -299,6 +362,28 @@ library is phase P0. The propositions this report makes testable are therefore s
   it is recoverable in the kernel (§IV.2–IV.3).
 - **P3.** An end-to-end bankml answer will be token-identical to the reference's at temperature zero on the same
   prompts, because every kernel it uses is bit-exact — the criterion for phase P3.
+
+### IV.5 The floor, and the limit of the test core
+
+A read of a 768 MiB buffer on the same pool and scheduler as the matrix products measures the laptop's floor: 14.9–17.3
+GB/s. Streaming one token's weights therefore takes at least 0.12–0.14 s (ternary) and 0.06–0.07 s (1-bit). Against it,
+bankml's ternary products run about 2× above the floor at three threads and the 1-bit products (like the reference's)
+about 5.5× above it. Both are bound by compute, not memory: the ternary kernel moves about 9 GB/s at three threads, and
+gains 1.8× from one to three threads on two physical cores.
+
+Releases 0.0.4 and 0.0.5 tried five bit-exact variants aimed at that compute; all passed the oracle and none shipped:
+
+| variant | kernel | speed | reason |
+|---|---|---:|---|
+| two blocks per iteration, interleaved FMA chains | 1-bit decode | 1.00× | not latency-bound |
+| "pair order": one multiply fewer per block | 1-bit decode | 0.84× | the cross-lane extract costs more than the multiply |
+| two rows sharing the activation | ternary decode | 0.80× | register pressure |
+| software prefetch, 256–1024 bytes ahead | ternary decode | ±3 % | the hardware prefetcher already follows the stream |
+| repacked quads (codes contiguous, scales adjacent) | ternary decode | 0.90–1.075× | within noise across two runs |
+
+(With the 2- and 4-row 1-bit tiles of 0.0.1, at 0.81–0.99×.) On this Zen+ core the kernels are therefore at their
+instruction-throughput limit for bit-exact results. The gains still available lie elsewhere: the forward pass, and a
+core with wider or better-fed vector units. The code of every rejected variant is kept in `testing/experiments/`.
 
 ## V. Objections
 
@@ -328,21 +413,25 @@ The plan continues the phases in `bankml.rs`; each step ends in a measured, repr
   exactly as the reference applies it — grouped-query attention (32 query heads, 8 key/value heads, head size 128)
   over a `q8_0` key–value cache, SwiGLU, greedy sampling. The acceptance test is proposition P3: token-identical
   output to the reference at temperature zero on fixed prompts.
-- **P0 — a wrapper for immediate use.** Until P3 lands, bind the reference library behind bankml's guard, pin and
-  receipts, so the verified-response discipline serves real answers now; then swap bankml's own kernels in behind
-  the same interface, one tensor type at a time, verified by the oracle.
-- **Receipts and commitments.** Emit the Receipt per answer, with an optional THOT8 ternary commitment of the output
-  whose Keccak-256 leaf matches the on-chain `THOTLib.sol`, so an answer can be verified later by anyone holding the
-  model file.
-- **Faster 1-bit.** Port the ternary kernel's layout (activation re-laid-out once per token, two blocks per register)
-  to `Q1_0`, whose kernel still spends 7.2 ns per 64 weights against ternary's 5.0 — headroom the 1-bit path is
-  leaving unused.
+- **P0, done (0.0.6).** `bankml serve` puts the reference behind bankml's guard, pin and receipts. Next: swap bankml's
+  own kernels in behind the same interface, one tensor type at a time, verified by the oracle.
+- **Commitments on chain.** Receipts carry the answer's sha256 today, and the history is committed by a Merkle root
+  and a CID (§III.6). Next: an optional THOT8 ternary commitment of each output, whose Keccak-256 leaf matches the
+  on-chain `THOTLib.sol`, and THOT dataset bundles of the history and notes for inclusion with an iNFT.
+- **Connectors, both ways.** Load a previous agent, and publish a new one, through the chain (reading an iNFT's
+  metadata and storage reference), THOT bundles, and PostgreSQL with pgvector or pgvectorscale for rows and
+  embeddings. Publishing ends in a mint that the owner signs; the runtime prepares and verifies everything before it.
+- **Custom agents from the Savante template.** Customizable `.persona` and `.prompt` files, each with its own ledger,
+  derived without touching Savante's canon.
+- **Faster 1-bit, if a core allows it.** On the test core every bit-exact 1-bit variant tried (§IV.5) ran at the
+  reference's speed or slower. A core with AVX-512 VNNI (a single-instruction byte dot product) is where the next
+  measurement belongs.
 - **Real activations in the oracle.** Dump activations from the reference's own forward pass and verify against them,
   replacing today's real-weights × synthetic-activations cases.
 - **The production machine and other CPUs.** A Zen3 row on the one-core server — it loads the same haswell build of the
   reference, so the same scalar ternary path is expected there, which the row will confirm or refute — NEON for ARM (P5, handheld devices), and AVX-512 where present.
-- **The mindX seam (P4).** Serve an OpenAI-compatible endpoint on loopback, register it as a provider so mindX's
-  inference budget records real usage, and run the sAGI engine and the improve.skill loop on it.
+- **The mindX seam (P4).** The OpenAI-compatible endpoint on loopback exists (`bankml serve`). Next: register it as a
+  provider so mindX's inference budget records real usage, and run the sAGI engine and the improve.skill loop on it.
 - **Upstream.** Because every bankml kernel is, by construction, a bit-exact drop-in for a reference function, the
   ternary kernel is offered back to llama.cpp as a contribution; the oracle is the evidence that accompanies it.
 - **Voice (voaicey).** A licence-clean text-to-speech path for the model's answers — espeak-ng in the browser by

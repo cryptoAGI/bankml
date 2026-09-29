@@ -1,0 +1,31 @@
+# bankml 0.0.8 — 2026-09-29T00:35:19Z · laptop (Ryzen 3 3200U). No Rust code changed since 0.0.6 (version only); the kernel records of testing/results/0.0.6.txt stand.
+unittests: test result: ok. 37 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.21s
+testing/cli.rs: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+clippy: clean
+ok   need_more
+18/18 agree
+## testing/test_ui.py
+ok   cid_v1_raw('abc')
+ok   commitment counts 5 records, has a root and a CID
+ok   every record's inclusion proof verifies
+ok   a changed byte fails its proof
+ok   a proof for another record fails
+ok   out-of-range proof is empty
+ok   history search finds the ternary questions first (built-in engine)
+ok   empty query returns nothing
+ok   metrics: 5 exchanges, median response 24 s, all hashes match
+ok   metrics: prefill = prompt tokens / first token
+ok   .memory holds 2 notes and a prompt block
+ok   .memory remove by number
+ok   view /api/state carries the .history commitment
+ok   view /api/state carries no .history content
+ok   view refuses traversal and unknown paths
+ok   view refuses POST
+all ok
+# live UI (this laptop)
+200 GET http://127.0.0.1:7873/
+200 GET http://10.0.0.153:7874/
+200 GET http://10.0.0.153:7874/api/state
+000 GET http://10.0.0.153:7873/
+view exposes commitments only: 3 records, root 54e6905621ce2140…
+# savante canon: 0 changes (read-only check)

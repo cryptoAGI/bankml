@@ -42,6 +42,7 @@ def state() -> dict:
         "serve": {"ok": "error" not in serve, "error": serve.get("error"),
                   "model": Path(serve.get("model", "")).name, "sha256": (serve.get("verified") or {}).get("model_sha256"),
                   "bankml": (serve.get("verified") or {}).get("bankml"), "engine": serve.get("engine")},
+        "private": {"history": S.commitment(S.HISTORY), "memory": S.commitment(S.MEMORY)},
         "savante": {"name": p.get("name"), "kind": p.get("kind"), "mantra": p.get("mantra"), "oath": p.get("oath"),
                     "status": (card.get("savante") or {}).get("status"), "type": card.get("type"),
                     "doctrine_root": (CANON.ledger.get("doctrine_root") or {}).get("value"),
@@ -68,7 +69,7 @@ resize:both;overflow:auto;min-width:260px;min-height:120px;max-width:100%;displa
 background:var(--panel2);border-radius:10px 10px 0 0;cursor:grab;user-select:none;display:flex;justify-content:space-between;position:sticky;top:0;z-index:1}
 .card>h2::after{content:'⠿ drag · ◢ resize';letter-spacing:0;text-transform:none;font-size:11px;opacity:.7}
 .card.dragging{opacity:.45}.card.over{outline:2px dashed var(--accent);outline-offset:3px}
-.body{padding:12px 14px;flex:1;min-height:0}.body pre{max-height:none}
+.body{padding:12px 14px;flex:1;min-height:0}.body pre{max-height:60vh}
 .w8{width:calc(66.6% - 8px)}.w4{width:calc(33.3% - 8px)}.w6{width:calc(50% - 8px)}
 @media (max-width:900px){.w8,.w4,.w6{width:100%}}
 .tool{background:var(--panel2);color:var(--text);border:1px solid var(--line2);border-radius:6px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer;margin-left:auto}
@@ -94,6 +95,9 @@ select{background:var(--panel2);color:var(--text);border:1px solid var(--line2);
 <section class="card w8" id="p-recs"><h2>Release records</h2><div class="body">
 <select id="pick"></select><pre id="rec" style="margin-top:10px;max-height:48vh"></pre></div></section>
 <section class="card w6" id="p-ci"><h2>CI — github.com/cryptoAGI/bankml</h2><div class="body"><table><thead><tr><th>run</th><th>result</th><th>when</th></tr></thead><tbody id="ci"></tbody></table></div></section>
+<section class="card w6" id="p-proof"><h2>Private data — commitments only</h2><div class="body">
+<p style="margin-top:0;color:var(--muted)">.history and .memory stay on this laptop. What is shown is their commitment: anyone given one
+exchange and its inclusion proof can check it against this root, without seeing the rest.</p><dl id="proof"></dl></div></section>
 <section class="card w6" id="p-sav"><h2>Savante — office and iNFT ledger</h2><div class="body">
 <p><strong id="sname"></strong> <span id="skind" style="color:var(--muted)"></span><br><span id="smantra" class="mantra"></span></p>
 <dl id="scard"></dl><table style="margin-top:10px"><thead><tr><th>ledger entry</th><th>check</th></tr></thead><tbody id="ledger"></tbody></table></div></section>
@@ -118,6 +122,8 @@ async function tick(){$('clock').textContent=new Date().toLocaleTimeString();
  const names=s.results.join(',');if(names!==known){known=names;const p=$('pick');p.replaceChildren();
   for(const n of s.results){const o=document.createElement('option');o.value=o.textContent=n;p.append(o)}if(!picked&&s.results.length){picked=s.results[0];rec()}}
  tr($('ci'),(s.ci.runs||[]).map(r=>[[r.title],[r.result,r.result==='success'?'run':(r.result==='failure'?'bad':'warn')],[r.when.replace('T',' ').replace('Z','')]]));
+ const P=s.private;dl($('proof'),[['.history records',P.history.records],['.history Merkle root',P.history.merkle_root],['.history CIDv1',P.history.file_cid],
+  ['.memory notes',P.memory.records],['.memory Merkle root',P.memory.merkle_root]]);
  const a=s.savante;$('sname').textContent=a.name||'';$('skind').textContent=a.kind?'— '+a.kind:'';$('smantra').textContent=a.mantra||'';
  dl($('scard'),[['card',a.type],['status',a.status+' (no mint here)'],['doctrine root',a.doctrine_root]]);
  tr($('ledger'),a.ledger.map(e=>[[e.entry+'  ('+e.path+')'],[(e.ok?'✓ ':'✗ ')+e.detail,e.ok?'run':'bad']]));

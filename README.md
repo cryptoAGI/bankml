@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.5%E2%80%939.8%C3%97-D9A23A?style=flat-square" alt="ternary 9.5–9.8x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
-  <img src="https://img.shields.io/badge/status-kernels%20proven%20%C2%B7%20forward%20pass%20next-F59E0B?style=flat-square" alt="status">
+  <img src="https://img.shields.io/badge/status-P0%20serving%20%C2%B7%20Savante%20UI%20%C2%B7%20forward%20pass%20next-F59E0B?style=flat-square" alt="status">
 </p>
 
 ---
@@ -60,16 +60,19 @@ Every number above is measured and reproducible — the tables, machines and com
 | phase | what | state |
 |---|---|---|
 | P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON; `bankml verify` = guard + pin as one gate (0.0.2) |
-| P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B weights; decode 1.03×, prefill 1.16× |
-| P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.5–9.8× decode, 12.5× prefill |
+| P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B + 8.19 B weights (1.7B and 8B); decode at parity, prefill 1.2–1.3× (0.0.4) |
+| P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.5–9.8× decode, 12.5× prefill; threaded 0.0.3 (9.2–9.9× per token) |
 | P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | next — acceptance: token-identical to llama.cpp at temperature 0 |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
-| P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | planned |
+| P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
+| UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.8** |
 | P5 | ARM / NEON, handheld | planned |
 
-Since 0.0.6 bankml answers through the reference engine (P0), behind its gate. Its own forward pass is the next phase. The whole-model
-budget says what it can reach: the ternary matrix work for one token in **0.36 s** against llama.cpp's **2.54 s** on
-three threads, a matmul-bound ceiling of about **2.8 tokens/s** against **0.39**.
+Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Its own forward
+pass is the next phase. The whole-model budget says what that can reach: the ternary matrix work for one token takes
+**0.23–0.25 s** against llama.cpp's **2.2–2.4 s** on three threads, a matmul-bound ceiling of about **4 tokens/s**
+against **0.4**. Five more bit-exact kernel variants were measured in 0.0.4–0.0.5 and none was reliably faster; on
+the test laptop both kernels are compute-bound, at the core's instruction limit (see TECHNICAL §IV.5).
 
 ## Build and verify
 
@@ -113,13 +116,23 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
 - **`.prompt`** chooses what carries the conversation: the persona's own system prompt (default), the `sAGI.prompt`
   facet, or the Hugging Face Space's template.
 - **`.history`** (`~/.local/share/bankml/savante/savante.history`) records every exchange with its timestamps,
-  response times and receipt.
+  response times and receipt. The **.history** tab shows them all, newest first, with a **ragebar**: type and the
+  exchanges are ranked by RAGE retrieval (mindX's `rage.py` when present, the same BM25 built in otherwise).
+- **Responses** steps through every answer (⤒ ▲ ▼ ⤓). **📋 copy** puts the answer on the clipboard, **➕ save to
+  .memory** keeps it, and **🔏 proof** gives the inclusion proof for that one exchange.
+- **`.memory`** (`savante.memory`) holds the notes you keep. With *use .memory* on, they go into the system prompt,
+  labelled as your notes, never as evidence.
+- **Metrics** is computed from `.history`: time to first token, response time, prefill and writing speed (median, p90,
+  mean), how many answers match their receipt, and the commitments.
+- **Proof of data, not the data.** `.history` and `.memory` never leave the laptop. What can be shared is their
+  commitment (a Merkle root over the lines and a CIDv1 of the file), and an inclusion proof for any one exchange
+  that checks against the root without revealing the rest.
 - Panels resize from their corner, and the side panel drags to either side.
 
 **4. Let others watch**: `python3 ui/view.py --host 0.0.0.0` gives a read-only page at
 **http://&lt;your LAN address&gt;:7874**. It shows the live testing, the release records, CI, the machine's load and
-Savante's ledger, with draggable, resizable panels. It is the standard library, not Gradio, so it is safe to put on
-a network.
+Savante's ledger, and the commitments of `.history` and `.memory` (never their content), in draggable, resizable
+panels. It is the standard library, not Gradio, so it is safe to put on a network.
 
 Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-hashes every file her iNFT ledger
 (`savante.commitments.json`) commits to, and it refuses if her persona does not verify. Nothing is minted.

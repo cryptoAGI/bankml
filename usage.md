@@ -10,7 +10,8 @@ watch the testing on your network. It also says what each part does, what it che
 - [5. Start `bankml serve`](#5-start-bankml-serve)
 - [6. Talk to Savante (interact mode)](#6-talk-to-savante-interact-mode)
 - [7. Let others watch (view mode, on the LAN)](#7-let-others-watch-view-mode-on-the-lan)
-- [8. The files Savante keeps: `.history`, `.prompt`, the persona](#8-the-files-savante-keeps-history-prompt-the-persona)
+- [8. The files Savante keeps: `.history`, `.memory`, `.prompt`](#8-the-files-savante-keeps-history-memory-prompt)
+- [8a. Proof of data without the data](#8a-proof-of-data-without-the-data)
 - [9. Receipts, and how to check an answer](#9-receipts-and-how-to-check-an-answer)
 - [10. Savante's canon and the iNFT ledger](#10-savantes-canon-and-the-inft-ledger)
 - [11. Testing and the release gate](#11-testing-and-the-release-gate)
@@ -135,11 +136,26 @@ by its grip to either side of the chat. Your choice is remembered in your browse
 - **The bankml serve card** shows the verified model, its full sha256, the bankml version and the engine. **Refresh
   carrier** re-reads it.
 
+- **use .memory** (side panel, on by default) appends your `.memory` notes to the system prompt, newest first, within
+  2,400 characters. They are labelled as the operator's notes, not evidence, and the footer says how many went in.
+
 The other tabs:
+- **.history**: every exchange, newest first: its time, session, time to first token, response time, tokens, and
+  whether the answer's sha256 matches its receipt. At the top is the **ragebar**: type, and the exchanges are
+  ranked by RAGE retrieval as you type, each with a relevance meter. It uses mindX's `rage.py` when present
+  (`RAGE_PATH`) and the same BM25 built in otherwise; the engine is named above the results.
+- **Responses**: one answer at a time. **⤒ first**, **▲ previous**, **▼ next**, **⤓ latest** step through every
+  response in `.history`. **📋 copy** puts the answer on the clipboard, **➕ save to .memory** keeps it as a note
+  (with its source: session, send time, answer sha256), and **🔏 proof** gives its inclusion proof (§8a).
+- **.memory**: your notes, numbered. Add one by typing, remove one by number.
+- **Metrics**: computed from `.history`. It shows the number of exchanges and sessions, and the median, p90, mean,
+  minimum and maximum of the time to first token, the response time, the prompt-reading (prefill) speed and the
+  writing speed. It also shows a bar per exchange, how many answers match their receipt, the last 25 exchanges, and
+  the commitments (§8a). Times come from the press of Send where recorded (0.0.7+); older exchanges use the receipt's
+  gateway times, and each row says which.
 - **Testing (live), Results, Office, Integrity** are the same as view mode (§7).
 - **Verifier** runs `~/savante/bind/savante_verify.py` offline. Exit 0 means APPROVE: the ledger, the doctrine root,
   the thot bundle and the mirror all agree.
-- **.history** shows the last 40 lines of the history file (§8).
 
 To ask for a review, say so: *"review: is Bonsai-8B ready to serve mindX?"*. Savante then answers under her verdict
 contract (FINDINGS / VERDICT / RATIONALE / CONDITIONS / RISKS WATCHED). A plain question gets a short answer in the same
@@ -161,6 +177,8 @@ ip -4 addr | grep inet                          # find the LAN address
 - **Release records**: every `testing/results/<version>.txt`.
 - **CI**: the last five GitHub Actions runs.
 - **Savante**: name, mantra, card status (`not_yet_minted`), doctrine root, and the ledger check, file by file.
+- **Private data — commitments only**: the count, Merkle root and CID of `.history`, and the count and root of
+  `.memory`. Never their content (§8a).
 
 Every panel can be dragged by its title to a new place and resized from its corner. **Reset layout** puts them back.
 The layout lives in each viewer's own browser.
@@ -171,7 +189,7 @@ routes (`/`, `/api/state`, `/api/result?name=` for a listed record only, `/savan
 404, POST is refused, and the page renders all data as text under a strict Content-Security-Policy. Keep interact mode
 on `127.0.0.1`.
 
-## 8. The files Savante keeps: `.history`, `.prompt`, the persona
+## 8. The files Savante keeps: `.history`, `.memory`, `.prompt`
 
 Nothing is ever written into the canon (`~/savante`). What the UI writes lives in `BANKML_UI_STATE` (default
 `~/.local/share/bankml/savante/`):
@@ -190,9 +208,40 @@ Nothing is ever written into the canon (`~/savante`). What the UI writes lives i
   `sent_at` is the press of Send; `first_token_s` and `response_s` are measured from it. The receipt's
   `ttft_ms`/`wall_ms` are measured by bankml serve from when it forwarded the request. The history is plain text:
   back it up, grep it, or delete it.
+- **`savante.memory`**: one JSON object per note: `{"ts", "at", "text", "sha256", "source": {"kind": "typed" |
+  "response", "session", "sent_at", "response_sha256"}}`.
 - **`Savante.prompt`**: the Space template's prompt, cached the first time it is chosen.
 
 The model sees the last 12 exchanges (each cut to 4,000 characters), as in the Hugging Face template.
+
+## 8a. Proof of data without the data
+
+`.history` and `.memory` stay on this computer. What can leave it is a **commitment**:
+
+| part | what |
+|---|---|
+| leaf | sha256 of one JSONL line, exactly as written (without its newline) |
+| Merkle root | pairwise sha256 up the tree; an odd node is paired with itself |
+| file sha256 / CIDv1 | of the whole file; CIDv1 raw (0x55), sha2-256, base32 lower: the construction Savante's iNFT ledger uses |
+
+**🔏 proof** (Responses tab) produces, for one exchange, `{"commitment": …, "proof": {"leaf", "path": [{"side",
+"hash"}, …], "merkle_root"}, "verifies": true}`. Give someone the exchange's line and the proof: they hash the line,
+fold in the path, and compare with the root you published. That proves the exchange is in your history, unchanged,
+and reveals nothing else. The same works for any data kept in a browser's local storage: keep the data, publish the
+hash or CID. Metrics and the view page show the commitments; the view page never serves a line.
+
+To check a proof by hand, in Python:
+
+```python
+import hashlib, json
+line = b'...the exact JSONL line...'
+p = json.load(open("proof.json"))["proof"]
+h = hashlib.sha256(line).hexdigest()
+for s in p["path"]:
+    a, b = (h, s["hash"]) if s["side"] == "right" else (s["hash"], h)
+    h = hashlib.sha256(bytes.fromhex(a) + bytes.fromhex(b)).hexdigest()
+print(h == p["merkle_root"])
+```
 
 ## 9. Receipts, and how to check an answer
 
@@ -285,5 +334,6 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `BANKML_SERVE` | `http://127.0.0.1:18093` | where the UI finds bankml serve |
 | `BANKML_UI_STATE` | `~/.local/share/bankml/savante` | `.history` and caches |
 | `BANKML_REPO` | the checkout | where view mode reads `testing/` |
+| `RAGE_PATH` | `~/mindX/mindx/godel/mindxtrain/hf/space_ui` | where the ragebar finds mindX's `rage.py` (built-in BM25 otherwise) |
 | `BANKML_GGML_LIB` | — | llama.cpp b11192 release dir, for the oracles |
 | `BANKML_THREADS` | all cores | threads for the kernels' benchmarks |

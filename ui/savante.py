@@ -32,6 +32,7 @@ stdlib + gradio (3.x or newer).
 from __future__ import annotations
 
 import argparse
+import html
 import hashlib
 import json
 import os
@@ -50,6 +51,8 @@ CANON = Path(os.environ.get("SAVANTE_CANON", Path.home() / "savante")).expanduse
 SERVE = os.environ.get("BANKML_SERVE", "http://127.0.0.1:18093")
 STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" / "bankml" / "savante")).expanduser()
 HISTORY = STATE / "savante.history"
+MEMORY = STATE / "savante.memory"
+RAGE_PATH = Path(os.environ.get("RAGE_PATH", Path.home() / "mindX" / "mindx" / "godel" / "mindxtrain" / "hf" / "space_ui")).expanduser()
 REPO = Path(os.environ.get("BANKML_REPO", Path(__file__).resolve().parents[1])).expanduser()
 LIVE = REPO / "testing" / "live.log"
 CI_API = "https://api.github.com/repos/cryptoAGI/bankml/actions/runs?per_page=5"
@@ -165,6 +168,252 @@ def history_load():
         return uuid.uuid4().hex[:12], []
     sid = lines[-1].get("session")
     return sid, [[r.get("user", ""), r.get("shown", r.get("assistant", ""))] for r in lines if r.get("session") == sid]
+
+
+def history_all() -> list:
+    """Every record in .history, oldest first (all sessions)."""
+    try:
+        return [json.loads(l) for l in HISTORY.read_text(encoding="utf-8").splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def _timing(r: dict):
+    """(first_token_s, response_s, source) — measured at the press of Send when recorded (0.0.7+), else the receipt's."""
+    if r.get("response_s") is not None:
+        return r.get("first_token_s"), r.get("response_s"), "ui"
+    rc = r.get("receipt") or {}
+    if rc.get("wall_ms") is not None:
+        return (rc["ttft_ms"] / 1000 if rc.get("ttft_ms") is not None else None), rc["wall_ms"] / 1000, "receipt"
+    return None, None, None
+
+
+def _when(r: dict) -> str:
+    return r.get("sent_at") or (time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(r["ts"])) if r.get("ts") else "?")
+
+
+def _hash_ok(r: dict):
+    h = (r.get("receipt") or {}).get("response_sha256")
+    return None if not h else h == sha256((r.get("assistant") or "").encode())
+
+
+# ── proof of data without the data: sha256 leaves, a Merkle root, CIDv1 ─────────────
+# The content stays here (files outside the canon, a browser's localStorage); what travels is a commitment. A
+# holder of the root can check any one exchange shown to them — its line and its sibling path — without the rest.
+def cid_v1_raw(b: bytes) -> str:
+    """CIDv1, raw codec (0x55), sha2-256 multihash, base32 lower with the 'b' prefix — as the canon's ledger uses."""
+    import base64
+    return "b" + base64.b32encode(bytes([0x01, 0x55, 0x12, 0x20]) + hashlib.sha256(b).digest()).decode().lower().rstrip("=")
+
+
+def _lines(path: Path) -> list:
+    try:
+        return [l for l in path.read_bytes().split(b"\n") if l.strip()]
+    except OSError:
+        return []
+
+
+def _pair(a: str, b: str) -> str:
+    return hashlib.sha256(bytes.fromhex(a) + bytes.fromhex(b)).hexdigest()
+
+
+def merkle(leaves: list) -> list:
+    """All levels, leaves first; an odd node is paired with itself."""
+    levels = [leaves]
+    while len(levels[-1]) > 1:
+        lv = levels[-1]
+        levels.append([_pair(lv[i], lv[i + 1] if i + 1 < len(lv) else lv[i]) for i in range(0, len(lv), 2)])
+    return levels
+
+
+def commitment(path: Path) -> dict:
+    """{records, merkle_root, file_sha256, file_cid} for a JSONL file — shareable; reveals no content."""
+    lines = _lines(path)
+    leaves = [sha256(l) for l in lines]
+    raw = b"".join(l + b"\n" for l in lines)
+    return {"file": path.name, "records": len(lines), "merkle_root": merkle(leaves)[-1][0] if leaves else None,
+            "file_sha256": sha256(raw) if lines else None, "file_cid": cid_v1_raw(raw) if lines else None}
+
+
+def inclusion_proof(path: Path, k: int) -> dict:
+    """The proof that record k (0-based) is in the file whose root is `merkle_root`."""
+    lines = _lines(path)
+    leaves = [sha256(l) for l in lines]
+    if not 0 <= k < len(leaves):
+        return {}
+    levels, i, sib = merkle(leaves), k, []
+    for lv in levels[:-1]:
+        j = i ^ 1
+        sib.append({"side": "right" if j > i else "left", "hash": lv[j] if j < len(lv) else lv[i]})
+        i //= 2
+    return {"record": k, "leaf": leaves[k], "line_sha256_of": "the exact JSONL line, without its newline",
+            "path": sib, "merkle_root": levels[-1][0], "records": len(leaves)}
+
+
+def verify_inclusion(line: bytes, proof: dict) -> bool:
+    h = sha256(line)
+    if h != proof.get("leaf"):
+        return False
+    for step in proof.get("path", []):
+        h = _pair(h, step["hash"]) if step["side"] == "right" else _pair(step["hash"], h)
+    return h == proof.get("merkle_root")
+
+
+# ── RAGE over .history: the house index (mindX rage.py) when present, else the same BM25 shape here ──
+class _BM25:
+    def __init__(self):
+        self.docs, self.df = [], {}
+
+    @staticmethod
+    def toks(t):
+        return re.findall(r"[a-z0-9]+", t.lower())
+
+    def add(self, text, source):
+        tf = {}
+        for w in self.toks(text):
+            tf[w] = tf.get(w, 0) + 1
+        for w in tf:
+            self.df[w] = self.df.get(w, 0) + 1
+        self.docs.append((source, text, tf, sum(tf.values())))
+
+    def search(self, q, k=8):
+        import math
+        n = len(self.docs) or 1
+        avg = sum(d[3] for d in self.docs) / n if self.docs else 1
+        out = []
+        for src, text, tf, ln in self.docs:
+            sc = 0.0
+            for w in set(self.toks(q)):
+                if w in tf:
+                    idf = math.log(1 + (n - self.df[w] + 0.5) / (self.df[w] + 0.5))
+                    sc += idf * tf[w] * 2.2 / (tf[w] + 1.2 * (0.25 + 0.75 * ln / avg))
+            if sc > 0:
+                out.append((sc, src, text))
+        return sorted(out, reverse=True)[:k]
+
+
+def rage_engine():
+    """The house RAGE module if importable (no cache written), else None."""
+    try:
+        if str(RAGE_PATH) not in sys.path:
+            sys.path.append(str(RAGE_PATH))
+        from mindxhfgradio import rage  # noqa: WPS433 (stdlib-only module)
+        return rage
+    except Exception:
+        return None
+
+
+def history_search(query: str, k: int = 8):
+    """[(score, record_index, record)] best first; engine name."""
+    recs = history_all()
+    if not query.strip() or not recs:
+        return [], "—"
+    rage = rage_engine()
+    docs = [(i, f"{r.get('user', '')}\n{r.get('assistant', '')}") for i, r in enumerate(recs)]
+    if rage is not None:
+        idx = rage.Index()
+        for i, t in docs:
+            idx.add(t, source=str(i))
+        hits = [(sc, int(d.source), recs[int(d.source)]) for sc, d in idx.search(query, k=k * 3)]
+        engine = "RAGE (mindX rage.py, BM25)"
+    else:
+        idx = _BM25()
+        for i, t in docs:
+            idx.add(t, str(i))
+        hits = [(sc, int(src), recs[int(src)]) for sc, src, _ in idx.search(query, k=k * 3)]
+        engine = "RAGE-shaped BM25 (built in)"
+    seen, out = set(), []
+    for sc, i, r in hits:  # one hit per exchange (the house index chunks long ones)
+        if i not in seen:
+            seen.add(i)
+            out.append((sc, i, r))
+    return out[:k], engine
+
+
+# ── .memory: notes the operator keeps, outside the canon ──────────────────────────
+def memory_all() -> list:
+    try:
+        return [json.loads(l) for l in MEMORY.read_text(encoding="utf-8").splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def memory_add(text: str, source: dict | None = None) -> int:
+    text = (text or "").strip()
+    if not text:
+        return len(memory_all())
+    STATE.mkdir(parents=True, exist_ok=True)
+    with MEMORY.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": round(time.time(), 3), "at": iso(time.time()), "text": text, "sha256": sha256(text.encode()),
+                            "source": source or {"kind": "typed"}}, ensure_ascii=False) + "\n")
+    return len(memory_all())
+
+
+def memory_remove(n: int) -> int:
+    m = memory_all()
+    if 1 <= n <= len(m):
+        del m[n - 1]
+        STATE.mkdir(parents=True, exist_ok=True)
+        MEMORY.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in m), encoding="utf-8")
+    return len(memory_all())
+
+
+MEMORY_BUDGET = 2400
+
+
+def memory_block() -> str:
+    """The notes as a system-prompt addendum, newest first, within MEMORY_BUDGET characters."""
+    out, used = [], 0
+    for m in reversed(memory_all()):
+        line = "- " + m["text"].replace("\n", " ")
+        if used + len(line) > MEMORY_BUDGET:
+            break
+        out.append(line)
+        used += len(line)
+    if not out:
+        return ""
+    return ("\n\nMEMORY — notes the operator kept from earlier conversations. They are context, not evidence: "
+            "cite them as the operator's notes, never as findings.\n" + "\n".join(out))
+
+
+# ── metrics, computed from .history ───────────────────────────────────────────────
+def _pct(v, q):
+    v = sorted(v)
+    if not v:
+        return None
+    i = (len(v) - 1) * q
+    lo = int(i)
+    return v[lo] + (v[min(lo + 1, len(v) - 1)] - v[lo]) * (i - lo)
+
+
+def metrics() -> dict:
+    recs = history_all()
+    rows, first, total, pre, wr, ok, bad = [], [], [], [], [], 0, 0
+    for r in recs:
+        ft, rs, src = _timing(r)
+        rc = r.get("receipt") or {}
+        pt, ct = rc.get("prompt_tokens"), rc.get("completion_tokens")
+        h = _hash_ok(r)
+        ok += h is True
+        bad += h is False
+        if rs is not None:
+            total.append(rs)
+        if ft is not None:
+            first.append(ft)
+            if pt:
+                pre.append(pt / ft if ft > 0 else 0)
+            if ct and rs and rs > ft:
+                wr.append(ct / (rs - ft))
+        rows.append({"when": _when(r), "session": r.get("session"), "first": ft, "total": rs, "src": src, "pt": pt, "ct": ct, "hash": h,
+                     "q": (r.get("user") or "")[:80]})
+    days = {}
+    for x in rows:
+        days[x["when"][:10]] = days.get(x["when"][:10], 0) + 1
+    stat = lambda v: {"n": len(v), "median": _pct(v, .5), "p90": _pct(v, .9), "mean": (sum(v) / len(v)) if v else None,
+                      "min": min(v) if v else None, "max": max(v) if v else None}
+    return {"exchanges": len(recs), "sessions": len({r.get("session") for r in recs}), "first_token_s": stat(first),
+            "response_s": stat(total), "prefill_tok_s": stat(pre), "write_tok_s": stat(wr), "hash_ok": ok, "hash_bad": bad,
+            "hash_missing": len(recs) - ok - bad, "per_day": days, "rows": rows}
 
 
 # ── the carrier: bankml serve ─────────────────────────────────────────────────────
@@ -401,7 +650,120 @@ CSS = """
 #bk-row.bk-over{outline:2px dashed #0f766e;outline-offset:4px}
 button.primary,button.lg.primary{background:#0f766e!important;border-color:#0f766e!important;color:#fff!important}
 .tabs button.selected{border-bottom:3px solid #0f766e!important;font-weight:700}
+#ragebar textarea,#ragebar input{background:#05070a!important;color:#e9ffe9!important;border:1px solid #1f3a2b!important;border-radius:8px!important;
+ font:15px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace!important;caret-color:#3ddc84;padding:14px 16px!important}
+#ragebar textarea:focus,#ragebar input:focus{border-color:#3ddc84!important;box-shadow:0 0 0 3px rgba(61,220,132,.18)!important}
+#ragebar label span{color:#0f766e!important;font-weight:700;letter-spacing:.12em;text-transform:lowercase}
+.rb-stat{font:12px ui-monospace,Menlo,Consolas,monospace;color:#334155;margin:6px 2px}.rb-stat.rb-hot{color:#b91c1c}
+.rb-meter{height:4px;border-radius:2px;background:#e2e8f0;overflow:hidden;margin:0 0 6px}.rb-meter i{display:block;height:100%;background:#16a34a}
+.bk-ex{border:1px solid #cbd5e1;border-radius:8px;padding:10px 12px;margin:8px 0;background:#fff}
+.bk-ex, .bk-ex *{color:#0f172a}
+.bk-exh{font:12px ui-monospace,Menlo,Consolas,monospace;color:#475569!important;margin-bottom:6px;overflow-wrap:anywhere}
+.bk-q{font-weight:700;margin-bottom:6px;white-space:pre-wrap}.bk-a{white-space:pre-wrap;line-height:1.5}
+.bk-okb{color:#15803d!important;font-weight:700}.bk-badb{color:#b91c1c!important;font-weight:700}.bk-dimb{color:#64748b!important}
+.bk-note{font-size:12px;color:#475569!important;margin:6px 2px}
+.bk-t{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}.bk-t th,.bk-t td{border:1px solid #cbd5e1;padding:5px 8px;text-align:left;color:#0f172a}
+.bk-t th{background:#f1f5f9}.bk-spark{border:1px solid #cbd5e1;border-radius:8px;background:#fff}.bk-spark rect{fill:#0f766e}
+#bk-nav button{min-width:0}
 """
+
+
+# ── renderers for the .history, Responses, .memory and Metrics tabs (all text escaped) ──
+E = html.escape
+
+
+def _fmt(v, unit="s", nd=1):
+    return "—" if v is None else f"{v:.{nd}f} {unit}".strip()
+
+
+def _exchange_html(i: int, r: dict, n: int, score: float | None = None, top: float = 1.0) -> str:
+    ft, rs, src = _timing(r)
+    h = _hash_ok(r)
+    rc = r.get("receipt") or {}
+    meter = f"<div class='rb-meter'><i style='width:{max(4, int(100 * score / top))}%'></i></div>" if score is not None else ""
+    badge = {True: "<span class='bk-okb'>answer sha256 ✓</span>", False: "<span class='bk-badb'>answer sha256 ≠ receipt</span>",
+             None: "<span class='bk-dimb'>no receipt hash</span>"}[h]
+    return (f"<div class='bk-ex'>{meter}<div class='bk-exh'>#{i + 1} of {n} · {E(_when(r))} · session {E(str(r.get('session', '?')))}"
+            f" · first token {_fmt(ft)} · answered {_fmt(rs)}{' (receipt)' if src == 'receipt' else ''}"
+            f" · {rc.get('prompt_tokens', '?')}+{rc.get('completion_tokens', '?')} tokens · {badge}</div>"
+            f"<div class='bk-q'>{E(r.get('user') or '')}</div><div class='bk-a'>{E(r.get('assistant') or '')}</div></div>")
+
+
+def history_html() -> str:
+    recs = history_all()
+    if not recs:
+        return f"<div class='bk-card'>No exchanges yet. They are written to <code>{E(str(HISTORY))}</code>.</div>"
+    return (f"<div class='bk-note'>{len(recs)} exchanges · newest first · <code>{E(str(HISTORY))}</code></div>"
+            + "".join(_exchange_html(i, r, len(recs)) for i, r in reversed(list(enumerate(recs)))))
+
+
+def search_html(q: str) -> str:
+    if not q.strip():
+        return "<div class='rb-stat'>type to search every question and answer in .history</div>"
+    hits, engine = history_search(q)
+    n = len(history_all())
+    if not hits:
+        return f"<div class='rb-stat rb-hot'>no match for “{E(q)}” · {E(engine)} over {n} exchanges</div>"
+    top = hits[0][0] or 1.0
+    return (f"<div class='rb-stat'>{len(hits)} of {n} exchanges · {E(engine)}</div>"
+            + "".join(_exchange_html(i, r, n, sc, top) for sc, i, r in hits))
+
+
+def response_at(k: int):
+    """(clamped index, html, plain answer) for the k-th response (0 = oldest)."""
+    recs = history_all()
+    if not recs:
+        return 0, "<div class='bk-card'>No responses yet.</div>", ""
+    k = max(0, min(int(k), len(recs) - 1))
+    return k, _exchange_html(k, recs[k], len(recs)), recs[k].get("assistant") or ""
+
+
+def memory_html() -> str:
+    m = memory_all()
+    if not m:
+        return f"<div class='bk-card'>.memory is empty. Save a response from <b>Responses</b>, or type a note. File: <code>{E(str(MEMORY))}</code></div>"
+    rows = "".join(f"<div class='bk-ex'><div class='bk-exh'>note {j + 1} · {E(x.get('at', ''))} · "
+                   f"{E((x.get('source') or {}).get('kind', ''))} {E(str((x.get('source') or {}).get('sent_at', '') or ''))}</div>"
+                   f"<div class='bk-a'>{E(x['text'])}</div></div>" for j, x in enumerate(m))
+    blk = memory_block()
+    return (f"<div class='bk-note'>{len(m)} notes · {len(blk)} of {MEMORY_BUDGET} characters go into the prompt when "
+            f".memory is on · <code>{E(str(MEMORY))}</code></div>" + rows)
+
+
+def metrics_html() -> str:
+    m = metrics()
+    if not m["exchanges"]:
+        return "<div class='bk-card'>No exchanges in .history yet.</div>"
+    def row(name, st, unit, nd=1):
+        return (f"<tr><td>{name}</td><td>{st['n']}</td><td>{_fmt(st['median'], unit, nd)}</td><td>{_fmt(st['p90'], unit, nd)}</td>"
+                f"<td>{_fmt(st['mean'], unit, nd)}</td><td>{_fmt(st['min'], unit, nd)}</td><td>{_fmt(st['max'], unit, nd)}</td></tr>")
+    tot = [x["total"] for x in m["rows"] if x["total"] is not None]
+    w, hgt = 640, 90
+    bars = ""
+    if tot:
+        mx = max(tot) or 1
+        bw = w / len(tot)
+        bars = "".join(f"<rect x='{j * bw + 1:.1f}' y='{hgt - v / mx * (hgt - 6):.1f}' width='{max(bw - 2, 1):.1f}' height='{v / mx * (hgt - 6):.1f}' rx='2'><title>#{j + 1}: {v:.1f} s</title></rect>"
+                       for j, v in enumerate(tot))
+    recent = "".join(f"<tr><td>{E(x['when'])}</td><td>{_fmt(x['first'])}</td><td>{_fmt(x['total'])}</td><td>{x['src'] or '—'}</td>"
+                     f"<td>{x['pt'] or '—'}+{x['ct'] or '—'}</td><td>{'✓' if x['hash'] else ('✗' if x['hash'] is False else '—')}</td>"
+                     f"<td>{E(x['q'])}</td></tr>" for x in reversed(m["rows"][-25:]))
+    days = " · ".join(f"{d}: {c}" for d, c in sorted(m["per_day"].items()))
+    ch, cm = commitment(HISTORY), commitment(MEMORY)
+    proofs = (f"<div class='bk-card'><b>Commitments</b> (shareable; reveal no content) · .history: {ch['records']} records, "
+              f"Merkle root <span class='bk-mono'>{ch['merkle_root']}</span>, CID <span class='bk-mono'>{ch['file_cid']}</span>"
+              f" · .memory: {cm['records']} notes, root <span class='bk-mono'>{cm['merkle_root']}</span></div>")
+    return (f"<div class='bk-card'><b>{m['exchanges']} exchanges · {m['sessions']} sessions</b> · answer hash matches its receipt "
+            f"in {m['hash_ok']}, differs in {m['hash_bad']}, no receipt in {m['hash_missing']} · per day: {E(days)}</div>"
+            "<table class='bk-t'><tr><th>measure</th><th>n</th><th>median</th><th>p90</th><th>mean</th><th>min</th><th>max</th></tr>"
+            + row("time to first token (from Send)", m["first_token_s"], "s") + row("response time (from Send)", m["response_s"], "s")
+            + row("prompt reading (prefill)", m["prefill_tok_s"], "tok/s", 2) + row("writing", m["write_tok_s"], "tok/s", 2) + "</table>"
+            f"<div class='bk-note'>response time per exchange, oldest → newest (hover for the value)</div>"
+            f"<svg class='bk-spark' viewBox='0 0 {w} {hgt}' width='100%' height='{hgt}' preserveAspectRatio='none'>{bars}</svg>"
+            "<div class='bk-note'>Times are measured from the press of Send where recorded (ui, 0.0.7+); older exchanges use the "
+            "receipt's gateway times. Prefill = prompt tokens ÷ time to first token; writing = completion tokens ÷ the rest.</div>"
+            "<table class='bk-t'><tr><th>sent</th><th>first token</th><th>answered</th><th>source</th><th>tokens</th><th>hash</th><th>question</th></tr>"
+            + recent + "</table>" + proofs)
 
 
 # Gradio 3 has no layout API: this runs once in the page. Drag the side panel's grip to either side of the chat;
@@ -465,6 +827,7 @@ def build(canon: Canon, mode: str):
                         gr.Image(value=str(avatar), label="Savante3.png — named, not pinned", height=220, interactive=False)
                     which = gr.Dropdown(list(PROMPTS), value=PROMPTS[0], label=".prompt")
                     prov = gr.Markdown(system_prompt(canon, PROMPTS[0])[1], elem_id="bk-prov")
+                    use_mem = gr.Checkbox(value=True, label="use .memory (the operator's notes, appended to the system prompt)")
                     max_tokens = gr.Slider(16, 1024, value=256, step=16, label="max tokens")
                     temperature = gr.Slider(0.0, 1.5, value=0.3, step=0.05, label="temperature")
                     carrier = gr.HTML(carrier_md())
@@ -477,7 +840,7 @@ def build(canon: Canon, mode: str):
                 PENDING.update(t0=time.time(), first=None)  # the clock starts at the press of Send
                 return "", (h or []) + [[m, None]]
 
-            def respond(h, which, max_tokens, temperature, sess):
+            def respond(h, which, max_tokens, temperature, sess, use_mem):
                 if not h or h[-1][1] is not None:
                     yield h
                     return
@@ -488,6 +851,9 @@ def build(canon: Canon, mode: str):
                     PENDING.update(t0=None, first=None)
                     yield h
                     return
+                mem = memory_block() if use_mem else ""
+                if mem:
+                    system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
                 st = serve_status()
                 qwen3 = "qwen3" in json.dumps(st).lower() or "bonsai" in json.dumps(st).lower()
                 msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3)
@@ -513,8 +879,8 @@ def build(canon: Canon, mode: str):
                                 "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc})
                 yield h
 
-            ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session], chat)
-            ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session], chat)
+            ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], chat)
+            ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], chat)
             stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])
             which.change(lambda w: system_prompt(canon, w)[1], which, prov)
             new.click(lambda: ([], {"id": uuid.uuid4().hex[:12]}), None, [chat, session])
@@ -535,15 +901,73 @@ def build(canon: Canon, mode: str):
 
             gr.Button("run the verifier").click(verify, None, out)
         with gr.Tab(".history"):
-            hist = gr.Code(language="json", label=str(HISTORY))
+            rq = gr.Textbox(label="ragebar", placeholder="search .history — every question and answer (RAGE)", elem_id="ragebar", lines=1)
+            hits = gr.HTML(search_html(""))
+            gr.Markdown("---")
+            hall = gr.HTML(history_html())
+            gr.Button("refresh").click(history_html, None, hall)
+            rq.change(search_html, rq, hits, show_progress=False)
+        with gr.Tab("Responses"):
+            n0 = max(len(history_all()) - 1, 0)
+            pos = gr.State(n0)
+            with gr.Row(elem_id="bk-nav"):
+                b_first, b_up, b_down, b_last = gr.Button("⤒ first"), gr.Button("▲ previous"), gr.Button("▼ next"), gr.Button("⤓ latest")
+                b_copy, b_mem = gr.Button("📋 copy"), gr.Button("➕ save to .memory", variant="primary")
+                b_proof = gr.Button("🔏 proof")
+            where = gr.Markdown()
+            card = gr.HTML(response_at(n0)[1])
+            plain = gr.Textbox(visible=False)
+            said = gr.Markdown()
 
-            def tail():
-                try:
-                    return "\n".join(HISTORY.read_text(encoding="utf-8").splitlines()[-40:])
-                except OSError:
-                    return "(empty)"
+            def show(k):
+                k, htm, txt = response_at(k)
+                return k, htm, txt, f"response **{k + 1} of {len(history_all())}**", ""
 
-            gr.Button("show the last 40 lines").click(tail, None, hist)
+            outs = [pos, card, plain, where, said]
+            b_first.click(lambda: show(0), None, outs)
+            b_last.click(lambda: show(10 ** 9), None, outs)
+            b_up.click(lambda k: show(k - 1), pos, outs)
+            b_down.click(lambda k: show(k + 1), pos, outs)
+            b_copy.click(None, plain, said, _js="(t) => { navigator.clipboard.writeText(t || ''); return 'copied to the clipboard'; }")
+
+            def to_memory(k):
+                recs = history_all()
+                if not recs:
+                    return "nothing to save"
+                k = max(0, min(int(k), len(recs) - 1))
+                r = recs[k]
+                n = memory_add(r.get("assistant") or "", {"kind": "response", "session": r.get("session"), "sent_at": _when(r),
+                                                            "response_sha256": (r.get("receipt") or {}).get("response_sha256")})
+                return f"saved response {k + 1} to .memory ({n} notes)"
+
+            b_mem.click(to_memory, pos, said)
+            proof_box = gr.Code(language="json", label="inclusion proof — share this with the one exchange; the rest of .history stays here")
+
+            def proof(k):
+                c = commitment(HISTORY)
+                pr = inclusion_proof(HISTORY, int(k))
+                line = _lines(HISTORY)[int(k)] if pr else b""
+                return json.dumps({"commitment": c, "proof": pr, "verifies": verify_inclusion(line, pr) if pr else False}, indent=1)
+
+            b_proof.click(proof, pos, proof_box)
+        with gr.Tab(".memory"):
+            mview = gr.HTML(memory_html())
+            with gr.Row():
+                note = gr.Textbox(label="add a note", placeholder="a fact or preference Savante should keep in mind", scale=4)
+                b_add = gr.Button("add", variant="primary", scale=1)
+            with gr.Row():
+                which_n = gr.Number(label="note number", precision=0, value=1, scale=1)
+                b_del = gr.Button("remove that note", scale=1)
+                gr.Button("refresh", scale=1).click(memory_html, None, mview)
+            b_add.click(lambda t: ("", memory_add(t, {"kind": "typed"}) and memory_html()), note, [note, mview])
+            b_del.click(lambda n: (memory_remove(int(n or 0)), memory_html())[1], which_n, mview)
+        with gr.Tab("Metrics"):
+            mt = gr.HTML(metrics_html())
+            gr.Button("refresh").click(metrics_html, None, mt)
+        # everything that reads .history or .memory refreshes after each answer and on open
+        for e in (ev, ev2):
+            e.then(history_html, None, hall).then(metrics_html, None, mt).then(lambda: show(10 ** 9), None, outs)
+        demo.load(lambda: (history_html(), metrics_html(), memory_html()), None, [hall, mt, mview])
     return demo
 
 

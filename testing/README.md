@@ -23,6 +23,7 @@ kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
 | `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify, and `serve` against a mock llama-server (receipts, answer hashes, refusals) |
 | `ggml_oracle.py` | writes an oracle: llama.cpp b11192's own answers (its exported symbols, in-process) on a real GGUF — dequantized tensors, q8_0 rows, dot products |
 | `gguf_guard.py`, `test_gguf_guard.py` | the Python guard the Rust one was ported from (vendored from minaiml), and its suite |
+| `test_ui.py` | the Savante UI's data layer, offline: CIDs, Merkle commitments, inclusion proofs (and their failures), RAGE search, metrics, `.memory`, and the view server's routes |
 | `guard_agree.py` | runs both guards on every synthetic case and any real file given; exit 0 only if the JSON is identical |
 | `results/<version>.txt` | each release's record |
 | `experiments/` | kernels that were measured and not adopted, with their numbers, for re-running elsewhere |
@@ -55,6 +56,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |
 | 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
 | 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml) |
+| 0.0.8 | `results/0.0.8.txt` | `.history` with ragebar (RAGE), Responses (copy, save to .memory, proof), `.memory`, Metrics, commitments + inclusion proofs; docs to 0.0.8 |
 | 0.0.7 | `results/0.0.7.txt` | LAN view (stdlib), drag and resize layout, response timer and times in `.history`, usage.md (no Rust change) |
 | 0.0.6 | `results/0.0.6.txt` | `bankml serve` (P0) with receipts; Savante UI, view / interact; iNFT ledger checked 12/12 |
 | 0.0.5 | `results/0.0.5.txt` | three ternary experiments, bit-exact, none reliably faster (no kernel change); kernels at the Zen+ instruction limit; live log |

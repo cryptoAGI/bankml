@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.0.8 — 2026-09-28
+
+Savante's memory, made searchable, measurable and provable, with the documents brought up to date. No Rust code
+changed. Record: `testing/results/0.0.8.txt`.
+
+### Added
+- **`.history` tab with a ragebar.** Every exchange, newest first: its time, session, time to first token, response
+  time, tokens, and whether the answer matches its receipt. Before this it showed nothing until a button was pressed.
+  The search bar (the GATERAGE ragebar's look) ranks exchanges as you type, using mindX's RAGE `rage.py` when present
+  (`RAGE_PATH`) and the same BM25 built in otherwise.
+- **Responses tab**: ⤒ first, ▲ previous, ▼ next, ⤓ latest through every answer. **📋 copy** puts the answer on the
+  clipboard, **➕ save to .memory** keeps it, and **🔏 proof** gives its inclusion proof.
+- **`.memory`** (`savante.memory`, JSONL, outside the canon): notes typed or saved from responses, with their source.
+  A side-panel switch appends them to the system prompt (newest first, 2,400 characters at most), labelled as the
+  operator's notes, not evidence. The footer names how many went in.
+- **Metrics tab**, computed from `.history`: time to first token, response time, prefill and writing speed (n, median,
+  p90, mean, min, max), a bar per exchange, receipt-hash agreement, the last 25 exchanges, and each row's timing source
+  (the press of Send, or the receipt for older records).
+- **Proof of data without the data.** Each `.history`/`.memory` line's sha256 is a leaf of a Merkle tree, and the file
+  has a sha256 and a CIDv1 (raw, sha2-256, base32: the construction of Savante's iNFT ledger; equal to mindX
+  `rage.cid_v1_raw`). The view page shows only these commitments. An inclusion proof lets one exchange be checked
+  against the root without disclosing the rest.
+- **`testing/test_ui.py`**: 16 offline checks of the UI's data layer. They cover the CIDs, commitments, every
+  inclusion proof, tamper and cross-record failure, the search, the metrics and `.memory`, and the view server
+  (commitments present, content absent, traversal 404, POST 405). Run in CI and in the gate.
+
+### Changed
+- **TECHNICAL.md** brought to 0.0.8:
+  - The Abstract now includes the threads, the floor and P0.
+  - The Thesis gains the principles stated on 2026-09-28, quoted and dated: incremental improvement with the oracle
+    in the loop, the machine at hand, and proof of data while keeping the data.
+  - Contributions 1, 5 and 8 are updated, and 12–13 are new.
+  - New §III.6 (proof of data) and §IV.5 (the floor, and the five rejected variants).
+  - §IV.4 no longer says bankml cannot answer.
+  - Future work drops the 1-bit layout port (tried and rejected) and adds connectors, THOT and custom agents.
+- **README**: status badge and phase table (P0 done; P2 with the 8B oracle and threads; UI row); the budget numbers
+  (0.23–0.25 s, about 4 tok/s); the Savante section covers the new tabs and proofs.
+- **usage.md**: the new tabs, `.memory`, and §8a on proofs (with a hand check in Python).
+- View: the live log is capped at 60 % of the window, so the other panels stay in reach.
+
 ## 0.0.7 — 2026-09-28
 
 Savante's UI, made to be watched and used: a LAN view, a professional look, response times, layout you can arrange,
