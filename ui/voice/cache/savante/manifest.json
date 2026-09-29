@@ -4850,5 +4850,16 @@
    "pitch_ratio": 0.8543,
    "target_f0": 182.0
   }
+ },
+ "da6ca86358755a104baea5ed": {
+  "text": "The Python original (vendored as testing/gguf_guard.py) and the Rust port (gguf.rs) agree JSON-for-JSON on every case (28 of 28 in the 0.1.5–0.2.0 gates, with the real file;",
+  "said": "The Python original (vendored as testing/gguf guard.py) and the Rust port agree JSON-for-JSON on every case (28 of 28 in the 0.1.5–0.2.0 gates, with the real file;",
+  "seconds": 16.749,
+  "opus_sha256": "a2d8989781c4ec1b5ef561558d078986dd96d88b39dda3d7e2323c4a60224e7c",
+  "measured": {
+   "body_f0": 212.0,
+   "pitch_ratio": 0.8584,
+   "target_f0": 182.0
+  }
  }
 }
