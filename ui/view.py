@@ -29,6 +29,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import savante as S  # noqa: E402  (stdlib-only at import; gradio is imported only by its build())
 
 CANON = S.Canon(S.CANON)
+import re  # noqa: E402
+import speak  # noqa: E402
+
+
+def listen() -> dict:
+    """Savante's introduction and voice examples, as far as they are rendered (keys only; audio via /audio/)."""
+    chs = speak.intro_chapters(S.CANON, CANON.persona, CANON.card)
+    ex = [x for x in CANON.persona.get("voice_examples") or [] if isinstance(x, str)]
+    out = []
+    for title, sents in chs + [("Savante speaks — her voice examples", ex)]:
+        items = speak.cached(sents)
+        if all(items):
+            out.append({"title": title, "items": [{"text": i["text"], "key": i["key"], "seconds": i["seconds"]} for i in items]})
+        else:
+            out.append({"title": title, "rendering": True, "count": len(sents)})
+    return {"voice": speak.savante_voice(), "chapters": out}
+
+
+def audio_file(key: str):
+    """Only a 24-hex key the voice manifest lists; nothing else is reachable."""
+    if not re.fullmatch(r"[0-9a-f]{24}", key or ""):
+        return None
+    try:
+        man = json.loads((speak.VOICE_DIR / "savante" / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    f = speak.VOICE_DIR / "savante" / f"{key}.ogg"
+    return f if key in man and f.is_file() else None
 
 
 def state() -> dict:
@@ -43,6 +71,7 @@ def state() -> dict:
                   "model": Path(serve.get("model", "")).name, "sha256": (serve.get("verified") or {}).get("model_sha256"),
                   "bankml": (serve.get("verified") or {}).get("bankml"), "engine": serve.get("engine")},
         "private": {"history": S.commitment(S.HISTORY), "memory": S.commitment(S.MEMORY)},
+        "listen": listen(),
         "savante": {"name": p.get("name"), "kind": p.get("kind"), "mantra": p.get("mantra"), "oath": p.get("oath"),
                     "status": (card.get("savante") or {}).get("status"), "type": card.get("type"),
                     "doctrine_root": (CANON.ledger.get("doctrine_root") or {}).get("value"),
@@ -81,7 +110,13 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}dt{color:va
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 th{color:var(--muted);font-weight:600;background:var(--panel2)}tr:last-child td{border-bottom:0}
 select{background:var(--panel2);color:var(--text);border:1px solid var(--line2);border-radius:6px;padding:6px 8px;font:inherit}
-.mantra{color:var(--gold);font-style:italic}.foot{color:var(--muted);font-size:12px;padding:0 20px 24px;text-align:center}
+.mantra{color:var(--gold);font-style:italic}
+.lbar{display:flex;gap:8px;margin:6px 0 10px}.lbar button,.lch button{cursor:pointer;border-radius:8px;border:1px solid var(--accent);background:transparent;
+color:var(--accent);font:600 12px var(--mono);padding:5px 12px}.lbar button:hover,.lch button:hover{background:rgba(57,211,199,.12)}
+.lch{border:1px solid var(--line);border-radius:10px;margin:6px 0}.lch summary{cursor:pointer;padding:7px 10px;display:flex;gap:10px;align-items:center}
+.lch summary b{flex:1}.lch ol{margin:0;padding:0 10px 8px 34px}.lch li{padding:3px 4px;border-radius:6px;cursor:pointer;font-size:13.5px;line-height:1.5}
+.lch li:hover{background:rgba(57,211,199,.06)}.lch li.now{background:rgba(217,162,58,.16);box-shadow:inset 3px 0 0 var(--gold)}
+.lwait{color:var(--muted);font-size:13px;padding:6px 10px}.foot{color:var(--muted);font-size:12px;padding:0 20px 24px;text-align:center}
 </style></head><body>
 <header><img id="av" alt="Savante" src="/savante.png"><div><h1>bankml · view — watching the testing live</h1>
 <div class="sub">Read-only. A speed counts only if every oracle passed on the same code. Refreshes every 2 s · <span id="clock"></span></div></div>
@@ -95,6 +130,11 @@ select{background:var(--panel2);color:var(--text);border:1px solid var(--line2);
 <section class="card w8" id="p-recs"><h2>Release records</h2><div class="body">
 <select id="pick"></select><pre id="rec" style="margin-top:10px;max-height:48vh"></pre></div></section>
 <section class="card w6" id="p-ci"><h2>CI — github.com/cryptoAGI/bankml</h2><div class="body"><table><thead><tr><th>run</th><th>result</th><th>when</th></tr></thead><tbody id="ci"></tbody></table></div></section>
+<section class="card w8" id="p-listen"><h2>Listen to Savante</h2><div class="body">
+<p style="margin-top:0;color:var(--muted)">New here? Savante reads herself to you — who she is, her oath, what she believes, how she
+works, why she exists — verbatim from her canon, in her voice (<span id="lv"></span>).</p>
+<div class="lbar"><button type="button" id="lall">▶ play the introduction</button><button type="button" id="lstop">■ stop</button></div>
+<div id="lchaps"></div></div></section>
 <section class="card w6" id="p-proof"><h2>Private data — commitments only</h2><div class="body">
 <p style="margin-top:0;color:var(--muted)">.history and .memory stay on this laptop. What is shown is their commitment: anyone given one
 exchange and its inclusion proof can check it against this root, without seeing the rest.</p><dl id="proof"></dl></div></section>
@@ -122,6 +162,7 @@ async function tick(){$('clock').textContent=new Date().toLocaleTimeString();
  const names=s.results.join(',');if(names!==known){known=names;const p=$('pick');p.replaceChildren();
   for(const n of s.results){const o=document.createElement('option');o.value=o.textContent=n;p.append(o)}if(!picked&&s.results.length){picked=s.results[0];rec()}}
  tr($('ci'),(s.ci.runs||[]).map(r=>[[r.title],[r.result,r.result==='success'?'run':(r.result==='failure'?'bad':'warn')],[r.when.replace('T',' ').replace('Z','')]]));
+ if(s.listen)lrender(s.listen);
  const P=s.private;dl($('proof'),[['.history records',P.history.records],['.history Merkle root',P.history.merkle_root],['.history CIDv1',P.history.file_cid],
   ['.memory notes',P.memory.records],['.memory Merkle root',P.memory.merkle_root]]);
  const a=s.savante;$('sname').textContent=a.name||'';$('skind').textContent=a.kind?'— '+a.kind:'';$('smantra').textContent=a.mantra||'';
@@ -129,6 +170,24 @@ async function tick(){$('clock').textContent=new Date().toLocaleTimeString();
  tr($('ledger'),a.ledger.map(e=>[[e.entry+'  ('+e.path+')'],[(e.ok?'✓ ':'✗ ')+e.detail,e.ok?'run':'bad']]));
  }catch(e){$('stage').textContent='offline';$('stage').className='pill bad'}}
 $('pick').addEventListener('change',e=>{picked=e.target.value;rec()});
+// Listen to Savante: one audio element, a queue of clips, the line being read highlighted
+const AU=new Audio();AU.preload='none';let LQ=[],lnow=null,lshown='';
+function lmark(li){if(lnow)lnow.classList.remove('now');lnow=li;if(li){li.classList.add('now');const d=li.closest('details');if(d)d.open=true;li.scrollIntoView({block:'nearest',behavior:'smooth'})}}
+function lnext(){const li=LQ.shift();if(!li){lmark(null);return}lmark(li);AU.src='/audio/'+li.dataset.k+'.ogg';AU.play().catch(()=>{})}
+AU.addEventListener('ended',lnext);
+function lplay(lis){AU.pause();LQ=[...lis];lnext()}
+$('lall').addEventListener('click',()=>lplay(document.querySelectorAll('#lchaps li')));
+$('lstop').addEventListener('click',()=>{LQ=[];AU.pause();lmark(null)});
+function lrender(L){const sig=JSON.stringify(L.chapters.map(c=>[c.title,!!c.rendering]));if(sig===lshown)return;lshown=sig;
+ $('lv').textContent='house stand-in '+L.voice.voice+' at '+L.voice.wpm+' wpm, said sav-ont';const box=$('lchaps');box.replaceChildren();
+ L.chapters.forEach((c,n)=>{if(c.rendering){const w=document.createElement('div');w.className='lwait';w.textContent=(n+1)+'. '+c.title+' — rendering ('+c.count+' sentences)';box.append(w);return}
+  const d=document.createElement('details');d.className='lch';const s=document.createElement('summary');const b=document.createElement('b');b.textContent=(n+1)+'. '+c.title;
+  const m=document.createElement('span');m.style.color='var(--muted)';m.textContent=(c.items.reduce((a,i)=>a+(i.seconds||0),0)/60).toFixed(1)+' min';
+  const p=document.createElement('button');p.type='button';p.textContent='▶ chapter';p.addEventListener('click',e=>{e.preventDefault();lplay(d.querySelectorAll('li'))});
+  s.append(b,m,p);const ol=document.createElement('ol');
+  for(const i of c.items){const li=document.createElement('li');li.dataset.k=i.key;li.textContent=i.text;li.title='play from here';
+   li.addEventListener('click',()=>{const all=[...document.querySelectorAll('#lchaps li')];lplay(all.slice(all.indexOf(li)))});ol.append(li)}
+  d.append(s,ol);box.append(d)})}
 // modular layout: drag a panel by its title to reorder, drag its corner to resize; kept in this browser only
 const KEY='bankml-view-layout-v1',M=document.querySelector('main');
 function save(){try{localStorage.setItem(KEY,JSON.stringify([...M.children].map(c=>({id:c.id,w:c.style.width,h:c.style.height}))))}catch(e){}}
@@ -159,7 +218,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -174,6 +233,9 @@ class H(BaseHTTPRequestHandler):
             if name in S.results_list():  # only names the directory listing produced
                 return self.send(200, "text/plain; charset=utf-8", S.results_read(name).encode())
             return self.send(404, "text/plain", b"no such record")
+        if u.path.startswith("/audio/") and u.path.endswith(".ogg"):
+            f = audio_file(u.path[len("/audio/"):-len(".ogg")])
+            return self.send(200, "audio/ogg", f.read_bytes(), cache="max-age=86400") if f else self.send(404, "text/plain", b"no such clip")
         if u.path == "/savante.png":
             rel = (CANON.ledger.get("image_candidate") or {}).get("path") or "gfx/Savante3.png"
             b = CANON.file(rel)

@@ -6,7 +6,7 @@ import json, os, sys, tempfile, threading, urllib.request, urllib.error
 from pathlib import Path
 
 tmp = Path(tempfile.mkdtemp(prefix="bankml-ui-"))
-os.environ.update(BANKML_UI_STATE=str(tmp), RAGE_PATH=str(tmp / "no-rage"), SAVANTE_CANON=str(tmp / "no-canon"))
+os.environ.update(BANKML_UI_STATE=str(tmp), RAGE_PATH=str(tmp / "no-rage"), SAVANTE_CANON=str(tmp / "no-canon"), BANKML_VOICE_DIR=str(tmp / "voice"))
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
 import savante as u  # noqa: E402
@@ -143,8 +143,29 @@ check("re-bind keeps the generation; a facet change is n+1 with parent = the pre
       m1b["bundle"]["generation"] == m1["bundle"]["generation"] and m2["bundle"]["generation"] == m1b["bundle"]["generation"] + 1
       and m2["bundle"]["parent"] == m1b["identity"]["cid"] and thot.verify(slug) == [])
 
-# the view server: fixed routes, commitments only, no traversal
+# Savante's voice: the pronunciation table, speech from markdown, one render, the view's audio gate
+import speak  # noqa: E402
+t2 = {"format": "voaice-pronunciation/1", "version": 2, "entries": [{"match": "PYTHAIML", "say": "Pith AI M L"}, {"match": "SAVANTE", "say": "Sav ont"},
+                                                                  {"match": "PYTHAI", "say": "Pith AI"}]}
+check("pronunciation: one pass, longest match first, case-insensitive", speak.say("savante and PYTHAIML and pythai", t2) == "Sav ont and Pith AI M L and Pith AI")
+check("pronunciation is idempotent (a spoken form holds no match)", speak.say(speak.say("Savante", t2), t2) == "Sav ont")
+sp = speak.speech("# Title\n\nSee [the docs](https://x.y) and `code`. Second sentence!\n\n```sh\nrm -rf /\n```\n\n| a | b |\n|---|---|\n\n- a **bold** item")
+check("speech(): code and tables dropped, links read as text, markers gone", "rm -rf" not in " ".join(sp) and "https" not in " ".join(sp)
+      and "See the docs and code." in sp and "Second sentence!" in sp and "a bold item" in sp)
+check("speech() keeps savante_sagi as written; say() speaks it as words", speak.speech("one seat of core_command, savante_sagi.") == ["one seat of core_command, savante_sagi."]
+      and speak.say("APPROVE_WITH_CONDITIONS", t2) == "APPROVE WITH CONDITIONS")
+ok_v, why_v = speak.available()
+if ok_v:
+    it = speak.render(["I am Savante."])
+    check("a statement renders to Opus in Savante's voice, cached by key", len(it) == 1 and it[0]["file"].is_file() and it[0]["file"].read_bytes()[:4] == b"OggS"
+          and speak.cached(["I am Savante."])[0]["key"] == it[0]["key"])
+else:
+    print(f"skip  voice render ({why_v})")
 import view  # noqa: E402
+check("view's audio route: only a 24-hex key the manifest lists", view.audio_file("../../etc/passwd") is None and view.audio_file("0" * 24) is None
+      and (not ok_v or view.audio_file(it[0]["key"]) is not None))
+
+# the view server: fixed routes, commitments only, no traversal
 from http.server import ThreadingHTTPServer
 srv = ThreadingHTTPServer(("127.0.0.1", 0), view.H)
 threading.Thread(target=srv.serve_forever, daemon=True).start()

@@ -134,6 +134,9 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   (pgvector/pgvectorscale) or **load** a published one back, verified byte for byte. Savante's canon is never written.
 - **iNFT**: plan and simulate an `iNFT_7857` mint from the agent's THOT bundle, get the unsigned transaction (you sign
   it), mint on a local devnet, or load an agent back from a token, verified back to the minted generation.
+- **Savante speaks**: in the card, her introduction for new participants (seven chapters from her canon, about 26
+  minutes) and her voice examples, pre-rendered in her voice, with PLAY ALL, per chapter, and from any line. DreamKnob
+  **SPEED** and **FM** knobs in the settings panel. View mode on the LAN plays the introduction too.
 - **The aivatar**: click the portrait for the agent's card, with every aspect of its persona, its verifiable identity
   (hashes, doctrine root, THOT) and its ledgered files. Choose the portrait, or upload one for a derived agent.
 - Panels resize from a refined corner handle. The side panel drags to either side (drop zones appear) or swaps with ⇄.

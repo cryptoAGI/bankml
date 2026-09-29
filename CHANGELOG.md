@@ -1,5 +1,102 @@
 # Changelog
 
+## 0.1.3 — 2026-09-28
+
+Savante gets a voice of her own: calm, confident, slower and more thoughtful. The DreamKnob controls are now in the
+card where she plays. No Rust code changed. Record: `testing/results/0.1.3.txt`.
+
+### Changed
+- **Her voice.** The eSpeak stand-in of 0.1.2 was a formant sketch and sounded harsh ("that voice is scary"). The
+  operator's direction was to use Jaimla as the template, build from Cori, and make a voice that is Savante's own:
+  - **body**: Piper `en_GB-cori-high`, trained on **public-domain** LibriVox recordings. Jaimla's own voice (Piper
+    jenny_dioco) comes from a custom-licence dataset, so under the open-source rule it serves as the template, never
+    the source. The body is rendered slower and steadier: length_scale 1.18 (about 142 wpm), noise 0.50 and timing
+    noise 0.60 (down from 0.667 and 0.8), and 0.8 s of silence after each sentence;
+  - **Jaimla as the template**: each clip's own f0 is measured and moved onto Jaimla's measured 182 Hz with
+    rubberband, formants preserved. The result is lower and grounded, not a slowed tape. Measured: f0 181–185 Hz;
+  - **SAVANTE's resonance** (the house recipe in `docspeech_voices.json`): her own voice an octave below, 80–2600 Hz,
+    heard only in echo (4 taps at 29 ms, decay 0.5), at 0.30. It is taken from the same clip, so it is locked to her
+    delivery exactly;
+  - **EQ**: SAVANTE's curve with presence +6 dB at 3 kHz and a +4 dB shelf above 5 kHz. Her brightness stays near
+    Cori's own (centroid about 2270 Hz). Forcing Jaimla's 2783 Hz took presence that turns sibilant, the opposite of
+    calm.
+
+  It is rendered on this computer (Piper's standalone MIT release and the model, in `~/.local/share/bankml/piper`,
+  nothing committed) and cached. Every clip's measured f0 and pitch ratio are in the manifest. The eSpeak stand-in
+  remains only as the fallback where Piper is absent.
+- **An oscilloscope behind the card.** A phosphor-teal trace, graticule and persistence glow behind the card's
+  translucent glass. While Savante speaks, it draws her actual waveform from a Web Audio analyser at the end of the
+  playback chain, so SPEED and FM show in it. Otherwise it idles as a slow sine sweep. It only draws while the card is
+  open and holds still under reduced motion.
+- **3D depth**: the card stands in perspective and tilts toward the pointer (up to about 5°), with a sheen that
+  follows the tilt and sections raised on a bevel (light above, shadow below) over the scope plane. There is no tilt
+  under reduced motion.
+- **PLAY plays.** In 0.1.2's design a chapter offered PLAY only once every sentence was rendered, and during a render
+  there was often nothing to queue. Now every sentence is listed, the rendered ones play at once (the rest show
+  "rendering"), and chapter headers count what is ready. Rendering runs in listening order: the voice examples, then
+  chapter 1, 2, 3 and so on. The buttons use one delegated click handler instead of inline attributes, and a clip
+  still plays if Web Audio is unavailable. Verified in headless Firefox against the real card and page script: after
+  PLAY ALL, audio advancing, the line highlighted, the knobs out.
+- **PLAY beside her name.** It reads who she is (the card's description) and ends when that ends. The next PLAY THE
+  INTRODUCTION **continues from there**, not from the start, and runs on through the introduction and her voice
+  examples until stopped. A sentence's ▶ plays from that sentence onward.
+- **Every PLAY becomes ❚❚ PAUSE while playing**, then ▶ RESUME at the exact point; the button in use is lit gold.
+- **GAIN and VOLUME knobs.** GAIN (−12 to +12 dB) sets her level into the chain; VOLUME (0–100 %) is the master out.
+  The oscilloscope reads between the two, so it shows her signal, not your listening level. Five DreamKnobs in all:
+  SPEED, FM RATE, FM DEPTH, GAIN, VOLUME.
+- **Input ready**: a slow-blinking (1.6 s), light-green, semi-transparent block cursor at the start of the empty input
+  field, with the typing caret in the same green. It holds still under reduced motion.
+- **The knobs emerge when she speaks**: no longer on the landing's settings panel. They are hidden in the card and
+  slide out, in the section that is playing, the moment PLAY is pressed.
+- **Her text is shown as written**: `savante_sagi`, `core_command` and `APPROVE_WITH_CONDITIONS` keep their
+  underscores on screen and are spoken as words. The 0.1.2 cleaner dropped intra-word underscores.
+- **The page never waits on her voice**: missing clips render in the background, and the card rebuilds on every page
+  load, so it fills in as the renders finish.
+
+## 0.1.2 — 2026-09-28
+
+Savante speaks: her introduction and her voice examples, pre-rendered in her voice, with DreamKnob controls. No Rust
+code changed. Record: `testing/results/0.1.2.txt`.
+
+### Added
+- **Savante's voice, and only hers.** The house defines SAVANTE (mindX `docspeech_voices.json`, id `savante`) as a
+  layered piper voice: Jaimla's body, a resonance an octave below in echo, breath at the edges. That voice renders on
+  the house render host. On this computer the UI uses the house's own stand-in for her, the cast entry `savante` in
+  the DeltaVerse voice index: eSpeak NG `en-gb-x-rp+jaimla` at 168 wpm, which is what `listen.html` plays for her.
+  - It is rendered here, under Node, by the same WASM build the DeltaVerse voice worker uses, with the house voice
+    files installed before the first synthesis. A test confirms the variant really applies: it changes both the
+    length and the hash of the audio.
+  - Her name is said sav-ont: the house pronunciation table is applied to what is spoken, never to what is shown.
+  - Every agent in this UI speaks with her voice.
+- **The introduction, in the card.** Seven chapters that Savante reads to a new participant, verbatim from her canon:
+  Who I am, My oath, What I believe, How I work (her `.prompt`), Why I exist (`explanation.md`), The manifesto, and
+  Savante in full. That is 272 sentences, about 26 minutes. **▶ PLAY THE INTRODUCTION** plays them all, **▶
+  chapter** plays one, and any sentence's ▶ plays from there. The line being read is highlighted and scrolled into
+  view.
+- **Her voice examples, in the card**: all 14, with PLAY ALL and a ▶ per statement.
+- **DreamKnob controls in the settings panel** (**VOICE · Savante**), built from the local `~/dreamknob` workspace
+  with React into one committed script (`ui/voice/knobs/`), as the playdocs rack is built.
+  - **SPEED**: a vintage knob from 0.5 to 2.5× with the rack's snap points, pitch preserved.
+  - **FM RATE** (0–12 Hz) and **FM DEPTH** (0–100 %): frequency modulation of her voice, an LFO sweeping a short
+    delay line. At depth 0 she is heard as rendered.
+  - Changes apply live, mid-sentence, and are remembered.
+- **Links in the card**:
+  - on Hugging Face: Savante (the Space `PYTHAI/savante`), sAGI (the skill in that Space), and Savante's loop (the
+    dataset);
+  - on GitHub: the sAGI engine (`cryptoAGI/sagi`), Savante's canon and bankml.
+
+  All were verified live before linking. sAGI has no Hub repository of its own, so its link is the skill in
+  Savante's Space.
+- **Listen to Savante, in view mode on the LAN.** The same chapters and statements, play-all, per chapter and from any
+  line, served by a fixed `/audio/<key>.ogg` route that answers only a 24-hex key listed in the voice manifest. The
+  page's CSP gains `media-src 'self'`.
+- **`ui/speak.py`**: the voice. Renders are cached by (engine, voice, rate, variant hash, table version, text) in a
+  git-ignored `ui/voice/cache/`: Gradio refuses to serve any path with a dot-directory, and the audio is not
+  source. `python3 ui/speak.py` pre-renders everything (286 statements, 27.5 minutes, 7.1 MB here). The UI renders
+  whatever is missing in the background.
+- `testing/test_ui.py`: 42 checks. The new ones cover the pronunciation (longest first, idempotent), speech from
+  markdown, one real render to Opus, and the view's audio gate.
+
 ## 0.1.1 — 2026-09-28
 
 Savante's aivatar and a layout that moves both ways. No Rust code changed. Record: `testing/results/0.1.1.txt`.

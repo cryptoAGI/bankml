@@ -1,0 +1,65 @@
+# bankml 0.1.3 — 2026-09-29T02:16:02Z · laptop (Ryzen 3 3200U). No Rust code changed since 0.1.0 (version only); the kernel records of testing/results/0.1.0.txt (and 0.0.6 for the ternary budget) stand.
+unittests: test result: ok. 37 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.33s
+testing/cli.rs: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+clippy: clean
+## testing/test_ui.py
+ok   cid_v1_raw('abc')
+ok   commitment counts 5 records, has a root and a CID
+ok   every record's inclusion proof verifies
+ok   a changed byte fails its proof
+ok   a proof for another record fails
+ok   out-of-range proof is empty
+ok   history search finds the ternary questions first (built-in engine)
+ok   empty query returns nothing
+ok   metrics: 5 exchanges, median response 24 s, all hashes match
+ok   metrics: prefill = prompt tokens / first token
+ok   .memory holds 2 notes and a prompt block
+ok   .memory remove by number
+ok   keccak256('') and ('abc') vectors
+ok   keccak256 == pycryptodome for every length 0..400
+ok   doctrine root reproduces Savante's published ledger value
+ok   derive writes persona, prompt, card, ledger; it verifies
+ok   derived identity is new; the template's bindings are not copied
+ok   agent card: ERC-8004 registration-v1, not_yet_minted, derived_from recorded
+ok   editing .prompt re-ledgers (prompt hash changes; the doctrine root, over the persona, does not)
+ok   editing a doctrine clause changes the doctrine root
+ok   a hand edit outside save() is caught by verify
+ok   preflight refuses a float
+ok   preflight refuses a missing clause
+ok   agent_dir rejects path traversal
+ok   a PNG aivatar is accepted and ledgered
+ok   the aivatar refuses a non-image
+ok   the aivatar refuses an image over 2 MB
+ok   THOT spec vector savante: bundle_root, Merkle root and identity CID
+ok   THOT spec vector jaimla: bundle_root, Merkle root and identity CID
+ok   THOT spec vector luvai: bundle_root, Merkle root and identity CID
+ok   a bankml THOT bundle verifies, with the aivatar as a facet
+ok   the bundle commits history by digest and holds none of its text
+ok   re-bind keeps the generation; a facet change is n+1 with parent = the previous CID
+ok   pronunciation: one pass, longest match first, case-insensitive
+ok   pronunciation is idempotent (a spoken form holds no match)
+ok   speech(): code and tables dropped, links read as text, markers gone
+ok   speech() keeps savante_sagi as written; say() speaks it as words
+ok   a statement renders to Opus in Savante's voice, cached by key
+ok   view's audio route: only a 24-hex key the manifest lists
+ok   view /api/state carries the .history commitment
+ok   view /api/state carries no .history content
+ok   view refuses traversal and unknown paths
+ok   view refuses POST
+all ok
+## testing/test_connectors.py
+all ok
+## testing/test_chain.py
+all ok
+## browser playback test (headless Firefox, the real card and page script)
+1 lead: playing=true label="❚❚ PAUSE" line="Savante is the read-only oversight office" lead-line=true
+2 pause: playing=false label="▶ RESUME"
+3 resume: playing=true label="❚❚ PAUSE"
+4 lead ended: playing=false label="▶ PLAY"
+5 intro continues: playing=true label="❚❚ PAUSE" line="Savante Knows." · knobs emerged=true
+## the voice
+voice: en_GB-cori-high · target f0 182.0 Hz · length_scale 1.18 · noise 0.5 0.6 · model licence: public domain (LibriVox) — rhasspy/piper-voices MODEL_CARD
+rendered so far: 150 clips (19.3 min) · body f0 median 214 Hz → shifted median 182 Hz
+(the render of all 286 statements continues in the background: python3 ui/speak.py)
+# savante canon: 0 changes (read-only check)
+input field: slow-blinking light-green semi-transparent cursor while empty (screenshot-checked in dark mode)

@@ -124,7 +124,41 @@ panel (width and height) and the chat (height). Your layout is remembered in you
 **The aivatar.** Click the agent's portrait in the side panel to open its card. The card holds the name, mantra and
 description; the oath, office and beliefs; the verifiable identity (persona sha256, doctrine root, THOT identity and
 generation, the ledger check); every aspect of the persona in collapsible sections; and every ledgered file with its
-sha256. Close it with ✕ or by clicking outside. **Agents → aivatar** chooses the portrait: one of Savante's canon
+sha256. Close it with ✕ or by clicking outside. **In the card, Savante speaks.** **Introduction**: seven chapters she reads to a new participant, verbatim from her
+canon: who she is, her oath, what she believes, her system prompt, why she exists, the manifesto, and `Savante.md`.
+**▶ PLAY THE INTRODUCTION** plays all of it (about 26 minutes). **▶ chapter** plays one, and a sentence's ▶ plays from
+there. **Voice examples**: her 14 statements, with **PLAY ALL**. Every clip is in her voice: the house stand-in
+`en-gb-x-rp+jaimla` at 168 wpm, which is what `listen.html` plays for her; her full layered voice renders on the house
+render host. Her name is said sav-ont. The card also links to her public places: the Hugging Face Space, the sAGI
+skill, her loop dataset, and the sAGI engine, her canon and bankml on GitHub.
+
+**VOICE knobs** (settings panel, DreamKnob): **SPEED** (0.5–2.5×, snap points, her pitch kept), **FM RATE** (Hz) and
+**FM DEPTH** (%) apply frequency modulation to her voice (0 = as rendered). They act live and are remembered.
+
+**Her voice** is her own, built from open parts. The body is Piper's `en_GB-cori-high` (public-domain LibriVox
+recordings), rendered slower and steadier. It is pitched onto Jaimla's measured 182 Hz with formants preserved (Jaimla
+is the template, never the source: her dataset's licence is custom). SAVANTE's octave-below resonance and EQ come from
+the house recipe. Set it up once (no sudo):
+
+```sh
+mkdir -p ~/.local/share/bankml/piper && cd ~/.local/share/bankml/piper
+gh release download 2023.11.14-2 -R rhasspy/piper -p piper_linux_x86_64.tar.gz && tar xzf piper_linux_x86_64.tar.gz
+for f in en_GB-cori-high.onnx en_GB-cori-high.onnx.json MODEL_CARD; do
+  curl -sSfLO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/$f; done
+```
+
+Without it, the house eSpeak stand-in is used. Pre-render everything once with `python3 ui/speak.py` (or in two halves
+at once: `--shard 1/2` and `--shard 2/2`); otherwise the UI renders what is missing in the background, and the card
+fills in as it goes. The DreamKnob controls (SPEED, FM RATE, FM DEPTH, GAIN, VOLUME) stay out of the way until she speaks. Press PLAY and
+they emerge in the section that is playing.
+
+**Playing.**
+- **▶ PLAY beside her name** reads who she is (the card's description) and ends.
+- **▶ PLAY THE INTRODUCTION** continues from wherever you left off and runs on until **■ STOP**.
+- A sentence's **▶** plays from that sentence onward.
+- A playing button turns into **❚❚ PAUSE**, and then into **▶ RESUME**.
+
+**Agents → aivatar** chooses the portrait: one of Savante's canon
 images (kept outside the canon), or an upload for a derived agent (PNG/JPEG/WebP, at most 2 MB), which becomes a
 ledgered facet of its THOT bundle.
 
@@ -189,6 +223,8 @@ ip -4 addr | grep inet                          # find the LAN address
 - **Release records**: every `testing/results/<version>.txt`.
 - **CI**: the last five GitHub Actions runs.
 - **Savante**: name, mantra, card status (`not_yet_minted`), doctrine root, and the ledger check, file by file.
+- **Listen to Savante**: her introduction and voice examples, for anyone watching. Play all, a chapter, or from any
+  line; the line being read is highlighted.
 - **Private data — commitments only**: the count, Merkle root and CID of `.history`, and the count and root of
   `.memory`. Never their content (§8a).
 

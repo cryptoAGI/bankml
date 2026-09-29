@@ -58,6 +58,8 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |
 | 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
 | 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml) |
+| 0.1.3 | `results/0.1.3.txt` | Savante's own voice (Cori body, Jaimla's 182 Hz, SAVANTE resonance; slower, steadier); PLAY fixed and verified in a browser; lead PLAY, pause/resume, continue-until-stopped; 5 DreamKnobs emerging on play; oscilloscope; 3D depth |
+| 0.1.2 | `results/0.1.2.txt` | Savante speaks: introduction (7 chapters) and voice examples in her voice; DreamKnob SPEED/FM; HF + GitHub links; view-mode Listen |
 | 0.1.1 | `results/0.1.1.txt` | aivatar card (every persona aspect, verifiable identity), chosen aivatar (ledgered, THOT facet), drop zones + ⇄ + refined resize handles |
 | 0.1.0 | `results/0.1.0.txt` | **milestone** — the full gate: every kernel oracle, A/Bs, budgets, and the UI, PostgreSQL and iNFT-devnet suites |
 | 0.0.9 | `results/0.0.9.txt` | custom agents (keccak256 doctrine root = Savante's), THOT manifests (= the spec's 3 test vectors), PostgreSQL publish/load (throwaway-cluster tests) |

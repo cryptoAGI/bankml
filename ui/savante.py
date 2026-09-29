@@ -680,6 +680,10 @@ CSS = """
 .bk-grip svg{flex:none;opacity:.8}.bk-grip .bk-sp{flex:1}
 .bk-swap{border:1px solid #cbd5e1;background:transparent;border-radius:6px;padding:2px 7px;font:600 12px ui-sans-serif,system-ui;color:#475569;cursor:pointer}
 .bk-swap:hover{border-color:#0f766e;color:#0f766e}
+.bk-knobs-wrap{border:1px solid #cbd5e1;border-radius:12px;padding:8px 8px 6px;background:#0b1220}
+.bk-kh{font:700 11px ui-monospace,Menlo,monospace;letter-spacing:.2em;color:#2dd4bf!important;margin:0 2px 6px}
+.bk-kn{font:10.5px ui-sans-serif,system-ui;color:#94a3b8!important;margin:4px 2px 0}
+.dark .bk-knobs-wrap{background:transparent!important;border-color:rgba(148,163,184,.35)!important}
 .bk-rz{position:absolute;right:3px;bottom:3px;width:16px;height:16px;cursor:nwse-resize;z-index:5;opacity:.45;transition:opacity .15s;touch-action:none}
 .bk-rz:hover,.bk-rz.on{opacity:1}.bk-rz svg{display:block}
 .bk-zone{position:fixed;z-index:9999;border:2px dashed rgba(15,118,110,.55);border-radius:12px;background:rgba(15,118,110,.06);
@@ -699,9 +703,16 @@ CSS = """
 .bk-modal{display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;padding:24px}
 .bk-av-t:checked ~ .bk-modal{display:flex}
 .bk-modal-bg{position:absolute;inset:0;background:rgba(2,6,23,.72);backdrop-filter:blur(4px);cursor:zoom-out}
-.bk-holo{position:relative;max-width:920px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:22px 24px 16px;color:#e2e8f0;
+.bk-3d{position:relative;max-width:920px;width:100%;max-height:88vh;border-radius:16px;transform-style:preserve-3d;
+ transform:perspective(1600px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .25s ease-out;will-change:transform;
+ box-shadow:0 30px 80px rgba(0,0,0,.65),0 12px 24px rgba(0,0,0,.45)}
+.bk-scope{position:absolute;inset:0;width:100%;height:100%;border-radius:16px;pointer-events:none;z-index:0;
+ background:radial-gradient(120% 90% at 50% 40%,#04211f 0%,#020a10 60%,#01050a 100%)}
+.bk-sheen{position:absolute;inset:0;border-radius:16px;pointer-events:none;z-index:2;
+ background:radial-gradient(60% 50% at var(--gx,50%) var(--gy,30%),rgba(255,255,255,.07),transparent 60%);mix-blend-mode:screen}
+.bk-holo{position:relative;z-index:1;max-width:920px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:22px 24px 16px;color:#e2e8f0;
  background:linear-gradient(rgba(45,212,191,.05) 1px,transparent 1px) 0 0/100% 22px,linear-gradient(90deg,rgba(45,212,191,.05) 1px,transparent 1px) 0 0/22px 100%,
- linear-gradient(160deg,rgba(15,23,42,.97),rgba(2,6,23,.97));border:1px solid rgba(45,212,191,.45);
+ linear-gradient(160deg,rgba(15,23,42,.72),rgba(2,6,23,.80));border:1px solid rgba(45,212,191,.45);backdrop-filter:blur(1.5px);
  box-shadow:0 0 0 1px rgba(217,162,58,.25),0 0 40px rgba(45,212,191,.18),inset 0 0 60px rgba(45,212,191,.05);animation:bk-glow 4s ease-in-out infinite}
 .bk-holo{scrollbar-width:thin;scrollbar-color:rgba(45,212,191,.45) transparent}
 .bk-holo::-webkit-scrollbar{width:8px}.bk-holo::-webkit-scrollbar-track{background:transparent}
@@ -709,13 +720,24 @@ CSS = """
 @keyframes bk-glow{50%{box-shadow:0 0 0 1px rgba(217,162,58,.4),0 0 60px rgba(45,212,191,.28),inset 0 0 60px rgba(45,212,191,.07)}}
 @media (prefers-reduced-motion:reduce){.bk-holo{animation:none}}
 .bk-holo *{color:#e2e8f0}
+/* depth: raised sections with a bevel — light from above, shadow below */
+.bk-holo-top,.bk-cols>div,.bk-voice,.bk-intro,.bk-links .bk-link,.bk-knobs-card,.bk-aspects details,.bk-ft{
+ box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 -1px 0 rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.35)}
+.bk-cols>div{border-radius:12px;padding:8px 12px;background:rgba(2,6,23,.35);border:1px solid rgba(45,212,191,.12)}
+.bk-holo-top{border-radius:14px;padding:10px 12px;background:rgba(2,6,23,.35);border:1px solid rgba(217,162,58,.18)}
+.bk-holo-pic{box-shadow:0 0 24px rgba(217,162,58,.35),0 10px 26px rgba(0,0,0,.55)}
+@media (prefers-reduced-motion:reduce){.bk-3d{transform:none!important;transition:none}}
 .bk-x{position:absolute;top:12px;right:14px;cursor:pointer;font-size:18px;color:#94a3b8!important;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:2px 9px}
 .bk-x:hover{color:#2dd4bf!important;border-color:#2dd4bf}
 .bk-holo-top{display:flex;gap:18px;align-items:center}
 .bk-holo-pic{flex:none;width:120px;height:120px;border-radius:50%;overflow:hidden;border:2px solid #d9a23a;box-shadow:0 0 24px rgba(217,162,58,.35)}
 .bk-holo-pic img,.bk-holo-pic .bk-glyph{width:120px;height:120px;object-fit:cover;font-size:40px}
 .bk-kicker{font:600 11px ui-monospace,Menlo,monospace;letter-spacing:.2em;text-transform:uppercase;color:#2dd4bf!important}
-.bk-holo h3{margin:4px 0 2px;font:700 28px ui-sans-serif,system-ui;letter-spacing:.02em;color:#fff!important}
+.bk-holo h3{margin:4px 0 2px;font:700 28px ui-sans-serif,system-ui;letter-spacing:.02em;color:#fff!important;display:flex;align-items:center;gap:14px}
+.bk-lead{cursor:pointer;border-radius:999px;border:1px solid #2dd4bf;background:rgba(45,212,191,.12);color:#5eead4!important;
+ font:700 12px ui-monospace,Menlo,monospace;letter-spacing:.1em;padding:6px 14px;box-shadow:0 0 16px rgba(45,212,191,.25);transition:all .15s}
+.bk-lead:hover{background:rgba(45,212,191,.24);box-shadow:0 0 22px rgba(45,212,191,.4)}
+[data-bk].bk-on{border-color:#d9a23a!important;color:#fde68a!important;background:rgba(217,162,58,.16)!important;box-shadow:0 0 18px rgba(217,162,58,.35)!important}
 .bk-mantra{font-style:italic;color:#fbbf24!important}
 .bk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .bk-chip{font:11px ui-monospace,Menlo,monospace;padding:2px 8px;border-radius:999px;border:1px solid rgba(45,212,191,.35);color:#99f6e4!important;background:rgba(45,212,191,.06)}
@@ -736,9 +758,49 @@ ol.bk-asp>li{font-size:12.5px;line-height:1.45;color:#cbd5e1!important;margin:2p
 .bk-sp{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:#cbd5e1!important;max-height:40vh;overflow:auto;margin:0}
 .bk-ft{width:100%;border-collapse:collapse;font-size:12px}.bk-ft th,.bk-ft td{border-bottom:1px solid rgba(148,163,184,.18);padding:4px 6px;text-align:left}
 .bk-ft th{font:600 11px ui-monospace,Menlo,monospace;color:#94a3b8!important}.bk-ft td.bk-mono{color:#5eead4!important;overflow-wrap:anywhere}
+.bk-knobs-card{max-width:520px;border:1px solid rgba(45,212,191,.22);border-radius:12px;background:rgba(45,212,191,.03);
+ max-height:0;opacity:0;overflow:hidden;padding:0 10px;margin:0;transform:translateY(-6px) scale(.97);
+ transition:max-height .45s ease,opacity .35s ease,transform .45s cubic-bezier(.2,.9,.3,1.2),padding .3s,margin .3s}
+.bk-knobs-card.bk-emerge{max-height:140px;opacity:1;padding:8px 10px 4px;margin:6px 0 8px;transform:none;
+ box-shadow:0 0 22px rgba(45,212,191,.18),inset 0 1px 0 rgba(255,255,255,.07)}
+.bk-pend .bk-line{opacity:.45}.bk-dim{opacity:.35;border-color:transparent!important;cursor:default}
+@media (prefers-reduced-motion:reduce){.bk-knobs-card{transition:none}}
+.bk-links{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin:4px 0 6px}
+.bk-link{display:block;text-decoration:none;border:1px solid rgba(45,212,191,.28);border-radius:10px;padding:8px 10px;background:rgba(45,212,191,.04);transition:all .15s}
+.bk-link b{display:block;font:600 13px ui-sans-serif,system-ui;color:#5eead4!important}.bk-link span{display:block;font-size:11.5px;color:#94a3b8!important;margin-top:2px}
+.bk-link:hover{border-color:#d9a23a;background:rgba(217,162,58,.08);box-shadow:0 0 14px rgba(217,162,58,.18)}
+.bk-intro{border:1px solid rgba(217,162,58,.3);border-radius:12px;padding:10px 12px;background:rgba(217,162,58,.03);margin-bottom:6px}
+.bk-chap{border:1px solid rgba(45,212,191,.18);border-radius:10px;margin:6px 0;padding:0}
+.bk-chap summary,.bk-wait{display:flex;align-items:center;gap:10px;padding:7px 10px;cursor:pointer;list-style:none}
+.bk-chap summary::-webkit-details-marker{display:none}.bk-chap summary b,.bk-wait b{flex:1;font:600 13px ui-sans-serif,system-ui;color:#e2e8f0!important}
+.bk-cn{flex:none;width:22px;height:22px;border-radius:50%;border:1px solid #d9a23a;display:flex;align-items:center;justify-content:center;font:700 11px ui-monospace,Menlo,monospace;color:#fbbf24!important}
+.bk-chap .bk-vlist{padding:0 8px 8px}.bk-wait{opacity:.55;cursor:default}
+.bk-voice{border:1px solid rgba(45,212,191,.22);border-radius:12px;padding:10px 12px;background:rgba(45,212,191,.03);margin-bottom:6px}
+.bk-vbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.bk-playall,.bk-stop,.bk-play1{cursor:pointer;border-radius:8px;font:700 12px ui-monospace,Menlo,monospace;letter-spacing:.08em}
+.bk-playall{border:1px solid #2dd4bf;background:rgba(45,212,191,.12);color:#5eead4!important;padding:6px 14px}
+.bk-playall:hover{background:rgba(45,212,191,.25);box-shadow:0 0 16px rgba(45,212,191,.3)}
+.bk-stop{border:1px solid rgba(148,163,184,.4);background:transparent;color:#cbd5e1!important;padding:6px 12px}
+.bk-vmeta{font:11px ui-monospace,Menlo,monospace;color:#94a3b8!important}.bk-vmeta code{color:#fbbf24!important}
+.bk-vlist{list-style:none;margin:0;padding:0;counter-reset:v}
+.bk-vlist li{display:flex;align-items:baseline;gap:10px;padding:5px 6px;border-radius:8px;transition:background .2s}
+.bk-vlist li.bk-now{background:rgba(217,162,58,.14);box-shadow:inset 3px 0 0 #d9a23a}
+.bk-vlist li.bk-now .bk-line{color:#fde68a!important}
+.bk-play1{flex:none;border:1px solid rgba(45,212,191,.35);background:transparent;color:#5eead4!important;padding:1px 7px;font-size:10px}
+.bk-play1:hover{background:rgba(45,212,191,.15)}
+.bk-line{flex:1;font-size:13px;line-height:1.5;color:#e2e8f0!important}.bk-dur{flex:none;font:11px ui-monospace,Menlo,monospace;color:#64748b!important}
 .bk-foot{margin-top:14px;padding-top:8px;border-top:1px solid rgba(148,163,184,.2);font:11px ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#64748b!important}
 button.primary,button.lg.primary{background:#0f766e!important;border-color:#0f766e!important;color:#fff!important}
 .tabs button.selected{border-bottom:3px solid #0f766e!important;font-weight:700}
+/* input ready: a slow-blinking, light-green, semi-transparent cursor while the field is empty */
+#bk-input label{position:relative}
+#bk-input textarea{caret-color:rgba(134,239,172,.9)}
+#bk-input textarea:placeholder-shown{text-indent:16px}
+#bk-input label:has(textarea:placeholder-shown)::after{content:"";position:absolute;left:14px;top:50%;width:9px;height:1.25em;
+ transform:translateY(-50%);border-radius:2px;background:rgba(134,239,172,.55);box-shadow:0 0 10px rgba(134,239,172,.45);
+ animation:bk-ready 1.6s ease-in-out infinite;pointer-events:none}
+@keyframes bk-ready{0%,100%{opacity:.9}50%{opacity:.08}}
+@media (prefers-reduced-motion:reduce){#bk-input label:has(textarea:placeholder-shown)::after{animation:none;opacity:.6}}
 #ragebar textarea,#ragebar input{background:#05070a!important;color:#e9ffe9!important;border:1px solid #1f3a2b!important;border-radius:8px!important;
  font:15px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace!important;caret-color:#3ddc84;padding:14px 16px!important}
 #ragebar textarea:focus,#ragebar input:focus{border-color:#3ddc84!important;box-shadow:0 0 0 3px rgba(61,220,132,.18)!important}
@@ -913,6 +975,82 @@ def chosen_image(canon: Canon):
     return (b, image_kind(b) if b else None, rel)
 
 
+LINKS = [("Savante on Hugging Face", "https://huggingface.co/spaces/PYTHAI/savante", "the public office: chat, canon, integrity"),
+         ("sAGI on Hugging Face", "https://huggingface.co/spaces/PYTHAI/savante/blob/main/skills/sagi/SKILL.md", "the sAGI skill Savante runs"),
+         ("Savante's loop", "https://huggingface.co/datasets/PYTHAI/savante-loop", "public questions and answers (dataset)"),
+         ("sAGI engine", "https://github.com/cryptoAGI/sagi", "the verdict contract, enforced in code"),
+         ("Savante's canon", "https://github.com/cryptoAGI/savante", "persona, charter, facets, ledger"),
+         ("bankml", "https://github.com/cryptoAGI/bankml", "the runtime this page runs on")]
+
+
+def links_html(derived: bool) -> str:
+    head = "derived from Savante — her public places" if derived else "Savante in public"
+    a = "".join(f"<a class='bk-link' href='{E(u)}' target='_blank' rel='noopener noreferrer'><b>{E(t)}</b><span>{E(d)}</span></a>" for t, u, d in LINKS)
+    return f"<div class='bk-h'>{E(head)}</div><div class='bk-links'>{a}</div>"
+
+
+def _clip_li(text: str, item, lead: bool = False) -> str:
+    if item:
+        return (f"<li{' class=bk-lead-line' if lead else ''}><button type='button' class='bk-play1' data-bk='from' title='play from here'>▶</button>"
+                f"<span class='bk-line'>{E(text)}</span><audio preload='none' src='/file={E(str(item['file']))}'></audio></li>")
+    return f"<li class='bk-pend'><span class='bk-play1 bk-dim'>·</span><span class='bk-line'>{E(text)}</span><span class='bk-dur'>rendering</span></li>"
+
+
+def intro_html(canon: Canon) -> str:
+    """Savante reads herself to a new participant: chapters from her canon; whatever is rendered plays now."""
+    import speak
+    chapters = speak.intro_chapters(CANON, canon.persona, canon.card)
+    total = sum(len(x) for _, x in chapters)
+    ready, parts = 0, []
+    for n, (title, sents) in enumerate(chapters, 1):
+        items = speak.cached(sents)
+        k = sum(1 for i in items if i)
+        ready += k
+        secs = sum((i["seconds"] or 0) for i in items if i)
+        state = f"{secs / 60:.1f} min" if k == len(sents) else f"{k}/{len(sents)} ready"
+        nlead = len(speak.speech(canon.card.get("description") or "")) if n == 1 else 0
+        lis = "".join(_clip_li(t, i, j < nlead) for j, (t, i) in enumerate(zip(sents, items)))
+        play = "<button type='button' class='bk-play1' data-bk='all' data-scope='details'>▶ chapter</button>" if k else ""
+        parts.append(f"<details class='bk-chap bk-voice'><summary><span class='bk-cn'>{n}</span><b>{E(title)}</b>"
+                     f"<span class='bk-dur'>{state}</span>{play}</summary><ol class='bk-vlist'>{lis}</ol></details>")
+    if ready < total:
+        speak.render_intro_async(CANON, canon.persona, canon.card)
+    note = "" if ready == total else f" · {ready}/{total} sentences rendered so far — refresh the page for more"
+    return (f"<div class='bk-h'>introduction — Savante reads herself to a new participant</div>"
+            f"<div class='bk-intro'><div class='bk-vbar'><button type='button' class='bk-playall' data-bk='all' data-scope='.bk-intro'>▶ PLAY THE INTRODUCTION</button>"
+            f"<button type='button' class='bk-stop' data-bk='stop'>■ STOP</button>"
+            f"<span class='bk-vmeta'>{len(chapters)} chapters from her canon (persona, .prompt, explanation, manifesto, Savante.md), read verbatim in her own voice{note}</span></div>"
+            f"<div class='bk-knobs-card' aria-label='voice controls'></div>"
+            + "".join(parts) + "</div>")
+
+
+def voice_html(examples: list, name: str) -> str:
+    """The persona's voice examples in Savante's voice: whatever is rendered plays now; PLAY ALL plays them in order."""
+    import speak
+    lines = [x for x in examples if isinstance(x, str) and x.strip()]
+    if not lines:
+        return (f"<div class='bk-h'>{E(name)} speaks</div><p>No voice examples in this persona yet — add them to "
+                "<code>voice_examples</code> in the .persona editor (Agents).</p>")
+    ok, why = speak.available()
+    if not ok:
+        return f"<div class='bk-h'>{E(name)} speaks</div><p>Not rendered on this computer ({E(why)}).</p>"
+    items = speak.cached(lines)
+    k = sum(1 for i in items if i)
+    if k < len(lines):
+        speak.render_async(lines)
+    v = speak.savante_voice()
+    total = sum((i["seconds"] or 0) for i in items if i)
+    who = ("Savante's own voice (Cori's body, Jaimla's pitch, SAVANTE's resonance; slower, steadier)" if v.get("model")
+           else f"the house stand-in {E(v['voice'])} at {v['wpm']} wpm")
+    return (f"<div class='bk-h'>{E(name)} speaks — every voice example, pre-rendered</div>"
+            f"<div class='bk-voice'><div class='bk-vbar'>"
+            f"<button type='button' class='bk-playall' data-bk='all' data-scope='.bk-voice'>▶ PLAY ALL</button>"
+            f"<button type='button' class='bk-stop' data-bk='stop'>■ STOP</button>"
+            f"<span class='bk-vmeta'>{k}/{len(lines)} ready · {total:.0f} s · {who} · said sav-ont</span></div>"
+            f"<div class='bk-knobs-card' aria-label='voice controls'></div>"
+            f"<ol class='bk-vlist'>{''.join(_clip_li(t, i) for t, i in zip(lines, items))}</ol></div>")
+
+
 # ── the aivatar: click the portrait for the agent's card (pure CSS toggle; the image is embedded, never served) ──
 def aivatar_html(canon: Canon) -> str:
     import base64
@@ -957,27 +1095,35 @@ def aivatar_html(canon: Canon) -> str:
                       for k, v in p.items() if k not in shown)
     aspects += f"<details><summary>system_prompt</summary><div><pre class='bk-sp'>{E(p.get('system_prompt', ''))}</pre></div></details>"
     files = "".join(f"<tr><td>{E(str(k))}</td><td>{E(str(pth))}</td><td>{E(str(n))}</td><td class='bk-mono'>{E(str(h))}</td></tr>" for k, pth, n, h in arts)
+    voice = voice_html(p.get("voice_examples") or [], name)
+    lead_btn = ("<button type='button' class='bk-lead' data-bk='lead' title='hear who she is'>▶ PLAY</button>" if not slug else "")
+    intro = intro_html(canon) if not slug else ""
+    links = links_html(bool(slug))
     return f"""<div class='bk-av'>
 <input type='checkbox' id='bk-av-open' class='bk-av-t'>
 <label for='bk-av-open' class='bk-av-pic' title='open {E(name)}'s card'>{pic}<span class='bk-av-cap'>{E(name)} · open the card</span></label>
 <div class='bk-modal'><label for='bk-av-open' class='bk-modal-bg'></label>
+<div class='bk-3d'><canvas class='bk-scope' aria-hidden='true'></canvas><div class='bk-sheen'></div>
 <div class='bk-holo' role='dialog' aria-label='{E(name)}'>
 <label for='bk-av-open' class='bk-x' title='close'>✕</label>
 <div class='bk-holo-top'><div class='bk-holo-pic'>{pic}</div><div>
 <div class='bk-kicker'>{E(p.get('kind', ''))} · {E(card.get('type', '').split('#')[-1] or 'agent')}</div>
-<h3>{E(name)}</h3><div class='bk-mantra'>{E(p.get('mantra', ''))}</div>
+<h3>{E(name)}{lead_btn}</h3><div class='bk-mantra'>{E(p.get('mantra', ''))}</div>
 <div class='bk-chips'>{attrs}</div></div></div>
 <p class='bk-desc'>{E(card.get('description') or '')}</p>
 <div class='bk-cols'><div><div class='bk-h'>oath</div><p>{E(p.get('oath', ''))}</p>
 <div class='bk-h'>office</div><p>primary skill: {E(str((p.get('skills') or {}).get('primary', '—')))}<br>scope: {E(str((p.get('safety') or {}).get('scope', '—')))}</p>
 <div class='bk-h'>beliefs</div><ul>{''.join(f'<li>{E(b)}</li>' for b in beliefs)}</ul></div>
 <div><div class='bk-h'>identity — verifiable, not asserted</div><dl class='bk-hash'>{dl}</dl></div></div>
+{links}
+{intro}
+{voice}
 <div class='bk-h'>every aspect of the persona</div>
 <div class='bk-aspects'>{aspects}</div>
 <div class='bk-h'>ledgered files</div>
 <table class='bk-ft'><tr><th>facet</th><th>file</th><th>bytes</th><th>sha256</th></tr>{files}</table>
 <div class='bk-foot'>portrait: {E(str(img_label or 'none'))} · the canon is read-only · every value above is re-derived from its files · nothing here mints</div>
-</div></div></div>"""
+</div></div></div></div>"""
 
 
 # Gradio 3 has no layout API: this runs once in the page. Drag the side panel's grip to either side of the chat;
@@ -1033,11 +1179,161 @@ LAYOUT_JS = """() => {
     const v = st[key];
     if (v) { if (v.w) { el.style.width = v.w; el.classList.add('bk-sized') } if (v.h) el.style.height = v.h }
   };
+  // Savante's voice: the DreamKnob controls, and the player every card's PLAY buttons use
+  try {
+    if (!window.SavanteKnobs) (0, eval)(__KNOBS__);
+    // the knobs live in the card and emerge when she starts to speak (mounted then, not before)
+    window.bkEmerge = (from) => {  // only the section that is playing shows its knobs
+      const sec = from && (from.closest('.bk-intro') || from.closest('.bk-voice:not(.bk-chap)'));
+      const holo = (from && from.closest('.bk-holo')) || document;
+      holo.querySelectorAll('.bk-knobs-card').forEach(el => {
+        const here = sec && sec.contains(el);
+        if (here && window.SavanteKnobs) SavanteKnobs.mount(el, 58);
+        el.classList.toggle('bk-emerge', !!here);
+      });
+    };
+  } catch (e) { console.warn('voice knobs', e) }
+  if (!window.bkPlayer) window.bkPlayer = (() => {
+    let ctx = null, lfo, depth, delay, pre, vol, cur = null, queue = [];
+    const src = new WeakMap();
+    const v = () => ({ speed: 1, fmRate: 5, fmDepth: 0, gain: 0, volume: 80, ...(window.bkVoice || {}) });
+    const chain = () => {
+      if (ctx) return;
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      delay = ctx.createDelay(0.05); delay.delayTime.value = 0.006;       // the FM line: a short delay...
+      lfo = ctx.createOscillator(); depth = ctx.createGain();              // ...whose length an LFO sweeps
+      lfo.connect(depth); depth.connect(delay.delayTime); lfo.start();
+      window.bkAnalyser = ctx.createAnalyser(); bkAnalyser.fftSize = 2048; bkAnalyser.smoothingTimeConstant = 0;
+      pre = ctx.createGain(); pre.connect(delay);                          // GAIN, into the chain
+      vol = ctx.createGain();                                              // VOLUME, the master out
+      delay.connect(bkAnalyser); bkAnalyser.connect(vol); vol.connect(ctx.destination);
+    };
+    const apply = () => {
+      const x = v();
+      if (ctx) { lfo.frequency.setTargetAtTime(Math.max(0.01, +x.fmRate || 0), ctx.currentTime, 0.02);
+                 depth.gain.setTargetAtTime(0.0025 * Math.max(0, Math.min(100, +x.fmDepth || 0)) / 100, ctx.currentTime, 0.02);
+                 pre.gain.setTargetAtTime(Math.pow(10, Math.max(-12, Math.min(12, +x.gain || 0)) / 20), ctx.currentTime, 0.02);
+                 vol.gain.setTargetAtTime(Math.max(0, Math.min(100, +x.volume)) / 100, ctx.currentTime, 0.02); }
+      else if (cur) cur.volume = Math.max(0, Math.min(1, (+x.volume) / 100));   // no Web Audio: volume still works
+      if (cur) { cur.preservesPitch = true; cur.mozPreservesPitch = true; cur.webkitPreservesPitch = true; cur.playbackRate = +x.speed || 1; }
+    };
+    window.addEventListener('bk-voice', apply);
+    const mark = (a, on) => { const li = a && a.closest('li'); if (li) li.classList.toggle('bk-now', on) };
+    const play = (a, then) => {
+      try {
+        chain(); if (ctx.state === 'suspended') ctx.resume();
+        if (!src.has(a)) { const s = ctx.createMediaElementSource(a); s.connect(pre); src.set(a, s) }
+      } catch (err) { console.warn('bankml voice: Web Audio unavailable, playing plain', err) }
+      cur = a; apply(); a.currentTime = 0; mark(a, true);
+      window.bkPlaying = true;
+      a.onended = () => { mark(a, false); window.bkPlaying = false; if (then) then() };
+      const d = a.closest('details'); if (d && !d.open) d.open = true;
+      const li = a.closest('li'); if (li && li.scrollIntoView) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      a.play().catch(() => mark(a, false));
+    };
+    const stop = () => { queue = []; window.bkPlaying = false; if (cur) { cur.onended = null; cur.pause(); mark(cur, false) } cur = null };
+    // one delegated listener: PLAY buttons work however the card's HTML was inserted
+    let btn = null, paused = false, lastDone = null;
+    const label = (b, on) => {
+      if (!b) return;
+      if (!b.dataset.label) b.dataset.label = b.textContent;
+      const small = b.dataset.label.trim() === '▶';
+      b.textContent = on === 'play' ? (small ? '❚❚' : '❚❚ PAUSE') : on === 'paused' ? (small ? '▶' : '▶ RESUME') : b.dataset.label;
+      b.classList.toggle('bk-on', !!on);
+    };
+    const finish = () => { label(btn, null); btn = null; paused = false; cur = null; window.bkPlaying = false };
+    const run = (b, list) => {
+      stop(); label(btn, null); btn = b; label(b, 'play'); if (window.bkEmerge) window.bkEmerge(b);
+      queue = list.filter(Boolean);
+      const next = () => { const a = queue.shift(); if (a) play(a, () => { lastDone = a; next() }); else finish() };
+      next();
+    };
+    const holoOf = (b) => b.closest('.bk-holo');
+    const introAll = (h) => [...h.querySelectorAll('.bk-intro audio')];
+    const exAll = (h) => [...h.querySelectorAll('.bk-voice:not(.bk-chap) audio')];
+    document.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('[data-bk]');
+      if (!b || !b.closest('.bk-holo')) return;
+      e.preventDefault(); e.stopPropagation();
+      const act = b.dataset.bk, h = holoOf(b);
+      if (act === 'stop') { stop(); label(btn, null); btn = null; return }
+      if (b === btn && cur) {                       // the playing button is a pause button
+        if (paused) { paused = false; cur.play(); label(b, 'play'); window.bkPlaying = true }
+        else { paused = true; cur.pause(); label(b, 'paused'); window.bkPlaying = false }
+        return;
+      }
+      if (act === 'lead') return run(b, [...h.querySelectorAll('.bk-lead-line audio')]);   // who she is, then it ends
+      if (act === 'all' && b.dataset.scope === 'details') return run(b, [...b.closest('details').querySelectorAll('audio')]);
+      if (act === 'all' && b.dataset.scope === '.bk-voice') return run(b, exAll(h));
+      if (act === 'all') {                          // the introduction: continue after what was heard, on until stopped
+        const all = introAll(h).concat(exAll(h)), k = lastDone ? all.indexOf(lastDone) : -1;
+        return run(b, all.slice(k >= 0 && k < all.length - 1 ? k + 1 : 0));
+      }
+      if (act === 'from') { const all = introAll(h).concat(exAll(h)), a = b.closest('li').querySelector('audio'); return run(b, all.slice(Math.max(0, all.indexOf(a)))) }
+    }, true);
+    return { stop: () => { stop(); label(btn, null); btn = null } };
+  })();
+  // the oscilloscope behind the card: her waveform while she speaks, a slow idle sweep otherwise
+  if (!window.bkScope) window.bkScope = (() => {
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let buf = null; const t0 = performance.now();
+    const draw = () => {
+      for (const c of document.querySelectorAll('.bk-scope')) {
+        if (!c.offsetParent) continue;                      // the card is closed: nothing to draw
+        const r = c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+        if (c.width !== Math.round(r.width * dpr)) { c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr) }
+        const g = c.getContext('2d'), W = c.width, H = c.height;
+        g.fillStyle = 'rgba(1,8,12,0.22)'; g.fillRect(0, 0, W, H);          // phosphor persistence
+        g.strokeStyle = 'rgba(45,212,191,0.06)'; g.lineWidth = 1;          // graticule
+        g.beginPath(); for (let i = 1; i < 10; i++) { const x = W * i / 10; g.moveTo(x, 0); g.lineTo(x, H) }
+        for (let j = 1; j < 8; j++) { const y = H * j / 8; g.moveTo(0, y); g.lineTo(W, y) } g.stroke();
+        const live = window.bkAnalyser && window.bkPlaying;
+        g.lineWidth = 2.2 * dpr; g.strokeStyle = live ? 'rgba(94,234,212,0.95)' : 'rgba(45,212,191,0.35)';
+        g.shadowColor = live ? 'rgba(45,212,191,0.9)' : 'rgba(45,212,191,0.4)'; g.shadowBlur = 14 * dpr;
+        g.beginPath();
+        if (live) {
+          buf = buf || new Float32Array(bkAnalyser.fftSize); bkAnalyser.getFloatTimeDomainData(buf);
+          for (let i = 0; i < buf.length; i++) { const x = W * i / (buf.length - 1), y = H / 2 - buf[i] * H * 0.42; i ? g.lineTo(x, y) : g.moveTo(x, y) }
+        } else {
+          const t = (performance.now() - t0) / 1000;
+          for (let i = 0; i <= 240; i++) { const u = i / 240, x = W * u;
+            const y = H / 2 + Math.sin(u * 14 + t * 1.4) * H * 0.035 * (0.6 + 0.4 * Math.sin(t * 0.7 + u * 3)); i ? g.lineTo(x, y) : g.moveTo(x, y) }
+        }
+        g.stroke(); g.shadowBlur = 0;
+      }
+      if (!still) requestAnimationFrame(draw);
+    };
+    requestAnimationFrame(draw);
+    // depth: the card tilts toward the pointer, and the sheen follows
+    document.addEventListener('pointermove', (e) => {
+      if (still) return;
+      for (const s3 of document.querySelectorAll('.bk-3d')) {
+        if (!s3.offsetParent) continue;
+        const r = s3.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+        const cx = Math.max(-0.5, Math.min(0.5, x - 0.5)), cy = Math.max(-0.5, Math.min(0.5, y - 0.5));
+        s3.style.setProperty('--ry', (cx * 9).toFixed(2) + 'deg'); s3.style.setProperty('--rx', (-cy * 7).toFixed(2) + 'deg');
+        s3.style.setProperty('--gx', (x * 100).toFixed(1) + '%'); s3.style.setProperty('--gy', (y * 100).toFixed(1) + '%');
+      }
+    }, { passive: true });
+    return true;
+  })();
   handle(side, 'side', 'xy');
   if (chat) handle(chat, 'chat', 'y');
   if (st.side === 'left') row.prepend(side);
   return [];
 }"""
+
+
+KNOBS_JS = Path(__file__).resolve().parent / "voice" / "knobs" / "savante_knobs.js"
+
+
+def layout_js() -> str:
+    """LAYOUT_JS with the DreamKnob bundle embedded (Gradio 3 serves no page scripts of ours)."""
+    try:
+        src = KNOBS_JS.read_text(encoding="utf-8")
+    except OSError:
+        src = ""
+    return LAYOUT_JS.replace("__KNOBS__", json.dumps(src))
 
 
 def view_tabs(gr, canon: Canon):
@@ -1072,7 +1368,7 @@ def build(canon: Canon, mode: str):
             with gr.Row(elem_id="bk-row"):
                 with gr.Column(scale=3, elem_id="bk-main"):
                     chat = gr.Chatbot(value=turns0, height=540, label="Savante (draft)", elem_id="bk-chat")
-                    msg = gr.Textbox(placeholder="Ask Savante — e.g. review: is this model ready to serve?", show_label=False)
+                    msg = gr.Textbox(placeholder="Ask Savante — e.g. review: is this model ready to serve?", show_label=False, elem_id="bk-input")
                     with gr.Row():
                         send, stop, new = gr.Button("Send", variant="primary"), gr.Button("Stop"), gr.Button("New session")
                 with gr.Column(scale=1, elem_id="bk-side"):
@@ -1140,7 +1436,8 @@ def build(canon: Canon, mode: str):
         stage, mach, log, ci = view_tabs(gr, canon)
         demo.load(lambda: (live_stage(), machine(), live_tail(), ci_status()), None, [stage, mach, log, ci], every=2, show_progress=False)
         demo.load(timer_md, None, timer, every=1, show_progress=False)
-        demo.load(None, None, None, _js=LAYOUT_JS)
+        demo.load(lambda: aivatar_html(canon), None, aiv, show_progress=False)  # the card reflects whatever has rendered by now
+        demo.load(None, None, None, _js=layout_js())
         with gr.Tab("Verifier"):
             out = gr.Textbox(label="bind/savante_verify.py (offline; exit 0 = APPROVE)", lines=14)
 
@@ -1488,7 +1785,9 @@ def main():
         demo.queue(concurrency_count=4)
     except TypeError:
         demo.queue(default_concurrency_limit=4)
-    demo.launch(server_name=a.host, server_port=a.port, show_api=False)
+    import speak
+    speak.VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    demo.launch(server_name=a.host, server_port=a.port, show_api=False, allowed_paths=[str(speak.VOICE_DIR)])
 
 
 if __name__ == "__main__":
