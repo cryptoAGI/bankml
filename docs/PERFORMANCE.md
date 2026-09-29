@@ -113,7 +113,8 @@ order as a real token touches them; llama-bench run immediately before and after
   *1-bit* token on three threads (~2 tok/s) — before attention, normalisation and the rest of the forward pass, which
   bankml does not have yet (phase P3), so the ceiling is a matmul bound, not an end-to-end rate.
 - bankml gains little from threads here (1.34× from 1 to 3) — the signature of a memory-bandwidth-bound kernel on a
-  2-core / 4-thread part.
+  2-core / 4-thread part. (0.0.2 harness, before the thread pool; superseded by the 0.0.3 section below, which finds
+  both kernels compute-bound.)
 - Method notes: unprivileged `perf` is blocked on this machine (paranoid = 4), so the matmul share comes from same-clock
   bracketing, not a cycle profile. A second 1-thread sequence was disturbed by other load and is not used.
 
@@ -131,6 +132,8 @@ with kernel. Laptop, two runs, min s/token; the full output is in `testing/resul
 | 2 | 2.65 | **0.31** | 0.45–0.46 | 0.43–0.44 |
 | 3 | 2.27–2.36 | **0.23–0.25** | 0.34–0.35 | 0.34–0.35 |
 | 4 | 2.11 | **0.23** | 0.34–0.35 | 0.36 |
+
+*These whole-token figures were measured in the 0.0.3–0.0.6 gate records with the model resident in memory. The gates since 0.1.0 measure 4.5–5.2 s per token (1.1–1.5× the reference) because this laptop can no longer keep the 2.3 GB ternary file in its page cache (other applications hold the memory; 1.04 of 2.31 GB stayed resident after a full read, 2026-09-29), so both runtimes wait on the disk; the per-matmul A/B on cached tensors still shows 9.8×.*
 
 - **Ternary is now cheaper than 1-bit.** At 3 threads bankml's ternary matmuls (0.23–0.25 s) take less time than ggml's
   1-bit ones (0.34–0.35 s), although the ternary weights are twice the bytes. The ternary matmul-only ceiling is
@@ -193,3 +196,29 @@ python3 testing/guard_agree.py target/release/bankml [FILE.gguf ...]            
 
 The oracle and A/B tests need the model files under `.models/` (fetched from the PYTHAI forks above and checked
 against their sha256) and the b11192 release directory. They are `#[ignore]`d so a plain `cargo test` stays offline.
+
+## 0.1.8 – 0.2.0: the gateway, the pin, restarts, and what the laptop can hold
+
+Measured on the same Ryzen 3 3200U, on fixed resources where stated (`testing/pinned.sh`: cores pinned, memory capped
+in a cgroup, load recorded).
+
+| what | before | after | how measured |
+|---|---|---|---|
+| sha256 pin of a 248 MB model (warm cache) | 1.25 s (portable) | **0.23 s** (SHA-NI), 5.5× | interleaved, 3 runs each (0.1.8) |
+| sha256 pin of the 1.16 GB 8B model | — | **2.9 s**, equal to `sha256sum` and the published pin | 0.1.8 |
+| carrier restart (hash + load), 8B | 25 s (0.1.7) | **7.0 s** | `_start_carrier`, 0.1.8 |
+| first answer after an engine restart (Savante's 282-token system prompt, same question, temperature 0) | 132.3 s (prefill 118 s, 315 tokens) | **15.4 s** (restore 0.05 s, prefill 1.2 s, 1 token), identical answer | slot save / restore, 0.1.9 |
+| the gateway's own cost per request | — | **0.71 ms** (`/health` 1.08 ms through serve vs 0.37 ms direct) | 200 requests, 0.1.9 |
+| cold vs warm hashing (1.7B, pinned) | cold 0.68–0.72 s (364 MB/s) | warm 0.59–0.78 s (419 MB/s) | `posix_fadvise(DONTNEED)` before each cold run; no read-ahead hint adopted |
+| n-gram speculation (8B, 3 prompts × 64 tokens, pinned 2 cores, 2.5 GB) | baseline 0.36–1.40 tok/s | ahead in 5 of 6 pairs, +0.01 to +0.36; one −0.06 | token-identical; not beyond this laptop's noise → opt-in |
+| draft-model speculation (Bonsai-1.7B for 8B) | 0.47 tok/s | 0.39 / 0.53 | token-identical; no gain → not adopted |
+| bge-m3 embedding (Ollama) | — | first call 9.2 s (load), then 1.40 s for 3 texts; 1.14 GB while loaded | 0.1.9 |
+| the `Q2_0` drop-in for llama.cpp (`upstream/`) | ggml shipped scalar 0.461 s | **0.134 s** (3.4×) per 200,000 × 4096-wide rows | bit-exact 200,000/200,000, pinned (0.2.0) |
+
+**The whole-token ternary budget on this laptop today.** The gates since 0.1.0 record 4.5–5.2 s per ternary token at
+three threads for bankml, and 1.1–1.5× the reference, not the 0.23–0.25 s of the 0.0.3–0.0.6 records. The reason was
+measured on 2026-09-29. With the chat engine resident and other applications holding memory, the 2.31 GB ternary file
+does not stay in the page cache: 0.49 GB was resident, and after a full read 1.04 GB. Every token then re-reads most of
+the weights from disk, and both runtimes wait on it. The per-matmul A/B on cached tensors still shows 9.8× (0.1.8
+gate). The whole-token figure needs a machine with at least 3 GB free to be re-measured (docs/TODO.md).
+

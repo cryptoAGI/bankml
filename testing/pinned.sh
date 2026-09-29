@@ -8,8 +8,10 @@
 #   BANKML_PIN_CPUS=2,3 BANKML_PIN_MEM=2500M testing/pinned.sh <command …>
 set -euo pipefail
 # default: the last two CPUs this shell is ALLOWED to use (a cpuset may start anywhere, e.g. 4-7)
-allowed=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
-cpus=${BANKML_PIN_CPUS:-$(echo "$allowed" | tr ',' '\n' | tail -2 | paste -sd,)}
+last_two() {  # expand this shell's Cpus_allowed_list (e.g. "0-3" or "4-7,10") and keep the last two
+  awk '/^Cpus_allowed_list/{n=split($2,r,","); for(i=1;i<=n;i++){split(r[i],b,"-"); e=(b[2]==""?b[1]:b[2]); for(c=b[1];c<=e;c++) print c}}' /proc/self/status | tail -2 | paste -sd,
+}
+cpus=${BANKML_PIN_CPUS:-$(last_two)}
 mem=${BANKML_PIN_MEM:-2500M}
 state() { echo "# $1: load $(cut -d' ' -f1-3 /proc/loadavg) · MemAvailable $(awk '/MemAvailable/{printf "%.2f GB", $2/1e6}' /proc/meminfo) · cpus $cpus · mem cap $mem"; }
 state before

@@ -59,7 +59,7 @@ Start here, then go where your question is:
 
 Since 0.0.3 the kernels run on a zero-dependency thread pool: one ternary token's matmuls take **0.23–0.25 s** on
 three threads, less than llama.cpp needs for the *1-bit* model's (0.34 s). Every release's test record is in
-[testing/results/](testing/results/).
+[testing/results/](testing/results/). Those whole-token figures were measured in the 0.0.3–0.0.6 gate records with the model resident in memory. The gates since 0.1.0 measure 4.5–5.2 s per token (1.1–1.5× the reference) because this laptop can no longer keep the 2.3 GB ternary file in its page cache (other applications hold the memory; 1.04 of 2.31 GB stayed resident after a full read, 2026-09-29), so both runtimes wait on the disk; the per-matmul A/B on cached tensors still shows 9.8× (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 
 Every number above is measured and reproducible — the tables, machines and commands are in
 **[PERFORMANCE.md](docs/PERFORMANCE.md)**. The design, the method and the literature are in the technical report,
@@ -96,7 +96,7 @@ Since 0.0.6 bankml answers through the reference engine (P0), behind its gate an
 pass is the next phase. The whole-model budget says what that can reach: the ternary matrix work for one token takes
 **0.23–0.25 s** against llama.cpp's **2.2–2.4 s** on three threads, a matmul-bound ceiling of about **4 tokens/s**
 against **0.4**. Five more bit-exact kernel variants were measured in 0.0.4–0.0.5 and none was reliably faster; on
-the test laptop both kernels are compute-bound, at the core's instruction limit (see TECHNICAL §IV.5).
+the test laptop both kernels are compute-bound, at the core's instruction limit (see TECHNICAL §IV.5). (Measured with the model resident in memory, 0.0.3–0.0.6; on this laptop today it no longer fits in the page cache, and the whole-token figure is disk-bound — PERFORMANCE.md.)
 
 ## Releases
 
@@ -106,6 +106,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [**0.2.0**](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.0) | **milestone**: every document checked against the code and records (23 corrections); the fourth audit fixed; bankml's ternary kernel prepared for llama.cpp (`upstream/`, bit-exact 200,000/200,000, 3.4× the shipped scalar path) |
 | [0.1.9](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.9) | the system prompt's KV saved across restarts: first answer after a restart 132 s → 15 s, identical; history counted in the engine's own tokens and never silently dropped; the third audit fixed; bge-m3 live |
 | [0.1.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.8) | speed on fixed resources: SHA-NI pin 5.5× (a server start 25 s → 7 s); a chat window that keeps the prompt cache warm (8 moves in 60 turns, not 48); CPU/RAM sliders with bankml's own psutil (`sys.rs`); n-gram speculation opt-in; `MIT OR Apache-2.0`; docs in `docs/` |
 | [0.1.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.7) | the second audit (gateway, chat path, commitments, agents, PostgreSQL, chain) fixed and tested; receipts bound to the request; RFC 6962 Merkle tree; bge-m3 embedding ([embedding.md](docs/embedding.md)); [research.md](docs/research.md) and [oracles.md](docs/oracles.md) |
@@ -237,6 +238,7 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `LICENSING.md` | the licence layers: `MIT OR Apache-2.0`, key handling `GPL-3.0-only`, AGPL walled off |
 | `sys.rs` | bankml's psutil: memory, cores, a process's resident memory and CPU time, from `/proc` (0.1.8) |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
+| `upstream/` | the AVX2 `Q2_0` kernel prepared for llama.cpp, its bit-exact harness against the shipped library, and why ([upstream/README.md](upstream/README.md)) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
 
 Changes by release are in **[CHANGELOG.md](CHANGELOG.md)**.

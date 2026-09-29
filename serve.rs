@@ -154,10 +154,20 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let live = Arc::new(AtomicUsize::new(0));
     for mut c in l.incoming().flatten() {
         if live.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
-            // read what the client already sent (briefly) before answering, so the 503 is not lost to a reset
-            let _ = c.set_read_timeout(Some(Duration::from_millis(100)));
-            let _ = std::io::copy(&mut (&c).take(64 << 10), &mut std::io::sink());
-            let _ = respond(&mut c, 503, "text/plain", b"bankml serve: too many connections");
+            // off the accept thread, with one overall deadline: read what the client already sent (so the 503 is not
+            // lost to a reset), answer, close — a slow client cannot hold the accept loop
+            std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_millis(200);
+                let mut buf = [0u8; 4096];
+                let _ = c.set_read_timeout(Some(Duration::from_millis(50)));
+                while Instant::now() < deadline {
+                    match c.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+                let _ = respond(&mut c, 503, "text/plain", b"bankml serve: too many connections");
+            });
             continue;
         }
         live.fetch_add(1, Ordering::SeqCst);

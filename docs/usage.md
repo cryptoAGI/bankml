@@ -6,7 +6,7 @@ watch the testing on your network. It also says what each part does, what it che
 - [1. What runs where](#1-what-runs-where)
 - [2. What you need](#2-what-you-need)
 - [3. Build and check bankml](#3-build-and-check-bankml)
-- [4. Verify the model](#4-verify-the-model)
+- [4. Get a model (the importer), and verify it](#4-get-a-model-the-importer-and-verify-it)
 - [5. Start `bankml serve`](#5-start-bankml-serve)
 - [6. Talk to Savante (interact mode)](#6-talk-to-savante-interact-mode)
 - [7. Let others watch (view mode, on the LAN)](#7-let-others-watch-view-mode-on-the-lan)
@@ -177,8 +177,9 @@ and every clip are committed in the repository (`ui/voice/export/`, `ui/voice/ca
 plays without rendering anything. **Voice examples**: her statements, with **PLAY ALL**. Her name is said sav-ont. The card also links to her public places: the Hugging Face Space, the sAGI
 skill, her loop dataset, and the sAGI engine, her canon and bankml on GitHub.
 
-**VOICE knobs** (settings panel, DreamKnob): **SPEED** (0.5–2.5×, snap points, her pitch kept), **FM RATE** (Hz) and
-**FM DEPTH** (%) apply frequency modulation to her voice (0 = as rendered). They act live and are remembered.
+**VOICE knobs** (DreamKnob, in the VOICE dock described below): **SPEED** (0.5–2.5×, snap points, her pitch kept),
+**FM RATE** (Hz) and **FM DEPTH** (%) apply frequency modulation to her voice (0 = as rendered), **GAIN** (±12 dB)
+and **VOLUME**. They act live and are remembered.
 
 **Her voice** is her own, built from open parts. The body is Piper's `en_GB-cori-high` (public-domain LibriVox
 recordings), rendered slower and steadier. It is pitched onto Jaimla's measured 182 Hz with formants preserved (Jaimla
@@ -235,8 +236,9 @@ ledgered facet of its THOT bundle.
     e.g. "weights 1.16 GB + engine 0.25 GB + KV cache 0.57 GB → a 3840-token context", or how much a model needs at
     least.
   - **Apply** restarts the engine with those settings, using the same verified switch as the Models tab. It is
-    refused while an answer is being written, falls back to the defaults if the engine will not start, and is
-    remembered for every later start.
+    saved but not applied while an answer is being written (the engine restarts with them at the next switch). If
+    the engine will not start with them, **your previous settings** are restored and both errors are reported. The
+    choice is remembered for every later start, and re-planned for each model's own size.
   - **Usage now** reads what the engine uses: resident memory and CPU per process, and free memory. The numbers come
     from `bankml serve` itself (`GET /bankml/usage`, `sys.rs`), which reads `/proc` the way psutil does, with no
     dependencies.
@@ -295,8 +297,9 @@ Every panel can be dragged by its title to a new place and resized from its corn
 The layout lives in each viewer's own browser.
 
 **Why view mode is not Gradio:** the Gradio installed here (3.37) has path-traversal bugs that let a client read files
-from the host (e.g. CVE-2023-51449, fixed in 4.11). `ui/view.py` is the Python standard library with four fixed GET
-routes (`/`, `/api/state`, `/api/result?name=` for a listed record only, `/savante.png`). Every other path is a
+from the host (e.g. CVE-2023-51449, fixed in 4.11). `ui/view.py` is the Python standard library with seven fixed GET
+routes: `/`, `/api/state`, `/api/result?name=` (a listed record only), `/knobs.js`, `/audio/<clip>.ogg` (a clip the
+voice manifest lists), `/export/<name>.opus` (a complete, current export only) and `/savante.png`. Every other path is a
 404, POST is refused, and the page renders all data as text under a strict Content-Security-Policy. Keep interact mode
 on `127.0.0.1`.
 
@@ -326,18 +329,27 @@ Nothing is ever written into the canon (`~/savante`). What the UI writes lives i
   "response", "session", "sent_at", "response_sha256"}}`.
 - **`Savante.prompt`**: the Space template's prompt, cached the first time it is chosen.
 
-The model sees at least the last 12 exchanges (each cut to 4,000 characters), as in the Hugging Face template.
-Since 0.1.9 the history is counted in **the engine's own tokens** against the context it actually runs with. As
-many recent exchanges as fit are sent, and when some are left out the answer's footer says how many ("history: 4 of
-13 exchanges fit the engine's 2048-token context — raise the RAM budget in Resources for more"). **After an engine
+**The history the model sees.**
+- **Without a context limit:** the last 12–17 exchanges, each cut to 4,000 characters. The window starts at 12
+  exchanges and moves in steps of six, so between moves each prompt is the previous prompt plus one exchange, and
+  the engine's prompt cache reuses all of it.
+- **Within the engine's context.** The window must also fit the context the engine actually runs with (`n_ctx` from
+  `/props`), counted by its own tokenizer.
+  - The start stays where it was last turn while that still fits, so the cache is reused.
+  - When it no longer fits, the start jumps so that the newest half of what fits is kept, leaving room for the next
+    turns. When only two or three exchanges fit, all of them are kept.
+  - The answer's footer then says so: "history: 4 of 13 exchanges fit the engine's 2048-token context — raise the
+    RAM budget in Resources for more".
+  - Exchanges older than the 12–17 window are dropped without a note, as they always were.
+- **If the system prompt and the question alone do not fit,** the answer is refused with the numbers.
+- On a 2048-token context the persona prompt plus `.memory` leaves room for only a few exchanges; 4096 tokens (about
+  0.3 GB more RAM for the 8B model) gives the window room to stay put for several turns. **After an engine
 restart**, the first question restores the saved KV of the system prompt (a 51 MB file per model, context and system
 prompt, in `~/.local/share/bankml/savante/slots/`), so it skips the system prompt's prefill: on this laptop 132 s
 became 15 s, with the same answer.
-Since 0.1.8 the window moves **in steps of six**. Between steps, each prompt is the previous prompt plus one exchange,
-so the engine's prompt cache reuses all of it and only the new exchange is read. A window that slid by one exchange
-per turn changed the text right after the system prompt, forcing the whole history to be re-read every turn. Over 60
-turns the window now moves 8 times instead of 48. It also shrinks, in whole steps, to fit the engine's context, and
-the chat's footer (clock, receipt) is never sent to the model.
+(A window that slid by one exchange per turn, as before 0.1.8, changed the text right after the system prompt and
+forced the whole history to be re-read every turn; over 60 turns the stable window moves 8 times instead of 48.) The
+chat's footer (clock, receipt) is never sent to the model.
 
 ## 8a. Proof of data without the data
 
@@ -436,8 +448,8 @@ sudo -u postgres psql -d bankml -c "CREATE EXTENSION IF NOT EXISTS vector"
   recomputes and every restored file (persona, prompt, and history and memory when included) re-hashes to the
   manifest's digest. A tampered row cannot be loaded.
 - **Vectors.** `bankml_exchanges.embedding` is `vector(1024)` (bge-m3's width, as mindX uses), indexed with DiskANN
-  when pgvectorscale is installed and HNSW (pgvector) otherwise. Embeddings are not computed yet (no local embedding
-  model is served); the column is ready for them.
+  when pgvectorscale is installed and HNSW (pgvector) otherwise. It is filled with bge-m3 vectors when private lines are
+  published and bge-m3 can run (see [embedding.md](embedding.md)); otherwise it stays empty.
 - **Safety.** Values travel to psql as COPY data into a temporary table; no value is ever part of SQL text.
   `testing/test_connectors.py` runs every step against a throwaway cluster (initdb in a temp dir, pgvector, its own
   socket), including a tampered prompt, a tampered history line and an SQL-injection string, all handled.
@@ -532,12 +544,15 @@ testing/live.sh "title" <command…>                               # one step, s
 ```
 
 The gate runs, in order:
-1. the unit tests and the end-to-end CLI tests;
-2. clippy;
-3. both guard checks (Python and Rust must agree);
-4. every oracle: bankml's kernels must equal llama.cpp's compiled kernels, bit for bit, on every weight of the real
+1. the build, the unit tests and the end-to-end CLI tests;
+2. clippy (`-D warnings`);
+3. the licence headers (`testing/spdx_check.py`);
+4. the Python suites: the guard, the UI data layer, the PostgreSQL connector (a throwaway cluster), the iNFT path (a
+   throwaway anvil devnet), the model importer (with a real carrier on spare ports);
+5. the Rust and Python guards agreeing on every case;
+6. every oracle: bankml's kernels must equal llama.cpp's compiled kernels, bit for bit, on every weight of the real
    models;
-5. the A/B speed tests and the whole-token budgets.
+7. the A/B speed tests, the prefill tile, the memory floor and the whole-token budgets.
 
 A speed counts only if every oracle passed on the same code. See `testing/README.md`.
 
@@ -561,8 +576,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml guard FILE [--engine mainline\|prism] [--json]` | header check: play / refuse / need_more |
 | `bankml sha256 FILE` | the file's sha256 |
 | `bankml pin FILE --fork FORK.json` | sha256 against the fork's record |
-| `bankml verify FILE --fork FORK.json [--json]` | guard, then pin |
-| `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N]` | the gate in front of llama-server |
+| `bankml verify FILE --fork FORK.json [--engine mainline\|prism] [--json]` | guard, then pin |
+| `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
 | `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage` |
 | `python3 ui/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 ui/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
@@ -586,7 +601,12 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `BANKML_PG_DSN` | `dbname=bankml` | PostgreSQL for publishing and loading agents |
 | `RAGE_PATH` | `~/mindX/mindx/godel/mindxtrain/hf/space_ui` | where the ragebar finds mindX's `rage.py` (built-in BM25 otherwise) |
 | `BANKML_GGML_LIB` | — | llama.cpp b11192 release dir, for the oracles |
-| `BANKML_THREADS` | all cores | threads for the kernels' benchmarks |
+| `BANKML_THREADS` | pool: all cores; budgets: `1,2,3,4` (Q1_0), `1,3` (Q2_0) | the thread pool's size, or a comma list of thread counts for the decode budgets |
+| `BANKML_NO_SHANI` | unset | set to hash with the portable SHA-256 instead of the CPU's SHA extensions |
+| `BANKML_OLLAMA_MODELS` | `/usr/share/ollama/.ollama/models` | the local Ollama store the importer adopts from |
+| `BANKML_PIPER`, `BANKML_PRONUNCIATION` | `~/.local/share/bankml/piper`, the house table | Savante's voice engine and pronunciation table |
+| `BANKML_ESPEAK`, `BANKML_ESPEAK_VOICES` | the DeltaVerse vendor dirs | the eSpeak fallback voice |
+| `BANKML_OLLAMA`, `BANKML_EMBED_MODEL`, `BANKML_EMBED_KEEP_ALIVE`, `BANKML_EMBED_NEED_GB` | see [embedding.md](embedding.md) | the embedding model |
 | `BANKML_MODELS` | `.models` in the checkout | where imported models go |
 | `BANKML_FORKS` | `~/.local/share/bankml/forks` | FORK.json pins, one per imported model |
 | `BANKML_LLAMA_SERVER` | `~/sAGI/bonsai/llama-b11192/llama-server` | the engine the carrier spawns |

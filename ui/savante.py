@@ -554,9 +554,9 @@ def metrics() -> dict:
 
 
 # ── the carrier: bankml serve ─────────────────────────────────────────────────────
-def serve_status():
+def serve_status(timeout=3):
     try:
-        with urllib.request.urlopen(SERVE + "/bankml", timeout=3) as r:
+        with urllib.request.urlopen(SERVE + "/bankml", timeout=timeout) as r:
             return json.loads(r.read())
     except Exception as e:
         return {"error": f"bankml serve not reachable at {SERVE}: {e}"}
@@ -585,8 +585,9 @@ LAST_WINDOW: dict = {}  # what the last build_messages() sent: {"sent", "of", "c
 
 
 def n_tokens(text: str) -> int:
-    """Tokens in `text`, counted by the engine's own tokenizer (llama-server /tokenize, loopback), cached per text;
-    about 3 characters per token when the engine cannot be asked (an overestimate: it never overfills)."""
+    """Tokens in `text`, counted by the engine's own tokenizer (llama-server /tokenize, loopback), cached per text.
+    If the engine cannot be asked: characters ÷ 3, an overestimate for English but not for CJK or emoji (≈ 1 token per
+    character) — the engine then refuses an overfull prompt with its own message."""
     k = hashlib.sha256(text.encode()).digest()
     if k in _TOK:
         return _TOK[k]
@@ -598,22 +599,31 @@ def n_tokens(text: str) -> int:
             n = len(json.loads(r.read())["tokens"])
     except (OSError, ValueError, KeyError):
         return -(-len(text) // 3)
-    if len(_TOK) > 4096:
-        _TOK.clear()
+    if len(_TOK) > 8192:  # drop the oldest half, not everything (a long session is not re-counted each turn)
+        for old in list(_TOK)[:4096]:
+            _TOK.pop(old, None)
     _TOK[k] = n
     return n
 
 
 def engine_ctx() -> int | None:
-    """The context the running engine actually has (its /props, through bankml serve), cached for 30 s."""
-    if time.time() - _CTX["t"] < 30 and _CTX["n"]:
+    """The context the running engine actually has (its /props through bankml serve), cached per engine start (a
+    restart with a new context is seen at once); if the engine cannot say, the saved setting (Resources)."""
+    st = serve_status(1)
+    key = st.get("hashed_at")
+    if key is not None and _CTX.get("key") == key and _CTX["n"]:
+        return _CTX["n"]
+    if _CTX.get("key") is None and time.time() - _CTX["t"] < 10:  # no engine a moment ago: do not wait on it every turn
         return _CTX["n"]
     try:
         with urllib.request.urlopen(SERVE + "/props", timeout=3) as r:
             n = (json.loads(r.read()).get("default_generation_settings") or {}).get("n_ctx")
     except (OSError, ValueError):
         n = None
-    _CTX.update(t=time.time(), n=n)
+    if not n:
+        import models
+        n = models.resources()["ctx"]
+    _CTX.update(t=time.time(), n=n, key=key)
     return n
 
 
@@ -645,7 +655,7 @@ def slot_restore(system: str) -> str:
     import models
     k = _slot(system)
     if not k or k in _WARM:
-        return _WARM.get(k, "")
+        return ""  # nothing done on this turn (the slot field records actions, not the engine's state)
     if (models.SLOTS / k[1]).is_file():
         try:
             _slot_call("restore", k[1])
@@ -657,46 +667,88 @@ def slot_restore(system: str) -> str:
     return _WARM[k]
 
 
-def slot_save(system: str) -> None:
-    """After the first answer of an engine's life with this system prompt: save the slot (newest three kept)."""
-    import models
+def slot_save(system: str) -> str:
+    """After the first answer of an engine's life with this system prompt: save the slot in the background (newest
+    three kept). Only when no other answer is being written — the engine's one slot then holds this conversation, not
+    another tab's — and never in the way of the answer or its .history line. Returns "saving" when it started one."""
+    import models, threading
     k = _slot(system)
-    if not k or _WARM.get(k) in ("restored", "saved"):
-        return
-    try:
-        _slot_call("save", k[1])
-        _WARM[k] = "saved"
-        for old in sorted(models.SLOTS.glob("savante-*.bin"), key=lambda p: p.stat().st_mtime)[:-3]:
-            old.unlink(missing_ok=True)
-    except (OSError, ValueError):
-        pass
+    if not k or k in _WARM or len(INFLIGHT) > 1:
+        return ""
+    _WARM[k] = "saving"
+
+    def run():
+        try:
+            _slot_call("save", k[1])
+            _WARM[k] = "saved"
+            for old in sorted(models.SLOTS.glob("savante-*.bin"), key=lambda p: p.stat().st_mtime)[:-3]:
+                old.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            _WARM[k] = "none"  # not retried every turn
+    threading.Thread(target=run, daemon=True).start()
+    return "saving"
 
 
-def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None, reserve_tokens: int = 256, count=None):
-    """The messages for one turn: the system prompt, a stably windowed history, the question. With `ctx_tokens`, the
-    history also fits the engine's context, counted in the engine's own tokens (`count`, default `n_tokens`): whole
-    steps first (the prompt cache stays warm), else the oldest exchanges dropped one at a time — never all history
-    when some fits. What was sent is left in LAST_WINDOW for the answer's footer."""
+class ContextTooSmall(ValueError):
+    """The system prompt and the question alone do not fit the engine's context."""
+
+
+_WSTART: dict = {}  # session id -> where its history window started last turn (kept while it still fits)
+
+
+def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None, reserve_tokens: int = 256, count=None,
+                   info: dict | None = None, session: str | None = None):
+    """The messages for one turn: the system prompt, a windowed history, the question.
+
+    The window starts at `window_start` (12–17 exchanges, moving in steps of six). With `ctx_tokens` it must also fit
+    the engine's context, counted in the engine's own tokens (`count`, default `n_tokens`). When it does not:
+    - the previous turn's start (per `session`) is kept while it still fits, so the prompt is the previous prompt plus
+      one exchange and the engine's cache is reused;
+    - when it stops fitting, the start jumps so that half of what fits is kept, leaving room for the next few turns;
+    - never all history when some fits; and if the system prompt and question alone do not fit, ContextTooSmall.
+    `info` (the caller's own dict — no shared state between tabs) receives {"sent", "of", "base", "ctx", "trimmed"}."""
     count = count or n_tokens
     turns = [(u, model_text(a)) for u, a in turns]
-    start = window_start(len(turns))
+    n = len(turns)
+    base = window_start(n)
+    start = base
     per_msg = 8  # the chat template's markers around each message
     if ctx_tokens:
         budget = ctx_tokens - count(system) - count(question) - reserve_tokens - 3 * per_msg
-        cost = [count(u[:KEEP_CHARS]) + count((a or "")[:KEEP_CHARS]) + 2 * per_msg for u, a in turns]
-        size = lambda k: sum(cost[k:])  # noqa: E731
-        # the most recent exchanges that fit, dropping the oldest one at a time …
-        fit_start = next((k for k in range(start, len(turns)) if size(k) <= budget), len(turns))
-        # … then rounded up to a step that is at most half of what fits: the start stays put for several turns (a
-        # warm prompt cache) and at most step − 1 exchanges that would have fitted are left out
-        step = max(1, min(WINDOW_STEP, (len(turns) - fit_start) // 2))
-        start = min(len(turns), max(start, -(-fit_start // step) * step))
+        if budget < 0:
+            raise ContextTooSmall(f"the system prompt and the question need {ctx_tokens - budget} tokens, more than the "
+                                  f"engine's {ctx_tokens}-token context (with {reserve_tokens} kept for the answer)")
+        cost = {}
+
+        def c(k):  # tokens of exchange k, counted only when it could be sent
+            if k not in cost:
+                u, a = turns[k]
+                cost[k] = count(u[:KEEP_CHARS]) + count((a or "")[:KEEP_CHARS]) + 2 * per_msg
+            return cost[k]
+        suffix = [0] * (n + 1)
+        for k in range(n - 1, base - 1, -1):
+            suffix[k] = suffix[k + 1] + c(k)
+        size = lambda k: suffix[k]  # noqa: E731
+        prev = _WSTART.get(session) if session else None
+        if prev is not None and base <= prev < n and size(prev) <= budget:
+            start = prev  # the same start as last turn: the whole previous prompt is reused
+        elif size(base) > budget:
+            fit_start = next((k for k in range(base, n) if size(k) <= budget), n)
+            fits = n - fit_start
+            # keep half of what fits (room to grow, so the next turns reuse this prompt) — but only when that still
+            # leaves at least two exchanges; with so little room, history is worth more than a warm cache
+            start = fit_start + fits // 2 if fits >= 4 else fit_start
+    if session:
+        _WSTART[session] = start
     msgs = [{"role": "system", "content": system}]
     for u, a in turns[start:]:
         msgs += [{"role": "user", "content": u[:KEEP_CHARS]}, {"role": "assistant", "content": (a or "")[:KEEP_CHARS]}]
     msgs.append({"role": "user", "content": question + (" /no_think" if qwen3 else "")})
+    w = {"sent": n - start, "of": n, "base": base, "ctx": ctx_tokens, "trimmed": start > base}
+    if info is not None:
+        info.update(w)
     LAST_WINDOW.clear()
-    LAST_WINDOW.update(sent=len(turns) - start, of=len(turns), ctx=ctx_tokens)
+    LAST_WINDOW.update(w)
     return msgs
 
 
@@ -1985,9 +2037,14 @@ def build(canon: Canon, mode: str):
                     arch = str((st.get("verified") or {}).get("arch") or "").lower()
                     qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
                     warm = slot_restore(system)
-                    msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
-                                          ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens))
-                    win = dict(LAST_WINDOW)
+                    win = {}
+                    try:
+                        msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
+                                              ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens), info=win, session=sess["id"])
+                    except ContextTooSmall as e:
+                        h[-1][1] = f"refused: {e}. Raise the RAM budget in Resources (a larger context), shorten the question, or lower max tokens."
+                        yield h
+                        return
                     text, rc, first = "", {}, None
                     for text, r in stream(msgs, max_tokens, temperature):
                         if text and first is None:
@@ -2005,11 +2062,11 @@ def build(canon: Canon, mode: str):
                              f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
                     foot = receipt_line(rc, text)
                     trimmed = (f"<br>history: {win['sent']} of {win['of']} exchanges fit the engine's {win['ctx']}-token context — "
-                               "raise the RAM budget in Resources for more") if win.get("ctx") and win.get("sent", 0) < win.get("of", 0) else ""
+                               "raise the RAM budget in Resources for more") if win.get("trimmed") else ""
                     h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + trimmed + "</sub>"
-                    slot_save(system)
                     history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
                                     "assistant_raw": text, "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc}, hist)
+                    slot_save(system)  # background; never in the way of the answer or its .history line
                     yield h
                 finally:
                     INFLIGHT.pop(rid, None)

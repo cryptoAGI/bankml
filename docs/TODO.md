@@ -4,9 +4,9 @@ What comes next, and where each item came from. Every item ends in a measured, r
 as rejected with its numbers (the house rule: the same bits first, then the speed). Sources:
 **R** = [research.md](research.md) (the field, 2026-09-29) · **K** = the clean-room study of KoboldCpp (docs only) ·
 **V** = the vLLM code review (main @ `36768d1`, Apache-2.0) · **Rs** = the Rust 1.95 study (the `rust` skill) ·
-**A** = the audits of 0.1.5 and 0.1.6.
+**A** = the audits of 0.1.5, 0.1.6, 0.1.7–0.1.8 and 0.1.9.
 
-## 0.1.8 — speed and efficiency (in progress)
+## 0.1.8 — speed and efficiency (done)
 
 - [x] **SHA-NI for the model pin** (Rs). 5.5× (0.23 s vs 1.25 s per 248 MB); the 8B model in 2.9 s; bit-exact
   against the portable rounds and `sha256sum`.
@@ -21,7 +21,7 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
   adopted. On fixed resources (`testing/pinned.sh`: cores 2–3, 2 threads, 2.5 GB): +0.01, +0.36, +0.16 while the
   baseline swung 0.36–1.40 tok/s with the machine's load (load average up to 3.8). Ahead in 5 of 6 pairs, exact,
   no memory cost → **opt-in** (`--spec-ngram`, a Resources checkbox), not the default. Re-measure on an idle machine
-  (TODO below: the production server).
+  ("The production server" below).
 - [x] **Fixed resources for every benchmark** (operator): `testing/pinned.sh` pins cores, caps memory in a user
   cgroup, and records the load before and after.
 - [x] **A refusal no longer resets the connection** (found by the CLI suite under load): serve read and discarded
@@ -51,13 +51,23 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 - [x] ~~PGO for `bankml serve`~~ (Rs): measured, rejected — 0.71 ms per request against 15–130 s answers.
 - [ ] Target-feature 1.1 clean-up (Rs): same bits, fewer `unsafe`; no speed at stake → after 0.2.0.
 
-## 0.2.0 — milestone
+## 0.2.0 — milestone (done)
 
-- [ ] A full docs pass (README, usage, TECHNICAL, testing/README, oracles, research, embedding, LICENSING, CHANGELOG),
-  published as an artifact.
-- [ ] **Offer the plain-AVX2 `Q2_0` kernel upstream** (R): llama.cpp has only scalar `Q2_0` on x86 and an open
-  VNNI-only PR (#26348); the oracle is the evidence. Prepare the patch against upstream C and the bit-exact report.
-- [ ] The oracle method written up for others (R: no public equivalent found).
+- [x] A full docs pass: 23 corrections from a line-by-line review against the code and the gate records. Among them,
+  the whole-token ternary figures are dated, with the reason they cannot be reproduced on this laptop today.
+- [x] The fourth audit (0.1.9): the window kept stable per session, the trimmed-history note only when the context
+  forced it, a clear refusal when a prompt cannot fit, slot saves in the background, the 503 path off the accept
+  thread.
+- [x] **The plain-AVX2 `Q2_0` kernel prepared for llama.cpp** (`upstream/`): bit-exact against the shipped library on
+  200,000 of 200,000 random cases, 3.4× its scalar path. Submitting the pull request is the authors' decision.
+- [x] The oracle method written up (`docs/oracles.md`, `upstream/README.md`).
+
+## The production server (and any machine with ≥ 3 GB free)
+
+- [ ] **Re-measure the whole-token ternary budget** with the 2.31 GB model resident in the page cache (on this laptop
+  it no longer fits: 1.04 GB stayed resident after a full read). The 0.0.3–0.0.6 records say 0.23–0.25 s per token at
+  three threads; the gates since 0.1.0, disk-bound, say 4.5–5.2 s.
+- [ ] Re-measure n-gram speculation on an idle machine (ahead in 5 of 6 pairs here, within the noise).
 
 ## After 0.2.0 — P3 and beyond
 

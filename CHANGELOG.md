@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.2.0 — 2026-09-29 — milestone
+
+**Verified, documented, and offered back.** 0.2.0 closes the 0.1.x run of audits and speed work:
+- every document checked line by line against the code and the gate records;
+- a fourth audit fixed;
+- bankml's ternary kernel prepared as a contribution to llama.cpp, bit-exact against its shipped library.
+
+Record: `testing/results/0.2.0.txt`.
+
+### Added
+- **`upstream/`: an AVX2 `Q2_0` kernel for llama.cpp.** At b11192 x86 has only scalar `Q2_0`, and the one open x86
+  PR needs AVX-VNNI. `q2_0_avx2.c` is a drop-in `ggml_vec_dot_q2_0_q8_0` in ggml's C:
+  - the generic code's float order, with its FMAs explicit;
+  - codes expanded by one variable dword shift;
+  - the activation transposed 4×4 within each lane, with no lane crossings.
+
+  `test_q2_0_avx2.c` compares it with the shipped `libggml-cpu-haswell.so`: **bit-exact on 200,000 of 200,000 random
+  cases** (every code 0–3, extreme activations), and **3.4×** the shipped scalar path per 4096-wide row, pinned to two
+  cores. The README explains why bankml's own kernel is faster (9.5–9.8×): it lays the activation out once per token,
+  where a drop-in must do it per call. MIT, llama.cpp's licence. Opening the pull request is the authors' decision;
+  nothing has been submitted.
+
+### Fixed (the fourth audit, of 0.1.9)
+- **The history window at a tight context.** It moved almost every turn, so the prompt cache did not help exactly
+  when it mattered. Now:
+  - the start is kept per session while it still fits;
+  - when it stops fitting, the newest half of what fits is kept, so the next turns reuse the prompt (when only two or
+    three fit, all are kept: history is worth more then);
+  - with room, the window moves 8 times in 60 turns.
+- **The "history trimmed" note** now appears only when the context forced a trim, not for the ordinary 12–17 window.
+- **A prompt that cannot fit is refused with the numbers,** instead of the engine's error.
+- **Two tabs no longer share one window record**: each request gets its own.
+- **Slot saves run in the background**, after the answer and its `.history` line, and only when no other answer is
+  being written: they no longer save another tab's KV or delay a footer. A failed save is not retried every turn, and
+  the `slot` field records what a turn did, not the engine's state.
+- **Token counts**: history outside the window is not tokenized; the cache evicts its oldest half instead of
+  clearing. The fallback's docstring no longer claims to be an overestimate for every script.
+- **The engine's context** is cached per engine start (a restart with a new context is seen at once) and falls back
+  to the saved setting.
+- `bankml serve`: the over-capacity 503 is answered on its own short thread with one overall deadline, so a slow
+  client can no longer hold the accept loop.
+- The embedding indexer cannot stay disabled if its thread fails to start. `testing/pinned.sh` no longer needs
+  python3.
+
+### Documentation
+- A line-by-line accuracy review of every document against the code and the gate records gave **23 corrections**:
+  - the usage guide's commands, routes, environment table, window policy, Apply behaviour and gate steps;
+  - dead anchors;
+  - guard-agreement counts (28 of 28);
+  - future work that is done;
+  - LICENSING.md's tense for modules that do not exist yet;
+  - the testing README's tables;
+  - a new PERFORMANCE section for 0.1.8–0.2.0.
+- **The whole-token ternary figures are now dated.** The 0.23–0.25 s per token of the 0.0.3–0.0.6 records was
+  measured with the model resident in memory. The gates since 0.1.0 measure 4.5–5.2 s, because this laptop can no
+  longer keep the 2.31 GB file in its page cache (1.04 GB stayed resident after a full read, with other applications
+  holding memory), so both runtimes wait on the disk. The per-matmul A/B on cached tensors still shows 9.8×. A
+  re-measure on a machine with ≥ 3 GB free is in `docs/TODO.md`.
+
 ## 0.1.9 — 2026-09-29
 
 The TODO's 0.1.9 items, and the third audit fixed. The first answer after an engine restart is **8.6× faster**, the

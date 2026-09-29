@@ -35,7 +35,7 @@ check("a proof for another record fails", not u.verify_inclusion(lines[1], u.inc
 check("out-of-range proof is empty", u.inclusion_proof(u.HISTORY, 9) == {})
 # RFC 6962: the certificate-transparency reference roots, and the second-preimage cases the old tree allowed
 ct = [bytes.fromhex(x) for x in ["", "00", "10", "2021", "3031", "40414243", "5051525354555657", "606162636465666768696a6b6c6d6e6f"]]
-check("Merkle roots equal RFC 6962's reference vectors (1, 2, 3 and 8 leaves)",
+check("Merkle roots equal RFC 6962's reference vectors (1, 3 and 8 leaves)",
       u.merkle_root([u._leaf(x) for x in ct[:1]]) == "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
       and u.merkle_root([u._leaf(x) for x in ct[:3]]) == "aeb6bcfe274b70a14fb067a5e5578264db0fa9b51af5e0ba159158f329e06e77"
       and u.merkle_root([u._leaf(x) for x in ct]) == "5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328")
@@ -119,6 +119,21 @@ big = [("q" * 100, "a" * 1200) for _ in range(13)]
 u.build_messages("s" * 3600, big, "Q", False, ctx_tokens=2048, reserve_tokens=256, count=cnt)
 check("never silent amnesia: when history cannot all fit, as much as fits is sent (0.1.8 sent none), and it is recorded",
       u.LAST_WINDOW["sent"] >= 2 and u.LAST_WINDOW["of"] == 13 and u.LAST_WINDOW["ctx"] == 2048)
+inf = {}
+u.build_messages("s", [("q" * 50, "a" * 200)] * 20, "Q", False, ctx_tokens=32768, count=cnt, info=inf, session="roomy")
+check("with room, the history note stays quiet (the ordinary 12–17 window is not a trim)", inf["sent"] == 14 and not inf["trimmed"])
+seq = []
+for k in range(12, 19):  # consecutive turns in one session once the context binds: the start is kept while it fits
+    inf = {}
+    u.build_messages("s" * 3600, [("q" * 100, "a" * 800)] * k, "Q", False, ctx_tokens=4096, reserve_tokens=256, count=cnt, info=inf, session="tight")
+    seq.append(k - inf["sent"])
+check("when the context binds, the start is kept while it fits (a warm prompt cache), not moved every turn",
+      sum(1 for a, b in zip(seq, seq[1:]) if a != b) <= 2)
+try:
+    u.build_messages("s" * 9000, [], "Q", False, ctx_tokens=2048, count=cnt)
+    check("a system prompt and question that cannot fit are refused with a reason, not sent", False)
+except u.ContextTooSmall:
+    check("a system prompt and question that cannot fit are refused with a reason, not sent", True)
 check("an answer's own <sub> survives; only the chat's clock footer is removed",
       u.model_text("H\n\n<sub>2</sub>O\n\n<sub>⏱ sent 12:00</sub>") == "H\n\n<sub>2</sub>O")
 check("the window fits the engine's context, moving in whole steps", len(u.build_messages("S", tt, "Q", False, ctx_tokens=60, reserve_tokens=10)) < len(mm))

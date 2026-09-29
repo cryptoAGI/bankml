@@ -16,9 +16,10 @@ Copyright stays with the authors: cryptoAGI — Professor Codephreak and Gregory
 
 Rules that keep the layers honest:
 
-- **The core never imports `crypto/` or `agpl/`.** Each is an opt-in cargo feature (`crypto`, `agpl`), off by
-  default, so the default binary stays `MIT OR Apache-2.0`. A build with either feature is, as a whole, under that
-  feature's copyleft licence, and says so in `bankml version` and in `GET /bankml`.
+- **The core never imports `crypto/` or `agpl/`.** Neither exists yet. When one does, it **will be** an opt-in cargo
+  feature (`crypto`, `agpl`), off by default, so the default binary stays `MIT OR Apache-2.0`; a build with either
+  feature is, as a whole, under that feature's copyleft licence, and **will** say so in `bankml version` and in
+  `GET /bankml`.
 - **AGPL §13** (network use) is met the way bankon-vault meets it: the source is public, and a deployment runs a
   tagged commit whose source anyone can fetch.
 - **Every source file carries an SPDX header**, and the release gate checks it (`testing/spdx_check.py`): a file in
@@ -32,6 +33,7 @@ Rules that keep the layers honest:
 
 | what | licence |
 |---|---|
+| `upstream/` (the AVX2 `Q2_0` kernel prepared for llama.cpp) | `MIT`, llama.cpp's licence, so it can be contributed as is |
 | `testing/gguf_guard.py` | vendored from minaiml (same authors); `MIT OR Apache-2.0` here |
 | `ui/voice/knobs/savante_knobs.js` | a build of DreamKnob and React (MIT); regenerate with `node ui/voice/knobs/build.mjs` |
 | `ui/voice/cache/`, `ui/voice/export/` | Savante's voice, rendered by bankml with Piper and the `en_GB-cori-high` voice (trained on public-domain LibriVox recordings); offered under `MIT OR Apache-2.0` |

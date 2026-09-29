@@ -186,7 +186,10 @@ def index_async(history: Path, records: list) -> None:
             INDEXING["error"] = str(e)
         finally:
             INDEXING["running"] = False
-    threading.Thread(target=run, daemon=True).start()
+    try:
+        threading.Thread(target=run, daemon=True).start()
+    except RuntimeError:  # "can't start new thread": do not leave indexing disabled until a restart
+        INDEXING["running"] = False
 
 
 def query_vector(q: str):

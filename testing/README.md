@@ -10,9 +10,12 @@ cargo test --release                                  # unit tests (in the modul
 BANKML_GGML_LIB=/path/to/llama-b11192 testing/release_gate.sh   # the full gate → testing/results/<version>.txt
 ```
 
-The gate runs the build, the unit and CLI tests, `clippy -D warnings`, the Python guard suite, the Rust-against-Python
-guard agreement, and then, when the models (`.models/`) and the llama.cpp b11192 release are present, every oracle, both
-kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
+The gate runs, and stops at the first failure: the build; the unit and CLI tests; `clippy -D warnings`; the licence
+headers (`spdx_check.py`); the Python suites — the guard, the UI data layer (`test_ui.py`), the PostgreSQL connector
+(`test_connectors.py`, a throwaway cluster), the iNFT path (`test_chain.py`, a throwaway anvil), the model importer
+(`test_models.py` with a real carrier on spare ports); the Rust-against-Python guard agreement; and then, when the
+models (`.models/`) and the llama.cpp b11192 release are present, every oracle, both kernel A/Bs, the prefill tile, the
+memory floor and both whole-model decode budgets.
 
 ## What is here
 
@@ -53,14 +56,21 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `ab_vs_ggml_q2_0`, `decode_budget_q2_0` *(real)* | `q2_0.rs` | speed against ggml's ternary kernel |
 | `act_tile_bit_exact`, `bench_q1_0_prefill_act` | `q1_0.rs` | the 0.0.4 prefill tile: bits, then speed |
 | pool coverage, `bench_pool_overhead`, `bench_memory_floor` | `par.rs` | the thread pool, its wake-up cost, the machine's read bandwidth |
+| `reads_this_machine_and_this_process`, `stat_with_spaces_and_parens_in_the_name`, `busy_loop_is_seen_as_cpu` | `sys.rs` | bankml's psutil: `/proc` memory, rss, CPU time and % |
+| `heads_are_bounded`, `only_loopback_hosts`, `unpaired_surrogates_become_replacement_characters`, `file_identity_changes_are_seen` | `serve.rs` | the gateway's limits, Host check, JSON decoding and the model-identity re-check |
+| `type_ids_match_mainline`, `verified_json_escapes_what_the_header_says` | `bankml.rs` | type ids; `/bankml`'s JSON stays valid for a hostile model name |
+| `hardware_path_equals_portable_on_every_length` | `sha256.rs` | SHA-NI equals the portable rounds (lengths 0–1,000, 4 KiB, 64 KiB, split updates) |
 
 ## Results
 
 | version | record | headline |
 |---|---|---|
-| 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |
-| 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
-| 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml) |
+| 0.2.0 | `results/0.2.0.txt` | **milestone** — docs pass (23 corrections), fourth audit fixed, the `Q2_0` kernel prepared for llama.cpp (bit-exact 200,000/200,000) |
+| 0.1.9 | `results/0.1.9.txt` | the system prompt's KV saved across restarts (first answer 132 s → 15 s, identical); history counted in engine tokens, never silently dropped |
+| 0.1.8 | `results/0.1.8.txt` | SHA-NI pin 5.5×; a history window that keeps the cache warm; CPU/RAM sliders; `sys.rs`; `pinned.sh`; `MIT OR Apache-2.0` |
+| 0.1.7 | `results/0.1.7.txt` | the second audit; hardened `serve` (limits, Host, request hash); RFC 6962 commitments; bge-m3 embedding |
+| 0.1.6 | `results/0.1.6.txt` | the first audit of 0.1.5 fixed, each finding with a test |
+| 0.1.5 | `results/0.1.5.txt` | the model importer (catalogue, Hugging Face, Ollama; open source only; sha256-pinned); metrics charts; Savante reads the thesis |
 | 0.1.4 | `results/0.1.4.txt` | DreamKnobs in view mode (emerge on play, same voice chain); the timer counts real seconds |
 | 0.1.3 | `results/0.1.3.txt` | Savante's own voice (Cori body, Jaimla's 182 Hz, SAVANTE resonance; slower, steadier); PLAY fixed and verified in a browser; lead PLAY, pause/resume, continue-until-stopped; 5 DreamKnobs emerging on play; oscilloscope; 3D depth |
 | 0.1.2 | `results/0.1.2.txt` | Savante speaks: introduction (7 chapters) and voice examples in her voice; DreamKnob SPEED/FM; HF + GitHub links; view-mode Listen |
@@ -72,3 +82,6 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | 0.0.6 | `results/0.0.6.txt` | `bankml serve` (P0) with receipts; Savante UI, view / interact; iNFT ledger checked 12/12 |
 | 0.0.5 | `results/0.0.5.txt` | three ternary experiments, bit-exact, none reliably faster (no kernel change); kernels at the Zen+ instruction limit; live log |
 | 0.0.4 | `results/0.0.4.txt` | memory floor 15–17 GB/s (kernels are compute-bound); 1-bit prefill 1.27–1.33× ggml; two rejected decode experiments |
+| 0.0.3 | `results/0.0.3.txt` | thread pool; 8B 1-bit oracle; ternary token matmuls 0.23–0.25 s at 3 threads (9.5–9.9× ggml), with the model resident |
+| 0.0.2 | `results/0.0.2.txt` | audit: guard hardened (a crashing input now refuses), soundness fix, `verify` |
+| 0.0.1 | `results/0.0.1.txt` | kernels bit-exact; ternary 9.5–9.8× ggml per matmul |

@@ -63,7 +63,7 @@ x64) and matches each one in 762 of 762.
    library directly (no crate, `dlopen`/`dlsym` declared by hand) and time ggml's kernel and bankml's on the same
    real weights in one process, after first checking they agree.
 
-### What it found (0.1.7 gate)
+### What it found (0.1.7–0.2.0 gates; identical in each)
 
 | model | tensors | weights | q8_0 rows | dot products |
 |---|---|---|---|---|
@@ -133,8 +133,12 @@ not), `request_sha256` equals the sha256 of the request body, and a model file c
 
 - **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer
   must be **token-identical** to llama.cpp b11192's. Every kernel it will use already passes §1.
-- **Speculative decoding (0.1.8).** A small draft model (Bonsai-1.7B) proposing tokens for Bonsai-8B must leave the
-  output **token-identical** at temperature 0; a speed-up counts only then.
+- **Speculative decoding (measured in 0.1.8).** A draft model (Bonsai-1.7B) and n-gram speculation both left the
+  output **token-identical** at temperature 0 on every run; neither was faster beyond this laptop's noise, so neither
+  is the default (n-gram is an opt-in). The same criterion applies to any future speed-up that changes how tokens are
+  computed.
+- **The upstream `Q2_0` kernel (0.2.0).** `upstream/test_q2_0_avx2.c` holds the C drop-in to the shipped
+  `ggml_vec_dot_q2_0_q8_0`, bit for bit: 200,000 of 200,000 random cases.
 
 
 ## The rule, restated
