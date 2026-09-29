@@ -50,6 +50,87 @@ check(".memory holds 2 notes and a prompt block", len(u.memory_all()) == 2 and "
 u.memory_remove(1)
 check(".memory remove by number", [x["text"] for x in u.memory_all()] == ["second note"])
 
+# custom agents: keccak256, the doctrine root, derive / verify / save, preflight, the template untouched
+os.environ["BANKML_AGENTS"] = str(tmp / "agents")
+import importlib, agents  # noqa: E402
+importlib.reload(agents)
+check("keccak256('') and ('abc') vectors", agents.keccak256(b"").hex() == "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+      and agents.keccak256(b"abc").hex() == "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45")
+try:  # an independent implementation, where installed: every length 0..400 crosses the 136-byte rate twice
+    from Crypto.Hash import keccak as _k
+    check("keccak256 == pycryptodome for every length 0..400", all(agents.keccak256((bytes(range(256)) * 2)[:n]) ==
+          _k.new(digest_bits=256, data=(bytes(range(256)) * 2)[:n]).digest() for n in range(401)))
+except ImportError:
+    print("skip  keccak256 vs pycryptodome (not installed)")
+real = Path.home() / "savante"
+if (real / "savante.persona").is_file():
+    sp, sl = json.loads((real / "savante.persona").read_bytes()), json.loads((real / "savante.commitments.json").read_bytes())
+    check("doctrine root reproduces Savante's published ledger value", agents.doctrine_root(sp, sl["doctrine_root"]["pointers"]) == sl["doctrine_root"]["value"])
+else:
+    print("skip  doctrine root vs Savante (no ~/savante here)")
+tpl = {"persona": "tpl", "name": "Template", "source": "s", "format": "f", "system_prompt": "You are the template.", "mantra": "m", "oath": "o",
+       "bdi": {"beliefs": [{"id": "b", "belief": "x"}]}, "skills": {"primary": "p", "taxonomy": [], "defer_triggers": [], "validation": []},
+       "safety": {"scope": "s"}, "embodiment": {}, "token": {"intelligence": {"tool_allowlist": ["read"]}, "bindings": {"erc7857": "SECRET"}}}
+tpl_bytes = json.dumps(tpl, sort_keys=True).encode()
+slug = agents.derive(tpl, {"artifacts": {"identity": {"sha256": "ab"}}, "doctrine_root": {"value": "0x01"}}, "Auditor Ada", system_prompt="You are Ada.", description="an auditor")
+f = agents.files(slug)
+check("derive writes persona, prompt, card, ledger; it verifies", slug == "auditor_ada" and all(f[k].is_file() for k in ("persona", "prompt", "agentcard.json", "commitments.json"))
+      and all(ok for _, ok, _ in agents.verify(slug)))
+pd = json.loads(f["persona"].read_text())
+check("derived identity is new; the template's bindings are not copied", pd["name"] == "Auditor Ada" and pd["token"]["bindings"]["erc7857"] is None
+      and json.dumps(tpl, sort_keys=True).encode() == tpl_bytes)
+card = json.loads(f["agentcard.json"].read_text())
+check("agent card: ERC-8004 registration-v1, not_yet_minted, derived_from recorded", card["type"].endswith("#registration-v1") and card["bankml"]["status"] == "not_yet_minted"
+      and card["bankml"]["derived_from"]["persona_sha256"] == "ab")
+r0 = json.loads(f["commitments.json"].read_text())["doctrine_root"]["value"]
+led = agents.save(slug, prompt_text="You are Ada, revised.")
+check("editing .prompt re-ledgers (prompt hash changes; the doctrine root, over the persona, does not)", led["doctrine_root"]["value"] == r0
+      and led["artifacts"]["prompt"]["sha256"] == u.sha256(b"You are Ada, revised.\n"))
+pd["mantra"] = "a new mantra"
+led = agents.save(slug, persona_text=json.dumps(pd))
+check("editing a doctrine clause changes the doctrine root", led["doctrine_root"]["value"] != r0 and all(ok for _, ok, _ in agents.verify(slug)))
+f["prompt"].write_text("tampered\n")
+check("a hand edit outside save() is caught by verify", not dict((n, ok) for n, ok, _ in agents.verify(slug))["prompt"])
+for bad, why in ((dict(pd, weight=0.5), "float"), ({k: v for k, v in pd.items() if k != "oath"}, "missing clause")):
+    try:
+        agents.save(slug, persona_text=json.dumps(bad))
+        check(f"preflight refuses a {why}", False)
+    except ValueError:
+        check(f"preflight refuses a {why}", True)
+try:
+    agents.agent_dir("../etc")
+    check("agent_dir rejects path traversal", False)
+except ValueError:
+    check("agent_dir rejects path traversal", True)
+
+# THOT manifests: the spec's test vectors (where those repositories are here), and a bankml bundle's lineage
+import subprocess, thot  # noqa: E402
+VEC = [("savante", Path.home() / "savante", "1fcca89", "savante.thot.json", "0x235da8e993dc8af2c077f50d698962446b872b17b1e5b033d5c5d976532b8880",
+        "0xdc1d80957cf831aee6638fd569e22cf0f6e5a1ec99ddde91cfecb5a15408fbe1", "bafkreieerglzkjrkmwrxhmrk53bf3tvhp3aut3qlatwpdtoutmspuxrh4i"),
+       ("jaimla", Path.home() / "cryptoAGI" / "jaimla", "8b57ccf", "jaimla.thot.json", "0x7f5bcc69dc9d50854189762dba0a97b3a48090ee546a0423aa9722917740e086",
+        "0xd7cb5363324645b4f6d0df19902fe9cd15dcb1c36ae925ee5ff2278315f6a258", "bafkreidczapw72pldcf5pxyoz2hhdleauto7ajvjgun7w2iiq7ccwwhvku"),
+       ("luvai", Path.home() / "cryptoAGI" / "luvai", "0c1eef7", "luvai.thot.json", "0x2feb7ecfcffe91c035951298e5d977d880ec475edb87fff5f3038efc8d44f94c",
+        "0xf594d1b2ab3f98b20ca203227e71a437ac86d82f6c4d4942227ecf8ee018309b", "bafkreiefvcfiw2rkrcjzblcj5ivrux7mtpsha4fqaulgvteycpr4zbwqtq")]
+for name, repo, commit, fn, br, mr, cid in VEC:
+    g = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{fn}"], capture_output=True, text=True)
+    if g.returncode:
+        print(f"skip  THOT test vector {name} (repository not here)")
+        continue
+    m = json.loads(g.stdout)
+    recs = thot.records(m["facets"])
+    check(f"THOT spec vector {name}: bundle_root, Merkle root and identity CID", thot.bundle_root(recs)[0] == br and thot.merkle_root(recs) == mr
+          and thot.identity(m)["cid"] == cid)
+m1 = thot.build(slug)
+check("a bankml THOT bundle verifies (structure and facet bytes)", thot.verify(slug) == [] and m1["merkle"]["populated"] == 5)
+check("the bundle commits history by digest and holds none of its text", "question" not in (agents.agent_dir(slug) / f"{slug}.thot.json").read_text()
+      and any(x["facet"] == "x-bankml.history" for x in m1["facets"]))
+m1b = thot.build(slug)
+f["history"].write_text(f["history"].read_text() + '{"user": "new"}\n')
+m2 = thot.build(slug)
+check("re-bind keeps the generation; a facet change is n+1 with parent = the previous CID",
+      m1b["bundle"]["generation"] == m1["bundle"]["generation"] and m2["bundle"]["generation"] == m1b["bundle"]["generation"] + 1
+      and m2["bundle"]["parent"] == m1b["identity"]["cid"] and thot.verify(slug) == [])
+
 # the view server: fixed routes, commitments only, no traversal
 import view  # noqa: E402
 from http.server import ThreadingHTTPServer

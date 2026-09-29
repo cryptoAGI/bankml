@@ -12,6 +12,9 @@ watch the testing on your network. It also says what each part does, what it che
 - [7. Let others watch (view mode, on the LAN)](#7-let-others-watch-view-mode-on-the-lan)
 - [8. The files Savante keeps: `.history`, `.memory`, `.prompt`](#8-the-files-savante-keeps-history-memory-prompt)
 - [8a. Proof of data without the data](#8a-proof-of-data-without-the-data)
+- [8b. Custom agents from the Savante template](#8b-custom-agents-from-the-savante-template)
+- [8c. THOT bundles: the dataset an iNFT points to](#8c-thot-bundles-the-dataset-an-inft-points-to)
+- [8d. PostgreSQL: publish an agent, load one back](#8d-postgresql-publish-an-agent-load-one-back)
 - [9. Receipts, and how to check an answer](#9-receipts-and-how-to-check-an-answer)
 - [10. Savante's canon and the iNFT ledger](#10-savantes-canon-and-the-inft-ledger)
 - [11. Testing and the release gate](#11-testing-and-the-release-gate)
@@ -243,6 +246,76 @@ for s in p["path"]:
 print(h == p["merkle_root"])
 ```
 
+## 8b. Custom agents from the Savante template
+
+**Agents** tab. Savante's canon is the template and is never written. **Derive a new agent** creates, in
+`~/.local/share/bankml/agents/<name>/` (`BANKML_AGENTS`):
+
+| file | what |
+|---|---|
+| `<name>.persona` | the persona (mindX `.persona v1` shape): a new name and identity, Savante's BDI/skills/safety as a starting point; the `token` bindings start empty (Savante's are never copied) |
+| `<name>.prompt` | the system prompt, as text: the `.prompt` the chat uses |
+| `<name>.agentcard.json` | EIP-721 metadata ∪ ERC-8004 registration-v1; status `not_yet_minted`; `derived_from` names Savante's persona sha256 and doctrine root |
+| `<name>.commitments.json` | the ledger: sha256 + CIDv1 of each file, and the **doctrine root** (keccak256 over the same 15 JSON pointers as Savante's ledger) |
+| `<name>.history`, `<name>.memory` | the agent's own conversations and notes |
+
+**Use this agent** switches the chat, `.history`, `.memory`, Responses and Metrics to it. **Edit** (custom agents
+only) opens the `.persona` as JSON and the `.prompt` as text. **Save and re-ledger** refuses a persona that breaks
+the binder's preflight (non-ASCII keys, floats, integers beyond ±2⁵³) or lacks a doctrine clause, and otherwise
+regenerates the card and ledger. An agent whose files do not match its ledger refuses to speak.
+
+The keccak256 is written in pure Python. It reproduces Savante's published doctrine root
+(`0x92fe83eb…ae137d0`) from her persona, and it equals pycryptodome's keccak for every input length from 0 to 400
+bytes (tested).
+
+## 8c. THOT bundles: the dataset an iNFT points to
+
+**Agents → THOT bundle** builds `<name>.thot.json` to `sagi.thot_manifest/1` (`~/sagi/engine/THOT_MANIFEST.md`):
+
+- **Facets.** Core facets `persona` (the ternary head, leaf 0) and `prompt`, plus declared custom facets
+  `x-bankml.agentcard`, `x-bankml.history` and `x-bankml.memory`. The history and memory are committed **by digest
+  only**: the manifest holds no conversation text and can be published.
+- **Bundle root.** `bundle_root` = keccak256 over `label ‖ 0x1f ‖ sha256_hex ‖ 0x1e`, core facets in registry order,
+  then custom facets by name.
+- **Merkle root.** A 64-leaf keccak256 tree, padded with `keccak256(b"")`, with unsorted pairs and no prefixes.
+- **Identity.** `thot:<sha256>`, a CIDv1, `thot-<cid>`, and `contentRoot` (keccak256), all over the canonical
+  manifest without its identity block.
+- **Lineage.** Genesis is generation 1. Every facet change (a new chat, a new note, an edited prompt) makes the next
+  build generation n+1, with `parent` = the previous manifest's CID. A re-bind with no change keeps the generation.
+  `relations` records `derived_from` Savante's bundle.
+- **Rung.** Each agent directory is its own git repository, so the rung's locator
+  (`localhost/<user>/<name>@<commit>`) names real bytes. History and memory are git-ignored and listed as
+  `locator_lacks`.
+
+The builder is checked against the spec's own test vectors: Savante @1fcca89, Jaimla @8b57ccf and LuvAI @0c1eef7 give
+the same bundle roots, Merkle roots and identity CIDs. Savante's current generation-9 manifest verifies with no findings.
+
+## 8d. PostgreSQL: publish an agent, load one back
+
+**Agents → PostgreSQL**. The connection is `BANKML_PG_DSN` (default `dbname=bankml`, the local socket, your role).
+One-time setup, which needs sudo:
+
+```sh
+sudo -u postgres psql -c "CREATE ROLE $USER LOGIN CREATEDB" -c "CREATE DATABASE bankml OWNER $USER"
+sudo -u postgres psql -d bankml -c "CREATE EXTENSION IF NOT EXISTS vector"
+```
+
+- **Publish the agent in use.** This rebuilds and verifies its THOT bundle, then upserts `bankml_agents`: persona
+  (the exact bytes, plus a jsonb copy for queries), prompt, card, ledger, manifest, THOT CID, contentRoot and
+  generation.
+  - **Off by default:** `.history` and `.memory` lines go in (`bankml_exchanges`, `bankml_memory`, exact line text,
+    sequence and sha256) only when *include .history and .memory lines* is ticked. Otherwise the database holds only
+    their commitments, inside the manifest.
+- **Load.** Rebuilds a published agent as a local one. It is **refused** unless the stored manifest's identity
+  recomputes and every restored file (persona, prompt, and history and memory when included) re-hashes to the
+  manifest's digest. A tampered row cannot be loaded.
+- **Vectors.** `bankml_exchanges.embedding` is `vector(1024)` (bge-m3's width, as mindX uses), indexed with DiskANN
+  when pgvectorscale is installed and HNSW (pgvector) otherwise. Embeddings are not computed yet (no local embedding
+  model is served); the column is ready for them.
+- **Safety.** Values travel to psql as COPY data into a temporary table; no value is ever part of SQL text.
+  `testing/test_connectors.py` runs every step against a throwaway cluster (initdb in a temp dir, pgvector, its own
+  socket), including a tampered prompt, a tampered history line and an SQL-injection string, all handled.
+
 ## 9. Receipts, and how to check an answer
 
 Every answer from `bankml serve` carries:
@@ -334,6 +407,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `BANKML_SERVE` | `http://127.0.0.1:18093` | where the UI finds bankml serve |
 | `BANKML_UI_STATE` | `~/.local/share/bankml/savante` | `.history` and caches |
 | `BANKML_REPO` | the checkout | where view mode reads `testing/` |
+| `BANKML_AGENTS` | `~/.local/share/bankml/agents` | custom agents (one git repository each) |
+| `BANKML_PG_DSN` | `dbname=bankml` | PostgreSQL for publishing and loading agents |
 | `RAGE_PATH` | `~/mindX/mindx/godel/mindxtrain/hf/space_ui` | where the ragebar finds mindX's `rage.py` (built-in BM25 otherwise) |
 | `BANKML_GGML_LIB` | — | llama.cpp b11192 release dir, for the oracles |
 | `BANKML_THREADS` | all cores | threads for the kernels' benchmarks |

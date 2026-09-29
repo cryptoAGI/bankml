@@ -65,7 +65,8 @@ Every number above is measured and reproducible — the tables, machines and com
 | P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | next — acceptance: token-identical to llama.cpp at temperature 0 |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
-| UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.8** |
+| UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9** |
+| iNFT | load an agent from chain, prepare and simulate a mint the owner signs | next (0.1.0) |
 | P5 | ARM / NEON, handheld | planned |
 
 Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Its own forward
@@ -127,6 +128,10 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
 - **Proof of data, not the data.** `.history` and `.memory` never leave the laptop. What can be shared is their
   commitment (a Merkle root over the lines and a CIDv1 of the file), and an inclusion proof for any one exchange
   that checks against the root without revealing the rest.
+- **Agents**: derive your own agent from Savante's template with its own `.persona`, `.prompt`, card and ledger
+  (keccak256 doctrine root, built exactly as Savante's binder builds hers). Build its **THOT bundle** (the dataset an
+  iNFT points to: history and memory committed by digest, lineage by generation), and **publish** it to PostgreSQL
+  (pgvector/pgvectorscale) or **load** a published one back, verified byte for byte. Savante's canon is never written.
 - Panels resize from their corner, and the side panel drags to either side.
 
 **4. Let others watch**: `python3 ui/view.py --host 0.0.0.0` gives a read-only page at
@@ -150,6 +155,9 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
 | `ui/savante.py` | the Savante UI, interact mode (Gradio, loopback) |
 | `ui/view.py` | the read-only view page for the LAN (standard library) |
+| `ui/agents.py` | custom agents: derive, edit, ledger; keccak256 and the doctrine root |
+| `ui/thot.py` | THOT manifests (`sagi.thot_manifest/1`), checked against the spec's test vectors |
+| `ui/connectors.py` | PostgreSQL (pgvector / pgvectorscale): publish and load agents, verified |
 | `usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |

@@ -17,6 +17,7 @@ out=testing/results/$v.txt
   cargo clippy --release --all-targets --locked -q -- -D warnings && echo "clippy: clean"
   python3 testing/test_gguf_guard.py | tail -1
   python3 -B testing/test_ui.py | tail -1 | sed 's/^/ui data layer: /'
+  python3 -B testing/test_connectors.py | tail -1 | sed 's/^/postgres connector (throwaway cluster): /'
   python3 testing/guard_agree.py target/release/bankml $(ls .models/*.gguf 2>/dev/null) | tail -1
   if [ -n "${BANKML_GGML_LIB:-}" ]; then
     for t in oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \

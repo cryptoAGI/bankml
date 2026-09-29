@@ -1,0 +1,61 @@
+# bankml 0.0.9 — 2026-09-29T00:49:09Z · laptop (Ryzen 3 3200U). No Rust code changed since 0.0.6 (version only); the kernel records of testing/results/0.0.6.txt stand.
+unittests: test result: ok. 37 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.23s
+testing/cli.rs: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+clippy: clean
+ok   need_more
+18/18 agree
+## testing/test_ui.py
+ok   cid_v1_raw('abc')
+ok   commitment counts 5 records, has a root and a CID
+ok   every record's inclusion proof verifies
+ok   a changed byte fails its proof
+ok   a proof for another record fails
+ok   out-of-range proof is empty
+ok   history search finds the ternary questions first (built-in engine)
+ok   empty query returns nothing
+ok   metrics: 5 exchanges, median response 24 s, all hashes match
+ok   metrics: prefill = prompt tokens / first token
+ok   .memory holds 2 notes and a prompt block
+ok   .memory remove by number
+ok   keccak256('') and ('abc') vectors
+ok   keccak256 == pycryptodome for every length 0..400
+ok   doctrine root reproduces Savante's published ledger value
+ok   derive writes persona, prompt, card, ledger; it verifies
+ok   derived identity is new; the template's bindings are not copied
+ok   agent card: ERC-8004 registration-v1, not_yet_minted, derived_from recorded
+ok   editing .prompt re-ledgers (prompt hash changes; the doctrine root, over the persona, does not)
+ok   editing a doctrine clause changes the doctrine root
+ok   a hand edit outside save() is caught by verify
+ok   preflight refuses a float
+ok   preflight refuses a missing clause
+ok   agent_dir rejects path traversal
+ok   THOT spec vector savante: bundle_root, Merkle root and identity CID
+ok   THOT spec vector jaimla: bundle_root, Merkle root and identity CID
+ok   THOT spec vector luvai: bundle_root, Merkle root and identity CID
+ok   a bankml THOT bundle verifies (structure and facet bytes)
+ok   the bundle commits history by digest and holds none of its text
+ok   re-bind keeps the generation; a facet change is n+1 with parent = the previous CID
+ok   view /api/state carries the .history commitment
+ok   view /api/state carries no .history content
+ok   view refuses traversal and unknown paths
+ok   view refuses POST
+all ok
+## testing/test_connectors.py (throwaway PostgreSQL 16 cluster, pgvector)
+ok   schema ready with pgvector 0.8.6 and an hnsw (pgvector) index
+ok   bankml_exchanges.embedding is vector(1024)
+ok   publish (public only): the agent row, and no private lines
+ok   the database holds the history's commitment, not its content
+ok   publish with private lines: 2 exchanges, 1 note; the injection text is stored as data
+ok   published() lists it
+ok   load verifies and restores persona and prompt byte for byte
+ok   load restores history and memory byte for byte (so their proofs still hold)
+ok   the loaded agent's ledger verifies
+ok   a tampered prompt in the database is refused on load
+ok   a tampered history line in the database is refused on load
+ok   a facet change makes the next publish a new THOT generation
+all ok
+# live UI
+200 GET http://127.0.0.1:7873/
+200 GET http://10.0.0.153:7874/
+000 GET http://10.0.0.153:7873/
+# savante canon: 0 changes (read-only check)

@@ -52,6 +52,19 @@ SERVE = os.environ.get("BANKML_SERVE", "http://127.0.0.1:18093")
 STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" / "bankml" / "savante")).expanduser()
 HISTORY = STATE / "savante.history"
 MEMORY = STATE / "savante.memory"
+ACTIVE = {"slug": None}  # None = Savante (the canon); else a custom agent from ui/agents.py
+
+
+def use_agent(slug):
+    """Point .history and .memory (and the prompt choices) at Savante or at a custom agent."""
+    global HISTORY, MEMORY
+    import agents
+    if slug:
+        f = agents.files(slug)
+        HISTORY, MEMORY = f["history"], f["memory"]
+    else:
+        HISTORY, MEMORY = STATE / "savante.history", STATE / "savante.memory"
+    ACTIVE["slug"] = slug or None
 RAGE_PATH = Path(os.environ.get("RAGE_PATH", Path.home() / "mindX" / "mindx" / "godel" / "mindxtrain" / "hf" / "space_ui")).expanduser()
 REPO = Path(os.environ.get("BANKML_REPO", Path(__file__).resolve().parents[1])).expanduser()
 LIVE = REPO / "testing" / "live.log"
@@ -130,11 +143,25 @@ def space_prompt() -> bytes | None:
         return None
 
 
-PROMPTS = ("persona · system_prompt (canon, ledgered)", "sAGI.prompt (canon facet, ledgered)", "Savante.prompt (Space template, not ledgered)")
+PROMPTS = ("persona · system_prompt (ledgered)", "the agent's .prompt file (ledgered; Savante: sAGI.prompt)", "Savante.prompt (Space template, not ledgered)")
 
 
 def system_prompt(canon: Canon, which: str):
     """(text, provenance line) — or (None, why) when the choice cannot be used."""
+    if ACTIVE["slug"]:
+        import agents
+        slug = ACTIVE["slug"]
+        bad = [r for r in agents.verify(slug) if not r[1]]
+        if bad:
+            return None, f"agent {slug} does not verify against its ledger ({', '.join(r[0] for r in bad)}): refusing to speak"
+        f = agents.files(slug)
+        led = json.loads(f["commitments.json"].read_text(encoding="utf-8"))
+        if which == PROMPTS[1]:
+            b = f["prompt"].read_bytes()
+            return b.decode("utf-8", "replace"), f"{slug}.prompt · sha256 {sha256(b)[:12]}… (ledgered)"
+        if which == PROMPTS[0]:
+            sp = json.loads(f["persona"].read_text(encoding="utf-8")).get("system_prompt") or ""
+            return sp, f"{slug}.persona system_prompt · persona sha256 {led['artifacts']['persona']['sha256'][:12]}… (ledgered)"
     if which == PROMPTS[0]:
         if not canon.persona_ok:
             return None, "savante.persona does not verify against the ledger: refusing to speak as Savante"
@@ -875,7 +902,7 @@ def build(canon: Canon, mode: str):
                          f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
                 foot = receipt_line(rc, text)
                 h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + "</sub>"
-                history_append({"ts": round(t0, 3), **timing, "session": sess["id"], "user": h[-1][0], "assistant": answer,
+                history_append({"ts": round(t0, 3), **timing, "agent": ACTIVE["slug"] or "savante", "session": sess["id"], "user": h[-1][0], "assistant": answer,
                                 "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc})
                 yield h
 
@@ -968,6 +995,164 @@ def build(canon: Canon, mode: str):
         for e in (ev, ev2):
             e.then(history_html, None, hall).then(metrics_html, None, mt).then(lambda: show(10 ** 9), None, outs)
         demo.load(lambda: (history_html(), metrics_html(), memory_html()), None, [hall, mt, mview])
+        with gr.Tab("Agents"):
+            import agents
+            SAV = "Savante (the canon · read-only template)"
+            gr.Markdown("**Custom agents from the Savante template.** Savante's canon is never written: *derive* makes a new agent "
+                        f"with its own `.persona`, `.prompt`, agent card and ledger in `{agents.AGENTS}`. The ledger (sha256 + CIDv1 "
+                        "per file, and a keccak256 doctrine root built exactly as Savante's binder builds hers) is regenerated on every "
+                        "save; an agent that does not verify does not speak. The chat, .history, .memory, Responses and Metrics follow "
+                        "the agent in use. Nothing here mints.")
+            with gr.Row():
+                apick = gr.Dropdown([SAV] + agents.list_agents(), value=SAV, label="agent", scale=3)
+                b_use = gr.Button("use this agent", variant="primary", scale=1)
+            active_md = gr.Markdown("in use: **Savante** (the canon)")
+            with gr.Accordion("derive a new agent from Savante", open=False):
+                with gr.Row():
+                    d_name = gr.Textbox(label="name", placeholder="e.g. Auditor Ada")
+                    d_kind = gr.Textbox(label="kind", value="governance")
+                d_mantra = gr.Textbox(label="mantra", value=canon.persona.get("mantra", ""))
+                d_oath = gr.Textbox(label="oath", value=canon.persona.get("oath", ""), lines=2)
+                d_desc = gr.Textbox(label="public description (the agent card)", lines=2)
+                d_sp = gr.Textbox(label="system prompt (.prompt) — start from Savante's and make it this agent's", value=canon.persona.get("system_prompt", ""), lines=10)
+                b_derive = gr.Button("derive", variant="primary")
+                d_out = gr.Markdown()
+            with gr.Accordion("edit the agent in use (custom agents only): .persona and .prompt", open=False):
+                e_persona = gr.Code(language="json", label=".persona (JSON; preflight: ASCII keys, integers only; every doctrine clause present)")
+                e_prompt = gr.Textbox(label=".prompt", lines=10)
+                b_save = gr.Button("save and re-ledger", variant="primary")
+                e_out = gr.Markdown()
+            ledger = gr.HTML()
+
+            def ledger_html():
+                slug = ACTIVE["slug"]
+                if not slug:
+                    return "<div class='bk-card'>Savante's ledger: see the <b>Integrity</b> tab (every committed file, re-hashed at start).</div>"
+                led = json.loads(agents.files(slug)["commitments.json"].read_text(encoding="utf-8"))
+                rows = "".join(f"<tr><td>{E(n)}</td><td>{'✓' if ok else '✗'}</td><td class='bk-mono'>{E(str(d))}</td></tr>" for n, ok, d in agents.verify(slug))
+                arts = "".join(f"<tr><td>{E(k)}</td><td class='bk-mono'>{a['sha256']}</td><td class='bk-mono'>{a['cid']}</td></tr>"
+                               for k, a in list(led["artifacts"].items()) + [("card", led["card"])])
+                return (f"<div class='bk-card'><b>{E(slug)}</b> · derived from {E(str((led.get('derived_from') or {}).get('agent')))} · "
+                        f"status not_yet_minted · doctrine root <span class='bk-mono'>{led['doctrine_root']['value']}</span></div>"
+                        f"<table class='bk-t'><tr><th>check</th><th></th><th>detail</th></tr>{rows}</table>"
+                        f"<table class='bk-t'><tr><th>file</th><th>sha256</th><th>CIDv1</th></tr>{arts}</table>")
+
+            def editors():
+                slug = ACTIVE["slug"]
+                if not slug:
+                    return "", ""
+                f = agents.files(slug)
+                return f["persona"].read_text(encoding="utf-8"), f["prompt"].read_text(encoding="utf-8")
+
+            def switch(choice):
+                slug = None if choice == SAV else choice
+                use_agent(slug)
+                sid, turns = history_load()
+                who = f"**{choice}**" + ("" if slug else " (the canon)")
+                pe, pr = editors()
+                return (f"in use: {who} · .history `{HISTORY}`", turns, {"id": sid}, history_html(), metrics_html(), memory_html(),
+                        pe, pr, ledger_html(), system_prompt(canon, PROMPTS[0])[1], *show(10 ** 9))
+
+            b_use.click(switch, apick, [active_md, chat, session, hall, mt, mview, e_persona, e_prompt, ledger, prov] + outs)
+
+            def do_derive(name, kind, mantra, oath, desc, sp):
+                if not name.strip():
+                    return "give the agent a name", gr.update()
+                try:
+                    slug = agents.derive(canon.persona, canon.ledger, name.strip(), system_prompt=sp, mantra=mantra, oath=oath, kind=kind, description=desc)
+                except (FileExistsError, ValueError) as e:
+                    return f"not derived: {e}", gr.update()
+                root = json.loads(agents.files(slug)["commitments.json"].read_text(encoding="utf-8"))["doctrine_root"]["value"]
+                return (f"derived **{slug}** in `{agents.agent_dir(slug)}` · doctrine root `{root}` — choose it above and press *use this agent*",
+                        gr.update(choices=[SAV] + agents.list_agents(), value=slug))
+
+            b_derive.click(do_derive, [d_name, d_kind, d_mantra, d_oath, d_desc, d_sp], [d_out, apick])
+
+            def do_save(pe, pr):
+                slug = ACTIVE["slug"]
+                if not slug:
+                    return "Savante's canon is read-only: derive an agent to edit one.", ledger_html()
+                try:
+                    led = agents.save(slug, pe, pr)
+                except (ValueError, json.JSONDecodeError) as e:
+                    return f"not saved: {e}", ledger_html()
+                return f"saved and re-ledgered · doctrine root `{led['doctrine_root']['value']}`", ledger_html()
+
+            b_save.click(do_save, [e_persona, e_prompt], [e_out, ledger])
+            demo.load(ledger_html, None, ledger)
+
+            import connectors
+            import thot
+            with gr.Accordion("THOT bundle — the dataset an iNFT points to (sagi.thot_manifest/1)", open=False):
+                gr.Markdown("Builds `<agent>.thot.json`: persona and prompt (core facets), the card, and **.history / .memory "
+                            "committed by digest only** (`x-bankml.*` custom facets) — publishable, holding no conversation text. "
+                            "A facet change makes a new generation whose `parent` is the previous manifest's CID. Checked against "
+                            "the spec's own test vectors (savante, jaimla, luvai).")
+                b_thot = gr.Button("build and verify the THOT bundle of the agent in use", variant="primary")
+                thot_out = gr.Code(language="json", label="manifest (identity, bundle root, Merkle root, lineage)")
+
+                def do_thot():
+                    slug = ACTIVE["slug"]
+                    if not slug:
+                        st = json.loads((CANON / "savante.thot.json").read_text(encoding="utf-8"))
+                        return json.dumps({"savante (read-only)": st["identity"], "generation": st["bundle"]["generation"],
+                                           "findings": thot.check_structure(st) + thot.check_facets(st, CANON)}, indent=1)
+                    tpl = json.loads((CANON / "savante.thot.json").read_text(encoding="utf-8"))
+                    m = thot.build(slug, tpl)
+                    return json.dumps({"identity": m["identity"], "bundle": m["bundle"], "bundle_root": m["bundle_root"]["value"],
+                                       "merkle_root": m["merkle"]["root"], "rung": m["rung"]["evidence"], "relations": m.get("relations"),
+                                       "findings": thot.verify(slug)}, indent=1, ensure_ascii=False)
+
+                b_thot.click(do_thot, None, thot_out)
+            with gr.Accordion("PostgreSQL (pgvector / pgvectorscale) — publish the agent, or load a published one", open=False):
+                pg_st = gr.JSON(label="connection (BANKML_PG_DSN)")
+                with gr.Row():
+                    b_pgst = gr.Button("check the connection")
+                    priv = gr.Checkbox(value=False, label="include .history and .memory lines (private; off = commitments only)")
+                    b_pub = gr.Button("publish the agent in use", variant="primary")
+                with gr.Row():
+                    pub_pick = gr.Dropdown([], label="published agents", scale=3)
+                    b_list = gr.Button("list", scale=1)
+                    b_load = gr.Button("load (verified) as a local agent", scale=1)
+                pg_out = gr.Markdown()
+
+                def pg_status():
+                    st = connectors.status()
+                    return st
+
+                def do_pub(p):
+                    slug = ACTIVE["slug"]
+                    if not slug:
+                        return "Savante's canon is not published from here: derive an agent first."
+                    try:
+                        r = connectors.publish(slug, include_private=bool(p))
+                    except Exception as e:  # noqa: BLE001 — shown to the operator
+                        return f"not published: {e}"
+                    return (f"published **{r['slug']}** · THOT generation {r['generation']} · `{r['thot_cid']}` · "
+                            + (f"{r['exchanges']} exchanges and {r['memory']} notes included" if r["private_included"] else "commitments only (no private lines)"))
+
+                def do_list():
+                    try:
+                        items = connectors.published()
+                    except Exception as e:  # noqa: BLE001
+                        return gr.update(choices=[]), f"cannot list: {e}"
+                    return gr.update(choices=[x["slug"] for x in items]), f"{len(items)} published agents"
+
+                def do_load(slug):
+                    if not slug:
+                        return "choose a published agent", gr.update()
+                    target = slug if slug not in agents.list_agents() else f"{slug}_loaded"[:40]
+                    try:
+                        r = connectors.load(slug, as_slug=target)
+                    except Exception as e:  # noqa: BLE001
+                        return f"refused: {e}", gr.update()
+                    return (f"loaded **{r['slug']}** from `{r['from']}` · verified against THOT `{r['thot_cid']}` · {r['private_lines']} private lines — "
+                            "choose it above and press *use this agent*", gr.update(choices=[SAV] + agents.list_agents()))
+
+                b_pgst.click(pg_status, None, pg_st)
+                b_pub.click(do_pub, priv, pg_out)
+                b_list.click(do_list, None, [pub_pick, pg_out])
+                b_load.click(do_load, pub_pick, [pg_out, apick])
     return demo
 
 

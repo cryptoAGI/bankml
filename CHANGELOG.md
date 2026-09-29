@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.0.9 — 2026-09-28
+
+Custom agents, their THOT bundles, and a PostgreSQL connector. Every new cryptographic construction is checked against
+a published value. No Rust code changed. Record: `testing/results/0.0.9.txt`.
+
+### Added
+- **`ui/agents.py`**: agents derived from the Savante template, without writing to her canon. Each gets `.persona`,
+  `.prompt`, an agent card (EIP-721 ∪ ERC-8004 registration-v1, `not_yet_minted`, `derived_from`) and a ledger:
+  sha256 and CIDv1 per file, plus a **keccak256 doctrine root** over the same 15 JSON pointers as Savante's.
+  - keccak256 is pure Python. It reproduces **Savante's published doctrine root** from her persona, and it equals
+    pycryptodome for every length from 0 to 400 bytes.
+  - Saving enforces the binder's preflight (ASCII keys, integers only, within ±2⁵³), and a missing doctrine clause is
+    a hard error, as the binder specifies.
+  - An agent that does not verify against its ledger does not speak.
+- **`ui/thot.py`**: THOT manifests to `sagi.thot_manifest/1`.
+  - Facets: core `persona` and `prompt`; custom `x-bankml.agentcard`, `x-bankml.history` and `x-bankml.memory`
+    (history and memory committed by digest only).
+  - The keccak `bundle_root`, the 64-leaf keccak Merkle tree, and the identity (`thot:`, CID, name, contentRoot).
+  - Lineage by generation (a facet change gives n+1 with `parent` = the previous CID), `relations` to Savante's
+    bundle, and a real git locator per agent.
+  - **Checked against the spec's three test vectors** (Savante @1fcca89, Jaimla @8b57ccf, LuvAI @0c1eef7): bundle
+    root, Merkle root and identity CID all equal. Savante's current generation-9 manifest verifies with no findings.
+- **`ui/connectors.py`**: PostgreSQL through `psql` (stdlib, no driver).
+  - `publish`: the public parts by default; `.history`/`.memory` lines only with an explicit opt-in.
+  - `load`: refused unless every restored byte matches the THOT manifest.
+  - `vector(1024)` embeddings column with a DiskANN (pgvectorscale) or HNSW (pgvector) index.
+  - Values travel as COPY data into a temporary table and never enter SQL text.
+- **UI**: an **Agents** tab (use, derive, edit and re-ledger, the ledger check, the THOT bundle, publish and load),
+  and the chat, `.history`, `.memory`, Responses and Metrics follow the agent in use.
+- **Tests**:
+  - `testing/test_ui.py` grows to 34 checks: the THOT spec vectors and lineage, keccak vectors and the cross-check, the doctrine root against Savante's,
+    derive/verify/save, preflight refusals, tamper detection, and path confinement.
+  - **`testing/test_connectors.py`** (12 checks) runs against a **throwaway PostgreSQL 16 cluster** (initdb in a temp
+    dir, pgvector): the schema, both publish modes, a byte-exact load, refusal of a tampered prompt and a tampered
+    history line, an injection string stored as data, and the THOT generation step. It skips where PostgreSQL 16 or
+    pgvector is absent (CI).
+
+### Not yet
+- The laptop's own PostgreSQL has no role for the operator yet. The one-time setup needs sudo and is in usage.md §8d.
+- Embeddings are not computed (the column is ready).
+- The chain side (loading an iNFT, preparing a mint) is 0.1.0. The house iNFT contract (`iNFT_7857`, `mintOpenAgent`)
+  is not deployed on any public chain, its audit is not cleared, and minting needs MINTER_ROLE.
+
 ## 0.0.8 — 2026-09-28
 
 Savante's memory, made searchable, measurable and provable, with the documents brought up to date. No Rust code
