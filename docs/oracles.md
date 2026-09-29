@@ -136,7 +136,24 @@ bankml's `forward.rs` computes the same in the float order read from b11192's `o
 - `scale = 1 / sqrtf(mean + eps)`;
 - each output `(x · scale) · w`, with no FMA.
 
-**300 of 300 rows bit-exact for both.** Each later step of the forward pass (RoPE, attention, the feed-forward block,
+**300 of 300 rows bit-exact for both.**
+
+**Step four (0.2.4): Q, K, V, the head norms and RoPE.** The oracle also builds layer 0's attention inputs on a
+28-token chat prompt:
+- `mul_mat` of the Q1_0 `attn_q`, `attn_k` and `attn_v` weights with the normed rows;
+- `reshape` to 128-wide heads, `rms_norm` and `mul` by `attn_q_norm` and `attn_k_norm`;
+- `rope_ext` in NEOX mode with the YaRN parameters llama.cpp's context derives (`freq_scale` 0.25, `ext_factor` 1,
+  `attn_factor` 1.0, whose bits the record carries, beta 32 and 1, `n_ctx_orig` 16,384, base 10⁶).
+
+RoPE runs twice: at positions 0–27, and at positions 7 to 63,214, where theta is a long product.
+`oracle_forward_qkv_rope` requires **140 of 140 rows bit-exact**.
+
+This step showed why the oracle is the shipped binary and not the source. Written as `ops.cpp` reads, bankml's RoPE
+matched only 30 of 84 rows, while the projections and norms before it were exact. The disassembly of
+`libggml-cpu-haswell.so` shows GCC's FMA contraction of the rotation, the YaRN mix and the magnitude term. With those
+three written as the same `mul_add`s, every row matches.
+
+Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 
 ## 2. Scalar models: every fast path against its own reference

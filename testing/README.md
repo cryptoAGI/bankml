@@ -61,6 +61,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | pool coverage, `bench_pool_overhead`, `bench_memory_floor` | `par.rs` | the thread pool, its wake-up cost, the machine's read bandwidth |
 | `reads_this_machine_and_this_process`, `stat_with_spaces_and_parens_in_the_name`, `busy_loop_is_seen_as_cpu` | `sys.rs` | bankml's psutil: `/proc` memory, rss, CPU time and % |
 | `heads_are_bounded`, `only_loopback_hosts`, `unpaired_surrogates_become_replacement_characters`, `file_identity_changes_are_seen` | `serve.rs` | the gateway's limits, Host check, JSON decoding and the model-identity re-check |
+| `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
 | `oracle_chat_template` *(real)*, `a_short_conversation`, `python_split_semantics` | `chat.rs` | P3 step two: every recorded conversation byte-identical to llama.cpp b11192's rendering (317 of 317) |
 | `oracle_tokenizer` *(real)*, `pretokenizer_shapes`, `byte_chars_are_gpt2s` | `tokenizer.rs` | P3 step one: every recorded case token-identical to llama.cpp b11192 (4,258 of 4,258) |
@@ -71,6 +72,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.4 | `results/0.2.4.txt` | P3 step four: Q/K/V, head norms and YaRN RoPE bit-exact against the shipped ggml (140 of 140 rows) |
 | 0.2.3 | `results/0.2.3.txt` | P3 step three: the embedding and the first RMS norm bit-exact against the shipped ggml (300 of 300 tokens) |
 | 0.2.2 | `results/0.2.2.txt` | P3 step two: the chat template byte-identical to llama.cpp on 317 of 317 conversations; the ternary headline re-measured with the model resident (0.231 s, 9.45×) |
 | 0.2.1 | `results/0.2.1.txt` | P3 step one: a Rust tokenizer token-identical to llama.cpp on 4,258 of 4,258 recorded cases |

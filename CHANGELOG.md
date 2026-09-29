@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.4 — 2026-09-29
+
+**P3, step four: layer 0's attention inputs (Q, K and V projected, the head norms, YaRN RoPE), bit-exact against
+llama.cpp's.** Record: `testing/results/0.2.4.txt`.
+
+### Added
+- **`forward.rs`.**
+  - `Weights::qkv` gives llama.cpp's `Qcur`, `Kcur` and `Vcur` for one token:
+    - the normed row quantized to q8_0 and multiplied by the Q1_0 `attn_q`, `attn_k` and `attn_v` weights, through
+      the kernel already proven bit-exact;
+    - Q and K normed per 128-wide head by `attn_q_norm` and `attn_k_norm`;
+    - RoPE applied to each.
+  - `Rope` carries the parameters llama.cpp's context derives for Bonsai's YaRN: `freq_scale = 1/4`,
+    `ext_factor = 1`, `attn_factor = get_mscale(4, 1) / (1 + 0.1·logf 4)` (exactly 1.0 in float, checked against
+    the bits the oracle records), beta 32 and 1, `n_ctx_orig` 16,384, and correction dims [20, 37]. The cos/sin
+    cache is built as ggml builds it: theta advances by repeated multiplication by `powf(base, −2/n)`, and the
+    pairs are NEOX (i, i + 64).
+- **The oracle extended** (`testing/forward_oracle.py` → `oracle_forward_qkv_rope`, in the gate). The shipped ggml's
+  `mul_mat`, `rms_norm`, `mul` and `rope_ext` run on a 28-token chat prompt at positions 0–27, and again at positions
+  7 to 63,214, where theta is a long product. **140 of 140 rows bit-exact.**
+
+### Found
+- **The bits follow the binary, not the source.** Written as the C source reads (`x0·cos − x1·sin`), RoPE matched only
+  30 of 84 rows. The projections and head norms were exact (28 of 28 each), which isolated the difference to RoPE.
+  The disassembly of the shipped `libggml-cpu-haswell.so` shows GCC contracting three expressions into FMAs:
+  - the rotation: `fma(x0, cos, −(x1·sin))` and `fma(x0, sin, x1·cos)`, with x1's products rounded and x0's fused;
+  - the YaRN mix: `fma(θ_interp, 1 − r, θ_extrap·r)`;
+  - the magnitude: `fma(logf(1/fs), 0.1, 1)`.
+
+  bankml writes the same three as `mul_add`s. The RMS norm has nothing to contract, which is why 0.2.3 matched as
+  written.
+
 ## 0.2.3 — 2026-09-29
 
 **P3, step three: the first operations of bankml's own forward pass, bit-exact against llama.cpp's.** Record:
