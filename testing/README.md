@@ -61,7 +61,8 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | pool coverage, `bench_pool_overhead`, `bench_memory_floor` | `par.rs` | the thread pool, its wake-up cost, the machine's read bandwidth |
 | `reads_this_machine_and_this_process`, `stat_with_spaces_and_parens_in_the_name`, `busy_loop_is_seen_as_cpu` | `sys.rs` | bankml's psutil: `/proc` memory, rss, CPU time and % |
 | `heads_are_bounded`, `only_loopback_hosts`, `unpaired_surrogates_become_replacement_characters`, `file_identity_changes_are_seen` | `serve.rs` | the gateway's limits, Host check, JSON decoding and the model-identity re-check |
-| `oracle_forward_attention` *(real)* | `forward.rs` | P3 step five: layer 0's `kqv_out`, `attn_out`, `ffn_inp` (f16 cache, causal flash attention, `wo`, residual) bit-exact against the shipped ggml, 84 of 84 rows |
+| `oracle_forward_attention` *(real)* | `forward.rs` | P3 steps five and six: layer 0's `kqv_out`, `attn_out`, `ffn_inp`, `l_out` (f16 cache, causal flash attention, `wo`, residual, the FFN block) bit-exact against the shipped ggml, 112 of 112 rows |
+| `oracle_forward_swiglu_sweep` | `forward.rs` | SwiGLU with ggml's vectorized expf on 24,600 values over ±120 and the edges, every output's bits |
 | `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
 | `oracle_chat_template` *(real)*, `a_short_conversation`, `python_split_semantics` | `chat.rs` | P3 step two: every recorded conversation byte-identical to llama.cpp b11192's rendering (317 of 317) |
@@ -73,6 +74,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.6 | `results/0.2.6.txt` | P3 step six: the FFN block; layer 0 complete and bit-exact (112 of 112 rows), SwiGLU sweep 24,600 of 24,600 |
 | 0.2.5 | `results/0.2.5.txt` | P3 step five: layer 0's attention, `wo` and the residual bit-exact against the shipped ggml (84 of 84 rows) |
 | 0.2.4 | `results/0.2.4.txt` | P3 step four: Q/K/V, head norms and YaRN RoPE bit-exact against the shipped ggml (140 of 140 rows) |
 | 0.2.3 | `results/0.2.3.txt` | P3 step three: the embedding and the first RMS norm bit-exact against the shipped ggml (300 of 300 tokens) |

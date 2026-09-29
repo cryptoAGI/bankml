@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.6 — 2026-09-29
+
+**P3, step six: the feed-forward block. With it, all of layer 0 is bit-exact against llama.cpp's.** Record:
+`testing/results/0.2.6.txt`.
+
+### Added
+- **`forward.rs`.**
+  - `Weights::ffn` runs the feed-forward block: `ffn_norm`, then the gate and up projections (one shared q8_0
+    activation, the proven Q1_0 kernel), SwiGLU, `ffn_down`, and the residual. The result is llama.cpp's `l_out`,
+    the layer's output.
+  - `v_expf` is ggml's AVX2 `ggml_v_expf`, lane by lane, and **not libm's `expf`**. It has a range reduction by
+    2ⁿ, a degree-5 polynomial evaluated in FMAs, and the scaled path for |n| > 126, with the constants carried as
+    exact bit patterns.
+  - `swiglu` is `silu(g) · u`, with `silu(x) = x / (1 + v_expf(0 − x))`, as `ggml_vec_swiglu_f32` computes it.
+- **The oracle extended.**
+  - `oracle_forward_attention` now runs through `l_out`: **112 of 112 rows bit-exact** (`kqv_out`, `attn_out`,
+    `ffn_inp`, `l_out`, 28 tokens).
+  - New `oracle_forward_swiglu_sweep`, in the gate: the shipped `ggml_swiglu_split` on 24,600 values across ±120
+    and the edges. That covers the large-|x| path of ggml's `expf`, which no prompt reaches. **24,600 of 24,600
+    bit-exact.**
+
+### Found
+- **A whole-layer check can hide a wrong function.** With libm's `expf` in place of ggml's, `l_out` still matched
+  27 of 28 rows, because the q8_0 quantization before `ffn_down` absorbs most of the difference. The direct sweep
+  matched only 19,245 of 24,600. Every function gets its own oracle for this reason.
+
 ## 0.2.5 — 2026-09-29
 
 **P3, step five: layer 0's attention, the output projection and the residual, bit-exact against llama.cpp's.**

@@ -167,6 +167,21 @@ are not yet covered, and each will get its own oracle:
 - the tiled kernel, for 64 or more query rows;
 - the split-KV kernel, for a decode over 512 or more cells.
 
+**Step six (0.2.6): the feed-forward block; layer 0 complete.** The oracle continues from `ffn_inp`:
+- `rms_norm` and `mul` by `ffn_norm`;
+- `mul_mat` by `ffn_gate` and `ffn_up`;
+- `swiglu_split`;
+- `mul_mat` by `ffn_down`;
+- `add`, giving `l_out`, the layer's output.
+
+`oracle_forward_attention` requires 112 of 112 rows through `l_out`. SiLU in the shipped build uses ggml's own
+vectorized `expf`, a polynomial in FMAs, not libm. bankml reproduces it lane by lane.
+
+A second check, `oracle_forward_swiglu_sweep`, feeds 24,600 values across ±120 and the edges straight to
+`ggml_swiglu_split` and requires every output's bits (**24,600 of 24,600**). The sweep exists because the layer check
+alone was not enough: with libm's `expf`, `l_out` still matched 27 of 28 rows, since q8_0 quantization absorbs most
+of the difference, while the sweep matched only 19,245 of 24,600.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

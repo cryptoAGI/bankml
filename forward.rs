@@ -13,6 +13,9 @@
 //! Step five (0.2.5): attention — K and V kept in f16 as llama.cpp's cache keeps them, the causal flash attention of
 //! ggml's CPU reference path (`flash_attn_ext`, fewer than 64 query rows and fewer than 512 KV cells), then `wo` and
 //! the residual (`kqv_out`, `attn_out`, `ffn_inp`).
+//!
+//! Step six (0.2.6): the feed-forward block — `ffn_norm`, the gate and up projections, SwiGLU with ggml's own
+//! vectorized `expf` (not libm's), `ffn_down` and the residual: `l_out`, the whole of layer 0.
 
 use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
 use crate::q1_0::{dequantize_row, f16_to_f32, f32_to_f16, mat_vec, Q8Act, Q1_0_BYTES, QK1_0};
@@ -160,6 +163,36 @@ pub fn attend_head(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, 
     }
 }
 
+/// ggml's AVX2 `ggml_v_expf` (vec.h, "adapted from arm limited optimized routine"), one lane: a range reduction by
+/// `2^n`, a degree-5 polynomial in FMAs, and the scaled path for `|n| > 126`. Each lane depends only on itself, so
+/// the scalar form gives the vector's bits.
+pub fn v_expf(x: f32) -> f32 {
+    let c = |b: u32| f32::from_bits(b);
+    let r = c(0x4b40_0000); // 0x1.8p23
+    let z = x.mul_add(c(0x3fb8_aa3b), r);
+    let n = z - r;
+    let b = (-n).mul_add(c(0x35bf_be8e), (-n).mul_add(c(0x3f31_7200), x));
+    let e = z.to_bits() << 23;
+    let k = f32::from_bits(e.wrapping_add(1.0f32.to_bits()));
+    let big = n.abs() > 126.0;
+    let u = b * b;
+    let j = c(0x3c07_2010).mul_add(b, c(0x3d2b_9f17)).mul_add(u, c(0x3e2a_af33).mul_add(b, c(0x3eff_fedb))).mul_add(u, c(0x3f7f_fff6) * b);
+    if !big {
+        return j.mul_add(k, k);
+    }
+    let g = if n <= 0.0 { 0x8200_0000u32 } else { 0 };
+    let s1 = f32::from_bits(g.wrapping_add(0x7f00_0000));
+    let s2 = f32::from_bits(e.wrapping_sub(g));
+    if n.abs() > 192.0 { s1 * s1 } else { s2.mul_add(j, s2) * s1 }
+}
+
+/// `ggml_vec_swiglu_f32` on AVX2: `silu(g) · u` with `silu(x) = x / (1 + v_expf(0 − x))`.
+pub fn swiglu(gate: &[f32], up: &[f32], out: &mut [f32]) {
+    for ((o, &g), &u) in out.iter_mut().zip(gate).zip(up) {
+        *o = g / (1.0 + v_expf(0.0 - g)) * u;
+    }
+}
+
 /// One layer's K/V cache, f16, one row of `n_head_kv · head_dim` per position (llama.cpp's `cache_k_l*`/`cache_v_l*`
 /// without the transposed-V layout, which flash attention does not use).
 pub struct KvCache {
@@ -301,6 +334,34 @@ impl Weights {
         Ok(())
     }
 
+    /// Layer `il`'s feed-forward block on `ffn_inp` (the residual stream after attention), written back in place as
+    /// `l_out`: `ffn_norm`, gate and up (one q8_0 activation), SwiGLU, `ffn_down`, the residual.
+    pub fn ffn(&self, il: usize, x: &mut [f32]) -> Result<(), String> {
+        let g = self.f32_vec(&format!("blk.{il}.ffn_norm.weight"))?;
+        let mut xn = vec![0.0f32; x.len()];
+        rms_norm_mul(x, &g, self.rms_eps, &mut xn);
+        let a = Q8Act::quantize(&xn);
+        let (wg, n_ff) = self.q1_matrix(&format!("blk.{il}.ffn_gate.weight"), self.n_embd)?;
+        let (wu, n_ff_u) = self.q1_matrix(&format!("blk.{il}.ffn_up.weight"), self.n_embd)?;
+        if n_ff != n_ff_u {
+            return Err(format!("ffn_gate has {n_ff} rows, ffn_up {n_ff_u}"));
+        }
+        let (mut gate, mut up, mut h) = (vec![0.0f32; n_ff], vec![0.0f32; n_ff], vec![0.0f32; n_ff]);
+        mat_vec(wg, n_ff, &a, &mut gate);
+        mat_vec(wu, n_ff, &a, &mut up);
+        swiglu(&gate, &up, &mut h);
+        let (wd, rows) = self.q1_matrix(&format!("blk.{il}.ffn_down.weight"), n_ff)?;
+        if rows != x.len() {
+            return Err(format!("ffn_down: {rows} rows for a {}-wide stream", x.len()));
+        }
+        let mut down = vec![0.0f32; rows];
+        mat_vec(wd, rows, &Q8Act::quantize(&h), &mut down);
+        for (xi, d) in x.iter_mut().zip(&down) {
+            *xi += d; // ggml adds ffn_out + ffn_inp; IEEE addition commutes, so the bits are the same
+        }
+        Ok(())
+    }
+
     /// `get_rows(token_embd, [id])`: the id's row of the Q1_0 table, dequantized (bit-exact with
     /// `dequantize_row_q1_0`, §III.4).
     pub fn embed(&self, id: u32, out: &mut [f32]) -> Result<(), String> {
@@ -409,7 +470,8 @@ mod tests {
         assert_eq!(ok, n);
     }
 
-    /// Layer 0's attention over a 28-token chat prompt (f16 cache, causal), `wo` and the residual, bit for bit.
+    /// Layer 0 whole: attention over a 28-token chat prompt (f16 cache, causal), `wo`, the residual, and the
+    /// feed-forward block to `l_out`, bit for bit.
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-forward (testing/forward_oracle.py); --release"]
     fn oracle_forward_attention() {
@@ -443,11 +505,14 @@ mod tests {
             got.insert(("kqv_out", p), sha(&kqv));
             got.insert(("attn_out", p), sha(&att));
             got.insert(("ffn_inp", p), sha(&res));
+            let mut l = res.clone();
+            w.ffn(0, &mut l).unwrap();
+            got.insert(("l_out", p), sha(&l));
         }
         let (mut n, mut ok) = (0, 0);
         for line in tsv.lines().skip(1) {
             let f: Vec<&str> = line.split('\t').collect();
-            let key = match f[0] { "kqv_out" => "kqv_out", "attn_out" => "attn_out", "ffn_inp" => "ffn_inp", _ => continue };
+            let key = match f[0] { "kqv_out" => "kqv_out", "attn_out" => "attn_out", "ffn_inp" => "ffn_inp", "l_out" => "l_out", _ => continue };
             n += 1;
             let good = got[&(key, f[1].parse::<usize>().unwrap())] == f[2];
             ok += good as usize;
@@ -455,7 +520,31 @@ mod tests {
                 eprintln!("  {key} position {} differs (ggml first values {})", f[1], f[3]);
             }
         }
-        eprintln!("forward oracle: layer-0 kqv_out/attn_out/ffn_inp {ok} of {n} rows ({} tokens, causal, f16 K/V) bit-exact against the shipped ggml b11192", toks.len());
+        eprintln!("forward oracle: layer-0 kqv_out/attn_out/ffn_inp/l_out {ok} of {n} rows ({} tokens, causal, f16 K/V) bit-exact against the shipped ggml b11192", toks.len());
         assert_eq!(ok, n);
+    }
+
+    /// SwiGLU (`silu(x) · 1`) on 24,600 values over ±120 and the edges, bit for bit against the shipped
+    /// `ggml_swiglu_split`: covers ggml's large-|x| expf path, which no prompt reaches.
+    #[test]
+    #[ignore = "needs .models/oracle-forward/swiglu.tsv (testing/forward_oracle.py)"]
+    fn oracle_forward_swiglu_sweep() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let tsv = std::fs::read_to_string(dir.join("oracle-forward/swiglu.tsv")).unwrap();
+        let (mut n, mut bad) = (0, Vec::new());
+        for line in tsv.lines() {
+            let (x, y) = line.split_once('\t').unwrap();
+            let x = f32::from_bits(u32::from_str_radix(x, 16).unwrap());
+            let want = u32::from_str_radix(y, 16).unwrap();
+            let mut o = [0.0f32];
+            swiglu(&[x], &[1.0], &mut o);
+            n += 1;
+            if o[0].to_bits() != want {
+                bad.push(format!("x {x:e}: got {:08x} want {want:08x}", o[0].to_bits()));
+            }
+        }
+        eprintln!("forward oracle: swiglu {} of {n} values bit-exact against the shipped ggml b11192 (±120 and the edges)", n - bad.len());
+        bad.iter().take(6).for_each(|b| eprintln!("  {b}"));
+        assert!(bad.is_empty());
     }
 }

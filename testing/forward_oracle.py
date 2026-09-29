@@ -169,6 +169,20 @@ emb0 = base.ggml_get_rows(ctx2, w2, tok2)
 outs["kqv_out"] = kqv
 outs["attn_out"] = attn_out
 outs["ffn_inp"] = base.ggml_add(ctx2, attn_out, emb0)
+# ---- step six: layer 0's feed-forward block — ffn_norm, gate and up, SwiGLU (ggml's vectorized expf), down, the
+# residual: llama.cpp's ffn_norm, ffn_swiglu, ffn_out and l_out, the layer's output
+base.ggml_swiglu_split.restype = P
+base.ggml_swiglu_split.argtypes = [P, P, P]
+n_ff = int(kv["qwen3.feed_forward_length"])
+fn = base.ggml_mul(ctx2, base.ggml_rms_norm(ctx2, outs["ffn_inp"], C.c_float(eps)), tensor_1d("blk.0.ffn_norm.weight", n_embd))
+gate = base.ggml_mul_mat(ctx2, tensor_2d("blk.0.ffn_gate.weight", Q1_0, n_embd, n_ff, bpr), fn)
+up = base.ggml_mul_mat(ctx2, tensor_2d("blk.0.ffn_up.weight", Q1_0, n_embd, n_ff, bpr), fn)
+sw = base.ggml_swiglu_split(ctx2, gate, up)
+down = base.ggml_mul_mat(ctx2, tensor_2d("blk.0.ffn_down.weight", Q1_0, n_ff, n_embd, n_ff // 128 * 18), sw)
+outs["ffn_norm"] = fn
+outs["ffn_swiglu"] = sw
+outs["ffn_out"] = down
+outs["l_out"] = base.ggml_add(ctx2, down, outs["ffn_inp"])
 gf2 = base.ggml_new_graph(ctx2)
 for k in outs:
     base.ggml_build_forward_expand(gf2, outs[k])
@@ -176,9 +190,32 @@ cpu.ggml_graph_compute_with_ctx(ctx2, gf2, 3)
 with open(out / "qkv.tsv", "w") as f:
     f.write(f"# attn_factor {attn_factor!r} bits {struct.unpack('<I', struct.pack('<f', attn_factor))[0]:08x} · freq_scale {freq_scale} · n_ctx_orig {n_ctx_orig} · freq_base {freq_base} · kq_scale bits {struct.unpack('<I', struct.pack('<f', kq_scale))[0]:08x} · far {' '.join(map(str, far))} · tokens {' '.join(map(str, prompt))}\n")
     for k in outs:
-        width = n_embd if k in ("kqv_out", "attn_out", "ffn_inp") else (n_head if k.startswith("Q") else n_head_kv) * head
+        width = n_ff if k == "ffn_swiglu" else n_embd if k in ("kqv_out", "attn_out", "ffn_inp", "ffn_norm", "ffn_out", "l_out") else (n_head if k.startswith("Q") else n_head_kv) * head
         raw = C.string_at(base.ggml_get_data(outs[k]), width * 4 * n)
         for p_ in range(n):
             row = raw[p_ * width * 4:(p_ + 1) * width * 4]
             f.write(f"{k}\t{p_}\t{hashlib.sha256(row).hexdigest()}\t{' '.join(f'{x:.6g}' for x in struct.unpack('<3f', row[:12]))}\n")
 print(f"layer 0 Q/K/V for {n} tokens (projections, normed, roped; attn_factor {attn_factor!r}) → {out / 'qkv.tsv'}")
+
+# ---- SwiGLU across the whole range: ggml's vectorized expf has a separate path for |x| > ~87 that a prompt never
+# reaches; sweep silu(x)·1 over ±120 (and the edges) through the shipped ggml_swiglu_split, every output's bits
+import random
+rnd = random.Random(11192)
+xs = [f32(-120 + 240 * i / 16383) for i in range(16384)] + [f32(rnd.uniform(-30, 30)) for _ in range(8192)] + \
+     [0.0, -0.0, 1e-30, -1e-30, 87.0, 88.5, 89.0, 103.9, 104.0, -87.0, -88.5, -89.0, -103.9, -104.0, -126.0, 126.0, 150.0, -150.0]
+xs += [0.0] * (-len(xs) % 8)
+m = len(xs)
+ctx3 = base.ggml_init(InitParams(64 << 20, None, False))
+tx, tone = base.ggml_new_tensor_1d(ctx3, F32, m), base.ggml_new_tensor_1d(ctx3, F32, m)
+C.memmove(base.ggml_get_data(tx), (C.c_float * m)(*xs), 4 * m)
+C.memmove(base.ggml_get_data(tone), (C.c_float * m)(*([1.0] * m)), 4 * m)
+ty = base.ggml_swiglu_split(ctx3, tx, tone)
+gf3 = base.ggml_new_graph(ctx3)
+base.ggml_build_forward_expand(gf3, ty)
+cpu.ggml_graph_compute_with_ctx(ctx3, gf3, 3)
+ys = struct.unpack(f"<{m}I", C.string_at(base.ggml_get_data(ty), 4 * m))
+with open(out / "swiglu.tsv", "w") as f:
+    for x, y in zip(xs, ys):
+        f.write(f"{struct.unpack('<I', struct.pack('<f', x))[0]:08x}\t{y:08x}\n")
+print(f"swiglu sweep: {m} values → {out / 'swiglu.tsv'}")
+
