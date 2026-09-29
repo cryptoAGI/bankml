@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! P0 — `bankml serve`: answers now, through the reference, behind the gate. A loopback HTTP gateway (std only)
 //! in front of llama.cpp b11192's `llama-server`:
 //!
@@ -40,6 +41,8 @@ pub struct Config {
     pub spawn: Option<PathBuf>,
     pub threads: usize,
     pub ctx: usize,
+    /// n-gram speculative decoding in the spawned engine (exact at temperature 0; opt-in, 0.1.8)
+    pub spec_ngram: bool,
 }
 
 struct State {
@@ -123,6 +126,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
             let c = std::process::Command::new(bin)
                 .args(["-m", &model.to_string_lossy(), "--host", &host, "--port", &port, "-t", &cfg.threads.to_string()])
                 .args(["-c", &cfg.ctx.to_string(), "-np", "1", "--jinja", "--reasoning", "off", "--no-webui"])
+                .args(if cfg.spec_ngram { &["--spec-type", "ngram-simple"][..] } else { &[][..] })
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("cannot launch {}: {e}", bin.display()))?;
@@ -323,18 +327,25 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
         Ok((_, h)) => h,
         Err(_) => return respond(&mut c, 400, "text/plain", b"request head too large"),
     };
+    let n: usize = header(&h, "content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    // a refusal reads (and discards) the body it was sent before closing: closing with unread data makes the kernel
+    // reset the connection, and the client can lose the answer that says why it was refused
+    let mut refuse = |code: u16, why: &[u8], r: &mut BufReader<TcpStream>| -> std::io::Result<()> {
+        respond(&mut c, code, "text/plain", why)?;
+        let _ = std::io::copy(&mut r.by_ref().take(n.min(16 << 20) as u64), &mut std::io::sink());
+        Ok(())
+    };
     if !loopback_host(header(&h, "host").unwrap_or("")) {
-        return respond(&mut c, 403, "text/plain", b"bankml serve answers loopback clients only (Host must be 127.0.0.1, localhost or [::1])");
+        return refuse(403, b"bankml serve answers loopback clients only (Host must be 127.0.0.1, localhost or [::1])", &mut r);
     }
     if header(&h, "transfer-encoding").is_some() {
-        return respond(&mut c, 400, "text/plain", b"chunked requests are not accepted; send Content-Length");
+        return refuse(400, b"chunked requests are not accepted; send Content-Length", &mut r);
     }
-    let n: usize = header(&h, "content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
     if n > 16 << 20 {
         return respond(&mut c, 413, "text/plain", b"request too large");
     }
     if method == "POST" && !header(&h, "content-type").is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("application/json")) {
-        return respond(&mut c, 415, "text/plain", b"POST bodies must be Content-Type: application/json");
+        return refuse(415, b"POST bodies must be Content-Type: application/json", &mut r);
     }
     let mut body = vec![0; n];
     r.read_exact(&mut body)?;
@@ -347,12 +358,18 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             );
             respond(&mut c, 200, "application/json", j.as_bytes())
         }
+        ("GET", "/bankml/usage") => {
+            // what this gateway and the engine it launched use now (sys.rs, /proc; sampled over 0.5 s)
+            let engine = CHILD_PID.load(Ordering::SeqCst);
+            let procs = [("bankml serve", std::process::id()), ("llama-server", engine.max(0) as u32)];
+            respond(&mut c, 200, "application/json", crate::sys::usage_json(&procs, Duration::from_millis(500)).as_bytes())
+        }
         ("GET", "/health" | "/v1/models" | "/props") => match request(&st.upstream, "GET", &path, b"") {
             Ok((code, _, b)) => respond(&mut c, code, "application/json", &b),
             Err(e) => respond(&mut c, 502, "text/plain", format!("upstream: {e}").as_bytes()),
         },
         ("POST", "/v1/chat/completions") => chat(&mut c, st, &body),
-        _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /health /v1/models, POST /v1/chat/completions"),
+        _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /bankml/usage /health /v1/models, POST /v1/chat/completions"),
     }
 }
 

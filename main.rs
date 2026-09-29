@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `bankml` — the binary. Today: the guard, the pin, and `verify` (both, as one gate) — P1.
 //! Later: `serve` (P0/P3/P4).
 //! Exit codes follow gguf_guard.py: 0 play · 2 refuse · 3 need_more · 1 usage/io.
@@ -5,11 +6,12 @@
 use bankml::{gguf, sha256, Verdict};
 use std::path::Path;
 
-const USAGE: &str = "usage: bankml guard FILE [--engine mainline|prism] [--json]
+const USAGE: &str = "usage: bankml usage [PID …]
+       bankml guard FILE [--engine mainline|prism] [--json]
        bankml sha256 FILE
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
-       bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N]
+       bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram]
        bankml version";
 
 fn main() {
@@ -29,6 +31,14 @@ fn main() {
         })
     };
     let code = match (a.first().map(String::as_str), a.get(1)) {
+        (Some("usage"), _) => {
+            // bankml's psutil: memory, cores, and rss + CPU % of the given pids (default: bankml itself), over 0.5 s
+            let pids: Vec<u32> = a[1..].iter().filter_map(|x| x.parse().ok()).collect();
+            let named: Vec<(String, u32)> = if pids.is_empty() { vec![("bankml".into(), std::process::id())] } else { pids.iter().map(|p| (format!("pid {p}"), *p)).collect() };
+            let refs: Vec<(&str, u32)> = named.iter().map(|(n, p)| (n.as_str(), *p)).collect();
+            println!("{}", bankml::sys::usage_json(&refs, std::time::Duration::from_millis(500)));
+            0
+        }
         (Some("version" | "--version" | "-V"), _) => {
             println!("bankml {}", bankml::VERSION);
             0
@@ -111,6 +121,7 @@ fn main() {
                     spawn: opt("--spawn").map(Into::into),
                     threads: opt("--threads").and_then(|v| v.parse().ok()).unwrap_or(3),
                     ctx: opt("--ctx").and_then(|v| v.parse().ok()).unwrap_or(4096),
+                    spec_ngram: flag("--spec-ngram"),
                 };
                 match bankml::serve::run(cfg) {
                     Ok(()) => 0,

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """bankml · Savante — the local chat UI, in Gradio, built from the Hugging Face template PYTHAI/savante.
 
 What it takes from the template (the Space's `local:bonsai-8b` carrier): the system prompt is the canon
@@ -561,9 +562,34 @@ def serve_status():
         return {"error": f"bankml serve not reachable at {SERVE}: {e}"}
 
 
-def build_messages(system, turns, question, qwen3):
+WINDOW_STEP = 6  # the history window moves in steps, not one exchange per turn
+
+
+def window_start(n: int, lo: int = KEEP_EXCHANGES, step: int = WINDOW_STEP) -> int:
+    """Where the history the model sees starts. It moves only every `step` turns, so between moves the prompt is
+    the previous prompt plus one exchange and the engine's prompt cache reuses all of it (a window that slides one
+    exchange per turn changes the text right after the system prompt and forces the whole history to be re-read).
+    The model sees between `lo` and `lo + step - 1` exchanges once the chat is longer than `lo`."""
+    return 0 if n <= lo else (n - lo) // step * step
+
+
+def model_text(a: str) -> str:
+    """An answer as the model wrote it, without the footer the chat adds (clock, receipt, provenance)."""
+    return (a or "").split("\n\n<sub>", 1)[0]
+
+
+def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None, reserve_tokens: int = 256):
+    """The messages for one turn: the system prompt, a stably windowed history, the question. With `ctx_tokens`,
+    the window also fits the engine's context (≈ 3 characters per token, conservatively), moving in whole steps."""
+    turns = [(u, model_text(a)) for u, a in turns]
+    start = window_start(len(turns))
+    if ctx_tokens:
+        budget = ctx_tokens * 3 - len(system) - len(question) - reserve_tokens * 3
+        size = lambda k: sum(len(u[:KEEP_CHARS]) + len((a or "")[:KEEP_CHARS]) + 40 for u, a in turns[k:])  # noqa: E731
+        while start < len(turns) and size(start) > budget:
+            start += WINDOW_STEP
     msgs = [{"role": "system", "content": system}]
-    for u, a in turns[-KEEP_EXCHANGES:]:
+    for u, a in turns[start:]:
         msgs += [{"role": "user", "content": u[:KEEP_CHARS]}, {"role": "assistant", "content": (a or "")[:KEEP_CHARS]}]
     msgs.append({"role": "user", "content": question + (" /no_think" if qwen3 else "")})
     return msgs
@@ -785,6 +811,43 @@ def catalog_choices() -> list:
     return out
 
 
+def resources_default_gb() -> float:
+    """The budget the current settings imply for the carrier's model (weights + KV + overhead), for the slider."""
+    import models
+    st = serve_status()
+    p = Path(st.get("model", "")) if "model" in st else None
+    if not p or not p.exists():
+        return 2.0
+    pl = models.plan(p, 64.0)
+    return round((pl["weights_gb"] * 1e9 + models.OVERHEAD + models.resources()["ctx"] * pl["kv_bytes_per_token"]) / 1e9, 1)
+
+
+def resources_plan_html(ram_gb: float) -> str:
+    import models
+    st = serve_status()
+    p = Path(st.get("model", "")) if "model" in st else None
+    if not p or not p.exists():
+        return "<div class='bk-note'>no carrier running: the budget is saved and used when a model starts</div>"
+    pl = models.plan(p, float(ram_gb))
+    if not pl["fits"]:
+        return (f"<div class='bk-card bk-bad'>{ram_gb:.1f} GB cannot hold {E(p.name)}: weights {pl['weights_gb']} GB + engine "
+                f"{pl['overhead_gb']:.2f} GB + a {models.CTX_MIN}-token KV cache needs at least <b>{pl['min_ram_gb']} GB</b></div>")
+    ex = pl["ctx"] // 900  # a chat exchange is roughly 900 tokens here (question, answer, template)
+    return (f"<div class='bk-note'>{E(p.name)}: weights {pl['weights_gb']} GB + engine {pl['overhead_gb']:.2f} GB + KV cache "
+            f"{pl['kv_gb']} GB → a <b>{pl['ctx']}-token</b> context (about {ex} exchanges of history). Now: "
+            f"{models.resources()['ctx']} tokens, {models.resources()['threads']} threads.</div>")
+
+
+def resources_usage_html() -> str:
+    import models
+    u = models.usage()
+    rows = "".join(f"<dt>{E(x['name'])} · pid {x['pid']}</dt><dd>{x['rss_bytes'] / 1e9:.2f} GB · {x['cpu_percent']:.0f} % CPU</dd>"
+                   for x in u.get("processes") or [])
+    return (f"<div class='bk-card'><b>engine now</b> · {u['rss_gb']} GB resident · {u['cpu_pct']} % CPU "
+            f"(100 % = one of {u['cores']} cores) · machine: {u['mem_available_gb']} of {u['mem_total_gb']} GB free"
+            f"<dl>{rows}</dl><div class='bk-note'>measured by {E(u.get('source', '?'))}</div></div>")
+
+
 def installed_choices() -> list:
     """Chat models only: an embedding model (bge-m3 and the like) is listed in the table, not offered as a carrier."""
     import models
@@ -800,7 +863,7 @@ def carrier_md() -> str:
         if j["state"] == "running":
             return f"<div class='bk-card'><b>bankml serve</b><br>starting: {E(j['what'])}{_job_bar(j)}</div>"
         why = f"<br>{E(j['error'])}" if j["state"] == "error" else ""
-        return (f"<div class='bk-card bk-bad'><b>bankml serve</b><br>not reachable — choose a model in the Models tab, or start it (usage.md)"
+        return (f"<div class='bk-card bk-bad'><b>bankml serve</b><br>not reachable — choose a model in the Models tab, or start it (docs/usage.md)"
                 f"<br><code>{SERVE}</code>{why}</div>")
     v = st.get("verified") or {}
     sha = v.get("model_sha256", "")
@@ -1774,6 +1837,20 @@ def build(canon: Canon, mode: str):
                     temperature = gr.Slider(0.0, 1.5, value=0.3, step=0.05, label="temperature")
                     carrier = gr.HTML(carrier_md())
                     gr.Button("refresh carrier").click(carrier_md, None, carrier)
+                    with gr.Accordion("Resources · CPU and RAM for the engine", open=False):
+                        import models as _M
+                        _r, _mt = _M.resources(), _M.mem_total() / 1e9
+                        cpu_s = gr.Slider(1, os.cpu_count() or 1, value=_r["threads"], step=1, label=f"CPU threads (of {os.cpu_count()})")
+                        ram_s = gr.Slider(0.5, round(_mt, 1), value=_r["ram_gb"] or resources_default_gb(), step=0.1, label="RAM budget for the engine (GB)")
+                        spec_c = gr.Checkbox(value=bool(_r.get("spec_ngram")), label="n-gram speculation (exact at temperature 0, no extra memory; "
+                                             "ahead in 5 of 6 paired runs here but not beyond this laptop's noise, so off by default)")
+                        res_plan = gr.HTML(resources_plan_html(_r["ram_gb"] or resources_default_gb()))
+                        with gr.Row():
+                            res_apply = gr.Button("Apply (restarts the engine)", variant="primary")
+                            res_use = gr.Button("usage now")
+                        res_usage = gr.HTML("<div class='bk-note'>press “usage now” to read what the engine uses</div>")
+                        ram_s.change(resources_plan_html, ram_s, res_plan, show_progress=False)
+                        res_use.click(resources_usage_html, None, res_usage)
             gr.Markdown(f"`.history` → `{HISTORY}` (outside the canon) · session `{sid0}`")
 
             def add(m, h):
@@ -1802,7 +1879,9 @@ def build(canon: Canon, mode: str):
                     st = serve_status()
                     arch = str((st.get("verified") or {}).get("arch") or "").lower()
                     qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
-                    msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3)
+                    import models as _M
+                    msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
+                                          ctx_tokens=_M.resources()["ctx"], reserve_tokens=int(max_tokens))
                     text, rc, first = "", {}, None
                     for text, r in stream(msgs, max_tokens, temperature):
                         if text and first is None:
@@ -2053,6 +2132,12 @@ def build(canon: Canon, mode: str):
                 yield from _watch(MD.start_job(f"importing {name}:{tag}", _import_then(lambda: MD.spec_ollama(MD.ollama_resolve(f"{name}:{tag}")), use)))
 
             outs_m = [mjob, mlist, use_dd, carrier]
+
+            def do_resources(threads, ram, spec):
+                ok = MD.start_job(f"applying {int(threads)} threads and {ram:.1f} GB", MD.apply_resources, threads, ram, chat_busy, spec)
+                return ("<div class='bk-card'>restarting the engine with the new settings — the carrier card follows it</div>" if ok
+                        else "<div class='bk-card bk-bad'>another import or switch is running; wait for it</div>")
+            res_apply.click(do_resources, [cpu_s, ram_s, spec_c], res_usage)
             demo.load(poll, seen, outs_m + [seen], every=2)
             cancel_btn.click(lambda: ("<div class='bk-card'>cancelling at the next chunk; the partial file is kept for resume</div>"
                                       if MD.cancel_job() else job_html()), None, mjob)

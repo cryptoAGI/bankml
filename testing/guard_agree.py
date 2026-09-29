@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Rust guard == Python guard, JSON for JSON. stdlib only.
 Runs `bankml guard F --json` and `gguf_guard.py F --json` on every file given plus the synthetic
 GGUFs of minaiml's test_gguf_guard.py (written to a temp dir), for both engines, and compares the

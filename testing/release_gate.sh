@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # The release gate: every check that decides whether a version ships, with the output kept as its record.
 # Offline checks always; the oracles, A/Bs and whole-model budgets when the models and b11192 are present.
 #   BANKML_GGML_LIB=/path/to/llama-b11192 testing/release_gate.sh      → testing/results/<version>.txt
@@ -15,6 +16,7 @@ out=testing/results/$v.txt
   cargo build --release --locked -q
   cargo test --release --locked 2>&1 | awk '/Running/{r=$2} /^test result/ && !/ 0 passed; 0 failed; 0 ignored/{print r": "$0}'
   cargo clippy --release --all-targets --locked -q -- -D warnings && echo "clippy: clean"
+  python3 testing/spdx_check.py | tail -1
   python3 testing/test_gguf_guard.py | tail -1
   python3 -B testing/test_ui.py | tail -1 | sed 's/^/ui data layer: /'
   python3 -B testing/test_connectors.py | tail -1 | sed 's/^/postgres connector (throwaway cluster): /'

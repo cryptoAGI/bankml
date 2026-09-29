@@ -10,7 +10,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-000000?style=flat-square&logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/dependencies-0-56D364?style=flat-square" alt="zero dependencies">
-  <img src="https://img.shields.io/badge/licence-Apache--2.0-2563EB?style=flat-square" alt="Apache-2.0">
+  <img src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-2563EB?style=flat-square" alt="MIT OR Apache-2.0">
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.5%E2%80%939.8%C3%97-D9A23A?style=flat-square" alt="ternary 9.5–9.8x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
@@ -30,6 +30,23 @@ bankml found why and fixed it at the kernel: **llama.cpp b11192 has no vectorise
 at all** — it runs scalar C with 64 integer multiplies per block. bankml's kernel computes the **same bits**, verified
 against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.5–9.8× faster**.
 
+## Documentation
+
+Start here, then go where your question is:
+
+| if you want to… | read |
+|---|---|
+| install, run and use bankml and Savante (both modes, models, `.history`, receipts, voice, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
+| understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
+| see every speed number, the machines and the commands that produced them | **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** |
+| know what bankml is checked against, and how | **[docs/oracles.md](docs/oracles.md)** |
+| see where bankml stands among Rust engines, 1-bit/ternary kernels and verifiable inference (with papers) | **[docs/research.md](docs/research.md)** |
+| use meaning search (bge-m3, the embedding model mindX uses) | **[docs/embedding.md](docs/embedding.md)** |
+| see what comes next and what was rejected, and why | **[docs/TODO.md](docs/TODO.md)** |
+| check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
+| know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |
+| run or read the tests and each release's gate record | **[testing/README.md](testing/README.md)**, [testing/results/](testing/results/) |
+
 ## Results
 
 <p align="center">
@@ -45,10 +62,10 @@ three threads, less than llama.cpp needs for the *1-bit* model's (0.34 s). Every
 [testing/results/](testing/results/).
 
 Every number above is measured and reproducible — the tables, machines and commands are in
-**[PERFORMANCE.md](PERFORMANCE.md)**. The design, the method and the literature are in the technical report,
-**[TECHNICAL.md](TECHNICAL.md)**. Where bankml stands among Rust engines, 1-bit and ternary kernels and verifiable
-inference (with the papers) is in **[research.md](research.md)**; every oracle it is checked against, in
-**[oracles.md](oracles.md)**.
+**[PERFORMANCE.md](docs/PERFORMANCE.md)**. The design, the method and the literature are in the technical report,
+**[TECHNICAL.md](docs/TECHNICAL.md)**. Where bankml stands among Rust engines, 1-bit and ternary kernels and verifiable
+inference (with the papers) is in **[research.md](docs/research.md)**; every oracle it is checked against, in
+**[oracles.md](docs/oracles.md)**.
 
 ## The three design goals
 
@@ -70,7 +87,7 @@ inference (with the papers) is in **[research.md](research.md)**; every oracle i
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
 | models | import without friction: Bonsai-8B on first run; a pinned open-source catalogue, any Hugging Face GGUF, Ollama; open-source licences only; carrier switch with rollback | **0.1.5**, hardened 0.1.6 |
-| memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](embedding.md)) |
+| memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](docs/embedding.md)) |
 | audits | two full audits, every finding fixed with a test; RFC 6962 commitments; a hardened gateway | **0.1.6, 0.1.7** |
 | iNFT | mint an agent from its THOT bundle (prepared, simulated, signed by the owner), load one from a token | **0.1.0** — full path tested on a local devnet; the contract is not on a public chain yet |
 | P5 | ARM / NEON, handheld | planned |
@@ -89,7 +106,8 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
-| [0.1.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.7) | the second audit (gateway, chat path, commitments, agents, PostgreSQL, chain) fixed and tested; receipts bound to the request; RFC 6962 Merkle tree; bge-m3 embedding ([embedding.md](embedding.md)); [research.md](research.md) and [oracles.md](oracles.md) |
+| [0.1.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.8) | speed on fixed resources: SHA-NI pin 5.5× (a server start 25 s → 7 s); a chat window that keeps the prompt cache warm (8 moves in 60 turns, not 48); CPU/RAM sliders with bankml's own psutil (`sys.rs`); n-gram speculation opt-in; `MIT OR Apache-2.0`; docs in `docs/` |
+| [0.1.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.7) | the second audit (gateway, chat path, commitments, agents, PostgreSQL, chain) fixed and tested; receipts bound to the request; RFC 6962 Merkle tree; bge-m3 embedding ([embedding.md](docs/embedding.md)); [research.md](docs/research.md) and [oracles.md](docs/oracles.md) |
 | [0.1.6](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.6) | the first audit of 0.1.5 fixed, each finding with a test: carrier switch, downloads, view mode, pronunciation |
 | [0.1.5](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.5) | the model importer (catalogue, Hugging Face, Ollama; open source only; sha256-pinned); readable metrics; the VOICE dock; Savante reads the thesis; Savante.opus |
 | [0.1.4](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.4) | DreamKnobs in view mode; a timer that counts real seconds |
@@ -128,7 +146,7 @@ target/release/bankml verify MODEL.gguf --fork FORK.json --json   # guard, then 
 ## Using Savante
 
 Savante is the review office of the mindX DAIO: an agent defined by a signed canon, not by a model. With bankml she
-runs on your own computer, and every answer she gives carries a receipt. Four steps (details in **[usage.md](usage.md)**):
+runs on your own computer, and every answer she gives carries a receipt. Four steps (details in **[usage.md](docs/usage.md)**):
 
 **1. Build bankml and verify the model**
 ```sh
@@ -174,7 +192,7 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   verified gateway as bankml's 1-bit and ternary models.
 - **Savante speaks**: in the card, her introduction for new participants (her canon, plus a note on SCIEN·TIFIC's
   2²⁵⁶ − 1 as the measure of accuracy), **the reading** (bankml's thesis and *can a binary computer perform a ternary
-  operation?* from TECHNICAL.md), and her voice examples, all pre-rendered in her own voice and committed to this
+  operation?* from docs/TECHNICAL.md), and her voice examples, all pre-rendered in her own voice and committed to this
   repository. There is PLAY ALL, per chapter, and from any line, and **⤓ Savante.opus** / **⤓ Savante-reading.opus**
   export each set as one file with chapter marks. DreamKnob **SPEED**, **FM**, **GAIN** and **VOLUME** appear in a
   dockable, resizable VOICE dock when she speaks. View mode on the LAN plays and exports them too.
@@ -207,13 +225,16 @@ Savante's canon (`~/savante`) is only ever read. Before she speaks, the UI re-ha
 | `ui/thot.py` | THOT manifests (`sagi.thot_manifest/1`), checked against the spec's test vectors |
 | `ui/connectors.py` | PostgreSQL (pgvector / pgvectorscale): publish and load agents, verified |
 | `ui/models.py` | the model importer: catalogue, Hugging Face, Ollama; sha256 pins; the carrier switch |
-| `ui/embed.py` | embeddings with bge-m3 (the model mindX uses) through the local Ollama — see [embedding.md](embedding.md) |
+| `ui/embed.py` | embeddings with bge-m3 (the model mindX uses) through the local Ollama — see [embedding.md](docs/embedding.md) |
 | `ui/speak.py` | Savante's voice: rendering, the introduction and the reading, the exports |
 | `ui/chain.py` | iNFT: ABI, JSON-RPC, mint planning, simulation, unsigned transactions, devnet, load from a token |
-| `usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
-| `embedding.md` | the embedding model: why, how, the cache, the ranking, PostgreSQL, settings |
-| `research.md` | the state of the field and bankml's place in it, with links and papers |
-| `oracles.md` | every oracle bankml is checked against: what, how, where, and what it last found |
+| `docs/usage.md` | the full guide: setup, both modes, `.history`, receipts, the canon, troubleshooting |
+| `docs/embedding.md` | the embedding model: why, how, the cache, the ranking, PostgreSQL, settings |
+| `docs/research.md` | the state of the field and bankml's place in it, with links and papers |
+| `docs/oracles.md` | every oracle bankml is checked against: what, how, where, and what it last found |
+| `docs/TODO.md` | what comes next and what was rejected, each item with its source (research, KoboldCpp, vLLM, Rust, audits) |
+| `LICENSING.md` | the licence layers: `MIT OR Apache-2.0`, key handling `GPL-3.0-only`, AGPL walled off |
+| `sys.rs` | bankml's psutil: memory, cores, a process's resident memory and CPU time, from `/proc` (0.1.8) |
 | `testing/` | every test outside the modules: the release gate, the end-to-end CLI suite (`cli.rs`), the oracle generator (`ggml_oracle.py`), the guard agreement check and the Python guard it was ported from; `testing/results/` holds each release's gate record — see [testing/README.md](testing/README.md) |
 | `docs/cards/` | the result cards above, drawn from the measured numbers |
 
@@ -235,4 +256,7 @@ PrismML's Bonsai (Qwen3-8B dense), forked with provenance; Apache-2.0.
 
 ## Licence
 
-Apache-2.0 — see [LICENSE](LICENSE). © 2026 Professor Codephreak and Gregory L. Magnusson, cryptoAGI.
+**`MIT OR Apache-2.0`**, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)): open source, do
+what you want with it, rights preserved. Key handling, when bankml has any, is `GPL-3.0-only` so no black-box
+modification of it can ship; AGPL-derived code, if ever used, stays walled off under AGPL. The layers and rules are in
+**[LICENSING.md](LICENSING.md)**. © 2026 Professor Codephreak and Gregory L. Magnusson, cryptoAGI.

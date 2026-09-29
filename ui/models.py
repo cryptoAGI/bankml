@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """bankml's model importer: the models Savante can speak through, brought in without friction and never unverified.
 
 Three sources, one discipline:
@@ -513,6 +514,94 @@ def _stop_carrier():
 
 CTX = int(os.environ.get("BANKML_CTX", "2048"))  # the engine's context: 2048 keeps an 8B model's KV cache near 0.3 GB
 THREADS = int(os.environ.get("BANKML_THREADS_SERVE", "3"))
+RESOURCES = LOG.parent / "resources.json"  # the operator's CPU and RAM choice (the Resources sliders), used by every start
+OVERHEAD = 250_000_000  # llama-server's compute buffers and runtime beside weights and KV (measured order of magnitude)
+CTX_MIN, CTX_MAX = 512, 32768
+
+
+def resources() -> dict:
+    """{"threads", "ctx", "ram_gb"}: the saved choice, else the defaults (BANKML_THREADS_SERVE, BANKML_CTX)."""
+    r = {"threads": THREADS, "ctx": CTX, "ram_gb": None, "spec_ngram": False}
+    try:
+        r.update({k: v for k, v in json.loads(RESOURCES.read_text()).items() if k in r})
+    except (OSError, ValueError):
+        pass
+    return r
+
+
+def plan(model: Path, ram_gb: float) -> dict:
+    """What a RAM budget buys for a model: weights stay resident, the rest is KV cache (f16, the guard's
+    bytes-per-token for this architecture) after the engine's overhead. ctx is rounded down to 256."""
+    g = guard(model)
+    kv = int(g.get("kv_f16_bytes_per_token") or 0) or 147_456  # Qwen3-8B's, if the guard cannot say
+    w = model.stat().st_size
+    room = int(ram_gb * 1e9) - w - OVERHEAD
+    ctx = max(0, min(CTX_MAX, room // kv // 256 * 256))
+    return {"ctx": ctx, "fits": ctx >= CTX_MIN, "kv_gb": round(ctx * kv / 1e9, 2), "weights_gb": round(w / 1e9, 2),
+            "kv_bytes_per_token": kv, "overhead_gb": OVERHEAD / 1e9, "arch": g.get("arch"),
+            "min_ram_gb": round((w + OVERHEAD + CTX_MIN * kv) / 1e9, 2)}
+
+
+def usage() -> dict:
+    """What the carrier uses now, from bankml itself (`GET /bankml/usage`, sys.rs reading /proc — bankml's psutil,
+    no crates); the Python reading below is the fallback for a serve older than 0.1.8."""
+    try:
+        with urllib.request.urlopen(f"http://{LISTEN}/bankml/usage", timeout=5) as r:
+            u = json.loads(r.read())
+        return {"pids": [p["pid"] for p in u["processes"]], "rss_gb": round(u["rss_bytes"] / 1e9, 2), "cpu_pct": round(u["cpu_percent"]),
+                "cores": u["cores"], "mem_total_gb": round(u["mem_total_bytes"] / 1e9, 1), "mem_available_gb": round(u["mem_available_bytes"] / 1e9, 2),
+                "source": u["source"], "processes": u["processes"]}
+    except (OSError, ValueError, KeyError):
+        pass
+    pids = sorted(set(_listeners().values()))
+    def ticks(pid):
+        try:
+            f = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            return int(f[11]) + int(f[12])  # utime + stime
+        except (OSError, IndexError, ValueError):
+            return 0
+    def rss(pid):
+        try:
+            return int(re.search(r"VmRSS:\s+(\d+)", Path(f"/proc/{pid}/status").read_text()).group(1)) * 1024
+        except (OSError, AttributeError):
+            return 0
+    t0 = {p: ticks(p) for p in pids}
+    time.sleep(0.5)
+    hz = os.sysconf("SC_CLK_TCK")
+    cpu = sum(ticks(p) - t0[p] for p in pids) / hz / 0.5 * 100
+    try:
+        avail = int(re.search(r"MemAvailable:\s+(\d+)", Path("/proc/meminfo").read_text()).group(1)) * 1024
+    except (OSError, AttributeError):
+        avail = 0
+    return {"pids": pids, "rss_gb": round(sum(rss(p) for p in pids) / 1e9, 2), "cpu_pct": round(cpu), "cores": os.cpu_count(),
+            "mem_total_gb": round(mem_total() / 1e9, 1), "mem_available_gb": round(avail / 1e9, 2), "source": "ui/models.py (/proc)"}
+
+
+def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False) -> dict:
+    """Save the choice and restart the carrier on the same model with it (a verified switch, with rollback)."""
+    threads = max(1, min(int(threads), os.cpu_count() or 1))
+    st = serve_status()
+    sha = (st.get("verified") or {}).get("model_sha256")
+    pins = forks()
+    path, fork = _pinned_path(sha, st.get("model"), pins) if sha else (None, None)
+    if path is None:
+        raise RuntimeError("no verified carrier is running; choose a model first (the settings are saved and used when it starts)")
+    pl = plan(path, ram_gb)
+    if not pl["fits"]:
+        raise RuntimeError(f"{ram_gb:.1f} GB cannot hold {path.name}: it needs at least {pl['min_ram_gb']} GB")
+    RESOURCES.parent.mkdir(parents=True, exist_ok=True)
+    RESOURCES.write_text(json.dumps({"threads": threads, "ctx": pl["ctx"], "ram_gb": ram_gb, "spec_ngram": bool(spec_ngram)}) + "\n")
+    if busy():
+        raise RuntimeError("saved; an answer is being written, so the engine restarts with these settings on the next switch")
+    JOB["what"] = f"restarting {path.name} with {threads} threads and a {pl['ctx']}-token context"
+    _stop_carrier()
+    try:
+        return _start_carrier(path, fork, sha)
+    except Exception:
+        RESOURCES.write_text(json.dumps({**resources(), "ctx": CTX, "threads": THREADS}) + "\n")  # fall back to the defaults
+        _stop_carrier()
+        _start_carrier(path, fork, sha)
+        raise
 
 
 def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads=None, ctx=None, wait=1800) -> dict:
@@ -525,7 +614,8 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
         log.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} bankml serve {model.name}\n".encode())
         log.flush()
         proc = subprocess.Popen([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM,
-                                 "--listen", LISTEN, "--threads", str(threads or THREADS), "--ctx", str(ctx or CTX)], stdout=log, stderr=log,
+                                 "--listen", LISTEN, "--threads", str(threads or resources()["threads"]), "--ctx", str(ctx or resources()["ctx"])]
+                                + (["--spec-ngram"] if resources().get("spec_ngram") else []), stdout=log, stderr=log,
                                 stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO))
     t0 = time.time()
     why = "timed out"
@@ -578,7 +668,7 @@ def switch(file: str, busy=lambda: False) -> dict:
         raise RuntimeError(why)
     arch = guard(p).get("arch")
     if arch in EMBEDDING_ARCHS:
-        raise RuntimeError(f"{file} is an embedding model ({arch}); it cannot be the chat carrier (see embedding.md)")
+        raise RuntimeError(f"{file} is an embedding model ({arch}); it cannot be the chat carrier (see docs/embedding.md)")
     pins = forks()
     if file not in pins:
         adopt(file)

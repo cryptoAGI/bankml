@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # bankml.rs — the in-house Rust player for low-bit models
 //!
 //! **Status (0.0.6, 2026-09-28): P0 serve + the Savante UI;: P1 guard + pin (one `verify` gate) and the P2 Q1_0 and Q2_0 (ternary) kernels are native and
@@ -131,6 +132,7 @@ pub mod serve;
 pub mod q1_0;
 pub mod q2_0;
 pub mod sha256;
+pub mod sys;
 
 use std::path::Path;
 

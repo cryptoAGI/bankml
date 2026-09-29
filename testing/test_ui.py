@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """The Savante UI's data layer, offline (stdlib only; Gradio is not imported): proofs of data, CIDs, .history
 search, .memory, metrics, and the view server's routes. A temporary state directory; nothing touches the canon.
 run: python3 testing/test_ui.py"""
@@ -104,6 +105,16 @@ _em._mem_available = _mem
 _em.provenance = lambda: {}
 check("without bge-m3 in Ollama, embed says why and search stands on BM25", not _em.status()["ready"] and "bge-m3" not in u.history_search("verification")[1])
 _fo.shutdown()
+
+# the history window moves in steps, so the engine's prompt cache is reused (KoboldCpp's Smart Context idea; vLLM's
+# chained block hashes show a one-exchange slide defeats it)
+starts = [u.window_start(n) for n in range(1, 61)]
+check("the window moves 8 times in 60 turns (a one-exchange slide moves 48 times)", sum(1 for a, b in zip(starts, starts[1:]) if a != b) == 8
+      and all(12 <= n - s <= 17 for n, s in zip(range(13, 61), starts[12:])))
+tt = [(f"q{i}", f"a{i}\n\n<sub>⏱ sent 12:00:00 · receipt</sub>") for i in range(30)]
+mm = u.build_messages("S", tt, "Q", False)
+check("the model never sees the chat's footer (clock, receipt)", "<sub>" not in json.dumps(mm) and mm[2]["content"] == "a18")
+check("the window fits the engine's context, moving in whole steps", len(u.build_messages("S", tt, "Q", False, ctx_tokens=60, reserve_tokens=10)) < len(mm))
 
 # search (built-in BM25 here: RAGE_PATH points nowhere)
 hits, engine = u.history_search("ternary kernels")

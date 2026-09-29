@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Pre-render statements in a house eSpeak NG voice, on this computer, with the same WASM build the DeltaVerse
 // voice worker runs in browsers (vendor/espeak-ng/0.3.5-en) and the cast's own voice files installed BEFORE the
 // first synthesis (eSpeak caches its voice list at first use; a variant installed later is silently ignored).

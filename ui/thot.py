@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """THOT manifests (sagi.thot_manifest/1) for bankml agents — the dataset bundle an iNFT points to.
 
 Implements ~/sagi/engine/THOT_MANIFEST.md §2, §3, §3a, §5 and §7 exactly, and is checked against that spec's own
@@ -52,7 +53,7 @@ CUSTOM = {
     "x-bankml.memory": {"suffix": "memory", "media": "application/x-ndjson",
                         "role": "the operator's notes for the agent; committed by digest, the bytes stay local"},
 }
-SPEC_URL = "https://github.com/cryptoAGI/bankml/blob/main/usage.md"
+SPEC_URL = "https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md"
 
 
 # ── §5: order, records, bundle_root, the 64-leaf Merkle tree ─────────────────────────────────────────────────

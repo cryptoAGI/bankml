@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! P1 — the GGUF guard: a header-only GGUF v3 parse and the three traps, ported from minaiml
 //! `minaiml-bonsai/tools/gguf_guard.py` (same verdicts, same reasons, same JSON keys). Tensor data is
 //! never read by `judge`; `tensor_bytes` exists for kernels/tests that need a tensor's raw blocks.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """The PostgreSQL connector against a throwaway cluster: initdb in a temp directory, a unix socket there, pgvector
 enabled as that cluster's superuser. Nothing touches the system's databases. Skips (exit 0) when initdb is absent.
 Covers: schema (HNSW index on vector(1024)), publish public-only and with private lines, load verified byte for

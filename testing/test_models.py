@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """The model importer (ui/models.py) without the network: a tiny GGUF served from a loopback HTTP server stands in for
 Hugging Face / the Ollama registry. Checks the pin (a download is kept only if its sha256 is the published one), the
 licence gate (open source or refused), resume, the guard, and the URL and search parsers. With BANKML_TEST_CARRIER=1

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Savante's voice controls — DreamKnob in the Savante UI's settings panel. One global, SavanteKnobs.mount(el).
 // SPEED: playback rate with the pitch preserved (the browser's own time-stretch), snap points as the playdocs rack.
 // FM: frequency modulation of the voice — an LFO sweeping a short delay line (vibrato), RATE in Hz, DEPTH in %.

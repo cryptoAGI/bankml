@@ -1,0 +1,85 @@
+# bankml 0.1.8 release gate — 2026-09-29T06:44:39Z
+# rustc 1.95.0 (59807616e 2026-04-14) · AMD Ryzen 3 3200U with Radeon Vega Mobile Gfx · 4 threads
+unittests: test result: ok. 47 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.68s
+testing/cli.rs: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+clippy: clean
+spdx: 37/37 files carry the licence of their layer
+ok   need_more
+ui data layer: all ok
+postgres connector (throwaway cluster): all ok
+iNFT mint and load (throwaway anvil devnet): all ok
+model importer (loopback source; carrier on spare ports): all ok
+28/28 agree
+## oracle_ggml_b11192_real_bonsai_1_7b
+oracle: 197 tensors / 1719904256 weights dequantized bit-exact; 788 q8_0 rows byte-exact; 788 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 788/788
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 11.38s
+## oracle_ggml_b11192_real_bonsai_8b_q1_0
+oracle: 254 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 762/762
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 44.73s
+## oracle_ggml_b11192_real_ternary_bonsai_8b
+oracle: 254 Q2_0 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot_ref, vec_dot_act (AVX2) and scalar bit-exact vs ggml haswell; no-FMA model == ggml x64 in 762/762
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 41.48s
+## ab_vs_ggml
+GEMV 12288x4096, ns/block min/median: bankml mat_vec 10.21/10.41 (1.034x ggml median)
+GEMV 12288x4096, ns/block min/median: ggml b11192 10.36/10.76 | bankml vec_dot 11.24/11.66 (0.923x) | bankml vec_dot_act 10.22/10.68 (1.008x)
+prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair 10.13/10.28 | bankml 1x4 tile 9.26/9.42 (1.092x) | bankml Q8Act tile 8.34/8.38 (1.227x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 0.99s
+## ab_vs_ggml_q2_0
+decode GEMV, 1 thread, ns/block (64 weights) min/median, ms/matmul = median:
+  blk.0.attn_q.weight          4096x4096  ggml  34.57/ 35.38 (    9.3 ms) | bankml  3.56/ 3.60 (   0.9 ms) |  9.82x
+  blk.0.attn_k.weight          1024x4096  ggml  34.41/ 34.60 (    2.3 ms) | bankml  3.48/ 3.51 (   0.2 ms) |  9.86x
+  blk.0.attn_output.weight     4096x4096  ggml  34.64/ 35.83 (    9.4 ms) | bankml  3.54/ 3.62 (   0.9 ms) |  9.91x
+  blk.0.ffn_gate.weight       12288x4096  ggml  34.50/ 35.39 (   27.8 ms) | bankml  3.55/ 3.62 (   2.8 ms) |  9.77x
+  blk.0.ffn_down.weight        4096x12288 ggml  34.58/ 35.65 (   28.0 ms) | bankml  3.58/ 3.64 (   2.9 ms) |  9.78x
+  output.weight              151669x4096  ggml  35.02/ 37.02 (  359.3 ms) | bankml  3.61/ 3.72 (  36.2 ms) |  9.94x
+activation n=4096: q8_0 quantize 28.9 µs + bankml layout 8.3 µs (median)
+activation n=12288: q8_0 quantize 96.0 µs + bankml layout 21.8 µs (median)
+prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair 34.72/34.89 | bankml mat_vec per column 3.50/3.54 (9.85x) | bankml 1x4 tile 2.79/2.81 (12.40x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 4.96s
+## bench_q1_0_prefill_act
+prefill 1024x4096 x 32 ns/(block·col) min/median: 1x4 (q8 bytes) 9.26/9.35 | 1x4 sel (Q8Act) 8.29/8.34 (1.121x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 0.17s
+## bench_memory_floor
+1 thread(s): 16.38 GB/s read → floor for one ternary token (2.13 GB) 0.130 s, one 1-bit token (1.06 GB) 0.065 s
+2 thread(s): 17.27 GB/s read → floor for one ternary token (2.13 GB) 0.123 s, one 1-bit token (1.06 GB) 0.061 s
+3 thread(s): 17.25 GB/s read → floor for one ternary token (2.13 GB) 0.123 s, one 1-bit token (1.06 GB) 0.061 s
+4 thread(s): 13.73 GB/s read → floor for one ternary token (2.13 GB) 0.155 s, one 1-bit token (1.06 GB) 0.077 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 1.80s
+## decode_budget_q1_0
+decode budget: 253 Q1_0 matmuls, 7567003648 weights (1.06 GB of blocks) per token
+  1 thread(s): ggml b11192 0.650/0.687 s/token (min/median) | bankml 0.614/0.615 | 1.12x | matmul-only ceiling ggml 1.54, bankml 1.63 tok/s
+  2 thread(s): ggml b11192 0.434/0.455 s/token (min/median) | bankml 0.419/0.419 | 1.08x | matmul-only ceiling ggml 2.30, bankml 2.39 tok/s
+  3 thread(s): ggml b11192 0.372/0.385 s/token (min/median) | bankml 0.373/0.378 | 1.02x | matmul-only ceiling ggml 2.69, bankml 2.68 tok/s
+  4 thread(s): ggml b11192 0.449/0.695 s/token (min/median) | bankml 0.383/0.702 | 0.99x | matmul-only ceiling ggml 2.23, bankml 2.61 tok/s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 16.85s
+## decode_budget_q2_0
+decode budget: 253 Q2_0 matmuls, 7567003648 weights (2.13 GB of blocks) per token
+  1 thread(s): ggml b11192 6.743/6.943 s/token (min/median) | bankml 4.196/4.268 s/token | 1.61x | matmul-only ceiling ggml 0.15, bankml 0.24 tok/s
+      attn_k       ggml  0.142 s  bankml  0.086 s  (mean of 3 passes)
+      attn_output  ggml  0.564 s  bankml  0.346 s  (mean of 3 passes)
+      attn_q       ggml  0.551 s  bankml  0.338 s  (mean of 3 passes)
+      attn_v       ggml  0.135 s  bankml  0.084 s  (mean of 3 passes)
+      ffn_down     ggml  1.773 s  bankml  1.007 s  (mean of 3 passes)
+      ffn_gate     ggml  1.992 s  bankml  1.006 s  (mean of 3 passes)
+      ffn_up       ggml  1.711 s  bankml  1.018 s  (mean of 3 passes)
+      output       ggml  0.522 s  bankml  0.359 s  (mean of 3 passes)
+  3 thread(s): ggml b11192 4.971/5.137 s/token (min/median) | bankml 4.564/4.570 s/token | 1.09x | matmul-only ceiling ggml 0.20, bankml 0.22 tok/s
+      attn_k       ggml  0.104 s  bankml  0.094 s  (mean of 3 passes)
+      attn_output  ggml  0.417 s  bankml  0.365 s  (mean of 3 passes)
+      attn_q       ggml  0.398 s  bankml  0.361 s  (mean of 3 passes)
+      attn_v       ggml  0.104 s  bankml  0.091 s  (mean of 3 passes)
+      ffn_down     ggml  1.267 s  bankml  1.127 s  (mean of 3 passes)
+      ffn_gate     ggml  1.269 s  bankml  1.091 s  (mean of 3 passes)
+      ffn_up       ggml  1.267 s  bankml  1.079 s  (mean of 3 passes)
+      output       ggml  0.419 s  bankml  0.378 s  (mean of 3 passes)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 76.69s
+# gate done

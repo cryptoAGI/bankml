@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """The chain side of a bankml agent: prepare an iNFT mint the owner signs, and load an agent back from a token.
 
 Target: the house ERC-7857 contract `iNFT_7857` (DeltaVerse/deploy/iNFT4), open (unsealed) agents:

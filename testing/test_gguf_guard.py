@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Vendored into bankml from minaiml (same authors); the Rust guard in gguf.rs is its port — keep them in step.
 # synthetic GGUFs, one per trap. stdlib only. run: python3 test_gguf_guard.py
 import struct, os, sys, tempfile

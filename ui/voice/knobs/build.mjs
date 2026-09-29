@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Build Savante's DreamKnob voice controls → ui/voice/knobs/savante_knobs.js (an IIFE, global SavanteKnobs).
 // The recipe of DeltaVerse's playdocs rack: React, react-dom and dreamknob from the local DreamKnob workspace
 // (DREAMKNOB_DEPS, default /home/hacker/dreamknob/node_modules), esbuild from its pnpm store. The artifact is

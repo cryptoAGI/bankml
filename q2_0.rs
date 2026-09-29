@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! P2 — the ternary kernel: `Q2_0` (ggml type 42, group 64), as mainline ggml defines it at **b11192**
 //! (read from the tag's source 2026-09-26):
 //!

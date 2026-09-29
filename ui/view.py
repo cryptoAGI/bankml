@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """bankml · view — the read-only page for anyone on the LAN who wants to watch the testing.
 
 Why not Gradio: the Gradio installed here (3.37) has path-traversal bugs that let a client read files from the
@@ -45,7 +46,7 @@ def listen() -> dict:
             return p.stat().st_mtime_ns
         except OSError:
             return 0
-    key = (mt(speak.VOICE_DIR / "savante" / "manifest.json"), mt(speak.REPO / "TECHNICAL.md"),
+    key = (mt(speak.VOICE_DIR / "savante" / "manifest.json"), mt(speak.REPO / "docs" / "TECHNICAL.md"),
            tuple(mt(speak.EXPORT_DIR / f"{n}.json") for n in speak.EXPORTS))
     if key != _LISTEN["key"] or _t.time() - _LISTEN["t"] > 30 or _LISTEN["data"] is None:
         _LISTEN.update(key=key, t=_t.time(), data=listen_uncached())

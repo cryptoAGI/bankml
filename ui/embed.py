@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Embeddings for Savante: the model mindX uses (bge-m3, 1024 dimensions), served by the local Ollama, the same way
 mindX's memory_pgvector.py calls it (/api/embed, inputs cut at 4,000 characters).
 

@@ -14,8 +14,8 @@ the THOT spec's vectors, Hugging Face's and Ollama's sha256 for a model file), a
 (pycryptodome, Foundry's `cast`, the Python guard bankml's Rust guard was ported from).
 
 This file lists every oracle bankml uses, what it checks, how to run it, and what it last found. The results are in
-[`testing/results/`](testing/results/), one record per release, written by
-[`testing/release_gate.sh`](testing/release_gate.sh).
+[`testing/results/`](../testing/results/), one record per release, written by
+[`testing/release_gate.sh`](../testing/release_gate.sh).
 
 ## 1. The ggml oracle: kernels bit-exact against the compiled llama.cpp
 
@@ -48,7 +48,7 @@ x64) and matches each one in 762 of 762.
 
 ### How it runs
 
-1. **Record** (once per model): [`testing/ggml_oracle.py`](testing/ggml_oracle.py) loads the release's
+1. **Record** (once per model): [`testing/ggml_oracle.py`](../testing/ggml_oracle.py) loads the release's
    `libggml-base.so` and `libggml-cpu-haswell.so` (and, for Q2_0, `libggml-cpu-x64.so`) with `ctypes`, calls
    `ggml_cpu_init()`, memory-maps the GGUF and writes:
    - `dequant.tsv`: tensor name · element count · sha256 of ggml's f32 output, for every tensor of the type;
@@ -56,8 +56,8 @@ x64) and matches each one in 762 of 762.
      of it, and ggml's dot products (AVX2 and generic).
 
    The release tarball is checked by sha256 before use (`llama-b11192-bin-ubuntu-x64.tar.gz`, `34cf6fa5…81ec7`).
-2. **Compare** (every gate): the Rust tests `oracle_ggml_b11192_real_*` (in [`q1_0.rs`](q1_0.rs) and
-   [`q2_0.rs`](q2_0.rs), `#[ignore]`d because they need the models) re-derive every recorded quantity from the same
+2. **Compare** (every gate): the Rust tests `oracle_ggml_b11192_real_*` (in [`q1_0.rs`](../q1_0.rs) and
+   [`q2_0.rs`](../q2_0.rs), `#[ignore]`d because they need the models) re-derive every recorded quantity from the same
    file through bankml's own memory map and assert equality.
 3. **A/B against the live library** (every gate): `ab_vs_ggml` and `ab_vs_ggml_q2_0` `dlopen` the shipped haswell
    library directly (no crate, `dlopen`/`dlsym` declared by hand) and time ggml's kernel and bankml's on the same
@@ -99,21 +99,21 @@ ordinary `cargo test`:
 | the generic port == f64 arithmetic on dequantized data (the mathematical definition) | `q1_0.rs` | random blocks |
 
 A speed-up is admitted only after these and §1 pass on the same build. Kernels that were faster but not exact, or
-exact but not faster beyond noise, are kept with their numbers in [`testing/experiments/`](testing/experiments/)
+exact but not faster beyond noise, are kept with their numbers in [`testing/experiments/`](../testing/experiments/)
 (0.0.5).
 
 ## 3. The guard: Rust against the Python it was ported from
 
 bankml's header guard (`gguf.rs`: play, refuse or need more bytes; the three low-bit traps; hostile headers) was
-ported from minaiml's Python `gguf_guard.py`, vendored in [`testing/gguf_guard.py`](testing/gguf_guard.py) with its
-suite. [`testing/guard_agree.py`](testing/guard_agree.py) runs **both** on every synthetic case and on every real
+ported from minaiml's Python `gguf_guard.py`, vendored in [`testing/gguf_guard.py`](../testing/gguf_guard.py) with its
+suite. [`testing/guard_agree.py`](../testing/guard_agree.py) runs **both** on every synthetic case and on every real
 model present and requires identical JSON. Last result: **28/28 agree**.
 
 ## 4. Cryptographic constructions against published values
 
 | construction | oracle | where |
 |---|---|---|
-| SHA-256 (the model pin) | FIPS 180-4 test vectors | `sha256.rs` (`fips_vectors`) |
+| SHA-256 (the model pin) | FIPS 180-4 test vectors; since 0.1.8 the SHA-NI path must also equal the portable rounds on every length 0–1,000 (and 4 KiB, 64 KiB, split updates), and a real 1.16 GB model must hash to coreutils `sha256sum`'s value and its published pin | `sha256.rs` (`fips_vectors`, `hardware_path_equals_portable_on_every_length`) |
 | the model pin | the sha256 the publisher lists: the FORK.json of the PYTHAI fork, a Hugging Face repository's LFS sha256 at a fixed revision, or the Ollama registry's layer digest; every import is hashed as it streams and kept only if equal | `bankml.rs` (`pin`), `ui/models.py` |
 | keccak256 (pure Python) | pycryptodome's keccak on every input length 0–400 bytes; and Savante's **published doctrine root** `0x92fe83eb…ae137d0`, reproduced from her persona | `ui/agents.py`, `testing/test_ui.py` |
 | THOT manifests (`sagi.thot_manifest/1`) | the spec's own test vectors (`THOT_MANIFEST.md` §5: savante@1fcca89, jaimla@8b57ccf, luvai@0c1eef7): bundle root, Merkle root, identity CID | `ui/thot.py`, `testing/test_ui.py` |
@@ -125,7 +125,7 @@ model present and requires identical JSON. Last result: **28/28 agree**.
 ## 5. The gateway: receipts against the text
 
 `bankml serve`'s receipts are checked end to end against a mock llama-server whose answers are known
-([`testing/cli.rs`](testing/cli.rs)): the `response_sha256` equals the sha256 of the text the mock sent (streamed and
+([`testing/cli.rs`](../testing/cli.rs)): the `response_sha256` equals the sha256 of the text the mock sent (streamed and
 not), `request_sha256` equals the sha256 of the request body, and a model file changed after verification produces a
 503 and no receipt. In use, the UI recomputes every answer's sha256 and marks ✓ or `≠ received!`.
 
@@ -135,8 +135,7 @@ not), `request_sha256` equals the sha256 of the request body, and a model file c
   must be **token-identical** to llama.cpp b11192's. Every kernel it will use already passes §1.
 - **Speculative decoding (0.1.8).** A small draft model (Bonsai-1.7B) proposing tokens for Bonsai-8B must leave the
   output **token-identical** at temperature 0; a speed-up counts only then.
-- **SHA-NI hashing (0.1.8).** The hardware SHA-256 path must equal the portable one on every length and on real model
-  files, and equal `sha256sum`.
+
 
 ## The rule, restated
 

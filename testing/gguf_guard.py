@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Vendored into bankml from minaiml (same authors); the Rust guard in gguf.rs is its port — keep them in step.
 # gguf_guard.py — decide whether a GGUF can play on a given llama.cpp build, from its header alone.
 # stdlib only. Reads a prefix of the file (default 32 MiB); tensor data is never read.

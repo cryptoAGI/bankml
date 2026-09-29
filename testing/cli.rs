@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! End-to-end tests of the `bankml` binary: what an operator types, what comes back, which exit code.
 //! Offline — synthetic GGUFs and a mock llama-server; the real-model oracles are in the modules (see
 //! testing/README.md). `cargo test --release --test cli`
@@ -206,7 +207,16 @@ fn free_port() -> String {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string()
 }
 
-fn start_serve(m: &str, fork: &str, upstream: &str) -> (std::process::Child, String) {
+/// The serve under test, killed when the test ends — pass or panic (a leaked child keeps the test's pipes open).
+struct Serve(std::process::Child);
+impl Drop for Serve {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn start_serve(m: &str, fork: &str, upstream: &str) -> (Serve, String) {
     let listen = free_port();
     let mut child = Command::new(env!("CARGO_BIN_EXE_bankml"))
         .args(["serve", m, "--fork", fork, "--upstream", upstream, "--listen", &listen])
@@ -215,7 +225,7 @@ fn start_serve(m: &str, fork: &str, upstream: &str) -> (std::process::Child, Str
         .unwrap();
     for _ in 0..100 {
         if TcpStream::connect(&listen).is_ok() {
-            return (child, listen);
+            return (Serve(child), listen);
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -238,7 +248,7 @@ fn serve_gates_and_signs_answers() {
     let fork = write(&d, "FORK.json", format!("{{\"files\": [{{\"path\": \"m.gguf\", \"sha256\": \"{h}\"}}]}}").as_bytes());
     let canon = Path::new(&m).canonicalize().unwrap().to_string_lossy().into_owned();
     let up = mock_upstream(canon);
-    let (mut child, addr) = start_serve(&m, &fork, &up);
+    let (child, addr) = start_serve(&m, &fork, &up);
 
     let st = http(&addr, "GET", "/bankml", "");
     assert!(st.contains(&h) && st.contains("\"verdict\": \"play\""), "{st}");
@@ -264,8 +274,7 @@ fn serve_gates_and_signs_answers() {
     std::fs::write(&m, b"replaced weights").unwrap();
     let r = http(&addr, "POST", "/v1/chat/completions", body);
     assert!(r.starts_with("HTTP/1.1 503") && !r.contains("bankml_receipt"), "{r}");
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(child);
 }
 
 #[test]

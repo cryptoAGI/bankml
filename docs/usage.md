@@ -227,6 +227,19 @@ ledgered facet of its THOT bundle.
   | Savante.prompt | the Hugging Face Space's template prompt, fetched once and cached | no — said so under each answer |
 
 - **max tokens** and **temperature** are the usual sampling controls. Low temperature suits verdicts.
+- **Resources · CPU and RAM for the engine** (0.1.8): two sliders.
+  - **CPU threads**, from 1 to this machine's count.
+  - **RAM budget (GB)**. bankml turns the budget into the largest context that fits: the model's weights stay
+    resident, the engine needs about 0.25 GB, and the rest becomes KV cache, at the per-token size `bankml guard`
+    reports for the model's architecture (147,456 bytes for Qwen3-8B). The line under the sliders shows the result,
+    e.g. "weights 1.16 GB + engine 0.25 GB + KV cache 0.57 GB → a 3840-token context", or how much a model needs at
+    least.
+  - **Apply** restarts the engine with those settings, using the same verified switch as the Models tab. It is
+    refused while an answer is being written, falls back to the defaults if the engine will not start, and is
+    remembered for every later start.
+  - **Usage now** reads what the engine uses: resident memory and CPU per process, and free memory. The numbers come
+    from `bankml serve` itself (`GET /bankml/usage`, `sys.rs`), which reads `/proc` the way psutil does, with no
+    dependencies.
 - **The bankml serve card** shows the verified model, its full sha256, the bankml version and the engine. **Refresh
   carrier** re-reads it.
 
@@ -313,7 +326,12 @@ Nothing is ever written into the canon (`~/savante`). What the UI writes lives i
   "response", "session", "sent_at", "response_sha256"}}`.
 - **`Savante.prompt`**: the Space template's prompt, cached the first time it is chosen.
 
-The model sees the last 12 exchanges (each cut to 4,000 characters), as in the Hugging Face template.
+The model sees at least the last 12 exchanges (each cut to 4,000 characters), as in the Hugging Face template.
+Since 0.1.8 the window moves **in steps of six**. Between steps, each prompt is the previous prompt plus one exchange,
+so the engine's prompt cache reuses all of it and only the new exchange is read. A window that slid by one exchange
+per turn changed the text right after the system prompt, forcing the whole history to be re-read every turn. Over 60
+turns the window now moves 8 times instead of 48. It also shrinks, in whole steps, to fit the engine's context, and
+the chat's footer (clock, receipt) is never sent to the model.
 
 ## 8a. Proof of data without the data
 
@@ -539,6 +557,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml pin FILE --fork FORK.json` | sha256 against the fork's record |
 | `bankml verify FILE --fork FORK.json [--json]` | guard, then pin |
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N]` | the gate in front of llama-server |
+| `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage` |
 | `python3 ui/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 ui/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
 | `python3 ui/models.py list \| catalog \| search Q \| import ID\|URL\|ollama:NAME:TAG \| use FILE \| first-run` | the model importer and carrier switch |

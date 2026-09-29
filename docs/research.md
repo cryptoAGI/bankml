@@ -3,7 +3,7 @@
 *A survey of Rust-native LLM inference, 1-bit and ternary CPU inference, and verifiable inference, made on
 2026-09-28/29 to answer one question: is bankml at the cutting edge, and where is it not? Every link below was
 checked to resolve on those dates unless marked. bankml's own numbers are its own measurements
-([TECHNICAL.md](TECHNICAL.md), [PERFORMANCE.md](PERFORMANCE.md), [`testing/results/`](testing/results/)); no third
+([TECHNICAL.md](TECHNICAL.md), [PERFORMANCE.md](PERFORMANCE.md), [`testing/results/`](../testing/results/)); no third
 party has benchmarked bankml.*
 
 ## The answer in brief

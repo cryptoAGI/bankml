@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! P1 — SHA-256 (FIPS 180-4), dependency-free, for the model pin: a GGUF plays only if its sha256
 //! equals the record in the PYTHAI fork's `FORK.json` (`files[].sha256` for its path).
 
@@ -30,6 +31,22 @@ impl Default for Sha256 {
 }
 
 impl Sha256 {
+    /// Compress whole 64-byte blocks: the CPU's SHA extensions when it has them (x86 SHA-NI: Zen, Ice Lake and
+    /// later), else the portable rounds. Both give the same digest; the tests check them against each other.
+    fn blocks(&mut self, data: &[u8]) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if shani::available() {
+                // SAFETY: the CPU reports sha, sse4.1 and ssse3; data is whole 64-byte blocks
+                unsafe { shani::compress(&mut self.h, data) };
+                return;
+            }
+        }
+        for c in data.chunks_exact(64) {
+            self.block(c);
+        }
+    }
+
     fn block(&mut self, b: &[u8]) {
         let mut w = [0u32; 64];
         for i in 0..16 {
@@ -64,15 +81,13 @@ impl Sha256 {
             data = &data[n..];
             if self.nbuf == 64 {
                 let b = self.buf;
-                self.block(&b);
+                self.blocks(&b);
                 self.nbuf = 0;
             }
         }
-        let mut chunks = data.chunks_exact(64);
-        for c in &mut chunks {
-            self.block(c);
-        }
-        let r = chunks.remainder();
+        let whole = data.len() / 64 * 64;
+        self.blocks(&data[..whole]);
+        let r = &data[whole..];
         self.buf[..r.len()].copy_from_slice(r);
         self.nbuf += r.len();
     }
@@ -89,6 +104,72 @@ impl Sha256 {
             o[4 * i..4 * i + 4].copy_from_slice(&v.to_be_bytes());
         }
         o
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+mod shani {
+    //! SHA-256 with the x86 SHA extensions (`sha256rnds2`, `sha256msg1`, `sha256msg2`): two rounds per instruction,
+    //! the message schedule in hardware. The layout is Intel's reference (the state held as ABEF / CDGH).
+    use std::arch::x86_64::*;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    static HAVE: AtomicU8 = AtomicU8::new(0); // 0 unknown, 1 no, 2 yes
+
+    pub fn available() -> bool {
+        match HAVE.load(Ordering::Relaxed) {
+            2 => true,
+            1 => false,
+            _ => {
+                let ok = std::env::var_os("BANKML_NO_SHANI").is_none()
+                    && is_x86_feature_detected!("sha")
+                    && is_x86_feature_detected!("sse4.1")
+                    && is_x86_feature_detected!("ssse3");
+                HAVE.store(if ok { 2 } else { 1 }, Ordering::Relaxed);
+                ok
+            }
+        }
+    }
+
+    #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
+    pub unsafe fn compress(h: &mut [u32; 8], data: &[u8]) {
+        let mask = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);
+        let mut tmp = _mm_loadu_si128(h.as_ptr() as *const __m128i); // A B C D
+        let mut st1 = _mm_loadu_si128(h.as_ptr().add(4) as *const __m128i); // E F G H
+        tmp = _mm_shuffle_epi32(tmp, 0xB1); // C D A B
+        st1 = _mm_shuffle_epi32(st1, 0x1B); // H G F E
+        let mut st0 = _mm_alignr_epi8(tmp, st1, 8); // A B E F
+        st1 = _mm_blend_epi16(st1, tmp, 0xF0); // C D G H
+        let k = super::K.as_ptr() as *const __m128i;
+        for b in data.chunks_exact(64) {
+            let (s0, s1) = (st0, st1);
+            let p = b.as_ptr() as *const __m128i;
+            let mut m = [
+                _mm_shuffle_epi8(_mm_loadu_si128(p), mask),
+                _mm_shuffle_epi8(_mm_loadu_si128(p.add(1)), mask),
+                _mm_shuffle_epi8(_mm_loadu_si128(p.add(2)), mask),
+                _mm_shuffle_epi8(_mm_loadu_si128(p.add(3)), mask),
+            ];
+            for i in 0..16 {
+                let w = _mm_add_epi32(m[i % 4], _mm_loadu_si128(k.add(i)));
+                st1 = _mm_sha256rnds2_epu32(st1, st0, w);
+                st0 = _mm_sha256rnds2_epu32(st0, st1, _mm_shuffle_epi32(w, 0x0E));
+                if i < 12 {
+                    // schedule the words four groups ahead: W[i+4] from W[i..i+4]
+                    let t = _mm_sha256msg1_epu32(m[i % 4], m[(i + 1) % 4]);
+                    let t = _mm_add_epi32(t, _mm_alignr_epi8(m[(i + 3) % 4], m[(i + 2) % 4], 4));
+                    m[i % 4] = _mm_sha256msg2_epu32(t, m[(i + 3) % 4]);
+                }
+            }
+            st0 = _mm_add_epi32(st0, s0);
+            st1 = _mm_add_epi32(st1, s1);
+        }
+        tmp = _mm_shuffle_epi32(st0, 0x1B); // F E B A
+        st1 = _mm_shuffle_epi32(st1, 0xB1); // D C H G
+        st0 = _mm_blend_epi16(tmp, st1, 0xF0); // D C B A
+        st1 = _mm_alignr_epi8(st1, tmp, 8); // H G F E
+        _mm_storeu_si128(h.as_mut_ptr() as *mut __m128i, st0);
+        _mm_storeu_si128(h.as_mut_ptr().add(4) as *mut __m128i, st1);
     }
 }
 
@@ -142,6 +223,48 @@ pub fn pinned_sha256(fork_json: &str, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn portable(data: &[u8]) -> [u8; 32] {
+        let mut h = Sha256 { len: data.len() as u64, ..Default::default() };
+        let whole = data.len() / 64 * 64;
+        for c in data[..whole].chunks_exact(64) {
+            h.block(c);
+        }
+        // finish without the dispatching update(): pad by hand through block()
+        let mut tail = data[whole..].to_vec();
+        tail.push(0x80);
+        while tail.len() % 64 != 56 {
+            tail.push(0);
+        }
+        tail.extend((data.len() as u64 * 8).to_be_bytes());
+        for c in tail.chunks_exact(64) {
+            h.block(c);
+        }
+        let mut o = [0u8; 32];
+        for (i, v) in h.h.iter().enumerate() {
+            o[4 * i..4 * i + 4].copy_from_slice(&v.to_be_bytes());
+        }
+        o
+    }
+
+    #[test]
+    fn hardware_path_equals_portable_on_every_length() {
+        // the SHA-NI path (when the CPU has it) against the portable rounds, lengths 0..=1000 and split updates
+        let mut x = 0x9e3779b97f4a7c15u64;
+        let data: Vec<u8> = (0..70_000).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x as u8 }).collect();
+        for n in (0..=1000).chain([4095, 4096, 4097, 65_536, 69_999]) {
+            let mut h = Sha256::default();
+            h.update(&data[..n]);
+            assert_eq!(h.finish(), portable(&data[..n]), "length {n}");
+        }
+        let mut h = Sha256::default();
+        for piece in data.chunks(777) {
+            h.update(piece);
+        }
+        assert_eq!(h.finish(), portable(&data), "split updates");
+        #[cfg(target_arch = "x86_64")]
+        eprintln!("sha256: hardware path {}", if shani::available() { "SHA-NI (tested above)" } else { "absent; portable only" });
+    }
 
     fn h(b: &[u8]) -> String {
         let mut s = Sha256::default();

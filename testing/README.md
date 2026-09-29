@@ -19,6 +19,8 @@ kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
 | file | what |
 |---|---|
 | `release_gate.sh` | the gate above (also appends to `live.log`) |
+| `pinned.sh` | runs a benchmark on a fixed amount of processor and memory: pinned cores (`taskset`), a hard RAM cap with no swap (a user cgroup), and the machine's load recorded before and after |
+| `spdx_check.py` | every source file carries the SPDX licence of its layer (LICENSING.md); in the gate |
 | `live.sh` | runs one step with its output appended to `live.log`, which `ui/savante.py --mode view` shows live |
 | `cli.rs` | end-to-end tests of the `bankml` binary (a cargo integration test): verdicts and exit codes, hostile headers, pin, verify, and `serve` against a mock llama-server (receipts, answer hashes, refusals) |
 | `ggml_oracle.py` | writes an oracle: llama.cpp b11192's own answers (its exported symbols, in-process) on a real GGUF — dequantized tensors, q8_0 rows, dot products |

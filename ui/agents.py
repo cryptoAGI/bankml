@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Custom agents from the Savante template — each with its own .persona, .prompt, card and ledger.
 
 Savante's canon (~/savante) is the template and is only ever read. `derive()` writes a new agent into

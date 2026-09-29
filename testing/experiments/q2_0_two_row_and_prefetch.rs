@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! 0.0.5 negative results, kept for reproduction (not compiled into the crate). Paste into q2_0.rs (kernels
 //! above `mat_vec`, tests into `mod tests`) to re-run. Both were bit-exact against the scalar model of ggml.
 //!

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! 0.0.5 — measured and not adopted: `Q2Packed`, the ternary weights repacked once (per quad: 64 contiguous
 //! code bytes, then the four f16 scales; the same 72 bytes, arithmetic unchanged). Bit-exact against the scalar
 //! model of ggml and against the file-layout kernel on the real Ternary-Bonsai-8B tensors — and not reliably

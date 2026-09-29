@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.8 — 2026-09-29
+
+Speed and efficiency, measured on fixed resources, and the house in order: the licence layers, the docs in `docs/`
+behind a README that routes to them, and `docs/TODO.md` from four studies (the field, KoboldCpp, vLLM, Rust).
+Record: `testing/results/0.1.8.txt`.
+
+### Faster
+- **SHA-256 with the CPU's SHA extensions (SHA-NI)**, detected at run time, with the portable rounds kept as the
+  model. It is **5.5× faster**: 0.23 s against 1.25 s for 248 MB, and 2.9 s for the 1.16 GB 8B model, which hashes to
+  its published pin and to coreutils `sha256sum`'s value. Every `bankml serve` start and every model switch hashes the
+  whole model, so every one of them is faster: restarting the 8B carrier took 7.0 s, against 25 s on 0.1.7.
+  `BANKML_NO_SHANI=1` selects the portable path.
+- **A chat window that keeps the engine's prompt cache warm.** The history the model sees now moves in steps of six
+  exchanges instead of sliding by one each turn. A one-exchange slide changed the text right after the system prompt,
+  so the whole history was re-read every turn: vLLM's chained block hashes show why no prefix cache can help then,
+  and KoboldCpp's "Smart Context" reserve is the same remedy.
+  - Over 60 turns the window moves 8 times instead of 48, and 39 of 47 turns reuse the previous prompt.
+  - The window also shrinks, in whole steps, to fit the engine's context.
+  - The chat's footer (the clock and the receipt) is no longer sent back to the model; it was wasting tokens.
+- Measured and **not adopted**, because neither is a gain beyond the noise, though both were token-identical:
+  - speculative decoding with a draft model (Bonsai-1.7B for Bonsai-8B);
+  - n-gram speculation, measured twice, the second time on fixed resources (`testing/pinned.sh`: cores 2–3, 2
+    threads, 2.5 GB). It was ahead in 5 of 6 paired runs (+0.01 to +0.36 tok/s, one −0.06), but the baseline itself
+    ranged from 0.36 to 1.40 tok/s as other programs loaded the same cores. Being exact and costing no memory, it is
+    offered as an **opt-in**: `bankml serve --spec-ngram`, and a checkbox in Resources, off by default.
+  - KV shifting (`--cache-reuse`) is rejected outright: it is not token-identical.
+
+  Details and sources are in `docs/TODO.md`.
+
+### Added
+- **Resources: CPU and RAM sliders** in the chat's side column.
+  - The threads slider and a RAM budget, which bankml turns into the largest context that fits (weights + engine
+    overhead + KV cache at the architecture's bytes per token, as `bankml guard` reports it).
+  - **Apply** restarts the engine through the verified switch, is refused mid-answer, and is remembered.
+  - **Usage now** reads what the engine uses.
+- **`sys.rs`, bankml's psutil, with no crates.** It reads memory, cores, and each process's resident memory and CPU
+  time from `/proc`, which is what psutil and Rust's `sysinfo` read on Linux. `GET /bankml/usage` on serve (itself
+  and the engine it launched), and `bankml usage [PID …]`.
+- **`testing/pinned.sh`**: benchmarks on a fixed amount of processor and memory, with cores pinned (`taskset`), a hard
+  RAM cap and no swap (a user cgroup), and the load recorded before and after.
+- **Licensing layers** (`LICENSING.md`). Own code is **`MIT OR Apache-2.0`** (`LICENSE-MIT`, `LICENSE-APACHE`): open
+  source, do what you want, rights preserved. Key handling will be `GPL-3.0-only` in an opt-in module, so no
+  black-box modification ships. AGPL-derived code only walled off. Every source file carries an SPDX header, checked
+  in the gate (`testing/spdx_check.py`).
+- **Docs in `docs/`** (`usage.md`, `TECHNICAL.md`, `PERFORMANCE.md`, `oracles.md`, `research.md`, `embedding.md`,
+  `TODO.md`). The README opens with a Documentation section that sends each reader to the right one.
+
+### Fixed
+- **A refusal could reset the connection.** When `bankml serve` refused a request (a foreign `Host`, a non-JSON POST)
+  it closed without reading the body. Closing with unread data makes the kernel send RST, so the client could lose
+  the refusal. It now reads and discards the declared body first. The CLI suite passes 10 times in a row, where it
+  had failed under load.
+- The CLI tests kill the `serve` they start even when an assertion fails (a leaked child held the test's pipes open).
+
 ## 0.1.7 — 2026-09-29
 
 A second audit, of the parts the first did not cover (the gateway, the chat path, commitments, agents, PostgreSQL,

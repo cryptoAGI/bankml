@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Savante's voice in the Savante UI — one voice, hers: pre-rendered statements for the aivatar card.
 
 SAVANTE, AS OF 0.1.3 — A VOICE OF HER OWN, FROM OPEN PARTS (operator, 2026-09-28: "combine from Jaimla as template to
@@ -366,7 +367,7 @@ def _section(md: str, head: str) -> str:
 def reading_chapters(repo: Path = REPO) -> list:
     """[(title, [sentences])]: Savante reads bankml's thesis and TECHNICAL.md's binary/ternary sections aloud."""
     try:
-        md = (repo / "TECHNICAL.md").read_text(encoding="utf-8")
+        md = (repo / "docs" / "TECHNICAL.md").read_text(encoding="utf-8")
     except OSError:
         return []
     return [(t, s) for t, h in READING if (s := speech(_section(md, h)))]

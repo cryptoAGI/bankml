@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """The chain side against a throwaway local EVM: anvil on a free port, the house iNFT_7857 (DeltaVerse iNFT4) deployed
 from its compiled artifact, a bankml agent minted from its THOT bundle and loaded back. Nothing leaves this computer.
 Skips (exit 0) when anvil or the artifact is absent (CI).

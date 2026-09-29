@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! 0.0.4 negative result, kept for reproduction (not compiled into the crate).
 //!
 //! Idea: build the ±1 expansion in a "pair order" so that one `maddubs` leaves the two half-sums of each

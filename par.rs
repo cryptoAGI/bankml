@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Threads for the matmuls, dependency-free: a persistent pool (spawned once, woken per matmul) and a
 //! row scheduler that hands out fixed-size row chunks from an atomic counter, as ggml's mul_mat does.
 //! Rows are independent and each is computed by the same single-thread kernel, so the output bits do

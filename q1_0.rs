@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! P2 — the Q1_0 kernel, as mainline ggml defines it at **b11192** (read from source 2026-09-25):
 //!
 //! - `ggml-common.h`: `block_q1_0 { ggml_half d; uint8_t qs[16]; }` — 18 bytes, **scale first**.
