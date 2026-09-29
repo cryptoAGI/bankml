@@ -120,6 +120,25 @@ llama-server's own `/apply-template` for 317 conversations. They cover:
 `oracle_chat_template` requires every prompt **byte-identical**: **317 of 317**. The oracle found one server behaviour
 that the template alone would not predict: an empty `reasoning_content` is dropped before templating.
 
+## 1d. The forward-pass oracle: llama.cpp's own operations, from the shipped ggml (0.2.3)
+
+The release has no tool that prints a model's intermediate values, so the oracle builds them the way the kernel oracle
+does. [`testing/forward_oracle.py`](../testing/forward_oracle.py) drives the **shipped** `libggml` through ctypes with
+the same operations llama.cpp's Qwen3 graph uses and computes them with the release's own CPU backend. For 300 real
+token ids (the chat markers, the table's edges, and tokens of the tokenizer's corpus) it records the sha256 of each
+row's f32 bytes:
+- `get_rows` on the Q1_0 token embedding: llama.cpp's `inp_embd`;
+- `rms_norm` with the model's epsilon, then `mul` by `blk.0.attn_norm.weight`: llama.cpp's `attn_norm-0`.
+
+bankml's `forward.rs` computes the same in the float order read from b11192's `ops.cpp`:
+- the sum of squares accumulated in double, one float product at a time, in order;
+- the mean rounded to float;
+- `scale = 1 / sqrtf(mean + eps)`;
+- each output `(x · scale) · w`, with no FMA.
+
+**300 of 300 rows bit-exact for both.** Each later step of the forward pass (RoPE, attention, the feed-forward block,
+the logits) is added to the same oracle before it counts.
+
 ## 2. Scalar models: every fast path against its own reference
 
 Between the real-model oracle runs, the kernels are held to a scalar model of ggml, on synthetic inputs, in the

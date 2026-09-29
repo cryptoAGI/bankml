@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.3 — 2026-09-29
+
+**P3, step three: the first operations of bankml's own forward pass, bit-exact against llama.cpp's.** Record:
+`testing/results/0.2.3.txt`.
+
+### Added
+- **`forward.rs`.**
+  - `Weights` reads the model's tensors through bankml's own memory map.
+  - `embed` is llama.cpp's `get_rows` on the Q1_0 token table (`inp_embd`), through the dequantizer already proven
+    bit-exact.
+  - `rms_norm_mul` is `rms_norm` then `mul` by the layer's norm weight (`attn_norm-0`), in the float order read from
+    b11192's `ggml-cpu/ops.cpp`: the sum of squares accumulated in double, one float product at a time; the mean
+    rounded to float; `1 / sqrtf(mean + eps)`; each output `(x · scale) · w`, with no FMA.
+- **The forward-pass oracle** (`testing/forward_oracle.py` → `oracle_forward_embed_norm`, in the gate). The release has
+  no tool that prints intermediate values, so the oracle drives the **shipped** `libggml` through ctypes with the same
+  ops llama.cpp's Qwen3 graph uses, computed by the release's own CPU backend, on 300 real token ids. **300 of 300 rows
+  bit-exact for both `inp_embd` and `attn_norm-0`.**
+
 ## 0.2.2 — 2026-09-29
 
 **P3, step two: the chat template, byte-identical to llama.cpp. The ternary headline re-measured and confirmed.**

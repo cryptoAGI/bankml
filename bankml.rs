@@ -127,6 +127,7 @@
 #![allow(dead_code)]
 
 pub mod chat;
+pub mod forward;
 pub mod gguf;
 pub mod par;
 pub mod serve;
