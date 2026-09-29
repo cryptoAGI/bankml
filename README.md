@@ -15,6 +15,7 @@
   <img src="https://img.shields.io/badge/ternary%20kernel-9.5%E2%80%939.8%C3%97-D9A23A?style=flat-square" alt="ternary 9.5–9.8x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
   <img src="https://img.shields.io/badge/status-P0%20serving%20%C2%B7%20Savante%20UI%20%C2%B7%20forward%20pass%20next-F59E0B?style=flat-square" alt="status">
+  <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
 </p>
 
 ---
@@ -67,7 +68,10 @@ inference (with the papers) is in **[research.md](research.md)**; every oracle i
 | P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | next — acceptance: token-identical to llama.cpp at temperature 0 |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
-| UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9** |
+| UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
+| models | import without friction: Bonsai-8B on first run; a pinned open-source catalogue, any Hugging Face GGUF, Ollama; open-source licences only; carrier switch with rollback | **0.1.5**, hardened 0.1.6 |
+| memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](embedding.md)) |
+| audits | two full audits, every finding fixed with a test; RFC 6962 commitments; a hardened gateway | **0.1.6, 0.1.7** |
 | iNFT | mint an agent from its THOT bundle (prepared, simulated, signed by the owner), load one from a token | **0.1.0** — full path tested on a local devnet; the contract is not on a public chain yet |
 | P5 | ARM / NEON, handheld | planned |
 
@@ -76,6 +80,32 @@ pass is the next phase. The whole-model budget says what that can reach: the ter
 **0.23–0.25 s** against llama.cpp's **2.2–2.4 s** on three threads, a matmul-bound ceiling of about **4 tokens/s**
 against **0.4**. Five more bit-exact kernel variants were measured in 0.0.4–0.0.5 and none was reliably faster; on
 the test laptop both kernels are compute-bound, at the core's instruction limit (see TECHNICAL §IV.5).
+
+## Releases
+
+Every release passed the full gate (build, tests, clippy, every suite, every oracle, the A/Bs and the decode budgets)
+before it was tagged; its record is `testing/results/<version>.txt`, and the details are in
+**[CHANGELOG.md](CHANGELOG.md)**.
+
+| version | what it brought |
+|---|---|
+| [0.1.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.7) | the second audit (gateway, chat path, commitments, agents, PostgreSQL, chain) fixed and tested; receipts bound to the request; RFC 6962 Merkle tree; bge-m3 embedding ([embedding.md](embedding.md)); [research.md](research.md) and [oracles.md](oracles.md) |
+| [0.1.6](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.6) | the first audit of 0.1.5 fixed, each finding with a test: carrier switch, downloads, view mode, pronunciation |
+| [0.1.5](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.5) | the model importer (catalogue, Hugging Face, Ollama; open source only; sha256-pinned); readable metrics; the VOICE dock; Savante reads the thesis; Savante.opus |
+| [0.1.4](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.4) | DreamKnobs in view mode; a timer that counts real seconds |
+| [0.1.3](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.3) | Savante's own voice (open parts: Cori's body, Jaimla's pitch); PLAY that plays; a card with depth |
+| 0.1.2 | Savante speaks: introduction and voice examples, pre-rendered |
+| [0.1.1](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.1) | the aivatar card, a chosen aivatar, a layout that moves both ways |
+| [0.1.0](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.0) | **milestone**: the iNFT path (prepare, simulate, owner signs, load from a token) and the full gate |
+| [0.0.9](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.9) | custom agents, THOT bundles, PostgreSQL connector |
+| [0.0.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.8) | `.history` search, Responses, `.memory`, Metrics, Merkle proofs |
+| [0.0.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.7) | the LAN view, response times, arrangeable layout, usage.md |
+| [0.0.6](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.6) | `bankml serve`: answers behind the gate, with receipts; the Savante UI |
+| [0.0.5](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.5) | three ternary kernel variants measured and rejected, with their numbers |
+| [0.0.4](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.4) | where the time goes; a faster 1-bit prefill |
+| [0.0.3](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.3) | the zero-dependency thread pool; the 8B 1-bit oracle; `testing/` |
+| [0.0.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.2) | the first audit: guard hardened, `verify`, soundness fix |
+| [0.0.1](https://github.com/cryptoAGI/bankml/releases/tag/v0.0.1) | the guard and pin; the `Q1_0` and `Q2_0_g64` kernels, bit-exact against llama.cpp b11192 |
 
 ## Build and verify
 
