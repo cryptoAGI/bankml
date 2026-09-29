@@ -43,6 +43,8 @@ pub struct Config {
     pub ctx: usize,
     /// n-gram speculative decoding in the spawned engine (exact at temperature 0; opt-in, 0.1.8)
     pub spec_ngram: bool,
+    /// where the spawned engine may save and restore a slot's KV cache (`--slot-save-path`; 0.1.9)
+    pub slot_dir: Option<PathBuf>,
 }
 
 struct State {
@@ -127,6 +129,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 .args(["-m", &model.to_string_lossy(), "--host", &host, "--port", &port, "-t", &cfg.threads.to_string()])
                 .args(["-c", &cfg.ctx.to_string(), "-np", "1", "--jinja", "--reasoning", "off", "--no-webui"])
                 .args(if cfg.spec_ngram { &["--spec-type", "ngram-simple"][..] } else { &[][..] })
+                .args(cfg.slot_dir.iter().flat_map(|d| ["--slot-save-path".to_string(), d.to_string_lossy().into_owned()]))
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("cannot launch {}: {e}", bin.display()))?;
@@ -151,6 +154,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let live = Arc::new(AtomicUsize::new(0));
     for mut c in l.incoming().flatten() {
         if live.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+            // read what the client already sent (briefly) before answering, so the 503 is not lost to a reset
+            let _ = c.set_read_timeout(Some(Duration::from_millis(100)));
+            let _ = std::io::copy(&mut (&c).take(64 << 10), &mut std::io::sink());
             let _ = respond(&mut c, 503, "text/plain", b"bankml serve: too many connections");
             continue;
         }
@@ -360,9 +366,17 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
         }
         ("GET", "/bankml/usage") => {
             // what this gateway and the engine it launched use now (sys.rs, /proc; sampled over 0.5 s)
-            let engine = CHILD_PID.load(Ordering::SeqCst);
-            let procs = [("bankml serve", std::process::id()), ("llama-server", engine.max(0) as u32)];
-            respond(&mut c, 200, "application/json", crate::sys::usage_json(&procs, Duration::from_millis(500)).as_bytes())
+            // one sample per second at most, however many pollers: a poll never holds a connection for the sampling time
+            static LAST: std::sync::Mutex<Option<(Instant, String)>> = std::sync::Mutex::new(None);
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if last.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(1)) {
+                let engine = CHILD_PID.load(Ordering::SeqCst);
+                let procs = [("bankml serve", std::process::id()), ("llama-server", engine.max(0) as u32)];
+                *last = Some((Instant::now(), crate::sys::usage_json(&procs, Duration::from_millis(250))));
+            }
+            let body = last.as_ref().map(|(_, j)| j.clone()).unwrap_or_default();
+            drop(last);
+            respond(&mut c, 200, "application/json", body.as_bytes())
         }
         ("GET", "/health" | "/v1/models" | "/props") => match request(&st.upstream, "GET", &path, b"") {
             Ok((code, _, b)) => respond(&mut c, code, "application/json", &b),

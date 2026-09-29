@@ -122,6 +122,20 @@ Public-only publishing sends no lines and so no vectors: a vector of private tex
 | `ui/connectors.py` | `publish()` writes `embedding` with the lines, in one transaction |
 | `testing/test_ui.py` | fusion, the cache, and the fallback to BM25 (offline: a fake Ollama) |
 
+## Measured on this laptop (2026-09-29, Ryzen 3 3200U, Ollama 0.13.3)
+
+| | |
+|---|---|
+| first call (load + embed one text) | 9.2 s |
+| next call (three texts, model loaded) | 1.40 s |
+| memory while loaded | 1.14 GB; free memory fell from 1.82 GB to 0.43 GB, which is why the 1.3 GB guard exists |
+| indexing the three real exchanges in `.history` | 11.5 s (once; cached afterwards) |
+| meaning check (cosine to "How fast is the ternary model on this laptop?") | a fact about decode speed 0.448 · the oversight office's oath 0.299 |
+| ragebar status | `RAGE (mindX rage.py, BM25) + bge-m3 (meaning, 3 of 3 embedded), fused by reciprocal rank` |
+
+The earlier attempt the same day was refused by the guard (1.0 GB free), as designed; this one ran when other
+applications had released memory.
+
 ## Usage
 
 **Have it.** bge-m3 is in the local Ollama:

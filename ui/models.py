@@ -514,7 +514,8 @@ def _stop_carrier():
 
 CTX = int(os.environ.get("BANKML_CTX", "2048"))  # the engine's context: 2048 keeps an 8B model's KV cache near 0.3 GB
 THREADS = int(os.environ.get("BANKML_THREADS_SERVE", "3"))
-RESOURCES = LOG.parent / "resources.json"  # the operator's CPU and RAM choice (the Resources sliders), used by every start
+RESOURCES = LOG.parent / "resources.json"
+SLOTS = LOG.parent / "slots"  # the engine's saved KV slots (--slot-save-path): a restart restores the system prompt  # the operator's CPU and RAM choice (the Resources sliders), used by every start
 OVERHEAD = 250_000_000  # llama-server's compute buffers and runtime beside weights and KV (measured order of magnitude)
 CTX_MIN, CTX_MAX = 512, 32768
 
@@ -589,6 +590,7 @@ def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram:
     pl = plan(path, ram_gb)
     if not pl["fits"]:
         raise RuntimeError(f"{ram_gb:.1f} GB cannot hold {path.name}: it needs at least {pl['min_ram_gb']} GB")
+    prev = resources()  # the last settings that ran, restored if these do not
     RESOURCES.parent.mkdir(parents=True, exist_ok=True)
     RESOURCES.write_text(json.dumps({"threads": threads, "ctx": pl["ctx"], "ram_gb": ram_gb, "spec_ngram": bool(spec_ngram)}) + "\n")
     if busy():
@@ -597,10 +599,13 @@ def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram:
     _stop_carrier()
     try:
         return _start_carrier(path, fork, sha)
-    except Exception:
-        RESOURCES.write_text(json.dumps({**resources(), "ctx": CTX, "threads": THREADS}) + "\n")  # fall back to the defaults
-        _stop_carrier()
-        _start_carrier(path, fork, sha)
+    except Exception as first:
+        RESOURCES.write_text(json.dumps(prev) + "\n")
+        try:
+            _stop_carrier()
+            _start_carrier(path, fork, sha)
+        except Exception as again:  # noqa: BLE001
+            raise RuntimeError(f"{first}; restoring the previous settings also failed: {again}") from first
         raise
 
 
@@ -613,12 +618,19 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
         at = log.seek(0, 2)
         log.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} bankml serve {model.name}\n".encode())
         log.flush()
+        SLOTS.mkdir(parents=True, exist_ok=True)
+        r = resources()
+        if not ctx and r.get("ram_gb"):
+            pl = plan(model, float(r["ram_gb"]))
+            if not pl["fits"]:
+                raise RuntimeError(f"the saved RAM budget ({r['ram_gb']} GB) cannot hold {model.name}: it needs at least {pl['min_ram_gb']} GB")
+            ctx = pl["ctx"]
         proc = subprocess.Popen([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM,
                                  "--listen", LISTEN, "--threads", str(threads or resources()["threads"]), "--ctx", str(ctx or resources()["ctx"])]
-                                + (["--spec-ngram"] if resources().get("spec_ngram") else []), stdout=log, stderr=log,
+                                + (["--spec-ngram"] if resources().get("spec_ngram") else []) + ["--slot-dir", str(SLOTS)], stdout=log, stderr=log,
                                 stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO))
     t0 = time.time()
-    why = "timed out"
+    why = "timed out"  # ctx: per model — the saved RAM budget is re-planned for this model's weights and KV size
     while time.time() - t0 < wait:
         st = serve_status(2)
         v = st.get("verified") or {}

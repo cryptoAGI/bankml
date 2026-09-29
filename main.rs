@@ -11,7 +11,7 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml sha256 FILE
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
-       bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram]
+       bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
        bankml version";
 
 fn main() {
@@ -34,6 +34,10 @@ fn main() {
         (Some("usage"), _) => {
             // bankml's psutil: memory, cores, and rss + CPU % of the given pids (default: bankml itself), over 0.5 s
             let pids: Vec<u32> = a[1..].iter().filter_map(|x| x.parse().ok()).collect();
+            if a.len() > 1 && pids.len() != a.len() - 1 {
+                eprintln!("bankml usage: not a process id: {}", a[1..].iter().filter(|x| x.parse::<u32>().is_err()).cloned().collect::<Vec<_>>().join(" "));
+                std::process::exit(1);
+            }
             let named: Vec<(String, u32)> = if pids.is_empty() { vec![("bankml".into(), std::process::id())] } else { pids.iter().map(|p| (format!("pid {p}"), *p)).collect() };
             let refs: Vec<(&str, u32)> = named.iter().map(|(n, p)| (n.as_str(), *p)).collect();
             println!("{}", bankml::sys::usage_json(&refs, std::time::Duration::from_millis(500)));
@@ -122,6 +126,7 @@ fn main() {
                     threads: opt("--threads").and_then(|v| v.parse().ok()).unwrap_or(3),
                     ctx: opt("--ctx").and_then(|v| v.parse().ok()).unwrap_or(4096),
                     spec_ngram: flag("--spec-ngram"),
+                    slot_dir: opt("--slot-dir").map(Into::into),
                 };
                 match bankml::serve::run(cfg) {
                     Ok(()) => 0,

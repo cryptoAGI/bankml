@@ -114,6 +114,13 @@ check("the window moves 8 times in 60 turns (a one-exchange slide moves 48 times
 tt = [(f"q{i}", f"a{i}\n\n<sub>⏱ sent 12:00:00 · receipt</sub>") for i in range(30)]
 mm = u.build_messages("S", tt, "Q", False)
 check("the model never sees the chat's footer (clock, receipt)", "<sub>" not in json.dumps(mm) and mm[2]["content"] == "a18")
+cnt = lambda t: max(1, len(t) // 4)  # noqa: E731 — a stand-in tokenizer, offline
+big = [("q" * 100, "a" * 1200) for _ in range(13)]
+u.build_messages("s" * 3600, big, "Q", False, ctx_tokens=2048, reserve_tokens=256, count=cnt)
+check("never silent amnesia: when history cannot all fit, as much as fits is sent (0.1.8 sent none), and it is recorded",
+      u.LAST_WINDOW["sent"] >= 2 and u.LAST_WINDOW["of"] == 13 and u.LAST_WINDOW["ctx"] == 2048)
+check("an answer's own <sub> survives; only the chat's clock footer is removed",
+      u.model_text("H\n\n<sub>2</sub>O\n\n<sub>⏱ sent 12:00</sub>") == "H\n\n<sub>2</sub>O")
 check("the window fits the engine's context, moving in whole steps", len(u.build_messages("S", tt, "Q", False, ctx_tokens=60, reserve_tokens=10)) < len(mm))
 
 # search (built-in BM25 here: RAGE_PATH points nowhere)

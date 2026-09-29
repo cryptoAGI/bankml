@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.1.9 — 2026-09-29
+
+The TODO's 0.1.9 items, and the third audit fixed. The first answer after an engine restart is **8.6× faster**, the
+chat can no longer silently lose its history, and bge-m3 runs live. Record: `testing/results/0.1.9.txt`.
+
+### Faster
+- **The system prompt's KV survives a restart** (KoboldCpp's and llama.cpp's slot saving). The carrier starts with a
+  slot directory (`bankml serve --slot-dir`, passed on as `--slot-save-path`). After the first answer of an engine's
+  life, the chat saves the slot: 51 MB for Savante's 282-token prompt. On the first question to a new engine it
+  restores it. Measured live, same question at temperature 0:
+  - **first answer 132 s → 15.4 s**;
+  - prefill 118 s → 1.2 s (315 prompt tokens → 1);
+  - restore 0.05 s;
+  - **identical answer**, because the same tokens give the same KV.
+
+  A model switch or a Resources change no longer costs a two-minute first answer. The newest three slot files are
+  kept, and each is keyed by model sha256, context and system prompt.
+
+### Fixed (the third audit, of 0.1.7–0.1.8)
+- **HIGH: the history window could send no history at all.** With the persona prompt plus `.memory`, 0.1.8's budget
+  (at ~3 characters per token) left room for about one exchange. The window then stepped past even that, and with
+  the long `sAGI.prompt` nothing was ever sent. Now:
+  - the budget is counted in **the engine's own tokens** (llama-server `/tokenize`, cached per text), against the
+    context the engine **actually runs with** (`n_ctx` from `/props`, not the saved setting);
+  - the window keeps as many recent exchanges as fit, moving in steps of at most half of what fits, so at most a
+    couple are left out and the prompt cache stays warm between moves. At 2048 tokens it now sends 4–6 exchanges,
+    where 0.1.8 sent 0 or 1;
+  - when history is trimmed, the answer says so: "history: k of n exchanges fit the engine's N-token context — raise
+    the RAM budget in Resources for more". Nothing is silent.
+  - It was hot-patched into the running UI before this release.
+- An answer's own `<sub>` (a formula) is no longer cut when the chat footer is stripped.
+- Resources:
+  - the context is re-planned per model from the saved RAM budget, so a larger model no longer inherits a context
+    planned for a smaller one;
+  - a failed Apply restores **your previous** settings (not the defaults), and reports both errors.
+- `connectors.load` checks every private blob before writing anything: a refusal no longer leaves an agent
+  half-overwritten.
+- Embeddings:
+  - one writer per cache file (a lock, and one `write` per line);
+  - the background indexer is marked running before its thread starts, so two quick searches start one indexer;
+  - query vectors are keyed by the model's digest.
+- `bankml serve`:
+  - `/bankml/usage` samples at most once a second, so polling cannot tie up connection slots;
+  - the over-capacity 503 is not lost to a reset;
+  - `sysconf` is declared with C types.
+- `bankml usage abc` is an error, not a report on bankml itself.
+- `testing/pinned.sh` takes its CPUs from the shell's allowed set, and claims a memory cap only after reading it back
+  from the cgroup.
+- `::1` is no longer offered for interact mode: the Host check cannot parse a bracketed address.
+
+### Measured, and not done (docs/TODO.md)
+- **madvise / fadvise for hashing.** From a cold page cache the 1.7B model hashes in 0.68–0.72 s against 0.59–0.78 s
+  warm (364 vs 419 MB/s). The disk keeps up with SHA-NI; there is nothing for a read-ahead hint to win.
+- **PGO for `bankml serve`.** The gateway adds 0.71 ms per request against 15–130 s answers (0.005 %).
+
+### Live
+- **bge-m3** ran for real: 9.2 s for the first call (load), 1.4 s for three texts after, 1.14 GB while loaded. It
+  indexed `.history`, and the ragebar reports mindX's `rage.py` BM25 fused with bge-m3 (`docs/embedding.md`).
+
 ## 0.1.8 — 2026-09-29
 
 Speed and efficiency, measured on fixed resources, and the house in order: the licence layers, the docs in `docs/`

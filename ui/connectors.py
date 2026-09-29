@@ -176,6 +176,16 @@ def load(slug: str, as_slug: str | None = None, dsn: str | None = None, expect_c
     findings += [f"{k}: stored bytes do not match the manifest" for k in got if got[k] != want.get(k)]
     if findings:
         raise ValueError(f"refused: {findings}")
+    # every private blob fetched and checked BEFORE anything is written: a refusal leaves the target untouched
+    private = {}
+    if row.get("private_included"):
+        for table, key, facet in (("bankml_exchanges", "history", "x-bankml.history"), ("bankml_memory", "memory", "x-bankml.memory")):
+            lines = json.loads(psql(f"SELECT coalesce(json_agg(line ORDER BY seq), '[]') FROM {table} WHERE agent = (SELECT v FROM _in WHERE k='slug');",
+                                    [("slug", slug)], dsn).strip())
+            b = "".join(l + "\n" for l in lines).encode()
+            if hashlib.sha256(b).hexdigest() != want.get(facet):
+                raise ValueError(f"refused: the stored {key} does not match the manifest's {facet} digest")
+            private[key] = (b, len(lines))
     target = as_slug or slug
     d = agents.agent_dir(target)
     d.mkdir(parents=True, exist_ok=True)
@@ -185,15 +195,9 @@ def load(slug: str, as_slug: str | None = None, dsn: str | None = None, expect_c
     (d / f"{target}.thot.json").write_text(json.dumps(m, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     agents.rebind(target, derived_from=row["commitments"].get("derived_from"))
     n = 0
-    if row.get("private_included"):
-        for table, key, facet in (("bankml_exchanges", "history", "x-bankml.history"), ("bankml_memory", "memory", "x-bankml.memory")):
-            lines = json.loads(psql(f"SELECT coalesce(json_agg(line ORDER BY seq), '[]') FROM {table} WHERE agent = (SELECT v FROM _in WHERE k='slug');",
-                                    [("slug", slug)], dsn).strip())
-            b = "".join(l + "\n" for l in lines).encode()
-            if hashlib.sha256(b).hexdigest() != want.get(facet):
-                raise ValueError(f"refused: the stored {key} does not match the manifest's {facet} digest")
-            f[key].write_bytes(b)
-            n += len(lines)
+    for key, (b, k) in private.items():
+        f[key].write_bytes(b)
+        n += k
     return {"slug": target, "from": slug, "thot_cid": row["thot_cid"], "generation": row["generation"], "verified": True, "private_lines": n,
             "anchored": bool(expect_content_root), "check": "against the expected contentRoot" if expect_content_root else
             "self-consistency (files against the manifest stored beside them)"}

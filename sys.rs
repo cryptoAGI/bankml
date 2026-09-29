@@ -63,10 +63,11 @@ fn parse_ticks(stat: &str) -> Option<u64> {
 pub fn ticks_per_second() -> u64 {
     #[cfg(target_os = "linux")]
     {
+        use std::os::raw::{c_int, c_long};
         extern "C" {
-            fn sysconf(name: i32) -> i64;
+            fn sysconf(name: c_int) -> c_long;
         }
-        let v = unsafe { sysconf(2) }; // _SC_CLK_TCK
+        let v = unsafe { sysconf(2) } as i64; // _SC_CLK_TCK
         if v > 0 {
             return v as u64;
         }

@@ -574,24 +574,129 @@ def window_start(n: int, lo: int = KEEP_EXCHANGES, step: int = WINDOW_STEP) -> i
 
 
 def model_text(a: str) -> str:
-    """An answer as the model wrote it, without the footer the chat adds (clock, receipt, provenance)."""
-    return (a or "").split("\n\n<sub>", 1)[0]
+    """An answer as the model wrote it, without the footer the chat adds (clock, receipt, provenance). The footer
+    always starts with the clock, so an answer's own `<sub>` (a chemical formula, say) is kept."""
+    return (a or "").rsplit("\n\n<sub>⏱", 1)[0]
 
 
-def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None, reserve_tokens: int = 256):
-    """The messages for one turn: the system prompt, a stably windowed history, the question. With `ctx_tokens`,
-    the window also fits the engine's context (≈ 3 characters per token, conservatively), moving in whole steps."""
+_TOK: dict = {}
+_CTX = {"t": 0.0, "n": None}
+LAST_WINDOW: dict = {}  # what the last build_messages() sent: {"sent", "of", "ctx"} (the answer's footer says it)
+
+
+def n_tokens(text: str) -> int:
+    """Tokens in `text`, counted by the engine's own tokenizer (llama-server /tokenize, loopback), cached per text;
+    about 3 characters per token when the engine cannot be asked (an overestimate: it never overfills)."""
+    k = hashlib.sha256(text.encode()).digest()
+    if k in _TOK:
+        return _TOK[k]
+    try:
+        import models
+        req = urllib.request.Request(f"http://{models.UPSTREAM}/tokenize", data=json.dumps({"content": text}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            n = len(json.loads(r.read())["tokens"])
+    except (OSError, ValueError, KeyError):
+        return -(-len(text) // 3)
+    if len(_TOK) > 4096:
+        _TOK.clear()
+    _TOK[k] = n
+    return n
+
+
+def engine_ctx() -> int | None:
+    """The context the running engine actually has (its /props, through bankml serve), cached for 30 s."""
+    if time.time() - _CTX["t"] < 30 and _CTX["n"]:
+        return _CTX["n"]
+    try:
+        with urllib.request.urlopen(SERVE + "/props", timeout=3) as r:
+            n = (json.loads(r.read()).get("default_generation_settings") or {}).get("n_ctx")
+    except (OSError, ValueError):
+        n = None
+    _CTX.update(t=time.time(), n=n)
+    return n
+
+
+# ── the system prompt's KV, kept across engine restarts (llama-server slot save / restore) ──────────────────────
+_WARM: dict = {}  # (engine start, slot file) -> "restored" | "saved" | "none"
+
+
+def _slot(system: str):
+    """(engine instance, slot file name) for this model, context and system prompt; None without a verified engine."""
+    st = serve_status()
+    v = st.get("verified") or {}
+    if not v.get("model_sha256"):
+        return None
+    h = hashlib.sha256(f"{v['model_sha256']}|{engine_ctx()}|{system}".encode()).hexdigest()[:24]
+    return st.get("hashed_at"), f"savante-{h}.bin"
+
+
+def _slot_call(action: str, name: str) -> dict:
+    import models
+    req = urllib.request.Request(f"http://{models.UPSTREAM}/slots/0?action={action}", data=json.dumps({"filename": name}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.loads(r.read())
+
+
+def slot_restore(system: str) -> str:
+    """Before the first question to a newly started engine: restore the saved KV of this system prompt, if any. The
+    same tokens give the same KV, so the answer is unchanged; only the prefill is skipped."""
+    import models
+    k = _slot(system)
+    if not k or k in _WARM:
+        return _WARM.get(k, "")
+    if (models.SLOTS / k[1]).is_file():
+        try:
+            _slot_call("restore", k[1])
+            _WARM[k] = "restored"
+        except (OSError, ValueError):
+            _WARM[k] = "none"  # an engine without --slot-save-path, or a file it will not take: prefill as usual
+    else:
+        _WARM[k] = "none"
+    return _WARM[k]
+
+
+def slot_save(system: str) -> None:
+    """After the first answer of an engine's life with this system prompt: save the slot (newest three kept)."""
+    import models
+    k = _slot(system)
+    if not k or _WARM.get(k) in ("restored", "saved"):
+        return
+    try:
+        _slot_call("save", k[1])
+        _WARM[k] = "saved"
+        for old in sorted(models.SLOTS.glob("savante-*.bin"), key=lambda p: p.stat().st_mtime)[:-3]:
+            old.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
+
+
+def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None, reserve_tokens: int = 256, count=None):
+    """The messages for one turn: the system prompt, a stably windowed history, the question. With `ctx_tokens`, the
+    history also fits the engine's context, counted in the engine's own tokens (`count`, default `n_tokens`): whole
+    steps first (the prompt cache stays warm), else the oldest exchanges dropped one at a time — never all history
+    when some fits. What was sent is left in LAST_WINDOW for the answer's footer."""
+    count = count or n_tokens
     turns = [(u, model_text(a)) for u, a in turns]
     start = window_start(len(turns))
+    per_msg = 8  # the chat template's markers around each message
     if ctx_tokens:
-        budget = ctx_tokens * 3 - len(system) - len(question) - reserve_tokens * 3
-        size = lambda k: sum(len(u[:KEEP_CHARS]) + len((a or "")[:KEEP_CHARS]) + 40 for u, a in turns[k:])  # noqa: E731
-        while start < len(turns) and size(start) > budget:
-            start += WINDOW_STEP
+        budget = ctx_tokens - count(system) - count(question) - reserve_tokens - 3 * per_msg
+        cost = [count(u[:KEEP_CHARS]) + count((a or "")[:KEEP_CHARS]) + 2 * per_msg for u, a in turns]
+        size = lambda k: sum(cost[k:])  # noqa: E731
+        # the most recent exchanges that fit, dropping the oldest one at a time …
+        fit_start = next((k for k in range(start, len(turns)) if size(k) <= budget), len(turns))
+        # … then rounded up to a step that is at most half of what fits: the start stays put for several turns (a
+        # warm prompt cache) and at most step − 1 exchanges that would have fitted are left out
+        step = max(1, min(WINDOW_STEP, (len(turns) - fit_start) // 2))
+        start = min(len(turns), max(start, -(-fit_start // step) * step))
     msgs = [{"role": "system", "content": system}]
     for u, a in turns[start:]:
         msgs += [{"role": "user", "content": u[:KEEP_CHARS]}, {"role": "assistant", "content": (a or "")[:KEEP_CHARS]}]
     msgs.append({"role": "user", "content": question + (" /no_think" if qwen3 else "")})
+    LAST_WINDOW.clear()
+    LAST_WINDOW.update(sent=len(turns) - start, of=len(turns), ctx=ctx_tokens)
     return msgs
 
 
@@ -1879,9 +1984,10 @@ def build(canon: Canon, mode: str):
                     st = serve_status()
                     arch = str((st.get("verified") or {}).get("arch") or "").lower()
                     qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
-                    import models as _M
+                    warm = slot_restore(system)
                     msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
-                                          ctx_tokens=_M.resources()["ctx"], reserve_tokens=int(max_tokens))
+                                          ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens))
+                    win = dict(LAST_WINDOW)
                     text, rc, first = "", {}, None
                     for text, r in stream(msgs, max_tokens, temperature):
                         if text and first is None:
@@ -1898,8 +2004,11 @@ def build(canon: Canon, mode: str):
                     clock = (f"⏱ sent {time.strftime('%H:%M:%S', time.localtime(t0))} · first token "
                              f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
                     foot = receipt_line(rc, text)
-                    h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + "</sub>"
-                    history_append({"ts": round(t0, 3), **timing, "agent": agent, "session": sess["id"], "user": h[-1][0], "assistant": answer,
+                    trimmed = (f"<br>history: {win['sent']} of {win['of']} exchanges fit the engine's {win['ctx']}-token context — "
+                               "raise the RAM budget in Resources for more") if win.get("ctx") and win.get("sent", 0) < win.get("of", 0) else ""
+                    h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + trimmed + "</sub>"
+                    slot_save(system)
+                    history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
                                     "assistant_raw": text, "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc}, hist)
                     yield h
                 finally:
@@ -2401,7 +2510,7 @@ def build(canon: Canon, mode: str):
     return demo
 
 
-LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+LOOPBACK = {"127.0.0.1", "localhost"}  # (::1 is not offered: the Host check's parser cannot read a bracketed address)
 
 
 def _trusted_hosts():

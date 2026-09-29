@@ -28,6 +28,7 @@ NEED_FREE = int(float(os.environ.get("BANKML_EMBED_NEED_GB", "1.3")) * 1e9)  # t
 RRF_K = 60            # reciprocal rank fusion constant (Cormack, Clarke and Büttcher 2009)
 
 _LOCK = threading.Lock()   # one embedding call at a time; a search that finds it busy uses BM25 alone
+_INDEX_LOCK = threading.Lock()  # one writer of a cache file at a time (the ragebar's background indexer, a publish)
 _QCACHE: dict = {}         # query text -> vector (the ragebar searches on every keystroke)
 
 
@@ -142,6 +143,11 @@ def cached(history: Path) -> dict:
 
 def index(history: Path, records: list, batch: int = 8) -> dict:
     """Embed every exchange not yet in the cache. Returns {embedded, cached, total}."""
+    with _INDEX_LOCK:
+        return _index(history, records, batch)
+
+
+def _index(history: Path, records: list, batch: int) -> dict:
     have = cached(history)
     todo = []
     for r in records:
@@ -154,9 +160,12 @@ def index(history: Path, records: list, batch: int = 8) -> dict:
     for k in range(0, len(todo), batch):
         part = todo[k:k + batch]
         vecs = embed([t for _, t in part])
-        with open(cache_path(history), "a", encoding="utf-8") as f:
-            for (h, _), v in zip(part, vecs):
-                f.write(json.dumps({"text_sha256": h, "model": MODEL, "digest": pv["digest"], "dims": DIMS, "vec": _pack(v)}) + "\n")
+        fd = os.open(cache_path(history), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            for (h, _), v in zip(part, vecs):  # one write per line: a line is never split between writers
+                os.write(fd, (json.dumps({"text_sha256": h, "model": MODEL, "digest": pv["digest"], "dims": DIMS, "vec": _pack(v)}) + "\n").encode())
+        finally:
+            os.close(fd)
         done += len(part)
     return {"embedded": done, "cached": len(have), "total": len(records)}
 
@@ -168,9 +177,9 @@ def index_async(history: Path, records: list) -> None:
     """index() in the background, once at a time (the ragebar never waits for it)."""
     if INDEXING["running"]:
         return
+    INDEXING.update(running=True, error=None)  # set before the thread starts: two quick searches start one indexer
 
     def run():
-        INDEXING.update(running=True, error=None)
         try:
             index(history, records)
         except Unavailable as e:
@@ -183,15 +192,17 @@ def index_async(history: Path, records: list) -> None:
 def query_vector(q: str):
     """The query's vector, cached; None if the model cannot answer right now (busy, absent, no memory)."""
     q = q.strip()[:MAX_CHARS]
-    if q in _QCACHE:
-        return _QCACHE[q]
+    key = (provenance().get("digest"), q)  # a re-pulled model never answers with an old model's vectors
+    hit = _QCACHE.get(key)
+    if hit is not None:
+        return hit
     try:
         v = embed([q], block=False)[0]
     except Unavailable:
         return None
     if len(_QCACHE) > 256:
         _QCACHE.clear()
-    _QCACHE[q] = v
+    _QCACHE[key] = v
     return v
 
 

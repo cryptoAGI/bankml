@@ -327,6 +327,12 @@ Nothing is ever written into the canon (`~/savante`). What the UI writes lives i
 - **`Savante.prompt`**: the Space template's prompt, cached the first time it is chosen.
 
 The model sees at least the last 12 exchanges (each cut to 4,000 characters), as in the Hugging Face template.
+Since 0.1.9 the history is counted in **the engine's own tokens** against the context it actually runs with. As
+many recent exchanges as fit are sent, and when some are left out the answer's footer says how many ("history: 4 of
+13 exchanges fit the engine's 2048-token context — raise the RAM budget in Resources for more"). **After an engine
+restart**, the first question restores the saved KV of the system prompt (a 51 MB file per model, context and system
+prompt, in `~/.local/share/bankml/savante/slots/`), so it skips the system prompt's prefill: on this laptop 132 s
+became 15 s, with the same answer.
 Since 0.1.8 the window moves **in steps of six**. Between steps, each prompt is the previous prompt plus one exchange,
 so the engine's prompt cache reuses all of it and only the new exchange is read. A window that slid by one exchange
 per turn changed the text right after the system prompt, forcing the whole history to be re-read every turn. Over 60

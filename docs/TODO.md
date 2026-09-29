@@ -42,18 +42,14 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 - **KoboldCpp code** (K): AGPL-3.0; ideas only, from its documentation.
 - **fp8 KV cache** (V): needs AVX-512/AMX on vLLM's CPU backend; q8_0 via llama.cpp is the equivalent to measure.
 
-## 0.1.9 — the next audit, and the live checks
+## 0.1.9 — done
 
-- [ ] A third audit (the parts changed in 0.1.7–0.1.8: `sys.rs`, SHA-NI, `/bankml/usage`, Resources, the window).
-- [ ] **bge-m3 live** (embedding.md): run on the real Ollama when ≥ 1.3 GB is free; record latency, RSS and the
-  first real hybrid-search results.
-- [ ] **Save the system prompt's KV** (K: `--slot-save-path`): after warm-up, save the slot; restore it on restart so
-  a restart skips the system-prompt prefill. Exact (same tokens, same KV).
-- [ ] **Profile-guided build of `bankml serve`** (Rs: PGO helps branchy code — parsing, JSON, the proxy loop; not the
-  SIMD kernels). Measure request overhead before and after.
-- [ ] **madvise for hashing** (Rs): `MADV_SEQUENTIAL` on the model while it is pinned; measure cold-cache hashing.
-- [ ] Target-feature 1.1 clean-up (Rs, 1.86/1.87): safe `#[target_feature]` kernels and safe intrinsics where the
-  caller has the features; `as_chunks` (1.88) where it removes bounds checks. Same bits, fewer `unsafe`.
+- [x] Third audit (0.1.7–0.1.8): 13 findings fixed, including silent loss of history (HIGH).
+- [x] **bge-m3 live**: 9.2 s first call, 1.4 s after, 1.14 GB loaded; hybrid search on the real `.history`.
+- [x] **The system prompt's KV saved across restarts** (K): first answer after a restart 132 s → 15.4 s, identical.
+- [x] ~~madvise for hashing~~ (Rs): measured, rejected — cold 364 MB/s vs warm 419 MB/s; the disk is not the limit.
+- [x] ~~PGO for `bankml serve`~~ (Rs): measured, rejected — 0.71 ms per request against 15–130 s answers.
+- [ ] Target-feature 1.1 clean-up (Rs): same bits, fewer `unsafe`; no speed at stake → after 0.2.0.
 
 ## 0.2.0 — milestone
 
