@@ -117,8 +117,16 @@ curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' 
 python3 ui/savante.py --mode interact          # then open http://127.0.0.1:7873
 ```
 
-The page, left to right. Every panel can be resized from its bottom-right corner, and the side panel can be dragged
-by its grip to either side of the chat. Your choice is remembered in your browser.
+The page, left to right. The side panel's grip (**⠿ panel**) drags it to either side of the chat: drop zones appear
+over the two halves while you drag. Its **⇄** button swaps sides with a click. The slim corner handles resize the side
+panel (width and height) and the chat (height). Your layout is remembered in your browser.
+
+**The aivatar.** Click the agent's portrait in the side panel to open its card. The card holds the name, mantra and
+description; the oath, office and beliefs; the verifiable identity (persona sha256, doctrine root, THOT identity and
+generation, the ledger check); every aspect of the persona in collapsible sections; and every ledgered file with its
+sha256. Close it with ✕ or by clicking outside. **Agents → aivatar** chooses the portrait: one of Savante's canon
+images (kept outside the canon), or an upload for a derived agent (PNG/JPEG/WebP, at most 2 MB), which becomes a
+ledgered facet of its THOT bundle.
 
 - **The chat.** Type a question and press **Send** (or Enter). **Stop** cancels the answer being written; **New
   session** starts a fresh conversation. The last session's history reloads on start.

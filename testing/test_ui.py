@@ -103,6 +103,17 @@ try:
 except ValueError:
     check("agent_dir rejects path traversal", True)
 
+# the chosen aivatar: validated by content and size, ledgered, and part of the THOT bundle
+png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+led = agents.set_aivatar(slug, png)
+check("a PNG aivatar is accepted and ledgered", led["artifacts"]["aivatar"]["sha256"] == u.sha256(png) and all(ok for _, ok, _ in agents.verify(slug)))
+for bad, why in ((b"not an image at all", "a non-image"), (b"\x89PNG\r\n\x1a\n" + b"\x00" * (2 * 1024 * 1024), "an image over 2 MB")):
+    try:
+        agents.set_aivatar(slug, bad)
+        check(f"the aivatar refuses {why}", False)
+    except ValueError:
+        check(f"the aivatar refuses {why}", True)
+
 # THOT manifests: the spec's test vectors (where those repositories are here), and a bankml bundle's lineage
 import subprocess, thot  # noqa: E402
 VEC = [("savante", Path.home() / "savante", "1fcca89", "savante.thot.json", "0x235da8e993dc8af2c077f50d698962446b872b17b1e5b033d5c5d976532b8880",
@@ -121,7 +132,8 @@ for name, repo, commit, fn, br, mr, cid in VEC:
     check(f"THOT spec vector {name}: bundle_root, Merkle root and identity CID", thot.bundle_root(recs)[0] == br and thot.merkle_root(recs) == mr
           and thot.identity(m)["cid"] == cid)
 m1 = thot.build(slug)
-check("a bankml THOT bundle verifies (structure and facet bytes)", thot.verify(slug) == [] and m1["merkle"]["populated"] == 5)
+check("a bankml THOT bundle verifies, with the aivatar as a facet", thot.verify(slug) == [] and m1["merkle"]["populated"] == 6
+      and any(x["facet"] == "x-bankml.aivatar" for x in m1["facets"]))
 check("the bundle commits history by digest and holds none of its text", "question" not in (agents.agent_dir(slug) / f"{slug}.thot.json").read_text()
       and any(x["facet"] == "x-bankml.history" for x in m1["facets"]))
 m1b = thot.build(slug)

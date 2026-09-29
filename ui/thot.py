@@ -166,7 +166,13 @@ def build(slug: str, template_manifest: dict | None = None, reason: str | None =
     prev = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else None
     prev_added = {x["facet"]: x.get("added_in", 1) for x in (prev or {}).get("facets", [])}
     gen = (prev or {}).get("bundle", {}).get("generation", 1)
-    for label, spec in CUSTOM.items():
+    custom_now = dict(CUSTOM)
+    from agents import aivatar_path
+    av = aivatar_path(slug)
+    if av:  # the chosen portrait, when there is one
+        custom_now["x-bankml.aivatar"] = {"suffix": av.name[len(slug) + 1:], "media": "image/" + av.suffix[1:],
+                                          "role": "the agent's chosen portrait (its aivatar); PNG, JPEG or WebP by content"}
+    for label, spec in sorted(custom_now.items()):
         p = d / f"{slug}.{spec['suffix']}"
         b = p.read_bytes()
         added = prev_added.get(label, gen if prev else 1)

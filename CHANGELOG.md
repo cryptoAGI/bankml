@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.1.1 — 2026-09-28
+
+Savante's aivatar and a layout that moves both ways. No Rust code changed. Record: `testing/results/0.1.1.txt`.
+
+### Fixed
+- **The side panel could be dragged left but not back to the right**: the drop depended on the elements under the
+  pointer passing the event up. While you drag the grip, two translucent **drop zones** now cover the two halves of
+  the layout above everything else, so nothing underneath can take the drop. A **⇄** button on the grip also swaps
+  sides with a click. The side is remembered per browser.
+
+### Added
+- **The aivatar card.** Click the agent's portrait: a card opens, in dark glass with a fine grid, teal and gold
+  accents and a slowly breathing glow. It holds:
+  - the kind and card type, name, mantra and the card's attribute chips;
+  - the description, oath, office (primary skill, scope) and beliefs;
+  - the **identity, verifiable rather than asserted**: persona sha256, doctrine root, THOT identity (`thot:`, CID,
+    contentRoot, generation, facets) and the ledger check;
+  - **every aspect of the persona** in collapsible sections (BDI, skills, safety, embodiment, token, task, voice
+    examples, exchanges, and the system prompt), rendered from the file itself;
+  - **every ledgered file** with its size and sha256.
+
+  The card opens and closes with a pure-CSS toggle (Gradio does not run scripts in HTML blocks), and the image is
+  embedded, never served by path. A derived agent gets the same card with its own values.
+- **A chosen aivatar.** Savante: any image in her canon's `gfx/`, the choice kept outside the canon. A derived agent:
+  an uploaded image, checked by content (PNG, JPEG or WebP) and size (2 MB at most), ledgered as `x-bankml.aivatar`
+  and included as a facet of its THOT bundle. Choose in **Agents → aivatar**.
+- **Refined resize handles**: a slim corner with diagonal ridges, the same in every browser, replaces the browser's
+  default resize grip on the side panel (width and height) and the chat (height). Sizes are remembered.
+- `testing/test_ui.py` grows to 37 checks: an aivatar is accepted and ledgered, a non-image and an oversized file are
+  refused, and the THOT bundle gains the aivatar facet.
+
+### Not tested by machine
+- The drag itself: a real mouse drag cannot be driven in this headless setup, so the drop zones are verified by
+  construction and by the ⇄ button's click path, which does the same move.
+
 ## 0.1.0 — 2026-09-28 · milestone: Savante with bankml
 
 The first milestone. bankml is a verified low-bit runtime that answers on the computer at hand, behind its gate,

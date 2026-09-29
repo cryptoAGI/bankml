@@ -671,10 +671,72 @@ CSS = """
 .bk-timer{border:1px solid #cbd5e1;border-radius:8px;padding:9px 12px;font:700 16px ui-monospace,Menlo,Consolas,monospace;text-align:center;background:#ffffff}
 .bk-live{border:2px solid #0f766e;color:#0f766e!important;background:#f0fdfa}.bk-idle{color:#475569!important}
 #bk-prov, #bk-prov *{font-size:12px;color:#334155!important;overflow-wrap:anywhere}
-#bk-chat,#bk-side{resize:both;overflow:auto;min-width:280px;min-height:200px}
-#bk-row{flex-wrap:nowrap;align-items:flex-start}
-.bk-grip{cursor:grab;user-select:none;text-align:center;font-size:12px;color:#334155;border:1px dashed #94a3b8;border-radius:6px;padding:4px;margin-bottom:6px;background:#ffffff}
-#bk-row.bk-over{outline:2px dashed #0f766e;outline-offset:4px}
+#bk-row{flex-wrap:nowrap;align-items:flex-start;position:relative}
+#bk-side,#bk-chat{position:relative}
+#bk-side.bk-sized{flex:none!important}
+.bk-grip{display:flex;align-items:center;gap:8px;cursor:grab;user-select:none;font:600 11px/1 ui-sans-serif,system-ui;letter-spacing:.08em;
+ text-transform:uppercase;color:#64748b;padding:6px 8px;margin:-2px 0 8px;border-radius:8px;border:1px solid transparent;transition:all .15s}
+.bk-grip:hover{border-color:#cbd5e1;color:#0f766e;background:rgba(15,118,110,.05)}.bk-grip:active{cursor:grabbing}
+.bk-grip svg{flex:none;opacity:.8}.bk-grip .bk-sp{flex:1}
+.bk-swap{border:1px solid #cbd5e1;background:transparent;border-radius:6px;padding:2px 7px;font:600 12px ui-sans-serif,system-ui;color:#475569;cursor:pointer}
+.bk-swap:hover{border-color:#0f766e;color:#0f766e}
+.bk-rz{position:absolute;right:3px;bottom:3px;width:16px;height:16px;cursor:nwse-resize;z-index:5;opacity:.45;transition:opacity .15s;touch-action:none}
+.bk-rz:hover,.bk-rz.on{opacity:1}.bk-rz svg{display:block}
+.bk-zone{position:fixed;z-index:9999;border:2px dashed rgba(15,118,110,.55);border-radius:12px;background:rgba(15,118,110,.06);
+ display:flex;align-items:center;justify-content:center;font:600 13px ui-sans-serif,system-ui;letter-spacing:.06em;color:#0f766e;transition:background .12s}
+.bk-zone.hot{background:rgba(15,118,110,.18);border-style:solid}
+.dark .bk-grip{color:#94a3b8}.dark .bk-grip:hover{border-color:rgba(148,163,184,.35);color:#2dd4bf;background:rgba(45,212,191,.06)}
+.dark .bk-swap{border-color:rgba(148,163,184,.35);color:#cbd5e1}.dark .bk-zone{color:#2dd4bf;border-color:rgba(45,212,191,.55);background:rgba(45,212,191,.06)}
+/* the aivatar and its card */
+.bk-av-t,input.bk-av-t[type=checkbox]{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important;margin:0!important;pointer-events:none!important;border:0!important}
+.bk-av-pic{display:block;position:relative;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid #cbd5e1;transition:transform .2s,box-shadow .2s}
+.bk-av-pic img,.bk-av-pic .bk-glyph{display:block;width:100%;height:230px;object-fit:cover}
+.bk-av-pic:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(15,118,110,.25)}
+.bk-av-cap{position:absolute;left:0;right:0;bottom:0;padding:18px 10px 8px;font:600 12px ui-sans-serif,system-ui;letter-spacing:.06em;color:#fff!important;
+ background:linear-gradient(transparent,rgba(2,6,23,.85))}
+.bk-glyph{display:flex!important;align-items:center;justify-content:center;font:700 64px ui-sans-serif,system-ui;color:#2dd4bf!important;
+ background:radial-gradient(circle at 30% 30%,#134e4a,#020617)}
+.bk-modal{display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;padding:24px}
+.bk-av-t:checked ~ .bk-modal{display:flex}
+.bk-modal-bg{position:absolute;inset:0;background:rgba(2,6,23,.72);backdrop-filter:blur(4px);cursor:zoom-out}
+.bk-holo{position:relative;max-width:920px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:22px 24px 16px;color:#e2e8f0;
+ background:linear-gradient(rgba(45,212,191,.05) 1px,transparent 1px) 0 0/100% 22px,linear-gradient(90deg,rgba(45,212,191,.05) 1px,transparent 1px) 0 0/22px 100%,
+ linear-gradient(160deg,rgba(15,23,42,.97),rgba(2,6,23,.97));border:1px solid rgba(45,212,191,.45);
+ box-shadow:0 0 0 1px rgba(217,162,58,.25),0 0 40px rgba(45,212,191,.18),inset 0 0 60px rgba(45,212,191,.05);animation:bk-glow 4s ease-in-out infinite}
+.bk-holo{scrollbar-width:thin;scrollbar-color:rgba(45,212,191,.45) transparent}
+.bk-holo::-webkit-scrollbar{width:8px}.bk-holo::-webkit-scrollbar-track{background:transparent}
+.bk-holo::-webkit-scrollbar-thumb{background:rgba(45,212,191,.4);border-radius:8px}
+@keyframes bk-glow{50%{box-shadow:0 0 0 1px rgba(217,162,58,.4),0 0 60px rgba(45,212,191,.28),inset 0 0 60px rgba(45,212,191,.07)}}
+@media (prefers-reduced-motion:reduce){.bk-holo{animation:none}}
+.bk-holo *{color:#e2e8f0}
+.bk-x{position:absolute;top:12px;right:14px;cursor:pointer;font-size:18px;color:#94a3b8!important;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:2px 9px}
+.bk-x:hover{color:#2dd4bf!important;border-color:#2dd4bf}
+.bk-holo-top{display:flex;gap:18px;align-items:center}
+.bk-holo-pic{flex:none;width:120px;height:120px;border-radius:50%;overflow:hidden;border:2px solid #d9a23a;box-shadow:0 0 24px rgba(217,162,58,.35)}
+.bk-holo-pic img,.bk-holo-pic .bk-glyph{width:120px;height:120px;object-fit:cover;font-size:40px}
+.bk-kicker{font:600 11px ui-monospace,Menlo,monospace;letter-spacing:.2em;text-transform:uppercase;color:#2dd4bf!important}
+.bk-holo h3{margin:4px 0 2px;font:700 28px ui-sans-serif,system-ui;letter-spacing:.02em;color:#fff!important}
+.bk-mantra{font-style:italic;color:#fbbf24!important}
+.bk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bk-chip{font:11px ui-monospace,Menlo,monospace;padding:2px 8px;border-radius:999px;border:1px solid rgba(45,212,191,.35);color:#99f6e4!important;background:rgba(45,212,191,.06)}
+.bk-desc{margin:16px 0 10px;line-height:1.55;color:#cbd5e1!important}
+.bk-cols{display:grid;grid-template-columns:1fr 1.15fr;gap:22px}@media (max-width:760px){.bk-cols{grid-template-columns:1fr}}
+.bk-h{font:600 11px ui-monospace,Menlo,monospace;letter-spacing:.18em;text-transform:uppercase;color:#d9a23a!important;margin:10px 0 4px;
+ border-bottom:1px solid rgba(217,162,58,.25);padding-bottom:3px}
+.bk-holo p,.bk-holo li{font-size:13px;line-height:1.5;color:#cbd5e1!important}.bk-holo ul{margin:4px 0;padding-left:18px}
+.bk-hash{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:6px 0}
+.bk-hash dt{font:600 11px ui-monospace,Menlo,monospace;color:#94a3b8!important;white-space:nowrap}
+.bk-hash dd{margin:0;font:12px ui-monospace,Menlo,monospace;color:#5eead4!important;overflow-wrap:anywhere}
+.bk-aspects details{border:1px solid rgba(45,212,191,.22);border-radius:10px;margin:6px 0;background:rgba(45,212,191,.03)}
+.bk-aspects summary{cursor:pointer;padding:7px 12px;font:600 12px ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:#5eead4!important}
+.bk-aspects summary:hover{background:rgba(45,212,191,.07)}.bk-aspects details>div{padding:4px 14px 10px}
+.bk-asp{margin:2px 0;padding-left:16px}dl.bk-asp{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:3px 12px;padding-left:0}
+dl.bk-asp>dt{font:600 11px ui-monospace,Menlo,monospace;color:#94a3b8!important}dl.bk-asp>dd{margin:0;font-size:12.5px;line-height:1.45;color:#cbd5e1!important;overflow-wrap:anywhere}
+ol.bk-asp>li{font-size:12.5px;line-height:1.45;color:#cbd5e1!important;margin:2px 0}
+.bk-sp{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:#cbd5e1!important;max-height:40vh;overflow:auto;margin:0}
+.bk-ft{width:100%;border-collapse:collapse;font-size:12px}.bk-ft th,.bk-ft td{border-bottom:1px solid rgba(148,163,184,.18);padding:4px 6px;text-align:left}
+.bk-ft th{font:600 11px ui-monospace,Menlo,monospace;color:#94a3b8!important}.bk-ft td.bk-mono{color:#5eead4!important;overflow-wrap:anywhere}
+.bk-foot{margin-top:14px;padding-top:8px;border-top:1px solid rgba(148,163,184,.2);font:11px ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#64748b!important}
 button.primary,button.lg.primary{background:#0f766e!important;border-color:#0f766e!important;color:#fff!important}
 .tabs button.selected{border-bottom:3px solid #0f766e!important;font-weight:700}
 #ragebar textarea,#ragebar input{background:#05070a!important;color:#e9ffe9!important;border:1px solid #1f3a2b!important;border-radius:8px!important;
@@ -803,21 +865,177 @@ def metrics_html() -> str:
             + recent + "</table>" + proofs)
 
 
+def _aspect(v, depth=0) -> str:
+    """Any persona value as escaped HTML: objects as definition lists, lists as lists, text as text."""
+    if isinstance(v, dict):
+        if not v:
+            return "<i>—</i>"
+        return "<dl class='bk-asp'>" + "".join(f"<dt>{E(str(k))}</dt><dd>{_aspect(x, depth + 1)}</dd>" for k, x in v.items()) + "</dl>"
+    if isinstance(v, list):
+        if not v:
+            return "<i>—</i>"
+        return "<ol class='bk-asp'>" + "".join(f"<li>{_aspect(x, depth + 1)}</li>" for x in v) + "</ol>"
+    if v is None:
+        return "<i>null</i>"
+    return E(str(v))
+
+
+IMG_KINDS = {b"\x89PNG\r\n\x1a\n": "png", b"\xff\xd8\xff": "jpeg", b"RIFF": "webp"}
+
+
+def image_kind(b: bytes):
+    for magic, kind in IMG_KINDS.items():
+        if b.startswith(magic) and (kind != "webp" or b[8:12] == b"WEBP"):
+            return kind
+    return None
+
+
+def savante_images() -> list:
+    d = CANON / "gfx"
+    return sorted(p.name for p in d.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")) if d.is_dir() else []
+
+
+def chosen_image(canon: Canon):
+    """(bytes, kind, label) of the portrait in use: a custom agent's own x-bankml.aivatar, or Savante's chosen canon image."""
+    slug = ACTIVE["slug"]
+    if slug:
+        import agents
+        for ext in ("png", "jpeg", "webp"):
+            q = agents.agent_dir(slug) / f"{slug}.aivatar.{ext}"
+            if q.is_file():
+                b = q.read_bytes()
+                return b, image_kind(b), q.name
+        return None, None, None
+    pref = STATE / "savante.aivatar"
+    name = pref.read_text(encoding="utf-8").strip() if pref.is_file() else ""
+    rel = f"gfx/{name}" if name in savante_images() else ((canon.ledger.get("image_candidate") or {}).get("path") or "gfx/Savante3.png")
+    b = canon.file(rel)
+    return (b, image_kind(b) if b else None, rel)
+
+
+# ── the aivatar: click the portrait for the agent's card (pure CSS toggle; the image is embedded, never served) ──
+def aivatar_html(canon: Canon) -> str:
+    import base64
+    slug = ACTIVE["slug"]
+    if slug:
+        import agents
+        f = agents.files(slug)
+        p = json.loads(f["persona"].read_text(encoding="utf-8"))
+        card = json.loads(f["agentcard.json"].read_text(encoding="utf-8"))
+        led = json.loads(f["commitments.json"].read_text(encoding="utf-8"))
+        tp = agents.agent_dir(slug) / f"{slug}.thot.json"
+        man = json.loads(tp.read_text(encoding="utf-8")) if tp.is_file() else {}
+        ledger_ok = f"{sum(ok for _, ok, _ in agents.verify(slug))}/{len(agents.verify(slug))}"
+        persona_sha, droot = led["artifacts"]["persona"]["sha256"], led["doctrine_root"]["value"]
+        status = (card.get("bankml") or {}).get("status", "not_yet_minted")
+        arts = [(k, a["path"], a["bytes"], a["sha256"]) for k, a in led["artifacts"].items()] + [("card", led["card"]["path"], led["card"]["bytes"], led["card"]["sha256"])]
+    else:
+        p, card, led = canon.persona, canon.card, canon.ledger
+        try:
+            man = json.loads((CANON / "savante.thot.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            man = {}
+        ledger_ok = f"{sum(r[2] for r in canon.rows)}/{len(canon.rows)}"
+        persona_sha = ((led.get("artifacts") or {}).get("identity") or {}).get("sha256", "")
+        droot = (led.get("doctrine_root") or {}).get("value", "")
+        status = (card.get("savante") or {}).get("status", "?")
+        arts = [(k, a.get("path"), a.get("bytes"), a.get("sha256")) for k, a in (led.get("artifacts") or {}).items()]
+    name = p.get("name", "agent")
+    img, kind, img_label = chosen_image(canon)
+    pic = (f"<img src='data:image/{kind};base64,{base64.b64encode(img).decode()}' alt='{E(name)}'>" if img and kind
+           else f"<div class='bk-glyph'>{E(''.join(w[0] for w in name.split()[:2]).upper())}</div>")
+    ident = man.get("identity") or {}
+    beliefs = [b.get("belief", "") for b in ((p.get("bdi") or {}).get("beliefs") or [])[:5] if isinstance(b, dict)]
+    attrs = "".join(f"<span class='bk-chip'>{E(str(a.get('trait_type')))}: {E(str(a.get('value')))}</span>" for a in (card.get("attributes") or [])[:8])
+    facets = " · ".join(E(x.get("facet", "")) for x in (man.get("facets") or []))
+    rows = [("persona sha256", persona_sha), ("doctrine root", droot), ("THOT", ident.get("thot", "—")), ("THOT CID", ident.get("cid", "—")),
+            ("contentRoot", ident.get("contentRoot", "—")), ("generation", str((man.get("bundle") or {}).get("generation", "—"))),
+            ("facets", facets or "—"), ("ledger", f"{ledger_ok} verify · status {status}")]
+    dl = "".join(f"<dt>{E(k)}</dt><dd>{E(v) if k != 'facets' else v}</dd>" for k, v in rows)
+    shown = {"persona", "name", "system_prompt"}  # name is the title; the system prompt gets its own section below
+    aspects = "".join(f"<details{' open' if k in ('bdi', 'skills') else ''}><summary>{E(k)}</summary><div>{_aspect(v)}</div></details>"
+                      for k, v in p.items() if k not in shown)
+    aspects += f"<details><summary>system_prompt</summary><div><pre class='bk-sp'>{E(p.get('system_prompt', ''))}</pre></div></details>"
+    files = "".join(f"<tr><td>{E(str(k))}</td><td>{E(str(pth))}</td><td>{E(str(n))}</td><td class='bk-mono'>{E(str(h))}</td></tr>" for k, pth, n, h in arts)
+    return f"""<div class='bk-av'>
+<input type='checkbox' id='bk-av-open' class='bk-av-t'>
+<label for='bk-av-open' class='bk-av-pic' title='open {E(name)}'s card'>{pic}<span class='bk-av-cap'>{E(name)} · open the card</span></label>
+<div class='bk-modal'><label for='bk-av-open' class='bk-modal-bg'></label>
+<div class='bk-holo' role='dialog' aria-label='{E(name)}'>
+<label for='bk-av-open' class='bk-x' title='close'>✕</label>
+<div class='bk-holo-top'><div class='bk-holo-pic'>{pic}</div><div>
+<div class='bk-kicker'>{E(p.get('kind', ''))} · {E(card.get('type', '').split('#')[-1] or 'agent')}</div>
+<h3>{E(name)}</h3><div class='bk-mantra'>{E(p.get('mantra', ''))}</div>
+<div class='bk-chips'>{attrs}</div></div></div>
+<p class='bk-desc'>{E(card.get('description') or '')}</p>
+<div class='bk-cols'><div><div class='bk-h'>oath</div><p>{E(p.get('oath', ''))}</p>
+<div class='bk-h'>office</div><p>primary skill: {E(str((p.get('skills') or {}).get('primary', '—')))}<br>scope: {E(str((p.get('safety') or {}).get('scope', '—')))}</p>
+<div class='bk-h'>beliefs</div><ul>{''.join(f'<li>{E(b)}</li>' for b in beliefs)}</ul></div>
+<div><div class='bk-h'>identity — verifiable, not asserted</div><dl class='bk-hash'>{dl}</dl></div></div>
+<div class='bk-h'>every aspect of the persona</div>
+<div class='bk-aspects'>{aspects}</div>
+<div class='bk-h'>ledgered files</div>
+<table class='bk-ft'><tr><th>facet</th><th>file</th><th>bytes</th><th>sha256</th></tr>{files}</table>
+<div class='bk-foot'>portrait: {E(str(img_label or 'none'))} · the canon is read-only · every value above is re-derived from its files · nothing here mints</div>
+</div></div></div>"""
+
+
 # Gradio 3 has no layout API: this runs once in the page. Drag the side panel's grip to either side of the chat;
 # drag any panel's corner to resize it. The choice is kept in this browser (localStorage).
 LAYOUT_JS = """() => {
-  const K = 'bankml-interact-side', row = document.getElementById('bk-row'), side = document.getElementById('bk-side');
-  if (!row || !side || side.querySelector('.bk-grip')) return [];
+  const K = 'bankml-interact-layout-v2';
+  const row = document.getElementById('bk-row'), side = document.getElementById('bk-side'), chat = document.getElementById('bk-chat');
+  if (!row || !side || side.dataset.bk) return [];
+  side.dataset.bk = '1';
+  let st = {}; try { st = JSON.parse(localStorage.getItem(K) || '{}') } catch (e) {}
+  const save = () => { try { localStorage.setItem(K, JSON.stringify(st)) } catch (e) {} };
+  const place = where => { if (where === 'left') row.prepend(side); else row.append(side); st.side = where; save() };
+  const svgDots = '<svg width="10" height="16" viewBox="0 0 10 16"><g fill="currentColor">' +
+    [2, 8].map(x => [3, 8, 13].map(y => '<circle cx="' + x + '" cy="' + y + '" r="1.4"/>').join('')).join('') + '</g></svg>';
+  const svgRz = '<svg width="16" height="16" viewBox="0 0 16 16"><g stroke="currentColor" stroke-width="1.4" stroke-linecap="round">' +
+    '<path d="M14 6 6 14"/><path d="M14 10 10 14"/><path d="M14 13.5 13.5 14"/></g></svg>';
+  // the grip: drag to move, or the swap button
   const grip = document.createElement('div'); grip.className = 'bk-grip'; grip.draggable = true;
-  grip.textContent = '⠿ drag this panel left or right · ◢ resize from the corner'; side.prepend(grip);
-  const place = where => { if (where === 'left') row.prepend(side); else row.append(side); try { localStorage.setItem(K, where) } catch (e) {} };
-  try { if (localStorage.getItem(K) === 'left') row.prepend(side) } catch (e) {}
-  grip.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', 'bk-side'); side.style.opacity = .5 });
-  grip.addEventListener('dragend', () => { side.style.opacity = 1; row.classList.remove('bk-over') });
-  row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('bk-over') });
-  row.addEventListener('dragleave', () => row.classList.remove('bk-over'));
-  row.addEventListener('drop', e => { e.preventDefault(); row.classList.remove('bk-over');
-    const r = row.getBoundingClientRect(); place(e.clientX - r.left < r.width / 2 ? 'left' : 'right') });
+  grip.innerHTML = svgDots + '<span>panel</span><span class="bk-sp"></span>';
+  const swap = document.createElement('button'); swap.className = 'bk-swap'; swap.type = 'button'; swap.title = 'move to the other side'; swap.textContent = '⇄';
+  swap.addEventListener('click', e => { e.stopPropagation(); place(row.firstElementChild === side ? 'right' : 'left') });
+  grip.append(swap); side.prepend(grip);
+  // drop zones above everything while dragging, so nothing underneath can swallow the drop
+  let zones = [];
+  const clear = () => { zones.forEach(z => z.remove()); zones = [] };
+  grip.addEventListener('dragstart', e => {
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'bk-side'); side.style.opacity = .55;
+    const r = row.getBoundingClientRect();
+    for (const [where, x] of [['left', r.left], ['right', r.left + r.width / 2]]) {
+      const z = document.createElement('div'); z.className = 'bk-zone'; z.textContent = 'drop ' + where;
+      Object.assign(z.style, { left: (x + 4) + 'px', top: (r.top + 4) + 'px', width: (r.width / 2 - 8) + 'px', height: Math.min(r.height, innerHeight - r.top) - 8 + 'px' });
+      z.addEventListener('dragover', ev => { ev.preventDefault(); z.classList.add('hot') });
+      z.addEventListener('dragleave', () => z.classList.remove('hot'));
+      z.addEventListener('drop', ev => { ev.preventDefault(); place(where); clear() });
+      document.body.append(z); zones.push(z);
+    }
+  });
+  grip.addEventListener('dragend', () => { side.style.opacity = 1; clear() });
+  // resize handles (a refined corner, the same in every browser)
+  const handle = (el, key, axis) => {
+    const h = document.createElement('div'); h.className = 'bk-rz'; h.innerHTML = svgRz; h.title = 'drag to resize'; el.append(h);
+    h.addEventListener('pointerdown', e => {
+      e.preventDefault(); h.setPointerCapture(e.pointerId); h.classList.add('on');
+      const r = el.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
+      const mv = ev => {
+        if (axis !== 'y') { const w = Math.max(260, r.width + (ev.clientX - x0) * (key === 'side' && row.firstElementChild !== side ? -1 : 1)); el.style.width = w + 'px'; el.classList.add('bk-sized') }
+        const hh = Math.max(220, r.height + ev.clientY - y0); el.style.height = hh + 'px';
+        for (const c of el.querySelectorAll('[style*="height"]')) if (c !== el && c.offsetHeight > 150) c.style.height = (hh - 40) + 'px';
+      };
+      const up = () => { h.removeEventListener('pointermove', mv); h.classList.remove('on'); st[key] = { w: el.style.width, h: el.style.height }; save() };
+      h.addEventListener('pointermove', mv); h.addEventListener('pointerup', up, { once: true });
+    });
+    const v = st[key];
+    if (v) { if (v.w) { el.style.width = v.w; el.classList.add('bk-sized') } if (v.h) el.style.height = v.h }
+  };
+  handle(side, 'side', 'xy');
+  if (chat) handle(chat, 'chat', 'y');
+  if (st.side === 'left') row.prepend(side);
   return [];
 }"""
 
@@ -844,7 +1062,6 @@ def build(canon: Canon, mode: str):
     import gradio as gr
 
     sid0, turns0 = history_load()
-    avatar = CANON / ((canon.ledger.get("image_candidate") or {}).get("path") or "gfx/Savante3.png")
     theme = gr.themes.Base(primary_hue="teal", secondary_hue="amber", neutral_hue="slate") if hasattr(gr, "themes") else None
     with gr.Blocks(title="bankml · Savante", css=CSS, theme=theme) as demo:
         session = gr.State({"id": sid0})
@@ -860,8 +1077,7 @@ def build(canon: Canon, mode: str):
                         send, stop, new = gr.Button("Send", variant="primary"), gr.Button("Stop"), gr.Button("New session")
                 with gr.Column(scale=1, elem_id="bk-side"):
                     timer = gr.HTML(timer_md())
-                    if avatar.is_file():
-                        gr.Image(value=str(avatar), label="Savante3.png — named, not pinned", height=220, interactive=False)
+                    aiv = gr.HTML(aivatar_html(canon))
                     which = gr.Dropdown(list(PROMPTS), value=PROMPTS[0], label=".prompt")
                     prov = gr.Markdown(system_prompt(canon, PROMPTS[0])[1], elem_id="bk-prov")
                     use_mem = gr.Checkbox(value=True, label="use .memory (the operator's notes, appended to the system prompt)")
@@ -1032,6 +1248,17 @@ def build(canon: Canon, mode: str):
                 e_prompt = gr.Textbox(label=".prompt", lines=10)
                 b_save = gr.Button("save and re-ledger", variant="primary")
                 e_out = gr.Markdown()
+            with gr.Accordion("aivatar — the portrait of the agent in use (click it in the side panel for the full card)", open=False):
+                gr.Markdown("Savante: choose one of her canon's images (the choice is kept outside the canon). A derived agent: "
+                            "upload its own (PNG, JPEG or WebP, at most 2 MB); it becomes a ledgered facet, `x-bankml.aivatar`, "
+                            "and part of its THOT bundle.")
+                with gr.Row():
+                    av_pick = gr.Dropdown(savante_images(), label="Savante's canon images", scale=2)
+                    b_avpick = gr.Button("use this image for Savante", scale=1)
+                with gr.Row():
+                    av_up = gr.File(label="an image for the derived agent in use", file_types=["image"], scale=2)
+                    b_avup = gr.Button("set as the agent's aivatar", variant="primary", scale=1)
+                av_out = gr.Markdown()
             ledger = gr.HTML()
 
             def ledger_html():
@@ -1061,9 +1288,9 @@ def build(canon: Canon, mode: str):
                 who = f"**{choice}**" + ("" if slug else " (the canon)")
                 pe, pr = editors()
                 return (f"in use: {who} · .history `{HISTORY}`", turns, {"id": sid}, history_html(), metrics_html(), memory_html(),
-                        pe, pr, ledger_html(), system_prompt(canon, PROMPTS[0])[1], *show(10 ** 9))
+                        pe, pr, ledger_html(), system_prompt(canon, PROMPTS[0])[1], aivatar_html(canon), *show(10 ** 9))
 
-            b_use.click(switch, apick, [active_md, chat, session, hall, mt, mview, e_persona, e_prompt, ledger, prov] + outs)
+            b_use.click(switch, apick, [active_md, chat, session, hall, mt, mview, e_persona, e_prompt, ledger, prov, aiv] + outs)
 
             def do_derive(name, kind, mantra, oath, desc, sp):
                 if not name.strip():
@@ -1089,6 +1316,30 @@ def build(canon: Canon, mode: str):
                 return f"saved and re-ledgered · doctrine root `{led['doctrine_root']['value']}`", ledger_html()
 
             b_save.click(do_save, [e_persona, e_prompt], [e_out, ledger])
+
+            def pick_savante_image(name):
+                if name not in savante_images():
+                    return "choose an image", gr.update()
+                STATE.mkdir(parents=True, exist_ok=True)
+                (STATE / "savante.aivatar").write_text(name + "\n", encoding="utf-8")
+                return f"Savante's portrait: `gfx/{name}`" + ("" if not ACTIVE["slug"] else " (shown when Savante is in use)"), aivatar_html(canon)
+
+            def set_agent_image(fobj):
+                slug = ACTIVE["slug"]
+                if not slug:
+                    return "Savante's canon is read-only: choose one of her images above, or derive an agent", gr.update(), gr.update()
+                if fobj is None:
+                    return "upload an image first", gr.update(), gr.update()
+                path = fobj if isinstance(fobj, str) else getattr(fobj, "name", None)
+                try:
+                    led = agents.set_aivatar(slug, Path(path).read_bytes())
+                except (ValueError, OSError) as e:
+                    return f"not set: {e}", gr.update(), gr.update()
+                return (f"set · sha256 `{led['artifacts']['aivatar']['sha256'][:16]}…` · ledgered; the next THOT build includes it",
+                        aivatar_html(canon), ledger_html())
+
+            b_avpick.click(pick_savante_image, av_pick, [av_out, aiv])
+            b_avup.click(set_agent_image, av_up, [av_out, aiv, ledger])
             demo.load(ledger_html, None, ledger)
 
             import connectors
