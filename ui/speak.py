@@ -94,6 +94,21 @@ def table() -> dict:
     return _BUILTIN_TABLE
 
 
+# said, not shown: the token's split name, the runtime's name, and a web address read as "dot"
+LOCAL_SAY = ((r"SCIEN·TIFIC", "Sci-en, Tiffic"), (r"\bbankml\b", "bank M L"),
+             (r"\b([a-z0-9-]+)\.(pythai)\.(net)\b", r"\1 dot \2 dot \3"),
+             # the notation of TECHNICAL.md, read the way a lecturer reads it
+             (r"\s*\((?:§[^)]*|PERFORMANCE\.md[^)]*|`?q2_0\.rs`?|q1_0\.rs[^)]*)\)", ""), (r"\bof\s+§\s*I\.2\b", "described earlier"), (r",?\s*§\s*[IVX]+\.\d+", ""), (r"\*", ""),
+             (r"\bQ1 0\b", "Q one zero"), (r"\bQ2 0 g64\b", "Q two zero, g sixty-four"), (r"\bQ2 0\b", "Q two zero"), (r"\bq8 0\b", "Q eight zero"),
+             (r"\+ or −", "plus or minus"), (r"\s\+\s", " plus "), (r"\s=\s", " equals "), (r"\s/\s", " over "), (r"log₂\s*3", "log base two of three"), (r"3⁵", "three to the fifth"),
+             (r"Σ_\{w=\+1\}", "the sum over plus-one weights of"), (r"Σ_\{w=−1\}", "the sum over minus-one weights of"),
+             (r"Σ_\{sᵢ=\+1\}", "the sum over plus signs of"), (r"Σ_\{sᵢ=−1\}", "the sum over minus signs of"),
+             (r"Σ", "the sum of "), (r"≈", " about "), (r"≤", " at most "), (r"∈", " in "), (r"×", " times "),
+             (r"\{\s*−1,\s*0,\s*\+1\s*\}", "minus one, zero, or plus one"), (r"\{\s*−1,\s*\+1\s*\}", "minus one or plus one"),
+             (r"\{−1, 0, \+1, \+2\}", "minus one, zero, plus one, or plus two"), (r"−", " minus "), (r"(?<![\w])\+(?=\d)", "plus "),
+             (r"ᵢ", " i"), (r"·", " times "), (r"\s{2,}", " "))
+
+
 def say(text: str, t: dict | None = None) -> str:
     """The respelling the synthesiser hears: one pass, case-insensitive, longest match first."""
     t = t or table()
@@ -103,6 +118,8 @@ def say(text: str, t: dict | None = None) -> str:
     rx = re.compile("|".join(re.escape(e["match"]) for e in ents), re.I)
     by = {e["match"].lower(): e["say"] for e in ents}
     text = re.sub(r"(?<=\w)_(?=\w)", " ", text)  # savante_sagi, APPROVE_WITH_CONDITIONS: said as words, shown as written
+    for m_, s_ in LOCAL_SAY:  # bankml's own words, before the house table
+        text = re.sub(m_, s_, text)
     return rx.sub(lambda m: by[m.group(0).lower()], text)
 
 
@@ -255,12 +272,11 @@ def speech(md: str) -> list:
         lines = [l for l in para.splitlines() if l.strip() and not l.lstrip().startswith(("|", "<", "![", ">|"))]
         if not lines:
             continue
-        t = " ".join(l.strip() for l in lines)
+        t = " ".join(re.sub(r"^([-*+]|\d+\.)\s+", "", l.strip()) for l in lines)  # list markers at line starts only
         t = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t)
         t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)
         t = re.sub(r"`([^`]*)`", r"\1", t)
         t = re.sub(r"^#+\s*|\s#+\s", " ", t)
-        t = re.sub(r"(^|\s)[-*+]\s+|(^|\s)\d+\.\s+", " ", t)
         t = re.sub(r"(?<![\w*])[*_]{1,3}(?=\S)([^*_]+?)(?<=\S)[*_]{1,3}(?![\w*])", r"\1", t)  # emphasis only; savante_sagi keeps its _
         t = re.sub(r"https?://\S+", "", t)
         t = re.sub(r"\s+", " ", t).strip(" >")
@@ -286,7 +302,109 @@ def intro_chapters(canon: Path, persona: dict, card: dict) -> list:
             ch.append((title, speech((canon / name).read_text(encoding="utf-8"))))
         except OSError:
             pass
+        if name == "explanation.md":  # the one chapter that is bankml's, not her canon: SCIEN·TIFIC as the measure
+            ch.append(("SCIEN·TIFIC: two to the 256, minus one", speech((READINGS / "scientific.md").read_text(encoding="utf-8"))))
     return [(t, s) for t, s in ch if s]
+
+
+READINGS = Path(__file__).resolve().parent / "voice" / "readings"
+REPO = Path(__file__).resolve().parents[1]
+# the reading: bankml's thesis and the binary / ternary argument, from TECHNICAL.md by heading, verbatim
+READING = (("The thesis", "## Thesis"), ("Binary and ternary weights", "### II.1"), ("The binary choice: Q1_0", "### III.2"),
+           ("The ternary kernel: Q2_0_g64", "### III.5"), ("Can a binary computer perform a ternary operation?", "### III.8"))
+
+
+def _section(md: str, head: str) -> str:
+    """The text under the first heading that starts with `head`, up to the next heading of the same or higher level."""
+    lv = len(head.split(" ", 1)[0])
+    out, on = [], False
+    for line in md.splitlines():
+        h = re.match(r"(#+) ", line)
+        if on and h and len(h.group(1)) <= lv:
+            break
+        if on:
+            out.append(line)
+        elif line.startswith(head):
+            on = True
+    return "\n".join(out)
+
+
+def reading_chapters(repo: Path = REPO) -> list:
+    """[(title, [sentences])]: Savante reads bankml's thesis and TECHNICAL.md's binary/ternary sections aloud."""
+    try:
+        md = (repo / "TECHNICAL.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [(t, s) for t, h in READING if (s := speech(_section(md, h)))]
+
+
+# ── export: a chapter set as one Ogg Opus file, complete or not at all ────────────────────────────────────────
+EXPORT_DIR = Path(os.environ.get("BANKML_EXPORT_DIR", Path(__file__).resolve().parent / "voice" / "export")).expanduser()
+GAP_S = 0.7  # silence between sentences; 2.0 between chapters
+
+
+def export_state(name: str, chapters: list) -> dict:
+    """{"file", "ready", "total", "current"}: current means the file on disk was built from exactly these clips."""
+    items = [i for _, s in chapters for i in cached(s)]
+    keys = [i["key"] if i else None for i in items]
+    sig = hashlib.sha256("|".join(k or "-" for k in keys).encode()).hexdigest()[:16]
+    f = EXPORT_DIR / f"{name}.opus"
+    meta = EXPORT_DIR / f"{name}.json"
+    cur = f.is_file() and meta.is_file() and json.loads(meta.read_text(encoding="utf-8")).get("sig") == sig
+    return {"file": f, "ready": sum(1 for k in keys if k), "total": len(keys), "current": cur, "sig": sig, "items": items}
+
+
+def export(name: str, chapters: list, lead: list = ()) -> dict:
+    """Concatenate the rendered clips of `lead` + every chapter into EXPORT_DIR/<name>.opus (Ogg Opus, 40 kbit/s,
+    one chapter mark per chapter). Refuses unless every sentence is rendered: an export is complete."""
+    chs = ([("Voice examples", list(lead))] if lead else []) + list(chapters)
+    st = export_state(name, chs)
+    if st["current"]:
+        return st
+    if st["ready"] < st["total"]:
+        raise RuntimeError(f"{name}: {st['ready']}/{st['total']} sentences rendered; an export is complete or it is not made")
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="bankml-export-") as tmp:
+        tmp = Path(tmp)
+        for n, secs in (("gap", GAP_S), ("chap", 2.0)):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"anullsrc=r=48000:cl=mono", "-t", str(secs),
+                            "-c:a", "libopus", "-b:a", "40k", str(tmp / f"{n}.ogg")], check=True, timeout=60)
+        lines, meta, t, k = [], [";FFMETADATA1"], 0.0, 0
+        for ci, (title, sents) in enumerate(chs):
+            if ci:
+                lines.append(f"file '{tmp / 'chap.ogg'}'")
+                t += 2.0
+            start = t
+            for j, _ in enumerate(sents):
+                i = st["items"][k]
+                k += 1
+                if j:
+                    lines.append(f"file '{tmp / 'gap.ogg'}'")
+                    t += GAP_S
+                lines.append(f"file '{i['file']}'")
+                t += i["seconds"] or 0
+            meta += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(start * 1000)}", f"END={int(t * 1000)}", "title=" + title.replace("=", "\\=")]
+        (tmp / "list.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (tmp / "meta.txt").write_text("\n".join(meta) + "\n", encoding="utf-8")
+        out = tmp / "out.opus"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(tmp / "list.txt"), "-i", str(tmp / "meta.txt"),
+                        "-map", "0:a", "-map_metadata", "1", "-map_chapters", "1", "-c:a", "libopus", "-b:a", "40k", "-ac", "1",
+                        "-metadata", f"title=Savante: {name}", "-metadata", "artist=Savante (bankml; Cori body, Jaimla template)",
+                        "-f", "ogg", str(out)], check=True, timeout=1800)
+        os.replace(out, st["file"])
+    (EXPORT_DIR / f"{name}.json").write_text(json.dumps({"sig": st["sig"], "sentences": st["total"], "chapters": [c for c, _ in chs],
+                                                        "seconds": round(t, 1), "sha256": hashlib.sha256(st["file"].read_bytes()).hexdigest()},
+                                                       indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return export_state(name, chs)
+
+
+EXPORTS = {"Savante": "the introduction: her voice examples, then every chapter", "Savante-reading": "the thesis, and binary and ternary, from TECHNICAL.md"}
+
+
+def export_sets(canon: Path, persona: dict, card: dict) -> dict:
+    """name -> (lead, chapters) for the two exports."""
+    lead = [x for x in persona.get("voice_examples") or [] if isinstance(x, str) and x.strip()]
+    return {"Savante": (lead, intro_chapters(canon, persona, card)), "Savante-reading": ([], reading_chapters())}
 
 
 INTRO = {"state": "idle", "done": 0, "total": 0, "error": None}
@@ -298,14 +416,16 @@ def render_intro_async(canon: Path, persona: dict, card: dict):
     if INTRO["state"] == "running" or os.environ.get("BANKML_VOICE_ASYNC", "1") == "0":
         return
     chapters = intro_chapters(canon, persona, card)
-    INTRO.update(state="running", done=0, total=sum(len(s) for _, s in chapters), error=None)
+    INTRO.update(state="running", done=0, total=sum(len(s) for _, s in chapters + reading_chapters()), error=None)
 
     def run():
         try:
-            for _, sents in chapters:
+            for _, sents in chapters + reading_chapters():
                 for k in range(0, len(sents), 25):
                     render(sents[k:k + 25])
                     INTRO["done"] += len(sents[k:k + 25])
+            for name, (lead, chs) in export_sets(canon, persona, card).items():
+                export(name, chs, lead)
             INTRO["state"] = "done"
         except Exception as e:  # noqa: BLE001
             INTRO.update(state="error", error=str(e))
@@ -354,8 +474,8 @@ if __name__ == "__main__":  # pre-render Savante's introduction and voice exampl
     per = json.loads((c / "savante.persona").read_text(encoding="utf-8"))
     crd = json.loads((c / "savante.agentcard.json").read_text(encoding="utf-8"))
     chs = intro_chapters(c, per, crd)
-    # listening order: her voice examples first (short), then the introduction chapter by chapter
-    allt = [x for x in per.get("voice_examples") or [] if isinstance(x, str)] + [x for _, s in chs for x in s]
+    # listening order: her voice examples first (short), then the introduction chapter by chapter, then the reading
+    allt = [x for x in per.get("voice_examples") or [] if isinstance(x, str)] + [x for _, s in chs + reading_chapters() for x in s]
     if "--shard" in sys.argv:  # python3 ui/speak.py --shard 1/2 : every n-th statement, for parallel renders
         k, n = map(int, sys.argv[sys.argv.index("--shard") + 1].split("/"))
         allt = allt[k - 1::n]
@@ -365,3 +485,20 @@ if __name__ == "__main__":  # pre-render Savante's introduction and voice exampl
         print(f"  {min(k + 10, len(allt))}/{len(allt)}", flush=True)
     items = cached(allt)
     print(f"cached {sum(1 for i in items if i)} of {len(allt)} · {sum(i['seconds'] or 0 for i in items if i) / 60:.1f} min · {VOICE_DIR}")
+    if "--shard" not in sys.argv:  # complete → one file per set: ui/voice/export/Savante.opus, Savante-reading.opus
+        for name, (lead, cs) in export_sets(c, per, crd).items():
+            try:
+                e = export(name, cs, lead)
+                print(f"export {e['file']} · {e['total']} sentences · {e['file'].stat().st_size / 1e6:.1f} MB")
+            except RuntimeError as err:
+                print("export skipped:", err)
+    if "--prune" in sys.argv:  # drop clips no current text uses (older voices, edited canon): the committed cache stays lean
+        keep = {i["key"] for i in cached(allt) if i}
+        d = VOICE_DIR / "savante"
+        gone = [f for f in d.glob("*.ogg") if f.stem not in keep]
+        for f in gone:
+            f.unlink()
+        man_p = d / "manifest.json"
+        man = json.loads(man_p.read_text(encoding="utf-8"))
+        man_p.write_text(json.dumps({k: v for k, v in man.items() if k.startswith("_") or k in keep}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"pruned {len(gone)} clips no current text uses")

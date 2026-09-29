@@ -39,13 +39,28 @@ def listen() -> dict:
     chs = speak.intro_chapters(S.CANON, CANON.persona, CANON.card)
     ex = [x for x in CANON.persona.get("voice_examples") or [] if isinstance(x, str)]
     out = []
-    for title, sents in chs + [("Savante speaks — her voice examples", ex)]:
+    rd = [("The reading — " + t, x) for t, x in speak.reading_chapters()]
+    for title, sents in chs + rd + [("Savante speaks — her voice examples", ex)]:
         items = speak.cached(sents)
         if all(items):
             out.append({"title": title, "items": [{"text": i["text"], "key": i["key"], "seconds": i["seconds"]} for i in items]})
         else:
             out.append({"title": title, "rendering": True, "count": len(sents)})
-    return {"voice": speak.savante_voice(), "chapters": out}
+    exports = []
+    for name, (lead, cs) in speak.export_sets(S.CANON, CANON.persona, CANON.card).items():
+        st = speak.export_state(name, ([("Voice examples", lead)] if lead else []) + cs)
+        exports.append({"name": name, "what": speak.EXPORTS[name], "ready": st["ready"], "total": st["total"], "current": st["current"],
+                        "mb": round(st["file"].stat().st_size / 1e6, 1) if st["current"] else None})
+    return {"voice": speak.savante_voice(), "chapters": out, "exports": exports}
+
+
+def export_file(name: str):
+    """Only a named export (speak.EXPORTS) that is complete and current."""
+    if name not in speak.EXPORTS:
+        return None
+    lead, cs = speak.export_sets(S.CANON, CANON.persona, CANON.card)[name]
+    st = speak.export_state(name, ([("Voice examples", lead)] if lead else []) + cs)
+    return st["file"] if st["current"] else None
 
 
 def audio_file(key: str):
@@ -116,6 +131,7 @@ select{background:var(--panel2);color:var(--text);border:1px solid var(--line2);
 padding:0 10px;margin:0;transform:translateY(-6px) scale(.97);transition:max-height .45s ease,opacity .35s ease,transform .45s cubic-bezier(.2,.9,.3,1.2),padding .3s,margin .3s}
 .kn.on{max-height:150px;opacity:1;padding:8px 10px 4px;margin:0 0 10px;transform:none;box-shadow:0 0 20px rgba(57,211,199,.18)}
 @media (prefers-reduced-motion:reduce){.kn{transition:none}}
+.lx{margin-left:8px;padding:3px 10px;border:1px solid rgba(255,209,102,.55);border-radius:14px;color:#ffd166;text-decoration:none;font:600 12px ui-monospace,monospace;white-space:nowrap}.lx.off{opacity:.45;border-style:dashed}
 .lbar{display:flex;gap:8px;margin:6px 0 10px}.lbar button,.lch button{cursor:pointer;border-radius:8px;border:1px solid var(--accent);background:transparent;
 color:var(--accent);font:600 12px var(--mono);padding:5px 12px}.lbar button:hover,.lch button:hover{background:rgba(57,211,199,.12)}
 .lch{border:1px solid var(--line);border-radius:10px;margin:6px 0}.lch summary{cursor:pointer;padding:7px 10px;display:flex;gap:10px;align-items:center}
@@ -138,7 +154,7 @@ color:var(--accent);font:600 12px var(--mono);padding:5px 12px}.lbar button:hove
 <section class="card w8" id="p-listen"><h2>Listen to Savante</h2><div class="body">
 <p style="margin-top:0;color:var(--muted)">New here? Savante reads herself to you — who she is, her oath, what she believes, how she
 works, why she exists — verbatim from her canon, in her voice (<span id="lv"></span>).</p>
-<div class="lbar"><button type="button" id="lall">▶ play the introduction</button><button type="button" id="lstop">■ stop</button></div>
+<div class="lbar"><button type="button" id="lall">▶ play the introduction</button><button type="button" id="lstop">■ stop</button><span id="lexp"></span></div>
 <div id="lknobs" class="kn" aria-label="voice controls"></div>
 <div id="lchaps"></div></div></section>
 <section class="card w6" id="p-proof"><h2>Private data — commitments only</h2><div class="body">
@@ -198,8 +214,10 @@ AU.addEventListener('ended',lnext);AU.addEventListener('play',vset);
 function lplay(lis){AU.pause();vemerge();LQ=[...lis];lnext()}
 $('lall').addEventListener('click',()=>lplay(document.querySelectorAll('#lchaps li')));
 $('lstop').addEventListener('click',()=>{LQ=[];AU.pause();lmark(null)});
-function lrender(L){const sig=JSON.stringify(L.chapters.map(c=>[c.title,!!c.rendering]));if(sig===lshown)return;lshown=sig;
- $('lv').textContent='house stand-in '+L.voice.voice+' at '+L.voice.wpm+' wpm, said sav-ont';const box=$('lchaps');box.replaceChildren();
+function lrender(L){const sig=JSON.stringify([L.chapters.map(c=>[c.title,!!c.rendering]),(L.exports||[]).map(x=>[x.current,x.ready])]);if(sig===lshown)return;lshown=sig;
+ $('lv').textContent=L.voice.model?"Savante's own voice: Cori's body, Jaimla's pitch, SAVANTE's resonance":'house stand-in '+L.voice.voice+' at '+L.voice.wpm+' wpm, said sav-ont';const box=$('lchaps');box.replaceChildren();
+ const ex=$('lexp');ex.replaceChildren();for(const x of L.exports||[]){const a=document.createElement(x.current?'a':'span');a.className='lx'+(x.current?'':' off');
+  a.textContent='⤓ '+x.name+'.opus'+(x.current?' · '+x.mb+' MB':' · '+x.ready+'/'+x.total+' rendered');a.title=x.what;if(x.current){a.href='/export/'+x.name+'.opus';a.download=x.name+'.opus'}ex.append(a)}
  L.chapters.forEach((c,n)=>{if(c.rendering){const w=document.createElement('div');w.className='lwait';w.textContent=(n+1)+'. '+c.title+' — rendering ('+c.count+' sentences)';box.append(w);return}
   const d=document.createElement('details');d.className='lch';const s=document.createElement('summary');const b=document.createElement('b');b.textContent=(n+1)+'. '+c.title;
   const m=document.createElement('span');m.style.color='var(--muted)';m.textContent=(c.items.reduce((a,i)=>a+(i.seconds||0),0)/60).toFixed(1)+' min';
@@ -231,9 +249,11 @@ tick();setInterval(tick,2000);setInterval(rec,15000);
 class H(BaseHTTPRequestHandler):
     server_version = "bankml-view"
 
-    def send(self, code, ctype, body: bytes, cache="no-store"):
+    def send(self, code, ctype, body: bytes, cache="no-store", disp=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if disp:
+            self.send_header("Content-Disposition", disp)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -261,6 +281,11 @@ class H(BaseHTTPRequestHandler):
         if u.path.startswith("/audio/") and u.path.endswith(".ogg"):
             f = audio_file(u.path[len("/audio/"):-len(".ogg")])
             return self.send(200, "audio/ogg", f.read_bytes(), cache="max-age=86400") if f else self.send(404, "text/plain", b"no such clip")
+        if u.path.startswith("/export/") and u.path.endswith(".opus"):  # the complete introduction / reading, one file each
+            f = export_file(u.path[len("/export/"):-len(".opus")])
+            if not f:
+                return self.send(404, "text/plain", b"no such export (it exists only when complete)")
+            return self.send(200, "audio/ogg", f.read_bytes(), cache="no-cache", disp=f'attachment; filename="{f.name}"')
         if u.path == "/savante.png":
             rel = (CANON.ledger.get("image_candidate") or {}).get("path") or "gfx/Savante3.png"
             b = CANON.file(rel)

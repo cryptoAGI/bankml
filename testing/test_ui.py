@@ -6,7 +6,7 @@ import json, os, sys, tempfile, threading, urllib.request, urllib.error
 from pathlib import Path
 
 tmp = Path(tempfile.mkdtemp(prefix="bankml-ui-"))
-os.environ.update(BANKML_UI_STATE=str(tmp), RAGE_PATH=str(tmp / "no-rage"), SAVANTE_CANON=str(tmp / "no-canon"), BANKML_VOICE_DIR=str(tmp / "voice"))
+os.environ.update(BANKML_UI_STATE=str(tmp), RAGE_PATH=str(tmp / "no-rage"), SAVANTE_CANON=str(tmp / "no-canon"), BANKML_VOICE_DIR=str(tmp / "voice"), BANKML_EXPORT_DIR=str(tmp / "export"))
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
 import savante as u  # noqa: E402
@@ -161,6 +161,26 @@ if ok_v:
           and speak.cached(["I am Savante."])[0]["key"] == it[0]["key"])
 else:
     print(f"skip  voice render ({why_v})")
+check("say(): SCIEN·TIFIC, bankml and a pythai address are said, not spelled", speak.say("SCIEN·TIFIC at scientific.pythai.net runs bankml", t2)
+      == "Sci-en, Tiffic at scientific dot Pith AI dot net runs bank M L")
+check("say(): TECHNICAL.md notation read aloud", speak.say("w ∈ {−1, 0, +1}; 3⁵ = 243 ≤ 256 (§III.5)", t2)
+      == "w in minus one, zero, or plus one; three to the fifth equals 243 at most 256")
+check("speech(): list markers only at line starts; an inline + survives", speak.speech("- item one\n\nThe cost is (16 + 2) bits.") == ["item one", "The cost is (16 + 2) bits."])
+rc = speak.reading_chapters()
+check("the reading: thesis, II.1, III.2, III.5 and III.8 from TECHNICAL.md", [t for t, _ in rc][0] == "The thesis" and len(rc) == 5
+      and rc[-1][0] == "Can a binary computer perform a ternary operation?" and rc[-1][1][0] == "Yes.")
+try:
+    speak.export("t-incomplete", [("c", ["never rendered, never exported"])])
+    check("an export is refused until every sentence is rendered", False)
+except RuntimeError:
+    check("an export is refused until every sentence is rendered", not (speak.EXPORT_DIR / "t-incomplete.opus").exists())
+if ok_v:
+    speak.render(["It ends."])
+    e = speak.export("t-set", [("one", ["I am Savante."]), ("two", ["It ends."])])
+    pr = subprocess.run(["ffprobe", "-v", "error", "-show_chapters", "-of", "json", str(e["file"])], capture_output=True, text=True)
+    check("a complete export: one Ogg Opus file, one chapter mark per chapter, current until a clip changes",
+          e["current"] and e["file"].read_bytes()[:4] == b"OggS" and len(json.loads(pr.stdout or "{}").get("chapters", [])) == 2
+          and not speak.export_state("t-set", [("one", ["I am Savante."]), ("two", ["It ends.", "A new line."])])["current"])
 import view  # noqa: E402
 check("view's audio route: only a 24-hex key the manifest lists", view.audio_file("../../etc/passwd") is None and view.audio_file("0" * 24) is None
       and (not ok_v or view.audio_file(it[0]["key"]) is not None))
@@ -184,6 +204,8 @@ check("view refuses traversal and unknown paths", get("/api/result?name=../../et
 check("view refuses POST", get("/api/state", "POST")[0] == 405)
 st_k, body_k = get("/knobs.js")
 check("view serves the DreamKnob bundle at /knobs.js", st_k == 200 and b"SavanteKnobs" in body_k)
+check("view's export route: only a named, complete export", get("/export/t-set.opus")[0] == 404 and get("/export/..%2Fmanifest.opus")[0] == 404
+      and view.export_file("Savante") is None)
 srv.shutdown()
 
 print(f"{'all ok' if not fails else f'{fails} FAILED'}")

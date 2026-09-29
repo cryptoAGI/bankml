@@ -624,15 +624,78 @@ def machine() -> str:
             f"of {m['ram_total_gb']} GB · swap used {m['swap_used_mb']} MB{warn}")
 
 
+# ── Models: import (catalogue, Hugging Face, Ollama) and choose the carrier ──────────────────────
+def _job_bar(j: dict) -> str:
+    pct = int(100 * j["done"] / j["total"]) if j.get("total") else 0
+    size = f" · {j['done'] / 1e9:.2f} / {j['total'] / 1e9:.2f} GB" if j.get("total") else ""
+    return (f"<div class='bk-jobbar'><i style='width:{pct}%'></i></div><div class='bk-note'>{pct}%{size} · "
+            f"{int(time.time() - (j.get('started') or time.time()))} s</div>")
+
+
+def job_html() -> str:
+    import models
+    j = models.JOB
+    if j["state"] == "idle":
+        return "<div class='bk-note'>No import running.</div>"
+    if j["state"] == "running":
+        return f"<div class='bk-card'><b>working</b> · {E(j['what'])}{_job_bar(j)}</div>"
+    if j["state"] == "error":
+        return f"<div class='bk-card bk-bad'><b>refused / failed</b><br>{E(j['error'])}</div>"
+    r = j.get("result") or {}
+    what = (r.get("verified") or {}).get("name") or r.get("file") or "done"
+    return f"<div class='bk-card'><b class='bk-okb'>done</b> · {E(str(what))}</div>"
+
+
+def models_html() -> str:
+    import models
+    st = serve_status()
+    cur = (st.get("verified") or {}).get("model_sha256")
+    pins = models.forks()
+    rows = []
+    for m in models.installed():
+        sha = pins[m["file"]][1]["sha256"] if m["file"] in pins else None
+        here = cur and sha == cur
+        rows.append(f"<tr class='{'bk-cur' if here else ''}'><td>{'● ' if here else ''}<b>{E(m['file'])}</b></td><td>{m['bytes'] / 1e9:.2f} GB</td>"
+                    f"<td>{E(m['source'] or '?')}</td><td>{E(m['licence'] or '?')}</td>"
+                    f"<td>{'<span class=bk-okb>pinned</span>' if m['pinned'] else ('adopt on use' if m['catalog'] else '<span class=bk-badb>unpinned</span>')}</td></tr>")
+    free = models.free_bytes() / 1e9
+    return (f"<div class='bk-note'>{len(rows)} models in <code>{E(str(models.MODELS))}</code> · {free:.1f} GB free on disk · pins in "
+            f"<code>{E(str(models.FORKS))}</code> · ● is the carrier now</div>"
+            "<table class='bk-t'><tr><th>model</th><th>size</th><th>source</th><th>licence</th><th>pin</th></tr>" + "".join(rows) + "</table>")
+
+
+def catalog_choices() -> list:
+    import models
+    out = []
+    for c in models.CATALOG:
+        have = (models.MODELS / c["file"]).exists()
+        ok, why = models.fits(c["bytes"], have)
+        out.append(f"{c['id']} — {c['title']} · {c['bytes'] / 1e9:.2f} GB · " + ("here" if have else ("fits" if ok else "does not fit: " + why)))
+    return out
+
+
+def installed_choices() -> list:
+    import models
+    return [m["file"] for m in models.installed() if m["pinned"] or m["catalog"]]
+
+
 def carrier_md() -> str:
     """bankml serve's verification as a compact card that wraps inside the side column."""
     st = serve_status()
     if "error" in st:
-        return f"<div class='bk-card bk-bad'><b>bankml serve</b><br>not reachable — start it (see usage.md)<br><code>{SERVE}</code></div>"
+        import models
+        j = models.JOB
+        if j["state"] == "running":
+            return f"<div class='bk-card'><b>bankml serve</b><br>starting: {E(j['what'])}{_job_bar(j)}</div>"
+        why = f"<br>{E(j['error'])}" if j["state"] == "error" else ""
+        return (f"<div class='bk-card bk-bad'><b>bankml serve</b><br>not reachable — choose a model in the Models tab, or start it (usage.md)"
+                f"<br><code>{SERVE}</code>{why}</div>")
     v = st.get("verified") or {}
     sha = v.get("model_sha256", "")
+    kinds = ", ".join(f"{k}×{n}" for k, n in sorted((v.get("types") or {}).items(), key=lambda x: -x[1]) if k not in ("F32",))
     return ("<div class='bk-card'><b>bankml serve</b> <span class='bk-ok'>● verified · play</span>"
-            f"<dl><dt>model</dt><dd>{Path(st.get('model', '')).name}</dd>"
+            f"<dl><dt>model</dt><dd>{E(v.get('name') or Path(st.get('model', '')).name)}</dd>"
+            f"<dt>arch · weights</dt><dd>{E(v.get('arch') or '?')} · {E(kinds or '?')}</dd>"
             f"<dt>sha256</dt><dd class='bk-mono'>{sha}</dd>"
             f"<dt>bankml</dt><dd>{v.get('bankml', '?')} · guard {v.get('guard', '?')}</dd>"
             f"<dt>engine</dt><dd>{st.get('engine', '?')}</dd></dl></div>")
@@ -706,13 +769,14 @@ CSS = """
 .bk-av-t:checked ~ .bk-modal{display:flex}
 .bk-modal-bg{position:absolute;inset:0;background:rgba(2,6,23,.72);backdrop-filter:blur(4px);cursor:zoom-out}
 .bk-3d{position:relative;max-width:920px;width:100%;max-height:88vh;border-radius:16px;transform-style:preserve-3d;
+ display:grid;grid-template-areas:"holo";grid-template-columns:minmax(0,1fr);
  transform:perspective(1600px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .25s ease-out;will-change:transform;
  box-shadow:0 30px 80px rgba(0,0,0,.65),0 12px 24px rgba(0,0,0,.45)}
 .bk-scope{position:absolute;inset:0;width:100%;height:100%;border-radius:16px;pointer-events:none;z-index:0;
  background:radial-gradient(120% 90% at 50% 40%,#04211f 0%,#020a10 60%,#01050a 100%)}
 .bk-sheen{position:absolute;inset:0;border-radius:16px;pointer-events:none;z-index:2;
  background:radial-gradient(60% 50% at var(--gx,50%) var(--gy,30%),rgba(255,255,255,.07),transparent 60%);mix-blend-mode:screen}
-.bk-holo{position:relative;z-index:1;max-width:920px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:22px 24px 16px;color:#e2e8f0;
+.bk-holo{grid-area:holo;min-width:0;box-sizing:border-box;position:relative;z-index:1;max-width:920px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:22px 24px 16px;color:#e2e8f0;
  background:linear-gradient(rgba(45,212,191,.05) 1px,transparent 1px) 0 0/100% 22px,linear-gradient(90deg,rgba(45,212,191,.05) 1px,transparent 1px) 0 0/22px 100%,
  linear-gradient(160deg,rgba(15,23,42,.72),rgba(2,6,23,.80));border:1px solid rgba(45,212,191,.45);backdrop-filter:blur(1.5px);
  box-shadow:0 0 0 1px rgba(217,162,58,.25),0 0 40px rgba(45,212,191,.18),inset 0 0 60px rgba(45,212,191,.05);animation:bk-glow 4s ease-in-out infinite}
@@ -760,6 +824,28 @@ ol.bk-asp>li{font-size:12.5px;line-height:1.45;color:#cbd5e1!important;margin:2p
 .bk-sp{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:#cbd5e1!important;max-height:40vh;overflow:auto;margin:0}
 .bk-ft{width:100%;border-collapse:collapse;font-size:12px}.bk-ft th,.bk-ft td{border-bottom:1px solid rgba(148,163,184,.18);padding:4px 6px;text-align:left}
 .bk-ft th{font:600 11px ui-monospace,Menlo,monospace;color:#94a3b8!important}.bk-ft td.bk-mono{color:#5eead4!important;overflow-wrap:anywhere}
+/* the knob dock: hidden until she speaks; a side column (vertical stack), or a strip at the top or the bottom */
+.bk-kdock{grid-area:dock;display:none;box-sizing:border-box;position:relative;z-index:3;border:1px solid rgba(45,212,191,.35);border-radius:14px;
+ background:linear-gradient(160deg,rgba(15,23,42,.88),rgba(2,6,23,.92));box-shadow:0 0 24px rgba(45,212,191,.18),inset 0 1px 0 rgba(255,255,255,.07);
+ padding:6px 10px 14px;animation:bk-kin .5s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes bk-kin{from{opacity:0;transform:scale(.94) translateY(-6px)}to{opacity:1;transform:none}}
+.bk-3d.kd-on .bk-kdock{display:block}
+.bk-3d.kd-on.kd-side{grid-template-areas:"holo dock";grid-template-columns:minmax(0,1fr) auto;gap:10px}
+.bk-3d.kd-on.kd-top{grid-template-areas:"dock" "holo";grid-template-rows:auto minmax(0,1fr);gap:8px}
+.bk-3d.kd-on.kd-bottom{grid-template-areas:"holo" "dock";grid-template-rows:minmax(0,1fr) auto;gap:8px}
+.bk-3d.kd-on.kd-top .bk-holo,.bk-3d.kd-on.kd-bottom .bk-holo{max-height:calc(88vh - var(--kdh,150px))}
+.kd-side .bk-kdock{align-self:start;max-height:88vh;overflow:auto}
+.bk-kgrip{display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;padding:2px 0 6px;border-bottom:1px solid rgba(45,212,191,.18);margin-bottom:6px}
+.bk-kgrip b{font:700 11px ui-monospace,Menlo,monospace;letter-spacing:.2em;color:#5eead4!important}.bk-kdots{color:#94a3b8!important}.bk-ksp{flex:1}
+.bk-kgrip button{cursor:pointer;border:1px solid rgba(148,163,184,.35);background:transparent;color:#cbd5e1!important;border-radius:6px;padding:0 5px;font-size:12px;line-height:18px}
+.bk-kgrip button:hover,.bk-kgrip button.on{border-color:#2dd4bf;color:#5eead4!important}
+.bk-kresize{position:absolute;right:3px;bottom:3px;width:14px;height:14px;cursor:nwse-resize;opacity:.55;
+ background:linear-gradient(135deg,transparent 45%,#5eead4 46%,#5eead4 54%,transparent 55%,transparent 70%,#5eead4 71%,#5eead4 79%,transparent 80%)}
+.bk-kresize:hover{opacity:1}
+.bk-kzone{position:fixed;z-index:10001;border:2px dashed rgba(45,212,191,.6);border-radius:12px;background:rgba(45,212,191,.08);display:flex;
+ align-items:center;justify-content:center;font:600 12px ui-monospace,Menlo,monospace;letter-spacing:.12em;color:#5eead4;pointer-events:auto}
+.bk-kzone.hot{background:rgba(45,212,191,.22);border-style:solid}
+@media (max-width:760px){.bk-3d.kd-on.kd-side{grid-template-areas:"holo" "dock";grid-template-columns:minmax(0,1fr)}}
 .bk-knobs-card{max-width:520px;border:1px solid rgba(45,212,191,.22);border-radius:12px;background:rgba(45,212,191,.03);
  max-height:0;opacity:0;overflow:hidden;padding:0 10px;margin:0;transform:translateY(-6px) scale(.97);
  transition:max-height .45s ease,opacity .35s ease,transform .45s cubic-bezier(.2,.9,.3,1.2),padding .3s,margin .3s}
@@ -782,7 +868,7 @@ ol.bk-asp>li{font-size:12.5px;line-height:1.45;color:#cbd5e1!important;margin:2p
 .bk-playall,.bk-stop,.bk-play1{cursor:pointer;border-radius:8px;font:700 12px ui-monospace,Menlo,monospace;letter-spacing:.08em}
 .bk-playall{border:1px solid #2dd4bf;background:rgba(45,212,191,.12);color:#5eead4!important;padding:6px 14px}
 .bk-playall:hover{background:rgba(45,212,191,.25);box-shadow:0 0 16px rgba(45,212,191,.3)}
-.bk-stop{border:1px solid rgba(148,163,184,.4);background:transparent;color:#cbd5e1!important;padding:6px 12px}
+.bk-export{margin-left:8px;padding:3px 10px;border:1px solid rgba(255,209,102,.55);border-radius:14px;color:#ffd166;text-decoration:none;font:600 12px ui-monospace,monospace;white-space:nowrap}.bk-export:hover{background:rgba(255,209,102,.12)}.bk-export small{opacity:.7;font-weight:400}.bk-export.off{opacity:.45;border-style:dashed;cursor:default}.bk-stop{border:1px solid rgba(148,163,184,.4);background:transparent;color:#cbd5e1!important;padding:6px 12px}
 .bk-vmeta{font:11px ui-monospace,Menlo,monospace;color:#94a3b8!important}.bk-vmeta code{color:#fbbf24!important}
 .bk-vlist{list-style:none;margin:0;padding:0;counter-reset:v}
 .bk-vlist li{display:flex;align-items:baseline;gap:10px;padding:5px 6px;border-radius:8px;transition:background .2s}
@@ -816,18 +902,43 @@ button.primary,button.lg.primary{background:#0f766e!important;border-color:#0f76
 .bk-okb{color:#15803d!important;font-weight:700}.bk-badb{color:#b91c1c!important;font-weight:700}.bk-dimb{color:#64748b!important}
 .bk-note{font-size:12px;color:#475569!important;margin:6px 2px}
 .bk-t{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}.bk-t th,.bk-t td{border:1px solid #cbd5e1;padding:5px 8px;text-align:left;color:#0f172a}
-.bk-t th{background:#f1f5f9}.bk-spark{border:1px solid #cbd5e1;border-radius:8px;background:#fff}.bk-spark rect{fill:#0f766e}
+.bk-t th{background:#f1f5f9}
+.bk-commit dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin:6px 0 0}.bk-commit dt{font-weight:600}.bk-commit dd{margin:0;overflow-wrap:anywhere}
+.bk-jobbar{height:8px;border-radius:5px;background:rgba(100,116,139,.2);overflow:hidden;margin:8px 0 2px}.bk-jobbar i{display:block;height:100%;background:linear-gradient(90deg,#0d9488,#d9a23a)}
+.bk-cur td{background:rgba(13,148,136,.08)!important}
+.bk-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin:4px 0 10px}
+.bk-kpi{border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:1px;min-width:0}
+.bk-kpi b{font:700 20px ui-monospace,Menlo,Consolas,monospace;color:#0f172a;white-space:nowrap}
+.bk-kpi span{font-size:12px;color:#334155}.bk-kpi small{font-size:11px;color:#64748b}
+.bk-chart{margin:8px 0 12px;border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px 4px}
+.bk-chart figcaption{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;color:#334155;margin-bottom:2px}
+.bk-chart figcaption b{margin-right:auto;color:#0f172a}
+.bk-chart svg{display:block;width:100%;height:auto;max-height:240px;overflow:visible}
+.bk-lg{display:inline-flex;align-items:center;gap:5px}.bk-lg i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.bk-chart .g{stroke:rgba(100,116,139,.22);stroke-width:1}.bk-chart .ax{stroke:rgba(100,116,139,.6);stroke-width:1}
+.bk-chart text{font:11px ui-monospace,Menlo,Consolas,monospace;fill:#64748b}.bk-chart .yl{text-anchor:end}.bk-chart .xl{text-anchor:middle}
+.bk-chart .yu{text-anchor:middle}.bk-chart .ml{text-anchor:end;fill:#b45309;paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}.bk-chart .clip{text-anchor:middle;fill:#b91c1c}
+.bk-chart .med{stroke:#d97706;stroke-width:1.2;stroke-dasharray:5 4}
+.bk-chart .hit{fill:transparent}.bk-chart .hit:hover{fill:rgba(100,116,139,.10)}
+.bk-chart rect.s1,.bk-lg i.s1{fill:rgba(13,148,136,.85);background:rgba(13,148,136,.85)}
+.bk-chart rect.s2,.bk-lg i.s2{fill:rgba(217,162,58,.9);background:rgba(217,162,58,.9)}
+.bk-chart rect.s3,.bk-lg i.s3{fill:rgba(100,116,139,.6);background:rgba(100,116,139,.6)}
+.bk-chart circle.s1{fill:#0d9488}.bk-chart circle.s2{fill:#d9a23a}
+.bk-chart .ln{fill:none;stroke-width:1.5;opacity:.7}.bk-chart .ln.s1{stroke:#0d9488}.bk-chart .ln.s2{stroke:#d9a23a}
 #bk-nav button{min-width:0}
 /* dark mode: transparent surfaces over the page, light text and borders — never white panels */
-.dark #bk-side,.dark .bk-card,.dark .bk-ex,.dark .bk-timer,.dark .bk-grip,.dark .bk-spark,.dark .bk-t th,.dark .bk-t td{background:transparent!important}
+.dark #bk-side,.dark .bk-card,.dark .bk-ex,.dark .bk-timer,.dark .bk-grip,.dark .bk-t th,.dark .bk-t td{background:transparent!important}
 .dark #bk-side{border-color:rgba(148,163,184,.35)!important;box-shadow:none}
-.dark .bk-card,.dark .bk-ex,.dark .bk-timer,.dark .bk-grip,.dark .bk-spark,.dark .bk-t th,.dark .bk-t td{border-color:rgba(148,163,184,.35)!important}
+.dark .bk-card,.dark .bk-ex,.dark .bk-timer,.dark .bk-grip,.dark .bk-t th,.dark .bk-t td{border-color:rgba(148,163,184,.35)!important}
 .dark .bk-card,.dark .bk-card *,.dark .bk-ex,.dark .bk-ex *,.dark .bk-t th,.dark .bk-t td,.dark .bk-grip{color:#e2e8f0!important}
 .dark .bk-card dt,.dark .bk-exh,.dark .bk-note,.dark #bk-prov,.dark #bk-prov *,.dark .bk-idle,.dark .rb-stat{color:#94a3b8!important}
 .dark .bk-card .bk-ok,.dark .bk-okb{color:#4ade80!important}.dark .bk-badb,.dark .bk-bad b{color:#f87171!important}
 .dark .bk-live{border-color:#2dd4bf!important;color:#2dd4bf!important;background:rgba(45,212,191,.08)!important}
 .dark .bk-t th{background:rgba(148,163,184,.08)!important}.dark .rb-meter{background:rgba(148,163,184,.2)}
-.dark .bk-spark rect{fill:#2dd4bf}
+.dark .bk-kpi,.dark .bk-chart{border-color:rgba(148,163,184,.35)!important;background:transparent!important}
+.dark .bk-kpi b,.dark .bk-chart figcaption b{color:#e2e8f0!important}.dark .bk-kpi span,.dark .bk-chart figcaption{color:#cbd5e1!important}
+.dark .bk-kpi small,.dark .bk-chart text{color:#94a3b8!important;fill:#94a3b8}.dark .bk-chart .ml{fill:#fbbf24;stroke:#0b0f19}
+.dark .bk-chart .g{stroke:rgba(148,163,184,.16)}.dark .bk-chart rect.s1,.dark .bk-lg i.s1{fill:rgba(45,212,191,.75);background:rgba(45,212,191,.75)}
 """
 
 
@@ -893,6 +1004,70 @@ def memory_html() -> str:
             f".memory is on · <code>{E(str(MEMORY))}</code></div>" + rows)
 
 
+def _nice(mx: float) -> tuple:
+    """A round axis top and step for 0..mx (1, 2 or 5 × 10ⁿ), about four gridlines."""
+    import math
+    if mx <= 0:
+        return 1.0, 0.25
+    raw = mx / 4
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    return step * math.ceil(mx / step), step
+
+
+def _chart(rows: list, series: list, unit: str, title: str, stacked: bool = False, cap: float | None = None) -> str:
+    """A small SVG chart that keeps its proportions: y axis with round gridlines, one slot per exchange (bars at most
+    18 px wide, however few exchanges there are), values above `cap` clipped with a ▲ mark. series: [(key, label, css)]."""
+    W, H, L, R, T, B = 640, 190, 46, 10, 14, 26
+    pw, ph = W - L - R, H - T - B
+    n = len(rows)
+    tops = [sum((r.get(k) or 0) for k, _, _ in series) if stacked else max([(r.get(k) or 0) for k, _, _ in series] or [0]) for r in rows]
+    top, step = _nice(min(max(tops or [0]), cap) if cap else max(tops or [0]))
+    y = lambda v: T + ph - min(v, top) / top * ph
+    g = [f"<line x1='{L}' x2='{W - R}' y1='{y(k * step):.1f}' y2='{y(k * step):.1f}' class='g'/>"
+         f"<text x='{L - 6}' y='{y(k * step) + 4:.1f}' class='yl'>{k * step:g}</text>" for k in range(int(round(top / step)) + 1)]
+    slot = pw / max(n, 1)
+    bw = max(3.0, min(18.0, slot * 0.6))
+    bars = []
+    for j, r in enumerate(rows):
+        cx = L + slot * (j + 0.5)
+        base = 0.0
+        tip = [f"#{j + 1} · {r.get('when', '')}"]
+        for k, (key, label, css) in enumerate(series):
+            v = r.get(key)
+            if v is None:
+                continue
+            tip.append(f"{label}: {v:.2f} {unit}")
+            lo, hi = (base, base + v) if stacked else (0.0, v)
+            if stacked:
+                base = hi
+                bars.append(f"<rect x='{cx - bw / 2:.1f}' y='{y(hi):.1f}' width='{bw:.1f}' height='{max(y(lo) - y(hi), 0.5):.1f}' class='{css}'/>")
+            else:
+                bars.append(f"<circle cx='{cx:.1f}' cy='{y(v):.1f}' r='3.2' class='{css}'/>")
+        if (tops[j] or 0) > top:
+            bars.append(f"<text x='{cx:.1f}' y='{T - 3}' class='clip'>▲</text>")
+        bars.append(f"<rect x='{cx - slot / 2:.1f}' y='{T}' width='{slot:.1f}' height='{ph}' class='hit'><title>{E(chr(10).join(tip))}</title></rect>")
+    if not stacked:  # connect each series with a thin line
+        for key, _, css in series:
+            pts = [(L + slot * (j + 0.5), y(r[key])) for j, r in enumerate(rows) if r.get(key) is not None]
+            if len(pts) > 1:
+                bars.insert(0, f"<polyline points='{' '.join(f'{a:.1f},{b:.1f}' for a, b in pts)}' class='{css} ln'/>")
+    med = sorted(t for t in tops if t) if stacked else []  # a median of mixed series would mean nothing
+    if med:
+        mv = med[len(med) // 2] if len(med) % 2 else (med[len(med) // 2 - 1] + med[len(med) // 2]) / 2
+        bars.append(f"<line x1='{L}' x2='{W - R}' y1='{y(mv):.1f}' y2='{y(mv):.1f}' class='med'/>"
+                    f"<text x='{W - R}' y='{y(mv) - 4:.1f}' class='ml'>median {mv:.1f} {unit}</text>")
+    every = max(1, n // 8)
+    ticks = sorted({0, n - 1} | {j for j in range(0, n, every) if n - 1 - j >= every / 2}) if n else []
+    xl = [f"<text x='{L + slot * (j + 0.5):.1f}' y='{H - 8}' class='xl'>#{j + 1}</text>" for j in ticks]
+    legend = "".join(f"<span class='bk-lg'><i class='{css}'></i>{E(label)}</span>" for key, label, css in series
+                     if any(r.get(key) is not None for r in rows))
+    return (f"<figure class='bk-chart'><figcaption><b>{E(title)}</b>{legend}</figcaption>"
+            f"<svg viewBox='0 0 {W} {H}' role='img' aria-label='{E(title)}'>"
+            f"<line x1='{L}' x2='{L}' y1='{T}' y2='{T + ph}' class='ax'/><line x1='{L}' x2='{W - R}' y1='{T + ph}' y2='{T + ph}' class='ax'/>"
+            + "".join(g) + "".join(bars) + "".join(xl) + f"<text x='8' y='{T + ph / 2:.0f}' class='yu' transform='rotate(-90 8 {T + ph / 2:.0f})'>{E(unit)}</text></svg></figure>")
+
+
 def metrics_html() -> str:
     m = metrics()
     if not m["exchanges"]:
@@ -900,29 +1075,44 @@ def metrics_html() -> str:
     def row(name, st, unit, nd=1):
         return (f"<tr><td>{name}</td><td>{st['n']}</td><td>{_fmt(st['median'], unit, nd)}</td><td>{_fmt(st['p90'], unit, nd)}</td>"
                 f"<td>{_fmt(st['mean'], unit, nd)}</td><td>{_fmt(st['min'], unit, nd)}</td><td>{_fmt(st['max'], unit, nd)}</td></tr>")
-    tot = [x["total"] for x in m["rows"] if x["total"] is not None]
-    w, hgt = 640, 90
-    bars = ""
-    if tot:
-        mx = max(tot) or 1
-        bw = w / len(tot)
-        bars = "".join(f"<rect x='{j * bw + 1:.1f}' y='{hgt - v / mx * (hgt - 6):.1f}' width='{max(bw - 2, 1):.1f}' height='{v / mx * (hgt - 6):.1f}' rx='2'><title>#{j + 1}: {v:.1f} s</title></rect>"
-                       for j, v in enumerate(tot))
+    rows = m["rows"][-60:]  # the last 60 exchanges; the tables below keep every statistic
+    tl = [{"when": x["when"], "first": x["first"], "write": (x["total"] - x["first"]) if x["total"] is not None and x["first"] is not None else None,
+           "total": x["total"] if x["first"] is None else None} for x in rows]
+    tp = [{"when": x["when"], "pre": (x["pt"] / x["first"]) if x["pt"] and x["first"] else None,
+           "wr": (x["ct"] / (x["total"] - x["first"])) if x["ct"] and x["total"] and x["first"] is not None and x["total"] > x["first"] else None} for x in rows]
+    tots = sorted(x["total"] for x in rows if x["total"] is not None)
+    cap = tots[int(0.95 * (len(tots) - 1))] * 1.15 if len(tots) >= 8 else None  # one slow outlier must not flatten the rest
+    def kpi(v, label, sub=""):
+        return f"<div class='bk-kpi'><b>{v}</b><span>{E(label)}</span>{f'<small>{E(sub)}</small>' if sub else ''}</div>"
+    fs, rs, ws = m["first_token_s"], m["response_s"], m["write_tok_s"]
+    verified = m["hash_ok"] + m["hash_bad"]
+    tiles = ("<div class='bk-kpis'>"
+             + kpi(m["exchanges"], "exchanges", f"{m['sessions']} sessions")
+             + kpi(_fmt(fs["median"]), "first token", f"median · p90 {_fmt(fs['p90'])}")
+             + kpi(_fmt(rs["median"]), "response", f"median · p90 {_fmt(rs['p90'])}")
+             + kpi(_fmt(ws["median"], "tok/s", 2), "writing", "median")
+             + kpi(f"{m['hash_ok']}/{verified}" if verified else "—", "answers match receipt", f"{m['hash_missing']} without receipt")
+             + "</div>")
     recent = "".join(f"<tr><td>{E(x['when'])}</td><td>{_fmt(x['first'])}</td><td>{_fmt(x['total'])}</td><td>{x['src'] or '—'}</td>"
                      f"<td>{x['pt'] or '—'}+{x['ct'] or '—'}</td><td>{'✓' if x['hash'] else ('✗' if x['hash'] is False else '—')}</td>"
                      f"<td>{E(x['q'])}</td></tr>" for x in reversed(m["rows"][-25:]))
     days = " · ".join(f"{d}: {c}" for d, c in sorted(m["per_day"].items()))
     ch, cm = commitment(HISTORY), commitment(MEMORY)
-    proofs = (f"<div class='bk-card'><b>Commitments</b> (shareable; reveal no content) · .history: {ch['records']} records, "
-              f"Merkle root <span class='bk-mono'>{ch['merkle_root']}</span>, CID <span class='bk-mono'>{ch['file_cid']}</span>"
-              f" · .memory: {cm['records']} notes, root <span class='bk-mono'>{cm['merkle_root']}</span></div>")
-    return (f"<div class='bk-card'><b>{m['exchanges']} exchanges · {m['sessions']} sessions</b> · answer hash matches its receipt "
-            f"in {m['hash_ok']}, differs in {m['hash_bad']}, no receipt in {m['hash_missing']} · per day: {E(days)}</div>"
+    val = lambda v: f"<span class='bk-mono'>{E(str(v))}</span>" if v else "<i>— (empty)</i>"
+    proofs = ("<div class='bk-card bk-commit'><b>Commitments</b> <span class='bk-dimb'>(shareable; they reveal no content)</span><dl>"
+              f"<dt>.history</dt><dd>{ch['records']} records</dd>"
+              f"<dt>Merkle root</dt><dd>{val(ch['merkle_root'])}</dd>"
+              f"<dt>CID</dt><dd>{val(ch['file_cid'])}</dd>"
+              f"<dt>.memory</dt><dd>{cm['records']} notes</dd>"
+              f"<dt>Merkle root</dt><dd>{val(cm['merkle_root'])}</dd></dl></div>")
+    return (tiles
+            + _chart(tl, [("first", "waiting for the first token", "s1"), ("write", "writing the answer", "s2"), ("total", "total (no first-token time)", "s3")],
+                     "s", f"response time per exchange{' (last 60)' if len(m['rows']) > 60 else ''}", stacked=True, cap=cap)
+            + _chart(tp, [("pre", "prompt reading (prefill)", "s1"), ("wr", "writing", "s2")], "tok/s", "throughput per exchange")
+            + f"<div class='bk-note'>per day: {E(days)} · hover a column for its values</div>"
             "<table class='bk-t'><tr><th>measure</th><th>n</th><th>median</th><th>p90</th><th>mean</th><th>min</th><th>max</th></tr>"
             + row("time to first token (from Send)", m["first_token_s"], "s") + row("response time (from Send)", m["response_s"], "s")
             + row("prompt reading (prefill)", m["prefill_tok_s"], "tok/s", 2) + row("writing", m["write_tok_s"], "tok/s", 2) + "</table>"
-            f"<div class='bk-note'>response time per exchange, oldest → newest (hover for the value)</div>"
-            f"<svg class='bk-spark' viewBox='0 0 {w} {hgt}' width='100%' height='{hgt}' preserveAspectRatio='none'>{bars}</svg>"
             "<div class='bk-note'>Times are measured from the press of Send where recorded (ui, 0.0.7+); older exchanges use the "
             "receipt's gateway times. Prefill = prompt tokens ÷ time to first token; writing = completion tokens ÷ the rest.</div>"
             "<table class='bk-t'><tr><th>sent</th><th>first token</th><th>answered</th><th>source</th><th>tokens</th><th>hash</th><th>question</th></tr>"
@@ -998,10 +1188,9 @@ def _clip_li(text: str, item, lead: bool = False) -> str:
     return f"<li class='bk-pend'><span class='bk-play1 bk-dim'>·</span><span class='bk-line'>{E(text)}</span><span class='bk-dur'>rendering</span></li>"
 
 
-def intro_html(canon: Canon) -> str:
-    """Savante reads herself to a new participant: chapters from her canon; whatever is rendered plays now."""
+def _chapters_html(chapters: list, lead_n: int = 0) -> tuple:
+    """(html, ready, total) for a list of chapters: whatever is rendered plays now."""
     import speak
-    chapters = speak.intro_chapters(CANON, canon.persona, canon.card)
     total = sum(len(x) for _, x in chapters)
     ready, parts = 0, []
     for n, (title, sents) in enumerate(chapters, 1):
@@ -1010,20 +1199,47 @@ def intro_html(canon: Canon) -> str:
         ready += k
         secs = sum((i["seconds"] or 0) for i in items if i)
         state = f"{secs / 60:.1f} min" if k == len(sents) else f"{k}/{len(sents)} ready"
-        nlead = len(speak.speech(canon.card.get("description") or "")) if n == 1 else 0
+        nlead = lead_n if n == 1 else 0
         lis = "".join(_clip_li(t, i, j < nlead) for j, (t, i) in enumerate(zip(sents, items)))
         play = "<button type='button' class='bk-play1' data-bk='all' data-scope='details'>▶ chapter</button>" if k else ""
         parts.append(f"<details class='bk-chap bk-voice'><summary><span class='bk-cn'>{n}</span><b>{E(title)}</b>"
                      f"<span class='bk-dur'>{state}</span>{play}</summary><ol class='bk-vlist'>{lis}</ol></details>")
-    if ready < total:
+    return "".join(parts), ready, total
+
+
+def export_html(name: str, chapters: list, lead: list = ()) -> str:
+    """⤓ <name>.opus: the whole set as one file, offered only when it is complete and current."""
+    import speak
+    st = speak.export_state(name, ([("Voice examples", list(lead))] if lead else []) + list(chapters))
+    if st["current"]:
+        f = st["file"]
+        return (f"<a class='bk-export' download='{E(name)}.opus' href='/file={E(str(f))}' title='Ogg Opus, one chapter mark per chapter'>"
+                f"⤓ {E(name)}.opus <small>{f.stat().st_size / 1e6:.1f} MB</small></a>")
+    return f"<span class='bk-export off' title='an export is complete or it is not made'>⤓ {E(name)}.opus · {st['ready']}/{st['total']} rendered</span>"
+
+
+def intro_html(canon: Canon) -> str:
+    """Savante reads herself to a new participant: chapters from her canon; whatever is rendered plays now."""
+    import speak
+    chapters = speak.intro_chapters(CANON, canon.persona, canon.card)
+    body, ready, total = _chapters_html(chapters, len(speak.speech(canon.card.get("description") or "")))
+    reading = speak.reading_chapters()
+    rbody, rready, rtotal = _chapters_html(reading)
+    sets = speak.export_sets(CANON, canon.persona, canon.card)
+    if ready + rready < total + rtotal or not all(speak.export_state(n, ([("Voice examples", l)] if l else []) + c)["current"] for n, (l, c) in sets.items()):
         speak.render_intro_async(CANON, canon.persona, canon.card)
     note = "" if ready == total else f" · {ready}/{total} sentences rendered so far — refresh the page for more"
+    rnote = "" if rready == rtotal else f" · {rready}/{rtotal} rendered so far"
     return (f"<div class='bk-h'>introduction — Savante reads herself to a new participant</div>"
             f"<div class='bk-intro'><div class='bk-vbar'><button type='button' class='bk-playall' data-bk='all' data-scope='.bk-intro'>▶ PLAY THE INTRODUCTION</button>"
-            f"<button type='button' class='bk-stop' data-bk='stop'>■ STOP</button>"
-            f"<span class='bk-vmeta'>{len(chapters)} chapters from her canon (persona, .prompt, explanation, manifesto, Savante.md), read verbatim in her own voice{note}</span></div>"
-            f"<div class='bk-knobs-card' aria-label='voice controls'></div>"
-            + "".join(parts) + "</div>")
+            f"<button type='button' class='bk-stop' data-bk='stop'>■ STOP</button>{export_html('Savante', *sets['Savante'][::-1])}"
+            f"<span class='bk-vmeta'>{len(chapters)} chapters from her canon (persona, .prompt, explanation, manifesto, Savante.md) read verbatim in her own voice, "
+            f"with one note of bankml's own (SCIEN·TIFIC){note}</span></div>" + body + "</div>"
+            + (f"<div class='bk-h'>the reading — Savante reads bankml's thesis, and binary and ternary</div>"
+               f"<div class='bk-intro bk-reading'><div class='bk-vbar'><button type='button' class='bk-playall' data-bk='all' data-scope='.bk-reading'>▶ PLAY THE READING</button>"
+               f"<button type='button' class='bk-stop' data-bk='stop'>■ STOP</button>{export_html('Savante-reading', reading)}"
+               f"<span class='bk-vmeta'>{len(reading)} chapters from TECHNICAL.md, verbatim, the notation read aloud{rnote}</span></div>" + rbody + "</div>"
+               if reading else ""))
 
 
 def voice_html(examples: list, name: str) -> str:
@@ -1049,7 +1265,6 @@ def voice_html(examples: list, name: str) -> str:
             f"<button type='button' class='bk-playall' data-bk='all' data-scope='.bk-voice'>▶ PLAY ALL</button>"
             f"<button type='button' class='bk-stop' data-bk='stop'>■ STOP</button>"
             f"<span class='bk-vmeta'>{k}/{len(lines)} ready · {total:.0f} s · {who} · said sav-ont</span></div>"
-            f"<div class='bk-knobs-card' aria-label='voice controls'></div>"
             f"<ol class='bk-vlist'>{''.join(_clip_li(t, i) for t, i in zip(lines, items))}</ol></div>")
 
 
@@ -1125,7 +1340,12 @@ def aivatar_html(canon: Canon) -> str:
 <div class='bk-h'>ledgered files</div>
 <table class='bk-ft'><tr><th>facet</th><th>file</th><th>bytes</th><th>sha256</th></tr>{files}</table>
 <div class='bk-foot'>portrait: {E(str(img_label or 'none'))} · the canon is read-only · every value above is re-derived from its files · nothing here mints</div>
-</div></div></div></div>"""
+</div>
+<div class='bk-kdock' aria-label='voice controls'>
+<div class='bk-kgrip' draggable='true' title='drag to dock: side, top or bottom'><span class='bk-kdots'>⠿</span><b>VOICE</b>
+<span class='bk-ksp'></span><button type='button' data-kd='top' title='dock to the top'>⤒</button><button type='button' data-kd='side' title='dock to the side'>⇥</button><button type='button' data-kd='bottom' title='dock to the bottom'>⤓</button></div>
+<div class='bk-kbody'></div><div class='bk-kresize' title='drag to resize the knobs'></div></div>
+</div></div></div>"""
 
 
 # Gradio 3 has no layout API: this runs once in the page. Drag the side panel's grip to either side of the chat;
@@ -1185,15 +1405,51 @@ LAYOUT_JS = """() => {
   try {
     if (!window.SavanteKnobs) (0, eval)(__KNOBS__);
     // the knobs live in the card and emerge when she starts to speak (mounted then, not before)
-    window.bkEmerge = (from) => {  // only the section that is playing shows its knobs
-      const sec = from && (from.closest('.bk-intro') || from.closest('.bk-voice:not(.bk-chap)'));
-      const holo = (from && from.closest('.bk-holo')) || document;
-      holo.querySelectorAll('.bk-knobs-card').forEach(el => {
-        const here = sec && sec.contains(el);
-        if (here && window.SavanteKnobs) SavanteKnobs.mount(el, 58);
-        el.classList.toggle('bk-emerge', !!here);
-      });
+    // the knob dock: appears when she speaks; side column (vertical stack), top or bottom; dragged, docked, resized
+    const KD = 'bankml-knob-dock-v1';
+    let kd = { dock: 'side', size: 56 }; try { kd = Object.assign(kd, JSON.parse(localStorage.getItem(KD) || '{}')) } catch (e) {}
+    const kdSave = () => { try { localStorage.setItem(KD, JSON.stringify(kd)) } catch (e) {} };
+    const kdLay = (s3) => {
+      s3.classList.remove('kd-side', 'kd-top', 'kd-bottom'); s3.classList.add('kd-on', 'kd-' + kd.dock);
+      const dock = s3.querySelector('.bk-kdock'), body = dock && dock.querySelector('.bk-kbody');
+      if (body && window.SavanteKnobs) SavanteKnobs.mount(body, kd.size, kd.dock === 'side' ? 'column' : 'row');
+      dock.querySelectorAll('[data-kd]').forEach(b => b.classList.toggle('on', b.dataset.kd === kd.dock));
+      requestAnimationFrame(() => s3.style.setProperty('--kdh', (dock.offsetHeight + 12) + 'px'));
     };
+    window.bkEmerge = (from) => { const s3 = from && from.closest('.bk-3d'); if (s3) kdLay(s3) };
+    const kdSet = (s3, where) => { kd.dock = where; kdSave(); kdLay(s3) };
+    document.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('[data-kd]'); if (!b) return;
+      e.preventDefault(); e.stopPropagation(); kdSet(b.closest('.bk-3d'), b.dataset.kd);
+    }, true);
+    // drag the grip: three drop zones over the card — top, side, bottom
+    let kzones = [];
+    const kclear = () => { kzones.forEach(z => z.remove()); kzones = [] };
+    document.addEventListener('dragstart', (e) => {
+      const g = e.target.closest && e.target.closest('.bk-kgrip'); if (!g) return;
+      const s3 = g.closest('.bk-3d'), r = s3.getBoundingClientRect(); e.dataTransfer.setData('text/plain', 'bk-kdock'); e.dataTransfer.effectAllowed = 'move';
+      const band = Math.min(90, r.height * 0.18);
+      for (const [where, box] of [['top', [r.left, r.top, r.width, band]], ['bottom', [r.left, r.bottom - band, r.width, band]],
+                                  ['side', [r.right - Math.min(160, r.width * 0.25), r.top + band + 6, Math.min(160, r.width * 0.25), r.height - 2 * band - 12]]]) {
+        const z = document.createElement('div'); z.className = 'bk-kzone'; z.textContent = 'dock ' + where;
+        Object.assign(z.style, { left: box[0] + 'px', top: box[1] + 'px', width: box[2] + 'px', height: box[3] + 'px' });
+        z.addEventListener('dragover', ev => { ev.preventDefault(); z.classList.add('hot') });
+        z.addEventListener('dragleave', () => z.classList.remove('hot'));
+        z.addEventListener('drop', ev => { ev.preventDefault(); kclear(); kdSet(s3, where) });
+        document.body.append(z); kzones.push(z);
+      }
+    });
+    document.addEventListener('dragend', (e) => { if (e.target.closest && e.target.closest('.bk-kgrip')) kclear() });
+    // resize: drag the corner to scale the knobs (40–96 px)
+    document.addEventListener('pointerdown', (e) => {
+      const h = e.target.closest && e.target.closest('.bk-kresize'); if (!h) return;
+      e.preventDefault(); h.setPointerCapture(e.pointerId);
+      const s3 = h.closest('.bk-3d'), x0 = e.clientX, y0 = e.clientY, s0 = kd.size;
+      const mv = (ev) => { const d = kd.dock === 'side' ? ev.clientX - x0 : ev.clientY - y0;
+        const n = Math.round(Math.max(40, Math.min(96, s0 + d / (kd.dock === 'side' ? 1.5 : 3)))); if (n !== kd.size) { kd.size = n; kdLay(s3) } };
+      h.addEventListener('pointermove', mv);
+      h.addEventListener('pointerup', () => { h.removeEventListener('pointermove', mv); kdSave() }, { once: true });
+    });
   } catch (e) { console.warn('voice knobs', e) }
   if (!window.bkPlayer) window.bkPlayer = (() => {
     let ctx = null, lfo, depth, delay, pre, vol, cur = null, queue = [];
@@ -1267,6 +1523,10 @@ LAYOUT_JS = """() => {
       if (act === 'lead') return run(b, [...h.querySelectorAll('.bk-lead-line audio')]);   // who she is, then it ends
       if (act === 'all' && b.dataset.scope === 'details') return run(b, [...b.closest('details').querySelectorAll('audio')]);
       if (act === 'all' && b.dataset.scope === '.bk-voice') return run(b, exAll(h));
+      if (act === 'all' && b.dataset.scope === '.bk-reading') {   // the reading alone; resumes where it was left
+        const all = [...h.querySelectorAll('.bk-reading audio')], k = lastDone ? all.indexOf(lastDone) : -1;
+        return run(b, all.slice(k >= 0 && k < all.length - 1 ? k + 1 : 0));
+      }
       if (act === 'all') {                          // the introduction: continue after what was heard, on until stopped
         const all = introAll(h).concat(exAll(h)), k = lastDone ? all.indexOf(lastDone) : -1;
         return run(b, all.slice(k >= 0 && k < all.length - 1 ? k + 1 : 0));
@@ -1412,7 +1672,8 @@ def build(canon: Canon, mode: str):
                 if mem:
                     system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
                 st = serve_status()
-                qwen3 = "qwen3" in json.dumps(st).lower() or "bonsai" in json.dumps(st).lower()
+                arch = str((st.get("verified") or {}).get("arch") or "").lower()
+                qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
                 msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3)
                 text, rc = "", {}
                 try:
@@ -1526,6 +1787,137 @@ def build(canon: Canon, mode: str):
         for e in (ev, ev2):
             e.then(history_html, None, hall).then(metrics_html, None, mt).then(lambda: show(10 ** 9), None, outs)
         demo.load(lambda: (history_html(), metrics_html(), memory_html()), None, [hall, mt, mview])
+        with gr.Tab("Models"):
+            import models as MD
+            gr.Markdown("**Models.** Savante speaks through one carrier at a time: `bankml serve` in front of llama.cpp, verified "
+                        "before it answers (the header guard, then the file's sha256 against its FORK.json pin). Bring models in "
+                        "from the catalogue, from any Hugging Face GGUF by URL, or from Ollama. Every file is hashed as it arrives "
+                        "and kept only if it equals the sha256 its publisher lists. **Open source only**: a model whose licence is "
+                        "not open source (Gemma, Llama, …) is refused.")
+            mlist = gr.HTML(models_html())
+            with gr.Row():
+                use_dd = gr.Dropdown(installed_choices(), label="installed models", scale=3)
+                use_btn = gr.Button("Use this model", variant="primary", scale=1)
+            then_use = gr.Checkbox(value=True, label="switch to a model when its import finishes")
+            mjob = gr.HTML(job_html())
+            with gr.Accordion("Catalogue: open-source models, pinned to their publishers' sha256", open=True):
+                with gr.Row():
+                    cat_dd = gr.Dropdown(catalog_choices(), label="catalogue", scale=3)
+                    cat_btn = gr.Button("Import", scale=1)
+            with gr.Accordion("Hugging Face: any GGUF by URL", open=False):
+                with gr.Row():
+                    hf_url = gr.Textbox(label="URL", placeholder="https://huggingface.co/OWNER/REPO  or  …/blob/main/FILE.gguf", scale=3)
+                    hf_look = gr.Button("Look up", scale=1)
+                hf_info = gr.HTML()
+                hf_state = gr.State({})
+                with gr.Row():
+                    hf_dd = gr.Dropdown([], label="GGUF file", scale=3)
+                    hf_btn = gr.Button("Import", scale=1)
+            with gr.Accordion("Ollama: search ollama.com, or adopt what the local Ollama holds", open=False):
+                with gr.Row():
+                    ol_q = gr.Textbox(label="search ollama.com", placeholder="qwen3, granite, smollm …", scale=3)
+                    ol_go = gr.Button("Search", scale=1)
+                ol_res = gr.HTML()
+                with gr.Row():
+                    ol_dd = gr.Dropdown([], label="model", scale=2)
+                    ol_tag = gr.Dropdown([], label="tag", scale=2)
+                    ol_btn = gr.Button("Import", scale=1)
+                loc = [f"{m['name']}:{m['tag']}" for m in MD.ollama_local()]
+                with gr.Row():
+                    loc_dd = gr.Dropdown(loc, label=f"in the local Ollama ({len(loc)}; adopted by link, no download)", scale=3)
+                    loc_btn = gr.Button("Adopt", scale=1)
+
+            def _busy():
+                return PENDING["t0"] is not None
+
+            def _watch(started):
+                if not started:
+                    yield job_html() if MD.JOB["state"] == "running" else "<div class='bk-card bk-bad'>another import or switch is running; wait for it</div>", models_html(), gr.update(), carrier_md()
+                    return
+                while MD.JOB["state"] == "running":
+                    yield job_html(), models_html(), gr.update(), carrier_md()
+                    time.sleep(1)
+                yield job_html(), models_html(), gr.update(choices=installed_choices()), carrier_md()
+
+            def _import_then(spec_fn, use):
+                def run():
+                    r = MD.import_spec(spec_fn())
+                    return MD.switch(r["file"], _busy) if use else r
+                return run
+
+            def do_use(f):
+                if not f:
+                    yield "<div class='bk-card bk-bad'>choose an installed model</div>", models_html(), gr.update(), carrier_md()
+                    return
+                yield from _watch(MD.start_job(f"switching to {f}", MD.switch, f, _busy))
+
+            def do_cat(c, use):
+                if not c:
+                    yield "<div class='bk-card bk-bad'>choose a catalogue model</div>", models_html(), gr.update(), carrier_md()
+                    return
+                cid = c.split(" — ")[0]
+                yield from _watch(MD.start_job(f"importing {cid}", _import_then(lambda: MD.spec_catalog(cid), use)))
+
+            def do_hf_look(url):
+                try:
+                    r = MD.hf_resolve(url)
+                except Exception as e:  # noqa: BLE001
+                    return f"<div class='bk-card bk-bad'>{E(str(e))}</div>", {}, gr.update(choices=[], value=None)
+                lic = r["licence"] if isinstance(r["licence"], str) else ", ".join(r["licence"]) or "none stated"
+                if not r["open"]:
+                    return (f"<div class='bk-card bk-bad'><b>{E(r['repo'])}</b>: licence <b>{E(lic)}</b> is not open source; bankml does not "
+                            "import it.</div>", {}, gr.update(choices=[], value=None))
+                ch = [f"{f['file']} · {f['bytes'] / 1e9:.2f} GB · {MD.fits(f['bytes'])[1]}" for f in r["files"]]
+                pick = next((c for c in ch if c.split(" · ")[0] == r["chosen"]), ch[0] if len(ch) == 1 else None)
+                return (f"<div class='bk-card'><b>{E(r['repo'])}</b> @ <span class='bk-mono'>{r['revision'][:12]}</span> · licence "
+                        f"<span class='bk-okb'>{E(lic)}</span> · {len(ch)} GGUF files, each pinned to the repository's LFS sha256</div>",
+                        r, gr.update(choices=ch, value=pick))
+
+            def do_hf(r, f, use):
+                if not r or not f:
+                    yield "<div class='bk-card bk-bad'>look up a repository and choose a file</div>", models_html(), gr.update(), carrier_md()
+                    return
+                file = f.split(" · ")[0]
+                yield from _watch(MD.start_job(f"importing {file}", _import_then(lambda: MD.spec_hf(r, file), use)))
+
+            def do_ol_search(q):
+                try:
+                    res = MD.ollama_search(q)
+                except Exception as e:  # noqa: BLE001
+                    return f"<div class='bk-card bk-bad'>{E(str(e))}</div>", gr.update(choices=[])
+                rows = "".join(f"<tr><td><b>{E(x['name'])}</b></td><td>{E(', '.join(x['sizes']))}</td><td>{E(x['pulls'])}</td><td>{E(x['description'][:160])}</td></tr>"
+                               for x in res[:20])
+                return ("<table class='bk-t'><tr><th>model</th><th>sizes</th><th>pulls</th><th>description</th></tr>" + rows + "</table>"
+                        "<div class='bk-note'>The licence is read from each model's registry layer at import; one that is not open source is refused.</div>",
+                        gr.update(choices=[x["name"] for x in res[:20]], value=None))
+
+            def do_ol_tags(name):
+                if not name:
+                    return gr.update(choices=[], value=None)
+                try:
+                    tags = [t for t in MD.ollama_tags(name) if "cloud" not in t]
+                except Exception:  # noqa: BLE001
+                    tags = ["latest"]
+                return gr.update(choices=tags, value=next((t for t in tags if re.fullmatch(r"[0-9.]+[mb]", t)), tags[0] if tags else None))
+
+            def do_ol(name, tag, use):
+                if not name or not tag:
+                    yield "<div class='bk-card bk-bad'>choose a model and a tag</div>", models_html(), gr.update(), carrier_md()
+                    return
+                yield from _watch(MD.start_job(f"importing {name}:{tag}", _import_then(lambda: MD.spec_ollama(MD.ollama_resolve(f"{name}:{tag}")), use)))
+
+            outs_m = [mjob, mlist, use_dd, carrier]
+            use_btn.click(do_use, use_dd, outs_m)
+            cat_btn.click(do_cat, [cat_dd, then_use], outs_m)
+            hf_look.click(do_hf_look, hf_url, [hf_info, hf_state, hf_dd])
+            hf_btn.click(do_hf, [hf_state, hf_dd, then_use], outs_m)
+            ol_go.click(do_ol_search, ol_q, [ol_res, ol_dd])
+            ol_q.submit(do_ol_search, ol_q, [ol_res, ol_dd])
+            ol_dd.change(do_ol_tags, ol_dd, ol_tag)
+            ol_btn.click(do_ol, [ol_dd, ol_tag, then_use], outs_m)
+            def do_loc(nt, use):
+                yield from do_ol(*(nt or ":").rsplit(":", 1), use)
+            loc_btn.click(do_loc, [loc_dd, then_use], outs_m)
         with gr.Tab("Agents"):
             import agents
             SAV = "Savante (the canon · read-only template)"
@@ -1793,9 +2185,14 @@ def main():
         demo.queue(concurrency_count=4)
     except TypeError:
         demo.queue(default_concurrency_limit=4)
+    import models
+    if a.mode == "interact" and "error" in serve_status() and os.environ.get("BANKML_FIRST_RUN", "1") != "0":
+        # first run (or the carrier is down): bring in Bonsai-8B if absent, verify it, start it; the UI opens meanwhile
+        models.start_job("first run: Bonsai-8B as the carrier", models.first_run, lambda: PENDING["t0"] is not None)
+        print("bankml serve not reachable: starting the first-run carrier in the background (Models tab shows progress)")
     import speak
     speak.VOICE_DIR.mkdir(parents=True, exist_ok=True)
-    demo.launch(server_name=a.host, server_port=a.port, show_api=False, allowed_paths=[str(speak.VOICE_DIR)])
+    demo.launch(server_name=a.host, server_port=a.port, show_api=False, allowed_paths=[str(speak.VOICE_DIR), str(speak.EXPORT_DIR)])
 
 
 if __name__ == "__main__":

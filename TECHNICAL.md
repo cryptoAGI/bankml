@@ -344,6 +344,46 @@ local chain (deploy, simulate, refuse without the role, mint, read back, refuse 
 load again). The contract is not deployed on a public chain, and its audit is not yet cleared: a real mint waits for
 both, and for a wallet with the minter role.
 
+### III.8 Can a binary computer perform a ternary operation?
+
+Yes. It does so exactly, because a trit is stored in bits and the operation on it is ordinary integer arithmetic. It
+cannot store a trit natively, so it pays for the encoding in space.
+
+**Information.** A trit carries log₂ 3 ≈ 1.585 bits. A binary memory must spend a whole number of bits on it (two,
+leaving one of the four codes unused) or pack several trits into one integer. Since 3⁵ = 243 ≤ 256, five trits fit in
+one byte (1.6 bits per trit), within 1 % of the bound. `Q2_0_g64` takes the simple route. It uses two bits per weight
+plus a 16-bit scale per 64 weights, 2.25 bits per weight in all, and the fourth code (+2) is legal but never occurs
+in Ternary-Bonsai-8B (§III.5). The cost is about 0.66 bits per weight over the information bound, which buys decoding
+by one shift and one mask.
+
+**Operation.** A weight *w* ∈ {−1, 0, +1} times an activation *x* is not really a multiplication. It is a selection:
+add *x*, skip it, or subtract it. The ternary dot product is therefore Σ_{w=+1} *x* − Σ_{w=−1} *x*, the same signed
+sum as the binary one (§III.2) with a third case that contributes nothing. Binary hardware can compute it in any of
+several exact ways:
+
+- sign-and-add, in which the sign of the code negates *x* and the zero code masks it out;
+- two bit-planes, a "+1" mask and a "−1" mask, each a popcount or masked sum, subtracted;
+- an offset code, which is bankml's. The stored code is *c* = *w* + 1 ∈ {0, 1, 2}, so Σ *w*·*x* = Σ *c*·*x* − Σ *x*.
+  The AVX2 kernel multiplies the unsigned codes by the signed activation bytes with `vpmaddubsw`, and then subtracts
+  Σ *x*. That sum depends only on the activation, so it is computed once per token and shared by every weight row
+  (`q2_0.rs`).
+
+Every path is integer arithmetic, so the result is not an approximation of the ternary operation; it *is* the ternary
+operation, and the oracle confirms it to the bit on 762 of 762 products (§IV.2).
+
+**What native ternary would add.** Balanced-ternary machines have been built. Setun (Moscow State University, 1958)
+used {−1, 0, +1} natively, and it is the precedent for the idea. A ternary cell would store 1.585 bits of information
+where a binary cell stores one, and ternary logic makes negation free. Neither is a question of *possibility*: binary
+and ternary machines compute the same functions, and each can simulate the other with constant overhead. The choice is
+one of cost. On a binary CPU, what limits a ternary model is memory bandwidth (§I.1, §IV.5). Packing closer to 1.585
+bits per weight would therefore be the next ternary speed-up. Native ternary gates would not. bankml keeps 2 bits
+because it must read the reference's file format bit for bit.
+
+**The binary choice, compared.** `Q1_0` spends 1.125 bits per weight and has no zero: every weight votes, + or −.
+`Q2_0_g64` spends 2.25 bits and lets a weight abstain. In this application the extra state gives better answers
+(PERFORMANCE.md, "Ternary vs 1-bit"). Doubling the bits need not double the time, and on this CPU it does not. Once the
+missing kernel is written, both formats run close to the rate at which memory can deliver their weights (§IV.5).
+
 ## IV. Results and testable propositions
 
 ### IV.1 Q1_0
@@ -387,7 +427,15 @@ Since 0.0.6 bankml answers, through the reference (phase P0). `bankml serve` ver
 engine to it, and every answer carries a receipt. Its own transformer forward pass (normalization, rotary embedding,
 attention with a quantized key–value cache, the feed-forward block, sampling) is phase P3. On the laptop a Savante
 turn under her roughly 300-token system prompt took 125 s, 113 s of it prefill at 2.8 tokens per second in the
-reference. That is the wall P3 and the prefill kernels are aimed at. The propositions this report makes testable are
+reference. That is the wall P3 and the prefill kernels are aimed at.
+
+The gate does not depend on the format. The guard reads any mainline type (it names all of ggml's standard types,
+from `Q4_0` and the K-quants to the `IQ` family and `MXFP4`), and no architecture is allow-listed. So a standard
+Qwen3, SmolLM or Granite GGUF at `Q4_K_M` or `Q8_0` is served on exactly the terms of a 1-bit Bonsai: it is guarded,
+pinned to its publisher's sha256, and carries a receipt. Since 0.1.5 the verification reports the architecture and the
+weight types it checked. The importer (`ui/models.py`) brings such files in, and admits only open-source licences.
+Only `Q1_0` and `Q2_0_g64` have bankml kernels proven against the oracle; other formats are answered by the reference
+engine alone, which is what P0 means. The propositions this report makes testable are
 stated at the kernel level:
 
 - **P1.** A low-bit kernel proven bit-exact against the compiled reference can match its speed without giving up

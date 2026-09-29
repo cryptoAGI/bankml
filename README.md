@@ -134,9 +134,18 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   (pgvector/pgvectorscale) or **load** a published one back, verified byte for byte. Savante's canon is never written.
 - **iNFT**: plan and simulate an `iNFT_7857` mint from the agent's THOT bundle, get the unsigned transaction (you sign
   it), mint on a local devnet, or load an agent back from a token, verified back to the minted generation.
-- **Savante speaks**: in the card, her introduction for new participants (seven chapters from her canon, about 26
-  minutes) and her voice examples, pre-rendered in her voice, with PLAY ALL, per chapter, and from any line. DreamKnob
-  **SPEED** and **FM** knobs in the settings panel. View mode on the LAN plays the introduction too.
+- **Models, imported without friction**: Bonsai-8B arrives by itself on first run. The **Models** tab (or `python3
+  ui/models.py`) imports from a curated catalogue (Bonsai 1-bit and ternary, Qwen3 0.6B–8B, SmolLM2/3, Granite), from
+  any Hugging Face GGUF by URL, or from Ollama (search ollama.com, or adopt a local model with no download). Each file
+  is kept only if its sha256 equals the publisher's, then guarded and pinned, and the carrier switches with rollback.
+  Open-source licences only: Gemma and Llama are refused. Standard formats (Q4_K_M, Q8_0, …) play through the same
+  verified gateway as bankml's 1-bit and ternary models.
+- **Savante speaks**: in the card, her introduction for new participants (her canon, plus a note on SCIEN·TIFIC's
+  2²⁵⁶ − 1 as the measure of accuracy), **the reading** (bankml's thesis and *can a binary computer perform a ternary
+  operation?* from TECHNICAL.md), and her voice examples, all pre-rendered in her own voice and committed to this
+  repository. There is PLAY ALL, per chapter, and from any line, and **⤓ Savante.opus** / **⤓ Savante-reading.opus**
+  export each set as one file with chapter marks. DreamKnob **SPEED**, **FM**, **GAIN** and **VOLUME** appear in a
+  dockable, resizable VOICE dock when she speaks. View mode on the LAN plays and exports them too.
 - **The aivatar**: click the portrait for the agent's card, with every aspect of its persona, its verifiable identity
   (hashes, doctrine root, THOT) and its ledgered files. Choose the portrait, or upload one for a derived agent.
 - Panels resize from a refined corner handle. The side panel drags to either side (drop zones appear) or swaps with ⇄.

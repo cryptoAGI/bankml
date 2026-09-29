@@ -25,6 +25,7 @@ kernel A/Bs and both whole-model decode budgets. It stops at the first failure.
 | `gguf_guard.py`, `test_gguf_guard.py` | the Python guard the Rust one was ported from (vendored from minaiml), and its suite |
 | `test_chain.py` | the iNFT path on a throwaway anvil devnet: deploy iNFT_7857, simulate, refusals, unsigned tx, mint, read-back, load, lineage |
 | `test_connectors.py` | the PostgreSQL connector against a throwaway PostgreSQL 16 cluster with pgvector: publish, verified load, tamper refusal, injection as data, THOT generations |
+| `test_models.py` | the model importer against a loopback server and a synthetic GGUF: the sha256 pin (tampered downloads discarded), the open-source licence gate, resume, the guard, Ollama adoption by link, URL and search parsing; with `BANKML_TEST_CARRIER=1`, a real carrier switch and rollback on spare ports |
 | `test_ui.py` | the Savante UI's data layer, offline: CIDs, Merkle commitments, inclusion proofs (and their failures), RAGE search, metrics, `.memory`, and the view server's routes |
 | `guard_agree.py` | runs both guards on every synthetic case and any real file given; exit 0 only if the JSON is identical |
 | `results/<version>.txt` | each release's record |

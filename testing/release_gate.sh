@@ -19,6 +19,7 @@ out=testing/results/$v.txt
   python3 -B testing/test_ui.py | tail -1 | sed 's/^/ui data layer: /'
   python3 -B testing/test_connectors.py | tail -1 | sed 's/^/postgres connector (throwaway cluster): /'
   python3 -B testing/test_chain.py | tail -1 | sed 's/^/iNFT mint and load (throwaway anvil devnet): /'
+  BANKML_TEST_CARRIER=1 python3 -B testing/test_models.py | tail -1 | sed 's/^/model importer (loopback source; carrier on spare ports): /'
   python3 testing/guard_agree.py target/release/bankml $(ls .models/*.gguf 2>/dev/null) | tail -1
   if [ -n "${BANKML_GGML_LIB:-}" ]; then
     for t in oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \

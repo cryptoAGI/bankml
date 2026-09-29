@@ -225,9 +225,12 @@ pub struct Report {
 
 pub fn type_name(t: u32) -> String {
     let n = match t {
-        0 => "F32", 1 => "F16", 2 => "Q4_0", 3 => "Q4_1", 6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0",
-        10 => "Q2_K", 11 => "Q3_K", 12 => "Q4_K", 13 => "Q5_K", 14 => "Q6_K", 30 => "BF16",
-        34 => "TQ1_0", 35 => "TQ2_0", 41 => "Q1_0", 42 => "Q2_0", 142 => "PQ2_0", 143 => "PTQ1_0",
+        // the standard ggml types (ggml.h at b11192), so a report on any common model reads by name
+        0 => "F32", 1 => "F16", 2 => "Q4_0", 3 => "Q4_1", 6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0", 9 => "Q8_1",
+        10 => "Q2_K", 11 => "Q3_K", 12 => "Q4_K", 13 => "Q5_K", 14 => "Q6_K", 15 => "Q8_K",
+        16 => "IQ2_XXS", 17 => "IQ2_XS", 18 => "IQ3_XXS", 19 => "IQ1_S", 20 => "IQ4_NL", 21 => "IQ3_S", 22 => "IQ2_S",
+        23 => "IQ4_XS", 24 => "I8", 25 => "I16", 26 => "I32", 27 => "I64", 28 => "F64", 29 => "IQ1_M", 30 => "BF16",
+        34 => "TQ1_0", 35 => "TQ2_0", 39 => "MXFP4", 41 => "Q1_0", 42 => "Q2_0", 142 => "PQ2_0", 143 => "PTQ1_0",
         _ => return t.to_string(),
     };
     n.into()
@@ -563,6 +566,17 @@ mod tests {
         let r = case("Bonsai-1.7B", &[("a", N, 41), ("b", N, 1)], (128, 18), Engine::Mainline);
         assert_eq!(r.verdict, Verdict::Play);
         assert_eq!(r.types, vec![("F16".to_string(), 1), ("Q1_0".to_string(), 1)]);
+    }
+
+    #[test]
+    fn t10_standard_k_quant_model_plays_on_mainline() {
+        // a common Q4_K_M file (Qwen3, SmolLM, Granite …): K-quant and F32 tensors, no pin-free shortcut —
+        // the guard plays it; whether it answers is then the pin's decision alone
+        let r = case("Qwen3-4B-Instruct", &[("a", N, 12), ("b", N, 14), ("c", N, 0)], (1, 2), Engine::Mainline);
+        assert_eq!(r.verdict, Verdict::Play);
+        assert_eq!(r.types, vec![("F32".to_string(), 1), ("Q4_K".to_string(), 1), ("Q6_K".to_string(), 1)]);
+        assert_eq!(type_name(23), "IQ4_XS");
+        assert_eq!(type_name(40), "40"); // an id without a settled name prints as its number, and still plays
     }
 
     #[test]

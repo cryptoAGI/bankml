@@ -191,13 +191,19 @@ pub struct Verified {
     pub model_sha256: String,
     pub guard: &'static str,
     pub engine: &'static str,
+    /// what was verified, from the header: `general.architecture`, `general.name`, and the tensor types by count
+    pub arch: Option<String>,
+    pub name: Option<String>,
+    pub types: Vec<(String, usize)>,
 }
 
 impl Verified {
     pub fn to_json(&self) -> String {
+        let opt = |s: &Option<String>| s.as_ref().map(|s| gguf::jstr(s)).unwrap_or_else(|| "null".into());
         format!(
-            "{{\"verdict\": \"play\", \"guard\": \"{}\", \"engine\": \"{}\", \"model_sha256\": \"{}\", \"bankml\": \"{VERSION}\"}}",
-            self.guard, self.engine, self.model_sha256
+            "{{\"verdict\": \"play\", \"guard\": \"{}\", \"engine\": \"{}\", \"model_sha256\": \"{}\", \"bankml\": \"{VERSION}\", \"arch\": {}, \"name\": {}, \"types\": {{{}}}}}",
+            self.guard, self.engine, self.model_sha256, opt(&self.arch), opt(&self.name),
+            self.types.iter().map(|(n, c)| format!("{}: {c}", gguf::jstr(n))).collect::<Vec<_>>().join(", ")
         )
     }
 }
@@ -212,7 +218,7 @@ pub fn verify(gguf: &Path, fork_json: &str, engine: gguf::Engine) -> Result<Veri
         Verdict::NeedMore(n) => return Err(format!("guard needs {n} header bytes: file truncated")),
     }
     let model_sha256 = pin(gguf, fork_json)?;
-    Ok(Verified { model_sha256, guard: "play", engine: engine.as_str() })
+    Ok(Verified { model_sha256, guard: "play", engine: engine.as_str(), arch: r.arch, name: r.name, types: r.types })
 }
 
 /// P0→P3: load a guarded, pinned model and answer one chat turn with its receipt.

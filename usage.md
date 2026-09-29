@@ -68,7 +68,43 @@ cargo test --release          # unit + end-to-end tests, offline, a few seconds
 target/release/bankml version
 ```
 
-## 4. Verify the model
+## 4. Get a model (the importer), and verify it
+
+**The easy way.** Start the interact UI (§6). If no `bankml serve` answers, it imports Bonsai-8B on first run in the
+background (a 1.16 GB download, only if absent), verifies it, and starts the carrier. The **Models** tab shows the
+progress. From the command line, the same steps:
+
+```sh
+python3 ui/models.py first-run            # Bonsai-8B: import if absent, pin, verify, start bankml serve + llama-server
+python3 ui/models.py catalog              # the curated catalogue, and whether each fits this machine
+python3 ui/models.py import qwen3-1.7b    # a catalogue id, a Hugging Face URL, or ollama:NAME:TAG
+python3 ui/models.py import https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/blob/main/SmolLM3-Q4_K_M.gguf
+python3 ui/models.py search granite       # search ollama.com
+python3 ui/models.py import ollama:qwen3:0.6b   # the local Ollama already has it: adopted by link, no download
+python3 ui/models.py list                 # what is here, pinned or not, and which one is the carrier
+python3 ui/models.py use Qwen3-0.6B-Q8_0.gguf   # switch the carrier (rolls back if the new model fails)
+```
+
+The **Models** tab offers the same in the UI:
+- installed models, with **Use this model**;
+- the **catalogue**: Bonsai-8B 1-bit (the default), Ternary-Bonsai-8B, Bonsai-4B and 1.7B, Qwen3 0.6B / 1.7B / 4B / 8B,
+  SmolLM2-1.7B, SmolLM3-3B and Granite-3.3-2B;
+- **Hugging Face**: paste any repository or file URL, look it up, and choose a GGUF;
+- **Ollama**: search ollama.com and pick a model and tag, or adopt what the local Ollama already holds.
+
+**How an import is trusted.**
+- Every file streams to disk and is hashed on the way. It is kept only if its sha256 equals the one its publisher
+  lists: the Hugging Face repository's LFS sha256 at the resolved revision, or the Ollama registry's layer digest.
+- The catalogue records those values too, and an import refuses if the repository no longer agrees.
+- `bankml guard` must then say play, and a FORK.json pin is written to `~/.local/share/bankml/forks/`. From then on,
+  `bankml serve` verifies the file against that pin before every start.
+- An interrupted download resumes.
+- **Open source only.** The licence is read from the repository (Hugging Face) or from the registry's licence layer
+  (Ollama). A model that is not open source is refused, not merely flagged. That includes Gemma and Llama.
+- **The machine's limits are respected.** An import that would leave less than 1.5 GB free on disk, or whose weights
+  exceed about 70 % of RAM, is refused with the numbers. On a 6 GB laptop that rules out Qwen3-8B at Q4_K_M (5 GB).
+
+**By hand**, the same checks:
 
 ```sh
 mkdir -p .models
@@ -124,12 +160,20 @@ panel (width and height) and the chat (height). Your layout is remembered in you
 **The aivatar.** Click the agent's portrait in the side panel to open its card. The card holds the name, mantra and
 description; the oath, office and beliefs; the verifiable identity (persona sha256, doctrine root, THOT identity and
 generation, the ledger check); every aspect of the persona in collapsible sections; and every ledgered file with its
-sha256. Close it with ✕ or by clicking outside. **In the card, Savante speaks.** **Introduction**: seven chapters she reads to a new participant, verbatim from her
+sha256. Close it with ✕ or by clicking outside. **In the card, Savante speaks.** **Introduction**: eight chapters she reads to a new participant. Seven are verbatim from her
 canon: who she is, her oath, what she believes, her system prompt, why she exists, the manifesto, and `Savante.md`.
-**▶ PLAY THE INTRODUCTION** plays all of it (about 26 minutes). **▶ chapter** plays one, and a sentence's ▶ plays from
-there. **Voice examples**: her 14 statements, with **PLAY ALL**. Every clip is in her voice: the house stand-in
-`en-gb-x-rp+jaimla` at 168 wpm, which is what `listen.html` plays for her; her full layered voice renders on the house
-render host. Her name is said sav-ont. The card also links to her public places: the Hugging Face Space, the sAGI
+One is bankml's own note, `ui/voice/readings/scientific.md`. It covers SCIEN·TIFIC, whose supply is 2²⁵⁶ − 1, the
+largest number one EVM word holds, taken as the measure of accuracy (scientific.pythai.net).
+**▶ PLAY THE INTRODUCTION** plays all of it. **▶ chapter** plays one, and a sentence's ▶ plays from there.
+**The reading**: Savante reads bankml's thesis and the binary / ternary argument from `TECHNICAL.md`, verbatim, with
+the notation read aloud. It has five chapters: the thesis, binary and ternary weights (§II.1), the binary choice
+`Q1_0` (§III.2), the ternary kernel `Q2_0_g64` (§III.5), and *can a binary computer perform a ternary operation?*
+(§III.8). It has its own **▶ PLAY THE READING**.
+**Export**: **⤓ Savante.opus** is the voice examples plus the whole introduction, and **⤓ Savante-reading.opus** is
+the reading. Each is one Ogg Opus file with a chapter mark per chapter. Each is offered only when complete (every
+sentence rendered) and current (built from exactly today's clips), and is rebuilt when a clip changes. Both files
+and every clip are committed in the repository (`ui/voice/export/`, `ui/voice/cache/savante/`), so a fresh clone
+plays without rendering anything. **Voice examples**: her statements, with **PLAY ALL**. Her name is said sav-ont. The card also links to her public places: the Hugging Face Space, the sAGI
 skill, her loop dataset, and the sAGI engine, her canon and bankml on GitHub.
 
 **VOICE knobs** (settings panel, DreamKnob): **SPEED** (0.5–2.5×, snap points, her pitch kept), **FM RATE** (Hz) and
@@ -147,10 +191,13 @@ for f in en_GB-cori-high.onnx en_GB-cori-high.onnx.json MODEL_CARD; do
   curl -sSfLO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/$f; done
 ```
 
-Without it, the house eSpeak stand-in is used. Pre-render everything once with `python3 ui/speak.py` (or in two halves
-at once: `--shard 1/2` and `--shard 2/2`); otherwise the UI renders what is missing in the background, and the card
-fills in as it goes. The DreamKnob controls (SPEED, FM RATE, FM DEPTH, GAIN, VOLUME) stay out of the way until she speaks. Press PLAY and
-they emerge in the section that is playing.
+Without it, the house eSpeak stand-in is used. Pre-render everything once with `python3 ui/speak.py`. It renders the
+voice examples, the introduction and the reading, then writes both exports; `--prune` also drops clips no current
+text uses. Run one render at a time on a small machine: `--shard i/n` exists, but two Pipers need about 2 GB; otherwise the UI renders what is missing in the background, and the card
+fills in as it goes. The DreamKnob controls (SPEED, FM RATE, FM DEPTH, GAIN, VOLUME) stay hidden until she speaks. Press any PLAY and they
+emerge in a **VOICE dock** beside the card: a vertical stack in the side column. Move it with ⤒ (top of the card), ⤓
+(bottom, where the knobs lie in a row) or ⇥ (back to the side), or drag it by ⠿ onto the drop zone you want. Drag its
+corner to resize the knobs (40–96 px). The place and size are remembered in this browser.
 
 **Playing.**
 - **▶ PLAY beside her name** reads who she is (the card's description) and ends.
@@ -223,7 +270,8 @@ ip -4 addr | grep inet                          # find the LAN address
 - **Release records**: every `testing/results/<version>.txt`.
 - **CI**: the last five GitHub Actions runs.
 - **Savante**: name, mantra, card status (`not_yet_minted`), doctrine root, and the ledger check, file by file.
-- **Listen to Savante**: her introduction and voice examples, for anyone watching. Play all, a chapter, or from any
+- **Listen to Savante**: her introduction, the reading and her voice examples, for anyone watching. When complete,
+  **⤓ Savante.opus** and **⤓ Savante-reading.opus** download from fixed routes (`/export/<name>.opus`). Play all, a chapter, or from any
   line; the line being read is highlighted. Pressing play brings out the same DreamKnob controls as the card (SPEED,
   FM RATE, FM DEPTH, GAIN, VOLUME), kept in each listener's own browser.
 - **Private data — commitments only**: the count, Merkle root and CID of `.history`, and the count and root of
@@ -477,6 +525,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N]` | the gate in front of llama-server |
 | `python3 ui/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 ui/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
+| `python3 ui/models.py list \| catalog \| search Q \| import ID\|URL\|ollama:NAME:TAG \| use FILE \| first-run` | the model importer and carrier switch |
+| `python3 ui/speak.py [--prune]` | render every voice clip, write both exports (`--prune`: drop unused clips) |
 
 | port | service |
 |---|---|
@@ -496,3 +546,11 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `RAGE_PATH` | `~/mindX/mindx/godel/mindxtrain/hf/space_ui` | where the ragebar finds mindX's `rage.py` (built-in BM25 otherwise) |
 | `BANKML_GGML_LIB` | — | llama.cpp b11192 release dir, for the oracles |
 | `BANKML_THREADS` | all cores | threads for the kernels' benchmarks |
+| `BANKML_MODELS` | `.models` in the checkout | where imported models go |
+| `BANKML_FORKS` | `~/.local/share/bankml/forks` | FORK.json pins, one per imported model |
+| `BANKML_LLAMA_SERVER` | `~/sAGI/bonsai/llama-b11192/llama-server` | the engine the carrier spawns |
+| `BANKML_BIN` | `target/release/bankml` | the bankml binary the importer and switch call |
+| `BANKML_FIRST_RUN` | `1` | `0` stops interact from starting the Bonsai-8B carrier by itself |
+| `BANKML_SERVE_LISTEN`, `BANKML_UPSTREAM` | `127.0.0.1:18093`, `127.0.0.1:18092` | the ports the switch manages |
+| `BANKML_VOICE_DIR`, `BANKML_EXPORT_DIR` | `ui/voice/cache`, `ui/voice/export` | voice clips and the two exports |
+| `BANKML_VOICE_ASYNC` | `1` | `0` stops the UI rendering missing clips in the background |

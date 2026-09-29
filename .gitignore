@@ -4,4 +4,5 @@ target/
 __pycache__/
 *.pyc
 testing/live.log
-ui/voice/cache/
+ui/voice/cache/**/.*.lock
+ui/voice/cache/**/.manifest.lock

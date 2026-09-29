@@ -16,7 +16,7 @@ function load() {
 
 const same = (a, b) => a && b && ['speed', 'fmRate', 'fmDepth', 'gain', 'volume'].every((k) => a[k] === b[k])
 
-function Panel({ size = 64 }) {
+function Panel({ size = 64, layout = 'row' }) {
   const [v, setV] = React.useState(() => ({ ...DEFAULTS, ...(window.bkVoice || load()) }))
   React.useEffect(() => {  // every panel (settings, card) shares one state: follow the others
     const on = (e) => { if (!same(e.detail, v)) setV(e.detail) }
@@ -33,7 +33,7 @@ function Panel({ size = 64 }) {
   const cell = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 0 }
   return (
     <DreamknobProvider base="dark">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, alignItems: 'end' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: layout === 'column' ? '1fr' : 'repeat(5, 1fr)', gap: layout === 'column' ? 10 : 6, alignItems: 'end', justifyItems: 'center' }}>
         <div style={cell} title={'SPEED ' + v.speed.toFixed(3) + '× — pitch kept; snap points at ' + SPEEDS.join(', ')}>
           <VintageKnob value={v.speed} min={0.5} max={2.5} step={0.001} detents={SPEEDS} detentSize={0.012}
             size={size} label="SPEED" color="#2dd4bf" aria-label="speaking speed" onChange={set('speed')} />
@@ -60,10 +60,11 @@ function Panel({ size = 64 }) {
   )
 }
 
-export function mount(el, size) {
-  if (!el || el.dataset.bkKnobs) return
-  el.dataset.bkKnobs = '1'
+// mount (or re-lay-out) the knobs in el: size in px, layout 'row' (five across) or 'column' (a vertical stack)
+export function mount(el, size, layout) {
+  if (!el) return
   if (!window.bkVoice) window.bkVoice = load()
-  createRoot(el).render(<Panel size={size || 64} />)
+  if (!el.__bkRoot) { el.__bkRoot = createRoot(el); el.dataset.bkKnobs = '1' }
+  el.__bkRoot.render(<Panel size={size || 64} layout={layout || 'row'} />)
 }
 export const defaults = DEFAULTS

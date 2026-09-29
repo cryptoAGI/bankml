@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.1.5 — 2026-09-28
+
+Models come in without friction, and only open-source, sha256-pinned ones: Bonsai-8B on first run, then the
+catalogue, any Hugging Face GGUF, or Ollama. The metrics become readable charts. The voice controls get a dock. Savante
+reads bankml's thesis and the binary / ternary argument, and her audio is exported and committed. Record:
+`testing/results/0.1.5.txt`.
+
+### Added — models
+- **The importer** (`ui/models.py`, the **Models** tab, `python3 ui/models.py`). Its sources:
+  - **First run.** If no carrier answers when interact starts, Bonsai-8B is imported (only if absent), pinned and
+    verified, and `bankml serve` is started in the background with progress shown.
+  - **Catalogue.** Eleven open-source models: Bonsai-8B (default), Ternary-Bonsai-8B, Bonsai-4B and 1.7B, Qwen3
+    0.6B / 1.7B / 4B / 8B, SmolLM2-1.7B, SmolLM3-3B and Granite-3.3-2B. Each is pinned to its repository's revision,
+    size and sha256, read 2026-09-28, and an import refuses if the repository no longer agrees.
+  - **Hugging Face.** Any repository or file URL. The licence is read from the repository, and the pin is its LFS
+    sha256 at the resolved revision.
+  - **Ollama.** Search ollama.com; import from the registry, where the model layer's digest is the GGUF's sha256 and
+    the licence layer is read; or adopt a model the local Ollama holds, by link with no download.
+- **The trust chain.** Every file is hashed as it streams, and kept only if it equals the published sha256; an
+  interrupted download resumes. `bankml guard` must then say play, and a FORK.json pin is written, so `bankml serve`
+  verifies it before every start.
+- **Open source only.** A licence outside the OSI list is refused before any byte is fetched: Gemma and Llama on
+  Hugging Face and on Ollama, and anything unrecognised.
+- **The machine's limits.** An import that would leave less than 1.5 GB free on disk, or whose weights exceed about
+  70 % of RAM, is refused with the numbers.
+- **Carrier switch.** Stop, then start `bankml serve --spawn llama-server` on the chosen model. It is refused while an
+  answer is being written. If the new model does not come up, the previous one is restored; it is found by its
+  verified sha256, because serve reports canonical paths.
+- **Verified on this laptop:**
+  - Qwen3-0.6B Q8_0 was downloaded from Hugging Face, and qwen3:0.6b (a Q4_K_M) was adopted from the local Ollama;
+    both are pinned, and both answered through bankml with receipts;
+  - Bonsai-1.7B, already here, was pinned against the published sha256;
+  - a switch, a refusal while busy, and a rollback from a bad pin all ran on spare ports.
+- `testing/test_models.py`: 19 checks, in the gate. The source is a loopback server with a synthetic GGUF, and a
+  real carrier runs on spare ports.
+
+### Changed — bankml (Rust)
+- **Standard models, named and reported.** `gguf::type_name` names all of ggml's standard types (Q8_1, Q8_K, the
+  IQ family, I8–I64, F64, MXFP4), and a new test confirms a K-quant model plays on mainline. The guard already played
+  such files; nothing about them was allow-listed or refused.
+- **`Verified` carries what was verified:** `arch`, `name` and the tensor types. `/bankml` reports them, so the UI
+  shows "qwen3 · Q4_K×155, Q6_K×15" and sends `/no_think` only to families that honour it (Qwen3, SmolLM3, Bonsai).
+
+### Changed — metrics
+- **Readable charts** replace the old bar strip, whose bars became "giant blue blobs" when there were few exchanges:
+  one bar was stretched across a third of the width.
+  - Summary tiles: exchanges and sessions, median and p90 first-token and response times, writing speed, and answers
+    matching their receipts.
+  - Response time per exchange: stacked bars (waiting, then writing), at most 18 px wide, on a round-numbered axis
+    with a median line. One slow outlier is clipped with a ▲ so the rest stay readable.
+  - Throughput per exchange: prefill and writing tok/s as lines.
+  - The charts keep their proportions at any width, and dark mode is transparent.
+- **Commitments** read one per line: the .history record count, Merkle root, CID, and .memory. An empty root reads
+  "— (empty)", not "None".
+
+### Added
+- **The VOICE dock.** The DreamKnobs no longer sit inside each section. They appear only when a PLAY is pressed, in
+  one dock beside the card: a vertical stack in the side column by default. ⤒, ⤓ and ⇥ dock it to the top of the
+  card, the bottom, or back to the side (top and bottom lay the knobs in a row). It can also be dragged by its grip
+  onto a drop zone and resized from its corner (40–96 px). Place and size are remembered per browser. Verified in
+  headless Firefox:
+  - hidden before play, and a vertical stack to the right of the card after it, with no overlap;
+  - above the card when docked top and below it when docked bottom, horizontal both times;
+  - back at the side, with the choice remembered.
+- **SCIEN·TIFIC in the introduction.** A new chapter, marked as bankml's own note rather than her canon
+  (`ui/voice/readings/scientific.md`), follows "Why I exist". It takes 2²⁵⁶ − 1 (SCIEN·TIFIC's whole supply, the
+  largest value one EVM word holds, about 1.16 × 10⁷⁷; scientific.pythai.net) first as the finest resolution a
+  single word allows, the maximum measurement of accuracy, and then as a measure of size. The atom count is stated as
+  measured: estimates for the observable universe run from 10⁷⁸ to 10⁸², so by a strict count 2²⁵⁶ falls short, but
+  it is of the same order of scale.
+- **The reading.** Savante reads bankml's thesis and the binary / ternary sections of `TECHNICAL.md` (§II.1, §III.2,
+  §III.5, §III.8) verbatim, as its own section of the card with **▶ PLAY THE READING**. It is also in the view
+  mode's Listen panel.
+- **TECHNICAL.md §III.8, "Can a binary computer perform a ternary operation?"** Yes, exactly. A trit is stored in bits
+  (log₂ 3 ≈ 1.585 bits of information; `Q2_0_g64` spends 2 bits plus the scale). The ternary product is a signed
+  sum, which bankml computes as Σ c·x − Σ x with the offset code c = w + 1 (`vpmaddubsw`, then one subtraction of an
+  activation sum shared by every row). The section also covers Setun and why packing, not native ternary gates, is
+  the next ternary speed-up on a bandwidth-bound CPU.
+- **Export.** `⤓ Savante.opus` holds the voice examples and the whole introduction; `⤓ Savante-reading.opus` holds
+  the reading. Each is one Ogg Opus file (40 kbit/s) with a chapter mark per chapter. It is made only when every
+  sentence is rendered, carries a signature of the exact clips it was built from, and is rebuilt when one changes.
+  Both are offered in the card, and in view mode at the fixed routes `/export/Savante.opus` and
+  `/export/Savante-reading.opus`, which serve only a named export that is complete and current. `python3
+  ui/speak.py` renders everything and writes both files; `--prune` drops clips no current text uses.
+- **The audio is in the repository.** `ui/voice/cache/savante/` (every clip plus its manifest) and `ui/voice/export/`
+  are committed, so a fresh clone plays and downloads without rendering. The voice is built from public-domain Cori
+  (see 0.1.3).
+
+### Changed
+- **Speech.** List markers are removed only at the start of a line, so an inline "16 + 2" is no longer read as
+  "16 2". bankml's own spoken forms go before the house table: SCIEN·TIFIC ("Sci-en, Tiffic"), bankml ("bank M L"),
+  web addresses ("dot"), and TECHNICAL.md's notation (Σ, ∈, ≈, ≤, ×, {−1, 0, +1}, `Q1_0`, and section references,
+  which are dropped). This re-rendered a dozen sentences of the introduction whose spoken form changed.
+- The view's voice label says "Savante's own voice" when Piper is present (it still said "house stand-in").
+
 ## 0.1.4 — 2026-09-28
 
 The knobs in view mode, and a timer that counts real seconds. No Rust code changed. Record: `testing/results/0.1.4.txt`.
