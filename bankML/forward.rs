@@ -28,6 +28,10 @@
 //! micro-batch of 64 rows or more takes ggml's *tiled* flash attention (f32 Q, a SIMD GEMM over 64-cell KV tiles, a
 //! vectorized softmax summed in double, an f32 accumulator) instead of the reference path. `Weights::prefill` follows
 //! the same micro-batching and kernel choice.
+//!
+//! Step ten (0.2.10): long contexts. A single-token decode whose padded KV length (multiples of 256) reaches 512
+//! takes ggml's split-KV kernel: the padded cells cut into one chunk per llama.cpp thread, a partial reference pass per
+//! chunk, then a reduction — so the bits depend on llama.cpp's thread count (`Weights::llama_threads`).
 
 use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
 use crate::par::Pool;
@@ -149,11 +153,21 @@ pub fn dot_f16(x: &[u16], y: &[u16]) -> f32 {
 /// `flash_attn_ext_f16_one_chunk`: Q rounded to f16; each score `dot · scale`; an online softmax whose V accumulator
 /// is f16 (`vec_mad_f16`: `f16(fma(v, w, acc))`, `vec_scale_f16`: `f16(acc · ms)`); finally `acc · (1/S)` in f32.
 pub fn attend_head(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, scale: f32, out: &mut [f32]) {
+    let (_, sum, acc) = attend_head_partial(q, k, v, 0, n_kv, stride, scale);
+    let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
+    for (o, &a) in out.iter_mut().zip(&acc) {
+        *o = f16_to_f32(a) * inv;
+    }
+}
+
+/// The reference path over cells `from..to` without the final normalisation: (max, sum, f16 accumulator) — what
+/// `flash_attn_ext_f16_one_chunk` writes as a partial for the split-KV kernel.
+pub fn attend_head_partial(q: &[f32], k: &[u16], v: &[u16], from: usize, to: usize, stride: usize, scale: f32) -> (f32, f32, Vec<u16>) {
     let hd = q.len();
     let q16: Vec<u16> = q.iter().map(|&x| f32_to_f16(x)).collect();
     let mut acc = vec![0u16; hd];
     let (mut sum, mut max) = (0.0f32, f32::NEG_INFINITY);
-    for ic in 0..n_kv {
+    for ic in from..to {
         let s = dot_f16(&k[ic * stride..ic * stride + hd], &q16) * scale;
         let (mut ms, mut vs) = (1.0f32, 1.0f32);
         if s > max {
@@ -171,10 +185,48 @@ pub fn attend_head(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, 
         }
         sum = sum * ms + vs;
     }
-    let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
-    for (o, &a) in out.iter_mut().zip(&acc) {
-        *o = f16_to_f32(a) * inv;
+    (max, sum, acc)
+}
+
+/// One query row of a single-token decode over `padded` KV cells (`cells` of them visible), as ggml's split-KV
+/// flash attention computes it with `nth` threads: the padded cells cut into `ceil(padded / nth)`-cell chunks, a
+/// partial reference pass per chunk (masked cells skipped), then `ggml_flash_attn_ext_reduce_partials` in chunk
+/// order — `fmaxf` of the maxima, two `expf` rescales, `fma(acc, old, chunk · new)` (the shipped build contracts it;
+/// the plain form agrees only while the first chunk holds the maximum) — and `· (1/S)`.
+#[allow(clippy::too_many_arguments)]
+pub fn attend_head_split(q: &[f32], k: &[u16], v: &[u16], cells: usize, padded: usize, nth: usize, stride: usize, scale: f32, out: &mut [f32]) {
+    let chunk = padded.div_ceil(nth);
+    let (mut max, mut sum) = (f32::NEG_INFINITY, 0.0f32);
+    let mut acc = vec![0.0f32; q.len()];
+    for c in 0..nth {
+        let start = c * chunk;
+        if start >= padded {
+            continue;
+        }
+        let end = (start + chunk).min(padded).min(cells);
+        if start >= end {
+            continue; // every cell of this chunk is masked: its partial sum is 0 and the reduction skips it
+        }
+        let (m_c, s_c, a_c) = attend_head_partial(q, k, v, start, end, stride, scale);
+        if s_c == 0.0 {
+            continue;
+        }
+        let m_new = max.max(m_c);
+        let (so, sn) = ((max - m_new).exp(), (m_c - m_new).exp());
+        // as compiled (vmulps + vfmadd231ps; vmulss + vfmadd132ss): the chunk's term rounded, the running one fused
+        for (a, &b) in acc.iter_mut().zip(&a_c) {
+            *a = a.mul_add(so, f16_to_f32(b) * sn);
+        }
+        sum = sum.mul_add(so, s_c * sn);
+        max = m_new;
     }
+    if sum != 0.0 {
+        let inv = 1.0 / sum;
+        for a in acc.iter_mut() {
+            *a *= inv;
+        }
+    }
+    out.copy_from_slice(&acc);
 }
 
 /// One query head against a causal run of cached keys and values, as ggml's tiled flash attention
@@ -247,6 +299,8 @@ pub enum Kernel {
     Reference,
     /// `flash_attn_ext_tiled`: micro-batches of 64 rows or more
     Tiled,
+    /// the split-KV path: a single-token step over `padded` ≥ 512 KV cells, one chunk per llama.cpp thread
+    Split { padded: usize, nth: usize },
 }
 
 /// llama.cpp's micro-batch (`--ubatch-size`, default 512).
@@ -258,17 +312,14 @@ pub fn padded_kv(cells: usize) -> usize {
     cells.div_ceil(256).max(1) * 256
 }
 
-/// The kernel for a micro-batch of `rows` whose last row makes `cells` cells in use, or an error where llama.cpp
-/// would take the split-KV kernel (a single row over 512 or more padded cells), which is not reproduced yet.
-pub fn kernel_for(rows: usize, cells: usize) -> Result<Kernel, String> {
-    match rows {
-        64.. => Ok(Kernel::Tiled),
-        1 if padded_kv(cells) >= 512 => Err(format!(
-            "a single-token step at {cells} cells: llama.cpp decodes over {} padded cells with its split-KV kernel, which bankml does not reproduce yet",
-            padded_kv(cells)
-        )),
-        _ => Ok(Kernel::Reference),
-    }
+/// The kernel llama.cpp (running `llama_threads` threads) uses for a micro-batch of `rows` whose last row makes
+/// `cells` cells in use.
+pub fn kernel_for(rows: usize, cells: usize, llama_threads: usize) -> Result<Kernel, String> {
+    Ok(match rows {
+        64.. => Kernel::Tiled,
+        1 if padded_kv(cells) >= 512 => Kernel::Split { padded: padded_kv(cells), nth: llama_threads.max(1) },
+        _ => Kernel::Reference,
+    })
 }
 
 /// ggml's AVX2 `ggml_v_expf` (vec.h, "adapted from arm limited optimized routine"), one lane: a range reduction by
@@ -363,6 +414,9 @@ pub struct Weights {
     pub n_layer: usize,
     /// the matrices' type: `TYPE_Q1_0` or `TYPE_Q2_0`
     pub wtype: u32,
+    /// the thread count of the llama.cpp being matched (`-t`; Savante runs 3): its split-KV decode kernel cuts the KV
+    /// cells into one chunk per thread, so the bits depend on it. `BANKML_LLAMA_THREADS`, default 3.
+    pub llama_threads: usize,
     pool: Pool,
 }
 
@@ -399,6 +453,7 @@ impl Weights {
         }
         let mm = Mmap::open(path).map_err(|e| e.to_string())?;
         Ok(Weights { mm, tensors: h.tensors, data_start: h.data_start, n_embd, n_vocab, rms_eps, n_head, n_head_kv, head_dim, rope, n_layer, wtype,
+                     llama_threads: std::env::var("BANKML_LLAMA_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(3),
                      pool: Pool::from_env() })
     }
 
@@ -487,6 +542,9 @@ impl Weights {
             match kernel {
                 Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh),
                 Kernel::Tiled => attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], cache.len(), cache.width, scale, oh),
+                Kernel::Split { padded, nth } => {
+                    attend_head_split(qh, &cache.k[off..], &cache.v[off..], cache.len(), padded, nth, cache.width, scale, oh)
+                }
             }
         }
         let m = self.matrix(&format!("blk.{il}.attn_output.weight"), kqv.len())?;
@@ -537,7 +595,7 @@ impl Weights {
     pub fn prefill(&self, caches: &mut [KvCache], tokens: &[u32], mut each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String> {
         let mut rn = Vec::new();
         for ub in tokens.chunks(N_UBATCH) {
-            let kernel = kernel_for(ub.len(), caches[0].len() + ub.len())?;
+            let kernel = kernel_for(ub.len(), caches[0].len() + ub.len(), self.llama_threads)?;
             for &t in ub {
                 let p = caches[0].len();
                 rn = self.step_with(caches, t, kernel, |il, l| each(p, il, l))?;
@@ -548,7 +606,7 @@ impl Weights {
 
     /// One generated token (a micro-batch of one), with the kernel llama.cpp would use at this length.
     pub fn decode(&self, caches: &mut [KvCache], token: u32) -> Result<Vec<f32>, String> {
-        let kernel = kernel_for(1, caches[0].len() + 1)?;
+        let kernel = kernel_for(1, caches[0].len() + 1, self.llama_threads)?;
         self.step_with(caches, token, kernel, |_, _| {})
     }
 
@@ -902,7 +960,7 @@ mod tests {
         let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
         let tsv = std::fs::read_to_string(dir.join("oracle-forward/tiled.tsv")).unwrap();
         let toks: Vec<u32> = tsv.lines().next().unwrap().split("tokens ").nth(1).unwrap().split(' ').map(|t| t.parse().unwrap()).collect();
-        assert_eq!(kernel_for(toks.len(), toks.len()).unwrap(), Kernel::Tiled);
+        assert_eq!(kernel_for(toks.len(), toks.len(), 3).unwrap(), Kernel::Tiled);
         let sha = |v: &[f32]| {
             let mut h = Sha256::default();
             v.iter().for_each(|x| h.update(&x.to_le_bytes()));
@@ -949,5 +1007,67 @@ mod tests {
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its greedy-long-*.jsonl (testing/greedy_oracle.py --long); --release"]
     fn oracle_greedy_llama_server_long() {
         greedy_oracle("long-", "Bonsai-8B-Q1_0");
+    }
+
+    /// ggml's split-KV flash attention: one decode row over 257–1,000 cells at 3 and 4 threads, bit for bit.
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-forward/{tiled,splitkv}.tsv (testing/forward_oracle.py); --release"]
+    fn oracle_forward_attention_split() {
+        use crate::sha256::{hex, Sha256};
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
+        let tsv = std::fs::read_to_string(dir.join("oracle-forward/splitkv.tsv")).unwrap();
+        let toks: Vec<u32> = tsv.lines().next().unwrap().split("tokens ").nth(1).unwrap().split(' ').map(|t| t.parse().unwrap()).collect();
+        let sha = |v: &[f32]| {
+            let mut h = Sha256::default();
+            v.iter().for_each(|x| h.update(&x.to_le_bytes()));
+            hex(&h.finish())
+        };
+        let g = w.f32_vec("blk.0.attn_norm.weight").unwrap();
+        let (qd, kd) = (w.n_head * w.head_dim, w.n_head_kv * w.head_dim);
+        let mut prompt_cache = KvCache::new(kd);
+        let (mut x, mut xn) = (vec![0.0f32; w.n_embd], vec![0.0f32; w.n_embd]);
+        let (mut q, mut k, mut v) = (vec![0.0f32; qd], vec![0.0f32; kd], vec![0.0f32; kd]);
+        for (p, &t) in toks.iter().enumerate() {
+            w.embed(t, &mut x).unwrap();
+            rms_norm_mul(&x, &g, w.rms_eps, &mut xn);
+            w.qkv(0, &xn, p as i32, &mut q, &mut k, &mut v).unwrap();
+            prompt_cache.push(&k, &v);
+        }
+        let (hd, group, scale) = (w.head_dim, w.n_head / w.n_head_kv, 1.0f32 / (w.head_dim as f32).sqrt());
+        let (mut n, mut ok) = (0, 0);
+        let mut kqv = vec![0.0f32; qd];
+        for line in tsv.lines().skip(1) {
+            let f: Vec<&str> = line.split('\t').collect();
+            let (cells, nth): (usize, usize) = (f[1].parse().unwrap(), f[2].parse().unwrap());
+            // the oracle's cells cycle the prompt's K/V rows
+            let mut cache = KvCache::new(kd);
+            for c in 0..cells {
+                let r = c % toks.len();
+                cache.k.extend_from_slice(&prompt_cache.k[r * kd..(r + 1) * kd]);
+                cache.v.extend_from_slice(&prompt_cache.v[r * kd..(r + 1) * kd]);
+            }
+            assert_eq!(kernel_for(1, cells, nth).unwrap(), Kernel::Split { padded: padded_kv(cells), nth });
+            for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
+                let off = (h / group) * hd;
+                attend_head_split(qh, &cache.k[off..], &cache.v[off..], cells, padded_kv(cells), nth, cache.width, scale, oh);
+            }
+            n += 1;
+            let good = sha(&kqv) == f[3];
+            ok += good as usize;
+            if !good {
+                eprintln!("  {cells} cells, {nth} threads: differs (ggml first values {})", f[4]);
+            }
+        }
+        eprintln!("forward oracle: split-KV flash attention {ok} of {n} decode rows (257–1,000 cells, 3 and 4 threads) bit-exact against the shipped ggml b11192");
+        assert_eq!(ok, n);
+    }
+
+    /// Continuations past 256 cells — the prompt by the tiled kernel, the decode by the reference kernel and then,
+    /// from 257 cells, by the split-KV kernel at llama-server's 3 threads — against llama-server itself.
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its greedy-deep-*.jsonl (testing/greedy_oracle.py --deep); --release"]
+    fn oracle_greedy_llama_server_deep() {
+        greedy_oracle("deep-", "Bonsai-8B-Q1_0");
     }
 }

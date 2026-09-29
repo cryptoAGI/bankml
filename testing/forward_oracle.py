@@ -267,3 +267,43 @@ with open(out / "tiled.tsv", "w") as f:
         f.write(f"kqv_out\t{p_}\t{hashlib.sha256(row).hexdigest()}\t{' '.join(f'{x:.6g}' for x in struct.unpack('<3f', row[:12]))}\n")
 print(f"tiled attention: layer 0 kqv_out for a {nl}-row micro-batch → {out / 'tiled.tsv'}")
 
+# ---- step ten: a single-token decode whose padded KV length reaches 512 takes ggml's SPLIT-KV flash attention: the
+# padded cells cut into one chunk per thread, a partial softmax per chunk, then a reduction. Layer 0's attention for
+# the last row of the 150-token prompt, repeated to longer contexts (K/V rows re-used cyclically, positions kept),
+# at padded lengths 512–1024 and at 3 and 4 threads (the result depends on the thread count)
+qrow = C.string_at(base.ggml_get_data(ql), 0)  # (keep ql alive)
+kraw = C.string_at(base.ggml_get_data(k16), head * n_head_kv * 2 * nl)
+vraw = C.string_at(base.ggml_get_data(v16), head * n_head_kv * 2 * nl)
+qraw = C.string_at(base.ggml_get_data(ql), head * n_head * 4 * nl)
+with open(out / "splitkv.tsv", "w") as f:
+    f.write(f"# layer 0 kqv_out for one query row (the last of the 150-token prompt) over n cells; cells cycle the prompt's K/V rows · tokens {' '.join(map(str, long_ids))}\n")
+    for cells in (257, 300, 511, 512, 513, 700, 1000):
+        padded = max(256, -(-cells // 256) * 256)
+        for nth in (3, 4):
+            c3 = base.ggml_init(InitParams(64 << 20, None, False))
+            qt = base.ggml_new_tensor_3d(c3, F32, head, 1, n_head)  # [DK, n_tokens = 1, heads]
+            qb = b"".join(qraw[((nl - 1) * n_head + h) * head * 4:((nl - 1) * n_head + h + 1) * head * 4] for h in range(n_head))
+            C.memmove(base.ggml_get_data(qt), C.c_char_p(qb), len(qb))
+            kt = base.ggml_new_tensor_3d(c3, F16, head, padded, n_head_kv)  # [DK, n_kv, heads_kv]
+            vt = base.ggml_new_tensor_3d(c3, F16, head, padded, n_head_kv)
+            kb, vb = bytearray(head * padded * n_head_kv * 2), bytearray(head * padded * n_head_kv * 2)
+            for hk in range(n_head_kv):
+                for c in range(cells):
+                    src = ((c % nl) * n_head_kv + hk) * head * 2
+                    dst = (hk * padded + c) * head * 2
+                    kb[dst:dst + head * 2] = kraw[src:src + head * 2]
+                    vb[dst:dst + head * 2] = vraw[src:src + head * 2]
+            C.memmove(base.ggml_get_data(kt), C.c_char_p(bytes(kb)), len(kb))
+            C.memmove(base.ggml_get_data(vt), C.c_char_p(bytes(vb)), len(vb))
+            mt = base.ggml_new_tensor_2d(c3, F16, padded, 1)
+            C.memmove(base.ggml_get_data(mt), (C.c_uint16 * padded)(*[0 if j < cells else 0xFC00 for j in range(padded)]), 2 * padded)
+            fa3 = base.ggml_flash_attn_ext(c3, qt, kt, vt, mt, C.c_float(kq_scale), C.c_float(0.0), C.c_float(0.0))
+            base.ggml_prec_set_acc(fa3, 10)
+            g3 = base.ggml_new_graph(c3)
+            base.ggml_build_forward_expand(g3, fa3)
+            cpu.ggml_graph_compute_with_ctx(c3, g3, nth)
+            row = C.string_at(base.ggml_get_data(fa3), n_embd * 4)
+            f.write(f"kqv_out\t{cells}\t{nth}\t{hashlib.sha256(row).hexdigest()}\t{' '.join(f'{x:.6g}' for x in struct.unpack('<3f', row[:12]))}\n")
+            base.ggml_free(c3)
+print(f"split-KV attention: one row over 257–1000 cells at 3 and 4 threads → {out / 'splitkv.tsv'}")
+

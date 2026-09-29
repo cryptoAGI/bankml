@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.10 — 2026-09-29
+
+**P3, step ten: long contexts. All three of ggml's CPU attention kernels are now reproduced.** Record:
+`testing/results/0.2.10.txt`.
+
+### Added
+- **`attend_head_split`: ggml's split-KV flash attention.** llama.cpp runs it for a single-token decode once the
+  padded KV length reaches 512, that is, beyond 256 cells in use.
+  - The padded cells are cut into `ceil(padded / nth)`-cell chunks, one per llama.cpp thread.
+  - Each chunk runs a partial reference pass (`attend_head_partial`: max, sum and the f16 accumulator, without
+    normalizing), skipping masked cells.
+  - `ggml_flash_attn_ext_reduce_partials` combines the chunks in order: `fmaxf` of the maxima, two `expf` rescales,
+    `fma(acc, old, chunk · new)` for the accumulator and likewise for the sum, then `· (1/S)`.
+- **The thread count is part of the result.** `Weights::llama_threads` (`BANKML_LLAMA_THREADS`, default 3, the `-t`
+  Savante runs) sets the chunking. `kernel_for(rows, cells, llama_threads)` now returns `Kernel::Split { padded, nth }`
+  where 0.2.9 refused, so `bankml generate` runs to any context length.
+- **Oracles, in the gate.**
+  - `oracle_forward_attention_split` records one decode row over 257, 300, 511, 512, 513, 700 and 1,000 cells, at 3
+    and at 4 threads, in the shipped ggml: **14 of 14 bit-exact**. Every hash differs between 3 and 4 threads, so the
+    dependence on the thread count is real.
+  - `oracle_greedy_llama_server_deep` uses `greedy_oracle.py --deep`: 3 prompts of 98–100 tokens asking for long
+    answers, 200 generated tokens each, running to about 300 cells. **bankml generates llama-server's 600 tokens
+    exactly.** Each case passes through all three kernels: tiled for the prompt, reference up to 256 cells,
+    split-KV after that.
+
+### Found
+- **A reduction that the first test cases could not see.** In the shipped binary the reduction is
+  `vmulps` + `vfmadd231ps`: the chunk's term is rounded and the running term fused. Written plainly, it passed every
+  3-thread case, because there the first chunk held the maximum, so the old scale was exactly 1 and the two forms
+  agree. It failed at 4 threads with 512 padded cells, where a later chunk held the maximum. The 4-thread cases were
+  added to show the thread-count dependence, and they also exposed this.
+
 ## 0.2.9 — 2026-09-29
 
 **P3, step nine: long prompts.** Record: `testing/results/0.2.9.txt`. Built on the new layout: the Rust runtime is

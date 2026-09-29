@@ -215,6 +215,17 @@ path: f32 Q, a SIMD GEMM per 64-cell KV tile, a vectorized softmax summed in dou
 - `greedy_oracle.py --long` records llama-server's continuations for 6 prompts of 111–116 tokens.
   `oracle_greedy_llama_server_long` requires **the same tokens on all 6**.
 
+**Step ten (0.2.10): long contexts and ggml's split-KV kernel.** A single-token decode over 512 or more padded cells
+cuts the cells into one chunk per llama.cpp thread and reduces the partial softmaxes, so the thread count shapes the
+bits.
+- The forward oracle records one decode row at 7 context lengths (257–1,000 cells) and at 3 and 4 threads.
+  `oracle_forward_attention_split` requires **14 of 14**.
+- `greedy_oracle.py --deep` records 3 continuations of 200 tokens that run to about 300 cells.
+  `oracle_greedy_llama_server_deep` requires **the same 600 tokens**.
+
+The 4-thread cases did double duty. Besides showing the dependence on the thread count, they exposed the reduction's
+FMA contraction: at 3 threads the first chunk always held the maximum, where the fused and plain forms agree.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 
