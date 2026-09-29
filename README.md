@@ -33,7 +33,7 @@ against llama.cpp's own compiled library on all 8.19 billion weights of the mode
 
 ## Documentation
 
-Start here, then go where your question is:
+Start here, then go where your question is. The same documents read as a website at **[cryptoagi.github.io/bankml](https://cryptoagi.github.io/bankml/)**, always at the latest release:
 
 | if you want to… | read |
 |---|---|
