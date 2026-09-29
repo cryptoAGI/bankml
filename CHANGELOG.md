@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.11 — 2026-09-29
+
+**P3, step eleven: sampling. bankml draws llama.cpp's tokens with the same seed.** Record:
+`testing/results/0.2.11.txt`.
+
+### Added
+- **`bankML/sampler.rs`: llama-server's sampler chain.** The chain is penalties → dry → top-n-σ → top-k → typical-p →
+  top-p → min-p → xtc → temperature → dist. With the Bonsai GGUF's defaults and neutral penalties, dry, typical-p,
+  xtc and top-n-σ, the active part is written from b11192's `llama-sampler.cpp` in its float order:
+  - **top-k** is `std::partial_sort` over the vocabulary, **ported from libstdc++'s heap select and heap sort**.
+    Logits can tie, and the order the algorithm leaves equal logits in decides which token a draw lands on.
+  - **top-p** is a float softmax with a float running cut.
+  - **min-p** cuts at `max + logf(p)`.
+  - **temperature** is `logit / temp`; at 0 or below, every logit but the first maximum is set to −∞.
+  - **dist** computes `expf(logit − max)` summed in double, takes one `uniform_real_distribution<double>` draw from
+    `std::mt19937(seed)` (libstdc++'s `generate_canonical`: two 32-bit outputs), and walks a double running sum.
+    The RNG advances once per token, including when only one candidate remains.
+  - Anything outside that is refused, not approximated: top-k 0 or above 128 (llama.cpp sorts those another way),
+    and non-neutral penalties, dry, typical-p, xtc, top-n-σ or dynamic temperature.
+  - `Params::from_gguf` resolves the defaults as llama-server does: the GGUF's `general.sampling.*` over llama.cpp's
+    own.
+- **`bankml generate --sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]`.** Without `--sample` it
+  stays greedy.
+- **The sampling oracle** (`testing/sample_oracle.py` → `oracle_sample_llama_server`, in the gate). It records 4
+  prompts × 10 settings with fixed seeds: the defaults, temperatures 0, 0.3, 1.0 and 1.5, top-k 5, 40 and 128,
+  top-p 0.95 and 1.0, and min-p 0.05 and 0.2. Each case keeps the parameters the server reports it ran. **40 of 40
+  continuations identical, 1,175 tokens**, on the first run.
+
 ## 0.2.10 — 2026-09-29
 
 **P3, step ten: long contexts. All three of ggml's CPU attention kernels are now reproduced.** Record:

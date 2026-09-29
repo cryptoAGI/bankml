@@ -226,6 +226,12 @@ bits.
 The 4-thread cases did double duty. Besides showing the dependence on the thread count, they exposed the reduction's
 FMA contraction: at 3 threads the first chunk always held the maximum, where the fused and plain forms agree.
 
+**Step eleven (0.2.11): sampling.** `testing/sample_oracle.py` has llama-server sample 40 continuations with fixed
+seeds, and keeps the parameters the server reports it ran (`generation_settings`). `oracle_sample_llama_server`
+replays them through bankml's forward pass and `sampler.rs` and requires **every token (40 of 40, 1,175 tokens)**.
+The cases range over temperature 0–1.5, top-k 5–128, top-p and min-p. Top-k is libstdc++'s `partial_sort`, ported
+line for line, because the order it leaves tied logits in decides which token a draw lands on.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

@@ -67,6 +67,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `oracle_forward_model_ternary`, `oracle_greedy_llama_server_ternary` *(real)* | `forward.rs` | P3 step eight: the ternary model, whole graph bit-exact (1,064 of 1,064 rows) and llama-server's greedy tokens on 6 of 6 prompts |
 | `oracle_forward_attention_tiled`, `oracle_greedy_llama_server_long` *(real)* | `bankML/forward.rs` | P3 step nine: ggml's tiled flash attention on a 150-row micro-batch (150 of 150 rows) and llama-server's tokens on 6 of 6 long prompts |
 | `oracle_forward_attention_split`, `oracle_greedy_llama_server_deep` *(real)* | `bankML/forward.rs` | P3 step ten: ggml's split-KV decode kernel (14 of 14 rows, 257–1,000 cells, 3 and 4 threads) and llama-server's tokens on 3 continuations running to ~300 cells (600 tokens) |
+| `oracle_sample_llama_server` *(real)* | `bankML/forward.rs`, `bankML/sampler.rs` | P3 step eleven: llama-server's seeded sampling, 40 of 40 continuations (1,175 tokens) identical |
 | `oracle_forward_swiglu_sweep` | `forward.rs` | SwiGLU with ggml's vectorized expf on 24,600 values over ±120 and the edges, every output's bits |
 | `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
@@ -79,6 +80,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.11 | `results/0.2.11.txt` | P3 step eleven: sampling — llama-server's chain, same seed, same tokens (40 of 40) |
 | 0.2.10 | `results/0.2.10.txt` | P3 step ten: long contexts — the split-KV kernel (14 of 14) and 600 tokens past 256 cells identical |
 | 0.2.9 | `results/0.2.9.txt` | P3 step nine: long prompts — the tiled kernel (150 of 150) and llama-server's tokens on 6 of 6 long prompts |
 | 0.2.8 | `results/0.2.8.txt` | P3 step eight: the ternary model, bit-exact and token-identical; about 8× llama-server end to end |

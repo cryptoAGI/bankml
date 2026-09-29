@@ -14,7 +14,8 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
        bankml tokenize MODEL.gguf [--no-special] < text      (token ids, as llama.cpp's /tokenize)
        bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
-       bankml generate MODEL.gguf [--max N] < messages.json|text  (bankml's own forward pass, greedy)
+       bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
+                                                              (bankml's own forward pass: greedy, or llama-server's sampler chain)
        bankml version";
 
 fn main() {
@@ -60,7 +61,26 @@ fn main() {
             let mut text = String::new();
             let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
             let max: usize = opt("--max").and_then(|v| v.parse().ok()).unwrap_or(256);
-            match generate(Path::new(file), &text, max) {
+            let sample = if flag("--sample") {
+                match bankml::sampler::Params::from_gguf(Path::new(file)) {
+                    Ok(mut p) => {
+                        let f = |k: &str| opt(k).and_then(|v| v.parse::<f64>().ok());
+                        if let Some(v) = f("--temp") { p.temp = v as f32 }
+                        if let Some(v) = f("--top-k") { p.top_k = v as i32 }
+                        if let Some(v) = f("--top-p") { p.top_p = v as f32 }
+                        if let Some(v) = f("--min-p") { p.min_p = v as f32 }
+                        if let Some(v) = f("--seed") { p.seed = v as u32 }
+                        Some(p)
+                    }
+                    Err(e) => {
+                        eprintln!("bankml generate: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+            match generate(Path::new(file), &text, max, sample) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("bankml generate: {e}");
@@ -200,7 +220,7 @@ fn main() {
 
 /// `bankml generate`: render, tokenize, run the prompt through bankml's forward pass, then greedy tokens to stdout as
 /// they come, until the turn ends or `max` tokens.
-fn generate(model: &Path, input: &str, max: usize) -> Result<(), String> {
+fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sampler::Params>) -> Result<(), String> {
     use bankml::{chat, forward::Weights, serve::Json, tokenizer::Tokenizer};
     use std::io::Write;
     chat::check_template(model)?;
@@ -212,6 +232,7 @@ fn generate(model: &Path, input: &str, max: usize) -> Result<(), String> {
     let prompt = tok.encode(&chat::render(&msgs)?, true);
     let w = Weights::open(model)?;
     let ends: Vec<u32> = ["<|im_end|>", "<|endoftext|>"].iter().filter_map(|t| tok.id(t)).collect();
+    let mut sampler = sample.map(bankml::sampler::Sampler::new).transpose()?;
     let t0 = std::time::Instant::now();
     let mut caches = w.caches();
     let mut rn = w.prefill(&mut caches, &prompt, |_, _, _| {})?;
@@ -219,7 +240,10 @@ fn generate(model: &Path, input: &str, max: usize) -> Result<(), String> {
     let (mut out, mut n) = (std::io::stdout(), 0);
     while n < max {
         let l = w.logits(&rn)?;
-        let next = l.iter().enumerate().fold(0, |b, (i, &v)| if v > l[b] { i } else { b }) as u32;
+        let next = match sampler.as_mut() {
+            Some(s) => s.sample(&l),
+            None => l.iter().enumerate().fold(0, |b, (i, &v)| if v > l[b] { i } else { b }) as u32,
+        };
         if ends.contains(&next) {
             break;
         }

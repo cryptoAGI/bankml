@@ -1070,4 +1070,61 @@ mod tests {
     fn oracle_greedy_llama_server_deep() {
         greedy_oracle("deep-", "Bonsai-8B-Q1_0");
     }
+
+    /// Sampling with a fixed seed against llama-server b11192 itself (testing/sample_oracle.py): the forward pass,
+    /// then the sampler chain with the parameters the server reported, token for token.
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its sample-*.jsonl (testing/sample_oracle.py); --release"]
+    fn oracle_sample_llama_server() {
+        use crate::sampler::{Params, Sampler};
+        use crate::serve::Json;
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
+        let cases = std::fs::read_to_string(dir.join("oracle-forward/sample-Bonsai-8B-Q1_0.jsonl")).unwrap();
+        let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n, other => panic!("{k}: {other:?}") };
+        let ids = |v: &Json, k: &str| -> Vec<u32> {
+            match v.get(k) { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!("{k}") }
+        };
+        let (mut n_cases, mut n_same, mut n_tok) = (0, 0, 0);
+        let mut prefilled: Option<(Vec<u32>, Vec<KvCache>, Vec<f32>)> = None;
+        for line in cases.lines() {
+            let v = Json::parse(line).unwrap();
+            let (prompt, want, pr) = (ids(&v, "prompt_ids"), ids(&v, "ids"), v.get("params").unwrap());
+            // the chain this test reproduces; anything else in the record is neutral or the case is refused
+            assert_eq!((num(pr, "typical_p"), num(pr, "xtc_probability"), num(pr, "dry_multiplier"), num(pr, "repeat_penalty"),
+                        num(pr, "presence_penalty"), num(pr, "frequency_penalty"), num(pr, "dynatemp_range")),
+                       (1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0));
+            let mut smp = Sampler::new(Params { temp: num(pr, "temperature") as f32, top_k: num(pr, "top_k") as i32,
+                                                top_p: num(pr, "top_p") as f32, min_p: num(pr, "min_p") as f32,
+                                                min_keep: num(pr, "min_keep") as usize, seed: num(pr, "seed") as u32 }).unwrap();
+            // the prompt's caches, computed once per prompt and cloned per case
+            if prefilled.as_ref().map(|p| p.0 != prompt).unwrap_or(true) {
+                let mut caches = w.caches();
+                let rn = w.prefill(&mut caches, &prompt, |_, _, _| {}).unwrap();
+                prefilled = Some((prompt.clone(), caches, rn));
+            }
+            let (_, c0, rn0) = prefilled.as_ref().unwrap();
+            let mut caches: Vec<KvCache> = c0.iter().map(|c| KvCache { k: c.k.clone(), v: c.v.clone(), width: c.width }).collect();
+            let mut rn = rn0.clone();
+            let mut got = Vec::new();
+            while got.len() < want.len() {
+                let next = smp.sample(&w.logits(&rn).unwrap());
+                got.push(next);
+                if got.len() < want.len() {
+                    rn = w.decode(&mut caches, next).unwrap();
+                }
+            }
+            n_cases += 1;
+            n_tok += want.len();
+            let same = got == want;
+            n_same += same as usize;
+            if !same {
+                let at = got.iter().zip(&want).position(|(a, b)| a != b);
+                eprintln!("  case {n_cases} (temp {}, top_k {}, top_p {}, min_p {}, seed {}): first difference at token {at:?}",
+                          num(pr, "temperature"), num(pr, "top_k"), num(pr, "top_p"), num(pr, "min_p"), num(pr, "seed"));
+            }
+        }
+        eprintln!("sample oracle: {n_same} of {n_cases} seeded continuations identical to llama-server b11192's ({n_tok} tokens; top-k, top-p, min-p, temperature, the mt19937 draw)");
+        assert_eq!(n_same, n_cases);
+    }
 }

@@ -133,6 +133,7 @@ pub mod par;
 pub mod serve;
 pub mod q1_0;
 pub mod q2_0;
+pub mod sampler;
 pub mod sha256;
 pub mod sys;
 pub mod tokenizer;

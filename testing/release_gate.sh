@@ -24,7 +24,7 @@ out=testing/results/$v.txt
   BANKML_TEST_CARRIER=1 python3 -B testing/test_models.py | tail -1 | sed 's/^/model importer (loopback source; carrier on spare ports): /'
   python3 testing/guard_agree.py target/release/bankml $(ls .models/*.gguf 2>/dev/null) | tail -1
   if [ -n "${BANKML_GGML_LIB:-}" ]; then
-    for t in oracle_tokenizer oracle_chat_template oracle_forward_embed_norm oracle_forward_qkv_rope oracle_forward_attention oracle_forward_attention_tiled oracle_forward_attention_split oracle_forward_swiglu_sweep oracle_forward_model oracle_forward_model_ternary oracle_greedy_llama_server oracle_greedy_llama_server_ternary oracle_greedy_llama_server_long oracle_greedy_llama_server_deep oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
+    for t in oracle_tokenizer oracle_chat_template oracle_forward_embed_norm oracle_forward_qkv_rope oracle_forward_attention oracle_forward_attention_tiled oracle_forward_attention_split oracle_forward_swiglu_sweep oracle_forward_model oracle_forward_model_ternary oracle_greedy_llama_server oracle_greedy_llama_server_ternary oracle_greedy_llama_server_long oracle_greedy_llama_server_deep oracle_sample_llama_server oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
              ab_vs_ggml ab_vs_ggml_q2_0 bench_q1_0_prefill_act bench_memory_floor decode_budget_q1_0 decode_budget_q2_0; do
       echo "## $t"
       name=$(cargo test --release -q -- --list --ignored 2>/dev/null | sed -n "s/^\(.*::$t\): test$/\1/p")
