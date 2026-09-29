@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.2.1 — 2026-09-29
+
+**P3, step one: bankml's own tokenizer, token-identical to llama.cpp.** P3, a forward pass of bankml's own, has to
+produce the same tokens as llama.cpp; the tokenizer is where that starts. Record: `testing/results/0.2.1.txt`.
+
+### Added
+- **`tokenizer.rs`** (no crates) reads the vocabulary straight from the GGUF: 151,669 tokens, 151,387 merges and
+  their types, through a bounded reader of its own. The guard's header parser skips arrays by design. It then
+  reproduces llama.cpp's gpt2/qwen2 tokenization:
+  - special tokens cut out first, longest first. USER_DEFINED ones such as `<think>` always split the text; CONTROL
+    ones such as `<|im_start|>` only when special tokens are parsed;
+  - Qwen2's pre-tokenizer pattern, written out alternative by alternative, including the backtracking outcomes of
+    `\s*[\r\n]+` and `\s+(?!\S)`;
+  - GPT-2 byte-level BPE by merge rank, leftmost on ties.
+
+  The pattern's `\p{L}` is Unicode general category L, generated into `unicode_letters.rs` (Rust's
+  `is_alphabetic` is a different property).
+- **The tokenizer oracle** (`testing/tokenizer_oracle.py` → `oracle_tokenizer`, in the gate). It records the running
+  engine's `/tokenize` on every document, Savante's canon, hand-picked edge cases and a seeded 2,000-string fuzz set
+  over 17 Unicode ranges, with special tokens parsed and not. **4,258 of 4,258 cases token-identical.**
+- **`bankml tokenize MODEL.gguf [--no-special]`** (text on stdin, ids out).
+
+- **The whole-token ternary budget with more memory free.** For this gate the chat engine was stopped (2.0 GB free
+  instead of about 1.4 GB). bankml's ternary token then took **1.42 s against llama.cpp's 3.0–5.2 s (2.1–3.6×)**,
+  against about 4.6 s (1.1×) in the disk-bound gates before. That is further evidence for the page-cache explanation
+  in docs/PERFORMANCE.md. It is still short of the 0.23 s measured with the model fully resident: 2.31 GB does not
+  quite fit in 2 GB.
+
+### Fixed
+- The CLI tests left their synthetic GGUF fixtures in `/tmp`: 234 runs had accumulated 1.2 GB on a disk with 4.2 GB
+  free. Each run now removes the directories of earlier runs whose process is gone.
+
+### Measured
+- 243 KB of docs (72,403 tokens): bankml loads the vocabulary in 0.17 s and encodes in about 0.04 s. llama-server's
+  `/tokenize` answers the same text in 0.175 s, vocabulary already loaded, HTTP and JSON included. The ids are
+  identical. That is a measured comparison, not a claim about llama.cpp's tokenizer alone.
+
 ## 0.2.0 — 2026-09-29 — milestone
 
 **Verified, documented, and offered back.** 0.2.0 closes the 0.1.x run of audits and speed work:

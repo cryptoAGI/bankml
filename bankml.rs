@@ -133,6 +133,8 @@ pub mod q1_0;
 pub mod q2_0;
 pub mod sha256;
 pub mod sys;
+pub mod tokenizer;
+pub mod unicode_letters;
 
 use std::path::Path;
 

@@ -578,6 +578,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml pin FILE --fork FORK.json` | sha256 against the fork's record |
 | `bankml verify FILE --fork FORK.json [--engine mainline\|prism] [--json]` | guard, then pin |
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
+| `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
 | `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage` |
 | `python3 ui/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 ui/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |

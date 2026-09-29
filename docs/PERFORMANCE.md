@@ -222,3 +222,7 @@ does not stay in the page cache: 0.49 GB was resident, and after a full read 1.0
 the weights from disk, and both runtimes wait on it. The per-matmul A/B on cached tensors still shows 9.8× (0.1.8
 gate). The whole-token figure needs a machine with at least 3 GB free to be re-measured (docs/TODO.md).
 
+**0.2.1 gate, with the chat engine stopped (2.0 GB free):** bankml 1.42 s per ternary token at one and three threads,
+against llama.cpp's 5.15 s (one thread) and 2.99 s (three threads): 3.6× and 2.1×. The more of the model stays cached,
+the closer the whole-token figure comes to the kernels' own ratio.
+

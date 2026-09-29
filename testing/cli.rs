@@ -20,7 +20,21 @@ fn out(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
+/// A scratch directory for this test process. Directories left by earlier runs (their process is gone) are removed
+/// first: the fixtures are synthetic GGUFs of several MB each, and 234 runs had left 1.2 GB behind.
 fn dir(tag: &str) -> PathBuf {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        for e in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let pid = name.strip_prefix("bankml-cli-").and_then(|r| r.rsplit('-').next()).and_then(|p| p.parse::<u32>().ok());
+            if let Some(pid) = pid {
+                if pid != std::process::id() && !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+    });
     let d = std::env::temp_dir().join(format!("bankml-cli-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d

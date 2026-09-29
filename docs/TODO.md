@@ -71,7 +71,11 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 
 ## After 0.2.0 — P3 and beyond
 
-- [ ] **P3: the Qwen3 forward pass, token-identical to llama.cpp at temperature 0** (TECHNICAL §VI). Design notes from
+- [x] **P3, step one (0.2.1): the tokenizer.** GPT-2 byte-level BPE with the Qwen2 pre-tokenizer, no crates,
+  token-identical to llama.cpp on 4,258 of 4,258 recorded cases (a 2,000-string Unicode fuzz set included).
+- [ ] **P3: the Qwen3 forward pass, token-identical to llama.cpp at temperature 0** (TECHNICAL §VI). Next steps, each
+  with its oracle: the chat template (Jinja subset) → the embedding lookup and RMSNorm → attention with YaRN RoPE →
+  one full layer → the whole model's logits → greedy tokens. Design notes from
   V: kernels must be **batch-invariant** (each row reduced in the same order whatever the batch size) or prefill,
   chunked prefill and speculative verification will not be token-identical.
 - [ ] **A block-hashed prefix cache in P3** (V: `hash(parent, tokens[16], extra)`, a HashMap to blocks, ref counts,
@@ -83,5 +87,9 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
   `crypto/` under GPL-3.0-only (LICENSING.md).
 - [ ] **NEON kernels** for ARM (R: upstream `Q1_0`/`Q2_0` already have NEON; P5, handheld).
 - [ ] Real activations in the oracle (TECHNICAL §VI); a Zen 3 row; AVX-512 VNNI where present.
+- [ ] **The integrated GPU (Radeon Vega 3, shared DDR4)** — candidates, not started (operator's question, 2026-09-29):
+  (a) measure llama.cpp's Vulkan build of b11192 for *standard* models (prefill is compute-bound and may gain; decode
+  is memory-bound and shares the same RAM, so it should not); (b) Vulkan compute kernels for `Q1_0`/`Q2_0` in bankml,
+  bit-exact against the CPU reference — no project has them (upstream support is CPU-only). Both after P3.
 - [ ] Optional external engines at a process boundary (bitnet.cpp, KoboldCpp) as benchmark rivals and cross-checks,
   never linked (LICENSING.md).

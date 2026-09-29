@@ -82,7 +82,7 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON; `bankml verify` = guard + pin as one gate (0.0.2) |
 | P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B + 8.19 B weights (1.7B and 8B); decode at parity, prefill 1.2–1.3× (0.0.4) |
 | P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.5–9.8× decode, 12.5× prefill; threaded 0.0.3 (9.2–9.9× per token) |
-| P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | next — acceptance: token-identical to llama.cpp at temperature 0 |
+| P3 | Qwen3 forward pass (tokenizer, YaRN RoPE, GQA, `q8_0` KV cache, sampling) | **tokenizer done (0.2.1)** — token-identical to llama.cpp on 4,258 of 4,258 cases; the rest next, each step against its oracle |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
 | P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
@@ -106,6 +106,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [0.2.1](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.1) | P3 step one: bankml's own tokenizer (no crates), token-identical to llama.cpp on 4,258 of 4,258 recorded cases, `bankml tokenize` |
 | [**0.2.0**](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.0) | **milestone**: every document checked against the code and records (23 corrections); the fourth audit fixed; bankml's ternary kernel prepared for llama.cpp (`upstream/`, bit-exact 200,000/200,000, 3.4× the shipped scalar path) |
 | [0.1.9](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.9) | the system prompt's KV saved across restarts: first answer after a restart 132 s → 15 s, identical; history counted in the engine's own tokens and never silently dropped; the third audit fixed; bge-m3 live |
 | [0.1.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.1.8) | speed on fixed resources: SHA-NI pin 5.5× (a server start 25 s → 7 s); a chat window that keeps the prompt cache warm (8 moves in 60 turns, not 48); CPU/RAM sliders with bankml's own psutil (`sys.rs`); n-gram speculation opt-in; `MIT OR Apache-2.0`; docs in `docs/` |

@@ -12,6 +12,7 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
+       bankml tokenize MODEL.gguf [--no-special] < text      (token ids, as llama.cpp's /tokenize)
        bankml version";
 
 fn main() {
@@ -31,6 +32,22 @@ fn main() {
         })
     };
     let code = match (a.first().map(String::as_str), a.get(1)) {
+        (Some("tokenize"), Some(file)) => {
+            // bankml's tokenizer (P3, step one): token-identical to llama.cpp b11192 on its oracle; text from stdin
+            match bankml::tokenizer::Tokenizer::from_gguf(Path::new(file)) {
+                Err(e) => {
+                    eprintln!("bankml tokenize: {e}");
+                    1
+                }
+                Ok(t) => {
+                    let mut text = String::new();
+                    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+                    let ids = t.encode(&text, !flag("--no-special"));
+                    println!("{{\"tokens\": [{}]}}", ids.iter().map(u32::to_string).collect::<Vec<_>>().join(","));
+                    0
+                }
+            }
+        }
         (Some("usage"), _) => {
             // bankml's psutil: memory, cores, and rss + CPU % of the given pids (default: bankml itself), over 0.5 s
             let pids: Vec<u32> = a[1..].iter().filter_map(|x| x.parse().ok()).collect();

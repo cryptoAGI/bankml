@@ -83,6 +83,26 @@ cargo test --release -- --ignored oracle_ggml_b11192 --nocapture --test-threads=
 BANKML_GGML_LIB=/path/to/llama-b11192 cargo test --release -- --ignored ab_vs_ggml --nocapture --test-threads=1
 ```
 
+## 1b. The tokenizer oracle: token-identical to llama.cpp (0.2.1)
+
+P3, bankml's own forward pass, starts with the tokenizer. [`testing/tokenizer_oracle.py`](../testing/tokenizer_oracle.py)
+asks a running llama-server (b11192, the Bonsai / Qwen3 vocabulary) to tokenize a corpus, with special tokens parsed
+and not, and records every answer. The corpus is:
+- every document in the repository and Savante's canon texts;
+- the chat template's markers;
+- hand-picked edge cases: contractions, CRLF, every kind of whitespace, digits in several scripts, combining marks,
+  CJK, right-to-left scripts, emoji with joiners, mathematical alphanumerics;
+- a seeded fuzz set of 2,000 strings drawn from 17 Unicode ranges.
+
+`tokenizer::tests::oracle_tokenizer` re-derives every case with bankml's tokenizer (`tokenizer.rs`, no crates) and
+requires the same ids in the same order. Last result: **4,258 of 4,258 cases token-identical**.
+
+Two details the oracle settles:
+- **Which special tokens split the text.** Qwen3's `<think>` markers are USER_DEFINED and split the text even when
+  special tokens are not parsed; CONTROL tokens such as `<|im_start|>` do not.
+- **The pre-tokenizer's letter class.** It is Unicode general category L, which is not `char::is_alphabetic`. It is
+  generated into `unicode_letters.rs`.
+
 ## 2. Scalar models: every fast path against its own reference
 
 Between the real-model oracle runs, the kernels are held to a scalar model of ggml, on synthetic inputs, in the
@@ -132,7 +152,8 @@ not), `request_sha256` equals the sha256 of the request body, and a model file c
 ## 6. Oracles planned
 
 - **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer
-  must be **token-identical** to llama.cpp b11192's. Every kernel it will use already passes §1.
+  must be **token-identical** to llama.cpp b11192's. Every kernel it will use already passes §1, and its tokenizer
+  passes §1b (0.2.1).
 - **Speculative decoding (measured in 0.1.8).** A draft model (Bonsai-1.7B) and n-gram speculation both left the
   output **token-identical** at temperature 0 on every run; neither was faster beyond this laptop's noise, so neither
   is the default (n-gram is an opt-in). The same criterion applies to any future speed-up that changes how tokens are
