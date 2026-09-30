@@ -1683,7 +1683,7 @@ def aivatar_html(canon: Canon) -> str:
 <div class='bk-modal'><label for='bk-av-open' class='bk-modal-bg'></label>
 <div class='bk-3d'><canvas class='bk-scope' aria-hidden='true'></canvas><div class='bk-sheen'></div>
 <div class='bk-holo' role='dialog' aria-label='{E(name)}'>
-<div class='bk-back'><label for='bk-av-open' class='bk-backl' data-bk='interaction' title='close the card and go to the Interaction tab'>← back to Interaction</label><span class='bk-esc'>Esc closes</span><label for='bk-av-open' class='bk-x' title='close'>✕</label></div>
+<div class='bk-back'><label for='bk-av-open' class='bk-backl' data-bk-home title='close the card and go to the Interaction tab'>← back to Interaction</label><span class='bk-esc'>Esc closes</span><label for='bk-av-open' class='bk-x' title='close'>✕</label></div>
 <div class='bk-holo-top'><div class='bk-holo-pic'>{pic}</div><div>
 <div class='bk-kicker'>{E(p.get('kind', ''))} · {E(card.get('type', '').split('#')[-1] or 'agent')}</div>
 <h3>{E(name)}{lead_btn}</h3><div class='bk-mantra'>{E(p.get('mantra', ''))}</div>
@@ -1722,8 +1722,10 @@ LAYOUT_JS = """() => {
       setTimeout(() => { const i = document.querySelector('#bk-input textarea'); if (i) i.focus() }, 80);
     };
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.querySelector('.bk-av-t:checked')) closeCards() });
-    document.addEventListener('click', e => { if (e.target.closest('[data-bk="interaction"]')) { e.preventDefault(); window.bkToInteraction() } });
-    const pill = document.createElement('button'); pill.type = 'button'; pill.className = 'bk-home'; pill.dataset.bk = 'interaction';
+    // data-bk-home, not data-bk: inside a card, data-bk is the voice player's (it cancels those clicks)
+    // the card's bar is a plain <label for> — the browser unticks the card itself; this only goes to the tab and the input
+    document.addEventListener('click', e => { if (e.target.closest('[data-bk-home]')) setTimeout(window.bkToInteraction, 0) });
+    const pill = document.createElement('button'); pill.type = 'button'; pill.className = 'bk-home'; pill.dataset.bkHome = '';
     pill.textContent = '← Interaction'; pill.title = 'back to the Interaction tab'; pill.style.display = 'none'; document.body.append(pill);
     const sync = () => { const b = tabBtn(); pill.style.display = b && !b.classList.contains('selected') ? '' : 'none' };
     document.addEventListener('click', () => setTimeout(sync, 50)); setInterval(sync, 1000);
