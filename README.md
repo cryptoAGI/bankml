@@ -67,6 +67,7 @@ Start here, then go where your question is. The same documents read as a website
 | know what bankml is checked against, and how | **[docs/oracles.md](docs/oracles.md)** |
 | see where bankml stands among Rust engines, 1-bit/ternary kernels and verifiable inference (with papers) | **[docs/research.md](docs/research.md)** |
 | use meaning search (bge-m3, the embedding model mindX uses) | **[docs/embedding.md](docs/embedding.md)** |
+| see the GPUs Hugging Face rents (NVIDIA agreed to acquire Hugging Face, 2026-09-02) and how bankML treats them | **[docs/huggingface.md](docs/huggingface.md)** (addendum, 2026-09-29) |
 | see what comes next and what was rejected, and why | **[docs/TODO.md](docs/TODO.md)** |
 | check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
 | know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |
