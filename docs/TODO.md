@@ -73,11 +73,12 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 
 - [x] **P3, step one (0.2.1): the tokenizer.** GPT-2 byte-level BPE with the Qwen2 pre-tokenizer, no crates,
   token-identical to llama.cpp on 4,258 of 4,258 recorded cases (a 2,000-string Unicode fuzz set included).
-- [ ] **P3: the Qwen3 forward pass, token-identical to llama.cpp at temperature 0** (TECHNICAL §VI). Next steps, each
-  with its oracle: ~~the chat template~~ (done 0.2.2, 317 of 317 byte-identical) → ~~the embedding lookup and RMSNorm~~ (done 0.2.3, 300 of 300 bit-exact) → ~~Q/K/V, head norms and YaRN RoPE~~ (done 0.2.4, 140 of 140 bit-exact, positions to 63,214) → ~~attention (f16 KV cache, flash-attention reference path, `wo`, residual)~~ (done 0.2.5, 84 of 84) → ~~the FFN block (`ffn_norm`, SwiGLU with ggml's expf, `ffn_down`)~~ (done 0.2.6: layer 0 complete, 112 of 112; SwiGLU sweep 24,600 of 24,600) → ~~all 36 layers, `output_norm`, the logits; greedy tokens~~ (done 0.2.7: 1,064 of 1,064 rows; llama-server's greedy tokens on 6 of 6 prompts; `bankml generate`) → ~~the ternary model's forward pass~~ (done 0.2.8: 1,064 of 1,064; llama-server's tokens on 6 of 6 prompts; 2.3–2.4 tokens/s against llama-server's 0.30) → **speed**: batched prefill through `mat_mul_act`, norm weights loaded once, logits only where sampled → ~~the tiled kernel for micro-batches of ≥ 64 rows, and llama.cpp's micro-batching~~ (done 0.2.9: 150 of 150; long prompts 6 of 6) → ~~the split-KV decode kernel~~ (done 0.2.10: 14 of 14 at 3 and 4 threads; 600 tokens past 256 cells identical) → ~~sampling (llama-server's chain, seeded)~~ (done 0.2.11: 40 of 40) → ~~batched prefill~~ (0.2.12) → ~~GPU discovery~~ (0.2.12, `bankml gpu`) → ~~GPU kernels, bit-exact~~ (0.2.13: Q1_0 on the Vega 3, `bankml gpu --verify`) → ~~the GPU as a worker beside the CPU threads, used automatically once verified~~ (0.2.14, bit-exact; speed neutral on the APU) → ~~**0.3.0: `bankml serve --native`**, Savante answered by bankML's own forward pass~~ (9 of 9 conversation turns identical to llama-server) → slot save/restore in native serve; the 1-bit speed (batched submissions: Q/K/V and gate/up in one, one wait per group) → the Q2_0 kernel → several cards → ~~mindXtrain in Rust: author and score~~ (0.2.13) → the probe (Llama architecture, adapters), the verdicts, LoRA on the CPU → **0.3.0: `bankml serve` answers from its own forward pass** →
-  one full layer → the whole model's logits → greedy tokens. Design notes from
-  V: kernels must be **batch-invariant** (each row reduced in the same order whatever the batch size) or prefill,
-  chunked prefill and speculative verification will not be token-identical.
+- [x] **P3: the Qwen3 forward pass, token-identical to llama.cpp** (0.2.2–0.2.11, one verified step per release):
+  the chat template, the embedding and norms, Q/K/V with YaRN RoPE, all three of ggml's CPU attention kernels, the
+  FFN with ggml's own `expf`, the whole model's logits for the 1-bit and ternary files, llama.cpp's micro-batching,
+  and seeded sampling. Batched prefill (0.2.12). **0.3.0: `bankml serve --native`**, Savante answered by bankML's
+  own forward pass, with conversations identical to llama-server's (9 of 9 turns). The per-release record is in
+  CHANGELOG.md; the road on from here is the next section.
 - [ ] **A block-hashed prefix cache in P3** (V: `hash(parent, tokens[16], extra)`, a HashMap to blocks, ref counts,
   an intrusive LRU free list, ~300 lines). Exact by construction: only the unchanged prefix is reused.
 - [ ] **Prompt-lookup speculation in P3** (V: the n-gram proposer, a KMP scan over the reversed history, ~60 lines,
@@ -87,9 +88,91 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
   `crypto/` under GPL-3.0-only (LICENSING.md).
 - [ ] **NEON kernels** for ARM (R: upstream `Q1_0`/`Q2_0` already have NEON; P5, handheld).
 - [ ] Real activations in the oracle (TECHNICAL §VI); a Zen 3 row; AVX-512 VNNI where present.
-- [ ] **The integrated GPU (Radeon Vega 3, shared DDR4)** — candidates, not started (operator's question, 2026-09-29):
-  (a) measure llama.cpp's Vulkan build of b11192 for *standard* models (prefill is compute-bound and may gain; decode
-  is memory-bound and shares the same RAM, so it should not); (b) Vulkan compute kernels for `Q1_0`/`Q2_0` in bankml,
-  bit-exact against the CPU reference — no project has them (upstream support is CPU-only). Both after P3.
+- [x] **The integrated GPU (Radeon Vega 3, shared DDR4)**, (b): Vulkan compute kernels for `Q1_0`, bit-exact against
+  the CPU reference (0.2.13), working inside the forward pass (0.2.14). What's left is in the road below. (a),
+  measuring llama.cpp's own Vulkan build for standard models, is still open as a comparison.
 - [ ] Optional external engines at a process boundary (bitnet.cpp, KoboldCpp) as benchmark rivals and cross-checks,
   never linked (LICENSING.md).
+
+## The road from 0.3.0 to 1.0.0
+
+**What 1.0.0 means.** bankML is the engine, not a companion to one:
+1. llama.cpp is needed only as the **oracle in the gate**, never at run time. The installer does not fetch
+   llama-server unless you ask for it.
+2. Every supported architecture × format has its whole-model, greedy, sampling and conversation oracles in the gate,
+   and passes them.
+3. On every supported format bankML is **at least at parity with llama.cpp**, and ahead where the kernels allow,
+   measured on named reference machines. That covers CPU (x86 AVX2 and AVX-512, ARM NEON) and GPU (Vulkan).
+4. Stable, documented interfaces under semver: the CLI, the HTTP endpoints, and the library API.
+5. Signed receipts wherever the operator holds a key, and a verifier anyone can run.
+6. Savante and mindX run on bankML by default.
+
+Each milestone ends with a gated release, and nothing counts until its oracle passes.
+
+### 0.4.0 — native serve complete (everything Savante and mindX ask of llama-server)
+- [ ] Slot save and restore in `--native` (Savante's warm start); oracle: the tokens after a restore equal the
+  tokens without one.
+- [ ] More than one slot (`-np N`) with llama-server's queueing, or a stated single-slot contract; the conversation
+  oracle extended to interleaved sessions.
+- [ ] The rest of llama-server's sampler chain, each with a seeded oracle: repetition, presence and frequency
+  penalties (`last_n`), typical-p, DRY, XTC, top-n-σ, dynamic temperature.
+- [ ] `/completion` with `n_probs`, and logprobs on `/v1/chat/completions`, bit-exact probabilities.
+- [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle.
+- [ ] **1-bit decode at least at llama-server's speed**: currently 1.9–2.0 tokens/s against 2.8. Cache the norm
+  weights, cut per-token allocations, share one quantized activation across Q/K/V and gate/up, and compute logits
+  only where sampled.
+- [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files.
+
+### 0.5.0 — hardware
+- [ ] Batched GPU submissions: Q/K/V and gate/up in one command buffer, one wait per group, persistent descriptor
+  sets. Goal: a measured gain on the Vega 3.
+- [ ] The Q2_0 (ternary) GPU kernel, bit-exact on the card, in `--verify`.
+- [ ] Several cards: each takes a share of every matrix's rows, still one card's exact dot per element. Proven on a
+  multi-card machine; a Hugging Face Job (`l4x4`, `a10g-largex2`) is the candidate, **only on the owner's go-ahead
+  and budget**.
+- [ ] A discrete-card measurement (the first rented T4 or L4 run, with the owner's approval): verify, then speed.
+- [ ] AVX-512 and VNNI kernels where present (Zen 4, Intel), bit-exact; Zen 3 and Zen 4 rows in PERFORMANCE.md.
+- [ ] **NEON kernels for ARM** (P5), with the oracle against llama.cpp's ARM build on an ARM machine.
+- [ ] The target-feature 1.1 clean-up: the same bits with fewer `unsafe`.
+- [ ] CI builds and unit-tests across the x86 variants and aarch64.
+
+### 0.6.0 — more models
+- [ ] The **Llama architecture** (SmolLM2, Llama 3.x): the first beyond Qwen3, needed by mindXtrain's probe.
+- [ ] Qwen2 and Qwen2.5 (the coder models in the catalogue).
+- [ ] ggml's standard formats as kernels bit-exact against ggml: `Q8_0` and `Q4_K_M` first, so that catalogue models
+  run natively.
+- [ ] A GGUF writer (merged models from mindXtrain; repacked forks).
+- [ ] Each architecture and format gets the full oracle set (the whole model, greedy, sampling, conversations) in the
+  gate.
+
+### 0.7.0 — mindXtrain in Rust, end to end
+- [ ] The probe stage: PEFT adapters loaded from safetensors and merged, then recall probing with transformers'
+  decoding rules (repetition penalty, no-repeat n-gram), against mindXtrain's own `probe_recall`.
+- [ ] The classroom and boardroom verdicts, the dojo tie-break, the feedback ledger, the receipts (BLAKE3 manifest),
+  each identical to mindXtrain's Python.
+- [ ] **LoRA training on the CPU**: a backward pass and AdamW for the 135M–0.6B imprint recipe. Gradients are checked
+  against PyTorch f32 within a stated bound, and the recall gate's verdict must agree.
+- [ ] One generation end to end in Rust: author → imprint → probe → score → verdict → GGUF. Also use the exact
+  pipeline to find out why the gate has refused every generation since 39.
+
+### 0.8.0 — trust
+- [ ] **Signed receipts** in `crypto/` (GPL-3.0-only, opt-in, a cargo feature): the operator's key through BANKON
+  or Parsec custody, never an agent's. `bankml verify-receipt` for anyone.
+- [ ] Reproducible builds: the release binary's sha256 published and rebuilt in CI; an SBOM (zero dependencies make
+  it short).
+- [ ] Fuzzing without crates (an in-crate harness) for the GGUF parser, the JSON parser and the HTTP reader; the
+  findings fixed, each with a test.
+- [ ] An independent review of `serve` (the loopback rules, request limits, receipts) before 1.0.
+
+### 0.9.0 — release candidate
+- [ ] The mindX provider (P4): mindX's inference discovery uses `bankml serve --native` with receipts.
+- [ ] Savante defaults to native. The installer builds or downloads a verified bankML binary and fetches llama.cpp
+  only for the oracle or on request.
+- [ ] Release binaries for x86_64 and aarch64 Linux, sha256-pinned, with the verification steps in usage.md.
+- [ ] The interfaces frozen and documented (CLI, HTTP, library) with a semver policy; deprecations stated.
+- [ ] Soak tests: long conversations (4k–32k context with YaRN), memory ceilings, restarts with slot restore.
+- [ ] Every document checked against the code and the records, as for 0.2.0.
+
+### 1.0.0
+- [ ] The six conditions at the top of this section are all met, each with a record in `testing/results/1.0.0.txt`.
+
