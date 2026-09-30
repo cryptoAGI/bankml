@@ -120,7 +120,7 @@ article p[align="center"] { text-align: center; }
   <div class="masthead-inner">
     <p class="brand"><span class="trits" aria-hidden="true"><i></i><i></i><i></i></span>bankml<span class="ver" id="ver">0.2.7</span></p>
     <span class="tag">Verified low-bit inference for the CPU you already have — the documentation, as of <span id="asof">0.2.7</span>.</span>
-    <div class="proof">gate record 0.2.7: own forward pass <b>1,064 / 1,064</b> rows bit-exact (36 layers, all 151,669 logits) and greedy tokens identical to llama-server on <b>6 / 6</b> prompts · <b>8,188,239,872</b> ternary weights and <b>762 / 762</b> dot products bit-exact against llama.cpp b11192’s compiled library · tokenizer <b>4,258 / 4,258</b> and chat template <b>317 / 317</b> identical · one ternary token <b>0.236 s vs 2.080 s</b></div>
+    <div class="proof">gate record 0.3.0: Savante answered by bankML’s own forward pass — whole conversations identical to llama-server on <b>9 / 9</b> turns (text, token counts, prompt-cache reuse) · own forward pass <b>1,064 / 1,064</b> rows bit-exact for the 1-bit and the ternary model · seeded sampling identical on <b>40 / 40</b> continuations · <b>8,188,239,872</b> ternary weights and <b>762 / 762</b> dot products bit-exact against llama.cpp b11192’s compiled library · one ternary token <b>0.222 s vs 2.139 s</b></div>
   </div>
 </header>
 
@@ -140,7 +140,7 @@ article p[align="center"] { text-align: center; }
   const REPO = "https://github.com/cryptoAGI/bankml";
   // Two homes, one file. In the claude.ai artifact the documents are published beside this page, so they load by
   // relative path. On GitHub Pages (docs/index.html) they are read from the repository at the latest release.
-  const FALLBACK_TAG = "v0.2.7";
+  const FALLBACK_TAG = "v0.3.0";
   let TAG = FALLBACK_TAG;
   let SRC = "";                          // "" = beside this page; otherwise a raw.githubusercontent.com base
   const RAW = "https://raw.githubusercontent.com/cryptoAGI/bankml/";
