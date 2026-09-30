@@ -161,7 +161,10 @@ What exists, each proven against llama.cpp b11192:
 - **Layout** since ef65eb4: Rust in `bankML/`, UI in `sAGI/`. Savante's canon is `~/cryptoAGI/savante`
   (`~/savante` is a link).
 
-Next (docs/TODO.md): slot save and restore in native serve; batched GPU submissions (Q/K/V and gate/up); the Q2_0
+**The road to 1.0.0** is in docs/TODO.md: what 1.0.0 means (llama.cpp only as the gate's oracle; full oracles per
+model × format; parity or better everywhere; stable interfaces; signed receipts; Savante and mindX on bankML by
+default), and the milestones 0.4.0 (native serve complete) → 0.5.0 (hardware) → 0.6.0 (models) → 0.7.0 (mindXtrain
+end to end) → 0.8.0 (trust) → 0.9.0 (release candidate). Next (docs/TODO.md): slot save and restore in native serve; batched GPU submissions (Q/K/V and gate/up); the Q2_0
 GPU kernel, then several cards; mindXtrain probe (Llama architecture, PEFT adapters), the verdicts, LoRA on the CPU;
 signed receipts in `crypto/` (GPL-3.0-only); NEON. The `upstream/` Q2_0 kernel awaits the authors' decision to open
 a llama.cpp PR.
