@@ -132,7 +132,8 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   and budget**.
 - [ ] A discrete-card measurement (the first rented T4 or L4 run, with the owner's approval): verify, then speed.
 - [ ] AVX-512 and VNNI kernels where present (Zen 4, Intel), bit-exact; Zen 3 and Zen 4 rows in PERFORMANCE.md.
-- [ ] **NEON kernels for ARM** (P5), with the oracle against llama.cpp's ARM build on an ARM machine.
+- [ ] **NEON kernels for ARM** (P5), with the oracle against llama.cpp's ARM build on an ARM machine: the first step of
+  the handheld track below.
 - [ ] The target-feature 1.1 clean-up: the same bits with fewer `unsafe`.
 - [ ] CI builds and unit-tests across the x86 variants and aarch64.
 
@@ -172,6 +173,42 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] The interfaces frozen and documented (CLI, HTTP, library) with a semver policy; deprecations stated.
 - [ ] Soak tests: long conversations (4k–32k context with YaRN), memory ceilings, restarts with slot restore.
 - [ ] Every document checked against the code and the records, as for 0.2.0.
+
+### Handheld and distributed intelligence (github.com/minaiml): making smartphones actually smart
+
+[minaiml](https://github.com/minaiml) is the delivery layer: models that run on hardware you already own, where
+*sparsity, not size, decides what a small machine can run*. Its app is brobot, the Android model player (public fork
+MIT, frozen at 3ac7076; the work continues in `minaiml/brobot-private` until release). bankML's part is to be the
+**verified engine** inside that delivery: the same bits as llama.cpp, a pinned model, and a receipt, on a phone
+as on a laptop. Then many devices act as one.
+
+**Handheld**
+- [ ] bankML on aarch64 (Android and Linux phones, the Raspberry Pi): Rust's own aarch64 targets, still no crates;
+  NEON kernels bit-exact (0.5.0); the oracle run on the device against llama.cpp's ARM build (MIT, minaiml's
+  `llama.cpp` fork).
+- [ ] bankML as a library for apps: a small C ABI (verify, load, generate, receipt), so brobot plays pinned models
+  through bankML. The core stays standalone and agnostic and imports no extension, per brobot's layering.
+- [ ] Phone GPUs (Adreno, Mali, Apple through MoltenVK) through the same `gpu/` Vulkan backend, each card verified
+  bit-exact on the device before it computes anything (`bankml gpu --verify`).
+- [ ] Delivery rules on the handheld exactly as on the laptop: pin by sha256, OSI licences only, the guard before
+  load, and memory planned for 4–12 GB phones (the importer's plan).
+- [ ] **Sparse delivery:** mixture-of-experts Qwen3 (the A3B shape) in bankML's forward pass, with the shared weights
+  resident and the experts read from flash on demand. The oracle is llama.cpp's MoE output. It is built from the
+  models' published architectures (Apache-2.0) with llama.cpp (MIT) as the reference, **not from flash-moe,
+  Flash-iOS, flash-pi-dsv4 or Anemll**, whose authors declare no licence upstream. Open source or go away: bankML
+  does not build on them until they do.
+
+**Distributed**
+- [ ] Several devices as one engine: 0.5.0's multi-card row split, generalised to devices on a network. Each device
+  computes a share of every matrix's rows, or a span of layers, with kernels verified on that device, and **the
+  answer is bit-identical to one machine's**. The transport is authenticated with device keys (Parsec custody;
+  pmVPN's port-scoped keys).
+- [ ] Per-device receipts, signed (0.8.0): which device computed which share, so a distributed answer is as
+  accountable as a local one.
+- [ ] exo (GPL-3.0, minaiml's fork) stays a reference and a rival at a process boundary, never linked into the MIT /
+  Apache core (LICENSING.md). mlc-llm, LiteRT-LM (Apache-2.0) and cutile-rs (Apache-2.0) may be studied and
+  compared. executorch and ncnn show `NOASSERTION` on GitHub: read their licence files before touching either.
+- [ ] The first deployment is mindX's own mesh: the VPS nodes, the laptops, and the phones running brobot.
 
 ### 1.0.0
 - [ ] The six conditions at the top of this section are all met, each with a record in `testing/results/1.0.0.txt`.
