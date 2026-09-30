@@ -151,8 +151,8 @@ llama-server's turn by turn, and about 8× faster on the ternary model.** Record
     Azure and GCP, each with its card count, memory and price per hour. They are read through the system `curl`
     (bankml has no TLS of its own), **listed and never selected or provisioned**: a rented card is used by running
     bankml on it as a Hugging Face Job, where the Vulkan backend finds it. NVIDIA agreed on 2026-09-02 to acquire
-    Hugging Face; closing is expected in the first half of 2027. mindX's `docs/HUGGINGFACE_INTEGRATION.md` carries
-    the dated addendum.
+    Hugging Face; closing is expected in the first half of 2027. The dated addendum is bankML's
+    [`docs/huggingface.md`](docs/huggingface.md).
   - **`bankml gpu [--remote]`** prints what was found and what will be used. Here it finds the Radeon Vega 3 (RADV, Vulkan
     1.3, 5 compute queues, CPU-mappable memory, `amdgpu` at 0000:04:00.0) and refuses llvmpipe.
   - **No kernels run on the GPU yet.** They come next, and each must reproduce the CPU kernels' bits on the card
