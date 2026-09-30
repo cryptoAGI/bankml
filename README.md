@@ -72,6 +72,7 @@ Start here, then go where your question is. The same documents read as a website
 | check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
 | know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |
 | run or read the tests and each release's gate record | **[testing/README.md](testing/README.md)**, [testing/results/](testing/results/) |
+| work on bankML with Claude Code (the file map, the oracles, the release routine, the pitfalls) | **[.claude/skills/bankml/SKILL.md](.claude/skills/bankml/SKILL.md)**, the project skill |
 
 ## Results
 
