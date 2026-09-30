@@ -245,7 +245,7 @@ def history_load():
     if not lines:
         return uuid.uuid4().hex[:12], []
     sid = lines[-1].get("session")
-    return sid, [[r.get("user", ""), r.get("shown", r.get("assistant", ""))] for r in lines if r.get("session") == sid]
+    return sid, [[r.get("user", ""), r.get("assistant", r.get("shown", ""))] for r in lines if r.get("session") == sid]
 
 
 def history_all() -> list:
@@ -2016,109 +2016,120 @@ def build(canon: Canon, mode: str):
         gr.Markdown("## bankML · Savante — verified low-bit inference on this computer\n"
                     "Every answer is a **draft**, carried by a local model behind bankML's guard and sha256 pin, "
                     "with a receipt. Savante's canon is read-only and checked against its ledger.", elem_id="bk-head")
-        with gr.Tab("Interaction"):
+        with gr.Tab("Interaction"):  # the question and the answer, nothing else: every setting is on the Admin tab
             with gr.Row(elem_id="bk-row"):
-                with gr.Column(scale=3, elem_id="bk-main"):
-                    chat = gr.Chatbot(value=turns0, height=540, label="Savante (draft)", elem_id="bk-chat")
+                with gr.Column(scale=4, elem_id="bk-main"):
+                    chat = gr.Chatbot(value=turns0, height=620, label="Savante (draft)", elem_id="bk-chat")
                     msg = gr.Textbox(placeholder="Ask Savante — e.g. review: is this model ready to serve?", show_label=False, elem_id="bk-input")
                     with gr.Row():
                         send, stop, new = gr.Button("Send", variant="primary"), gr.Button("Stop"), gr.Button("New session")
                 with gr.Column(scale=1, elem_id="bk-side"):
                     timer = gr.HTML(timer_md())
                     aiv = gr.HTML(aivatar_html(canon))
+        with gr.Tab("Admin"):
+            gr.Markdown("**Everything that shapes an answer, and the machine that carries it.** The Interaction tab uses these as they are set here.")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("### the last answer")
+                    last = gr.HTML("<div class='bk-note'>no answer yet in this session — its timing, receipt and prompt provenance appear here</div>")
+                    gr.Markdown("### settings")
                     which = gr.Dropdown(list(PROMPTS), value=PROMPTS[0], label=".prompt")
                     prov = gr.Markdown(system_prompt(canon, PROMPTS[0])[1], elem_id="bk-prov")
                     use_mem = gr.Checkbox(value=True, label="use .memory (the operator's notes, appended to the system prompt)")
                     max_tokens = gr.Slider(16, 1024, value=256, step=16, label="max tokens")
                     temperature = gr.Slider(0.0, 1.5, value=0.3, step=0.05, label="temperature")
+                    gr.Markdown(f"`.history` → `{HISTORY}` (outside the canon) · session `{sid0}`")
+                with gr.Column(scale=1):
+                    gr.Markdown("### the carrier")
                     carrier = gr.HTML(carrier_md())
                     gr.Button("refresh carrier").click(carrier_md, None, carrier)
-                    with gr.Accordion("Resources · CPU and RAM for the engine", open=False):
-                        import models as _M
-                        _r, _mt = _M.resources(), _M.mem_total() / 1e9
-                        cpu_s = gr.Slider(1, os.cpu_count() or 1, value=_r["threads"], step=1, label=f"CPU threads (of {os.cpu_count()})")
-                        ram_s = gr.Slider(0.5, round(_mt, 1), value=_r["ram_gb"] or resources_default_gb(), step=0.1, label="RAM budget for the engine (GB)")
+                    gr.Markdown("### resources · CPU and RAM for the engine")
+                    import models as _M
+                    _r, _mt = _M.resources(), _M.mem_total() / 1e9
+                    cpu_s = gr.Slider(1, os.cpu_count() or 1, value=_r["threads"], step=1, label=f"CPU threads (of {os.cpu_count()})")
+                    ram_s = gr.Slider(0.5, round(_mt, 1), value=_r["ram_gb"] or resources_default_gb(), step=0.1, label="RAM budget for the engine (GB)")
+                    with gr.Accordion("advanced", open=False):
                         spec_c = gr.Checkbox(value=bool(_r.get("spec_ngram")), label="n-gram speculation (exact at temperature 0, no extra memory; "
                                              "ahead in 5 of 6 paired runs here but not beyond this laptop's noise, so off by default)")
                         eng_r = gr.Radio(["auto", "native", "llama.cpp"], value=_r.get("engine", "auto"), label="engine — native: bankML's own forward pass, "
                                          "token-identical to llama.cpp (about 8x on the ternary model); auto picks it for the ternary files")
-                        res_plan = gr.HTML(resources_plan_html(_r["ram_gb"] or resources_default_gb()))
-                        with gr.Row():
-                            res_apply = gr.Button("Apply (restarts the engine)", variant="primary")
-                            res_use = gr.Button("usage now")
-                        res_usage = gr.HTML("<div class='bk-note'>press “usage now” to read what the engine uses</div>")
-                        ram_s.change(resources_plan_html, ram_s, res_plan, show_progress=False)
-                        res_use.click(resources_usage_html, None, res_usage)
-            gr.Markdown(f"`.history` → `{HISTORY}` (outside the canon) · session `{sid0}`")
+                    res_plan = gr.HTML(resources_plan_html(_r["ram_gb"] or resources_default_gb()))
+                    with gr.Row():
+                        res_apply = gr.Button("Apply (restarts the engine)", variant="primary")
+                        res_use = gr.Button("usage now")
+                    res_usage = gr.HTML("<div class='bk-note'>press “usage now” to read what the engine uses</div>")
+                    ram_s.change(resources_plan_html, ram_s, res_plan, show_progress=False)
+                    res_use.click(resources_usage_html, None, res_usage)
+        # the Interaction tab's events (its settings live on the Admin tab)
+        def add(m, h):
+            if not m.strip():
+                return "", h
+            PENDING.update(t0=time.time(), first=None)  # the clock starts at the press of Send
+            return "", (h or []) + [[m, None]]
 
-            def add(m, h):
-                if not m.strip():
-                    return "", h
-                PENDING.update(t0=time.time(), first=None)  # the clock starts at the press of Send
-                return "", (h or []) + [[m, None]]
-
-            def respond(h, which, max_tokens, temperature, sess, use_mem):
-                if not h or h[-1][1] is not None:
-                    yield h
+        def respond(h, which, max_tokens, temperature, sess, use_mem):
+            if not h or h[-1][1] is not None:
+                yield h, gr.update()
+                return
+            rid = uuid.uuid4().hex
+            INFLIGHT[rid] = time.time()
+            t0 = PENDING["t0"] or time.time()
+            hist, agent = HISTORY, ACTIVE["slug"] or "savante"  # where this exchange belongs, fixed at its start
+            try:
+                system, why = system_prompt(canon, which)
+                if system is None:
+                    h[-1][1] = f"refused: {why}"
+                    yield h, gr.update()
                     return
-                rid = uuid.uuid4().hex
-                INFLIGHT[rid] = time.time()
-                t0 = PENDING["t0"] or time.time()
-                hist, agent = HISTORY, ACTIVE["slug"] or "savante"  # where this exchange belongs, fixed at its start
+                mem = memory_block() if use_mem else ""
+                if mem:
+                    system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
+                st = serve_status()
+                arch = str((st.get("verified") or {}).get("arch") or "").lower()
+                qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
+                warm = slot_restore(system)
+                win = {}
                 try:
-                    system, why = system_prompt(canon, which)
-                    if system is None:
-                        h[-1][1] = f"refused: {why}"
-                        yield h
-                        return
-                    mem = memory_block() if use_mem else ""
-                    if mem:
-                        system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
-                    st = serve_status()
-                    arch = str((st.get("verified") or {}).get("arch") or "").lower()
-                    qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
-                    warm = slot_restore(system)
-                    win = {}
-                    try:
-                        msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
-                                              ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens), info=win, session=sess["id"])
-                    except ContextTooSmall as e:
-                        h[-1][1] = f"refused: {e}. Raise the RAM budget in Resources (a larger context), shorten the question, or lower max tokens."
-                        yield h
-                        return
-                    text, rc, first = "", {}, None
-                    for text, r in stream(msgs, max_tokens, temperature):
-                        if text and first is None:
-                            first = time.time()
-                            if PENDING["t0"] == t0:
-                                PENDING["first"] = first
-                        h[-1][1] = show_answer(text)
-                        rc = r if r is not None else rc
-                        yield h
-                    t1 = time.time()
-                    answer = show_answer(text)
-                    timing = {"sent_at": iso(t0), "first_token_s": round(first - t0, 2) if first else None,
-                              "response_s": round(t1 - t0, 2), "answered_at": iso(t1)}
-                    clock = (f"⏱ sent {time.strftime('%H:%M:%S', time.localtime(t0))} · first token "
-                             f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
-                    foot = receipt_line(rc, text)
-                    trimmed = (f"<br>history: {win['sent']} of {win['of']} exchanges fit the engine's {win['ctx']}-token context — "
-                               "raise the RAM budget in Resources for more") if win.get("trimmed") else ""
-                    h[-1][1] = answer + f"\n\n<sub>{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + trimmed + "</sub>"
-                    history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
-                                    "assistant_raw": text, "shown": h[-1][1], "prompt": which, "prompt_provenance": why, "receipt": rc}, hist)
-                    slot_save(system)  # background; never in the way of the answer or its .history line
-                    yield h
-                finally:
-                    INFLIGHT.pop(rid, None)
-                    if PENDING["t0"] == t0:  # only this request's clock; another tab's stays
-                        PENDING.update(t0=None, first=None)
+                    msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
+                                          ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens), info=win, session=sess["id"])
+                except ContextTooSmall as e:
+                    h[-1][1] = f"refused: {e}. Raise the RAM budget on the Admin tab (a larger context), shorten the question, or lower max tokens."
+                    yield h, gr.update()
+                    return
+                text, rc, first = "", {}, None
+                for text, r in stream(msgs, max_tokens, temperature):
+                    if text and first is None:
+                        first = time.time()
+                        if PENDING["t0"] == t0:
+                            PENDING["first"] = first
+                    h[-1][1] = show_answer(text)
+                    rc = r if r is not None else rc
+                    yield h, gr.update()
+                t1 = time.time()
+                answer = show_answer(text)
+                timing = {"sent_at": iso(t0), "first_token_s": round(first - t0, 2) if first else None,
+                          "response_s": round(t1 - t0, 2), "answered_at": iso(t1)}
+                clock = (f"⏱ sent {time.strftime('%H:%M:%S', time.localtime(t0))} · first token "
+                         f"{timing['first_token_s'] if first else '—'} s · answered in {timing['response_s']} s")
+                foot = receipt_line(rc, text)
+                trimmed = (f"<br>history: {win['sent']} of {win['of']} exchanges fit the engine's {win['ctx']}-token context — "
+                           "raise the RAM budget on the Admin tab for more") if win.get("trimmed") else ""
+                h[-1][1] = answer  # the answer alone: its clock, receipt and provenance are kept, on the Admin tab and in .history
+                trail = f"{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + trimmed
+                history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
+                                "assistant_raw": text, "shown": h[-1][1], "trail": trail, "prompt": which, "prompt_provenance": why, "receipt": rc}, hist)
+                slot_save(system)  # background; never in the way of the answer or its .history line
+                yield h, f"<div class='bk-card' style='font-size:13px'>{E(h[-1][0][:120])}<br><sub>{trail}</sub></div>"
+            finally:
+                INFLIGHT.pop(rid, None)
+                if PENDING["t0"] == t0:  # only this request's clock; another tab's stays
+                    PENDING.update(t0=None, first=None)
 
-            ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], chat)
-            ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], chat)
-            stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])  # a cancelled respond runs its finally
-            which.change(lambda w: system_prompt(canon, w)[1], which, prov)
-            new.click(lambda: ([], {"id": uuid.uuid4().hex[:12]}), None, [chat, session])
+        ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], [chat, last])
+        ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], [chat, last])
+        stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])  # a cancelled respond runs its finally
+        which.change(lambda w: system_prompt(canon, w)[1], which, prov)
+        new.click(lambda: ([], {"id": uuid.uuid4().hex[:12]}), None, [chat, session])
         stage, mach, log, ci = view_tabs(gr, canon)
         demo.load(lambda: (live_stage(), machine(), live_tail(), ci_status()), None, [stage, mach, log, ci], every=2, show_progress=False)
         demo.load(timer_md, None, timer, every=1, show_progress=False)

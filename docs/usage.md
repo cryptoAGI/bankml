@@ -106,15 +106,19 @@ Open **http://127.0.0.1:7873**, type a question, press **Send**.
 
 - The first answer takes about **2 minutes** on a laptop CPU, while the model reads Savante's instructions. Later
   answers start sooner.
-- Every answer is labelled **draft · not a finding**, and carries a receipt (§9).
+- Every answer is a **draft · not a finding**. The chat shows the answer alone; its clock, receipt (§9) and prompt
+  provenance are on the **Admin** tab under *the last answer*, and in `.history` and the Responses tab.
 - To ask for a review, say so: *"review: is Bonsai-8B ready to serve mindX?"*. She then answers as FINDINGS /
   VERDICT / RATIONALE / CONDITIONS / RISKS WATCHED. The 1-bit carrier was graded REJECT for review duty in the sAGI
   carrier test, so treat its verdicts as drafts.
 - **Stop** cancels an answer; **New session** starts a fresh conversation.
 
-The side panel sets the system prompt (`.prompt`, §8), max tokens, temperature, and the engine's CPU threads and RAM
-budget (**Apply** restarts the engine with them, and restores your previous settings if it will not start). The tabs
-hold your history, notes, metrics, integrity checks and the verifier. [playback.md](playback.md) walks through the
+The Interaction tab is only the conversation: the chat, the question field, the clock and the portrait (press it for
+the card; **← back to Interaction** or Esc closes it, and every other tab has a **← Interaction** button). The
+**Admin** tab holds the settings: the system prompt (`.prompt`, §8), `.memory`, max tokens, temperature, the carrier,
+and the engine's CPU threads and RAM budget (**Apply** restarts the engine with them, and restores your previous
+settings if it will not start; the engine choice and n-gram speculation are under *advanced*). The other tabs hold
+your history, notes, metrics, integrity checks and the verifier. [playback.md](playback.md) walks through the
 page, her card and her voice.
 
 ## 5. Models
@@ -202,8 +206,8 @@ Nothing is ever written into the canon (`~/cryptoAGI/savante`). What the UI writ
   - The start stays where it was last turn while that still fits, so the cache is reused.
   - When it no longer fits, the start jumps so that the newest half of what fits is kept, leaving room for the next
     turns. When only two or three exchanges fit, all of them are kept.
-  - The answer's footer then says so: "history: 4 of 13 exchanges fit the engine's 2048-token context — raise the
-    RAM budget in Resources for more".
+  - The answer's trail (Admin → *the last answer*) then says so: "history: 4 of 13 exchanges fit the engine's
+    2048-token context — raise the RAM budget on the Admin tab for more".
   - Exchanges older than the 12–17 window are dropped without a note, as they always were.
 - **If the system prompt and the question alone do not fit,** the answer is refused with the numbers.
 - On a 2048-token context the persona prompt plus `.memory` leaves room for only a few exchanges; 4096 tokens (about

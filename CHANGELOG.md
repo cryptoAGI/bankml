@@ -10,6 +10,13 @@
   - Every other tab shows a **← Interaction** pill in the bottom-left corner. It goes straight back to the chat, with
     the cursor in the question field.
   - *use this agent* on the Agents tab now returns to the Interaction tab with that agent in use.
+- **The Interaction tab is only the conversation.**
+  - The chat, the question field, the clock and the portrait. The settings (`.prompt`, `.memory`, max tokens,
+    temperature), the carrier, and the CPU and RAM controls moved to a new **Admin** tab; the engine choice and
+    n-gram speculation are under its *advanced*.
+  - An answer is shown alone. Its clock, receipt and prompt provenance are kept, but not in the chat: they are on
+    the Admin tab under *the last answer*, in `.history` (a new `trail` field) and on the Responses tab. Earlier
+    turns reload as their answers alone.
 
 ## 0.3.0 — 2026-09-29 — milestone: Savante answered by bankML's own forward pass
 
