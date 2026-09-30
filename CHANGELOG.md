@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **The way back to the Interaction tab.**
+  - Savante's card, and every derived agent's card, now has a bar pinned to its top: **← back to Interaction**. It
+    stays visible however far the card is scrolled, and Esc closes the card. Before, the only close control was a ✕
+    that scrolled away with the card's content.
+  - Every other tab shows a **← Interaction** pill in the bottom-left corner. It goes straight back to the chat, with
+    the cursor in the question field.
+  - *use this agent* on the Agents tab now returns to the Interaction tab with that agent in use.
+
 ## 0.3.0 — 2026-09-29 — milestone: Savante answered by bankML's own forward pass
 
 **`bankml serve --native` answers Savante from bankML's own forward pass. Whole conversations are identical to

@@ -1146,6 +1146,16 @@ CSS = """
 @media (prefers-reduced-motion:reduce){.bk-3d{transform:none!important;transition:none}}
 .bk-x{position:absolute;top:12px;right:14px;cursor:pointer;font-size:18px;color:#94a3b8!important;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:2px 9px}
 .bk-x:hover{color:#2dd4bf!important;border-color:#2dd4bf}
+/* the way back: pinned to the top of the card however far it scrolls, and a pill on every other tab */
+.bk-back{position:sticky;top:-22px;z-index:5;display:flex;align-items:center;gap:12px;margin:-22px -24px 14px;padding:10px 16px;
+ background:rgba(2,6,23,.94);border-bottom:1px solid rgba(45,212,191,.35);border-radius:16px 16px 0 0}
+.bk-back .bk-x{position:static;margin-left:auto}
+.bk-backl{cursor:pointer;font:600 14px ui-sans-serif,system-ui;color:#2dd4bf!important;border:1px solid rgba(45,212,191,.5);border-radius:8px;padding:4px 12px}
+.bk-backl:hover{background:rgba(45,212,191,.15)}
+.bk-esc{font-size:12px;color:#64748b!important}
+.bk-home{position:fixed;left:16px;bottom:16px;z-index:9000;cursor:pointer;font:600 14px ui-sans-serif,system-ui;color:#042f2e;background:#2dd4bf;
+ border:none;border-radius:999px;padding:9px 16px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.bk-home:hover{background:#5eead4}
 .bk-holo-top{display:flex;gap:18px;align-items:center}
 .bk-holo-pic{flex:none;width:120px;height:120px;border-radius:50%;overflow:hidden;border:2px solid #d9a23a;box-shadow:0 0 24px rgba(217,162,58,.35)}
 .bk-holo-pic img,.bk-holo-pic .bk-glyph{width:120px;height:120px;object-fit:cover;font-size:40px}
@@ -1673,7 +1683,7 @@ def aivatar_html(canon: Canon) -> str:
 <div class='bk-modal'><label for='bk-av-open' class='bk-modal-bg'></label>
 <div class='bk-3d'><canvas class='bk-scope' aria-hidden='true'></canvas><div class='bk-sheen'></div>
 <div class='bk-holo' role='dialog' aria-label='{E(name)}'>
-<label for='bk-av-open' class='bk-x' title='close'>✕</label>
+<div class='bk-back'><label for='bk-av-open' class='bk-backl' data-bk='interaction' title='close the card and go to the Interaction tab'>← back to Interaction</label><span class='bk-esc'>Esc closes</span><label for='bk-av-open' class='bk-x' title='close'>✕</label></div>
 <div class='bk-holo-top'><div class='bk-holo-pic'>{pic}</div><div>
 <div class='bk-kicker'>{E(p.get('kind', ''))} · {E(card.get('type', '').split('#')[-1] or 'agent')}</div>
 <h3>{E(name)}{lead_btn}</h3><div class='bk-mantra'>{E(p.get('mantra', ''))}</div>
@@ -1703,6 +1713,21 @@ def aivatar_html(canon: Canon) -> str:
 # drag any panel's corner to resize it. The choice is kept in this browser (localStorage).
 LAYOUT_JS = """() => {
   const K = 'bankml-interact-layout-v2';
+  // the way back to the Interaction tab: from any card (the pinned bar, or Esc) and from any other tab (the pill)
+  if (!window.bkToInteraction) {
+    const tabBtn = () => [...document.querySelectorAll('.tab-nav button')].find(b => b.textContent.trim() === 'Interaction');
+    const closeCards = () => document.querySelectorAll('.bk-av-t:checked').forEach(c => { c.checked = false });
+    window.bkToInteraction = () => {
+      closeCards(); const b = tabBtn(); if (b) b.click();
+      setTimeout(() => { const i = document.querySelector('#bk-input textarea'); if (i) i.focus() }, 80);
+    };
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.querySelector('.bk-av-t:checked')) closeCards() });
+    document.addEventListener('click', e => { if (e.target.closest('[data-bk="interaction"]')) { e.preventDefault(); window.bkToInteraction() } });
+    const pill = document.createElement('button'); pill.type = 'button'; pill.className = 'bk-home'; pill.dataset.bk = 'interaction';
+    pill.textContent = '← Interaction'; pill.title = 'back to the Interaction tab'; pill.style.display = 'none'; document.body.append(pill);
+    const sync = () => { const b = tabBtn(); pill.style.display = b && !b.classList.contains('selected') ? '' : 'none' };
+    document.addEventListener('click', () => setTimeout(sync, 50)); setInterval(sync, 1000);
+  }
   const row = document.getElementById('bk-row'), side = document.getElementById('bk-side'), chat = document.getElementById('bk-chat');
   if (!row || !side || side.dataset.bk) return [];
   side.dataset.bk = '1';
@@ -2395,7 +2420,8 @@ def build(canon: Canon, mode: str):
                 return (f"in use: {who} · .history `{HISTORY}`", turns, {"id": sid}, history_html(), metrics_html(), memory_html(),
                         pe, pr, ledger_html(), system_prompt(canon, PROMPTS[0])[1], aivatar_html(canon), *show(10 ** 9))
 
-            b_use.click(switch, apick, [active_md, chat, session, hall, mt, mview, e_persona, e_prompt, ledger, prov, aiv] + outs)
+            b_use.click(switch, apick, [active_md, chat, session, hall, mt, mview, e_persona, e_prompt, ledger, prov, aiv] + outs).then(
+                None, None, None, _js="() => { if (window.bkToInteraction) window.bkToInteraction(); return [] }")  # straight back to the chat, with the agent in use
 
             def do_derive(name, kind, mantra, oath, desc, sp):
                 if not name.strip():
