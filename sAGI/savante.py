@@ -1721,6 +1721,12 @@ LAYOUT_JS = """() => {
       closeCards(); const b = tabBtn(); if (b) b.click();
       setTimeout(() => { const i = document.querySelector('#bk-input textarea'); if (i) i.focus() }, 80);
     };
+    // the aivatar always opens its card — never a toggle, so no stuck state can turn a press into a close
+    document.addEventListener('click', e => {
+      const pic = e.target.closest && e.target.closest('.bk-av-pic'); if (!pic) return;
+      const c = document.getElementById(pic.htmlFor); if (!c) return;
+      e.preventDefault(); c.checked = true;
+    }, true);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.querySelector('.bk-av-t:checked')) closeCards() });
     // data-bk-home, not data-bk: inside a card, data-bk is the voice player's (it cancels those clicks)
     // the card's bar is a plain <label for> — the browser unticks the card itself; this only goes to the tab and the input
