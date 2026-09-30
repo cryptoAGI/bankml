@@ -375,6 +375,12 @@ impl KvCache {
     pub fn is_empty(&self) -> bool {
         self.k.is_empty()
     }
+    /// Keep the first `n` positions (llama.cpp's `seq_rm` of the tail, as its prompt cache does).
+    pub fn truncate(&mut self, n: usize) {
+        self.k.truncate(n * self.width);
+        self.v.truncate(n * self.width);
+    }
+
     /// Store a position's K and V as the cache stores them (`set_rows` f32 → f16, round to nearest even).
     pub fn push(&mut self, k: &[f32], v: &[f32]) {
         self.k.extend(k.iter().map(|&x| f32_to_f16(x)));

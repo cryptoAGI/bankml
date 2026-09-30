@@ -45,9 +45,12 @@ pub struct Config {
     pub spec_ngram: bool,
     /// where the spawned engine may save and restore a slot's KV cache (`--slot-save-path`; 0.1.9)
     pub slot_dir: Option<PathBuf>,
+    /// answer from bankML's own forward pass (`native.rs`) instead of llama-server (0.3.0)
+    pub native: bool,
 }
 
 struct State {
+    native: Option<Arc<crate::native::Native>>,
     verified: Verified,
     model: PathBuf,
     upstream: String,
@@ -117,6 +120,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let upstream = cfg.upstream.trim_start_matches("http://").trim_end_matches('/').to_string();
     #[cfg(unix)]
     sig::install();
+    if cfg.native {
+        return run_native(cfg, verified, model, id, upstream);
+    }
     let mut child = match &cfg.spawn {
         Some(bin) => {
             if request(&upstream, "GET", "/health", b"").is_ok() {
@@ -147,10 +153,38 @@ pub fn run(cfg: Config) -> Result<(), String> {
     }
     let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let engine = "llama.cpp b11192 llama-server (loopback), behind bankml P0".to_string();
-    let st = Arc::new(State { verified, model, upstream, engine, hashed_at, ident: id });
+    let st = Arc::new(State { native: None, verified, model, upstream, engine, hashed_at, ident: id });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
     eprintln!("bankml serve {}: {} verified (sha256 {}), upstream {} serves it; listening on http://{}",
         crate::VERSION, st.model.display(), st.verified.model_sha256, st.upstream, cfg.listen);
+    accept(l, st);
+    drop(child);
+    Ok(())
+}
+
+/// `--native`: the verified file answered by bankML's own forward pass. The same gateway (guard, pin, receipts,
+/// loopback rules), and it also listens on the engine address (`--upstream`), answering llama-server's endpoints
+/// there (`/health`, `/props`, `/tokenize`, `/apply-template`, `/v1/chat/completions`), so a client written for
+/// llama-server — Savante — reaches it unchanged.
+fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, upstream: String) -> Result<(), String> {
+    eprintln!("bankml serve --native: loading {} into bankML's forward pass", model.display());
+    let eng = crate::native::Native::open(&model, cfg.ctx)?;
+    let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let gpu = eng.w.gpu.as_ref().and_then(|g| g.lock().ok().map(|w| format!(", GPU {} on {:.0}% of each 1-bit matrix", w.name, w.share * 100.0))).unwrap_or_default();
+    let engine = format!("bankML {} native: its own forward pass, token-identical to llama.cpp b11192 on its oracle{gpu}", crate::VERSION);
+    let st = Arc::new(State { native: Some(Arc::new(eng)), verified, model, upstream: upstream.clone(), engine, hashed_at, ident: id });
+    let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
+    let lu = TcpListener::bind(&upstream).map_err(|e| format!("cannot listen on the engine address {upstream}: {e} (is llama-server running there?)"))?;
+    eprintln!("bankml serve {} --native: {} verified (sha256 {}); listening on http://{} and, for llama-server's clients, http://{upstream}",
+        crate::VERSION, st.model.display(), st.verified.model_sha256, cfg.listen);
+    let st2 = st.clone();
+    std::thread::spawn(move || accept(lu, st2));
+    accept(l, st);
+    Ok(())
+}
+
+/// Serve connections on `l` until the process ends: a bounded number at once, each on its own thread.
+fn accept(l: TcpListener, st: Arc<State>) {
     let live = Arc::new(AtomicUsize::new(0));
     for mut c in l.incoming().flatten() {
         if live.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
@@ -179,8 +213,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
             live.fetch_sub(1, Ordering::SeqCst);
         });
     }
-    drop(child);
-    Ok(())
 }
 
 struct ChildGuard(std::process::Child);
@@ -388,6 +420,7 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             drop(last);
             respond(&mut c, 200, "application/json", body.as_bytes())
         }
+        _ if st.native.is_some() => native_route(&mut c, st, &method, &path, &body),
         ("GET", "/health" | "/v1/models" | "/props") => match request(&st.upstream, "GET", &path, b"") {
             Ok((code, _, b)) => respond(&mut c, code, "application/json", &b),
             Err(e) => respond(&mut c, 502, "text/plain", format!("upstream: {e}").as_bytes()),
@@ -420,6 +453,94 @@ fn read_head_rest(r: &mut impl BufRead) -> std::io::Result<(u16, Headers)> {
         }
     }
     Ok((0, h))
+}
+
+/// The routes of `--native` other than `/bankml` and `/bankml/usage`.
+fn native_route(c: &mut TcpStream, st: &State, method: &str, path: &str, body: &[u8]) -> std::io::Result<()> {
+    let eng = st.native.as_ref().unwrap();
+    let req = || Json::parse(&String::from_utf8_lossy(body));
+    match (method, path) {
+        ("GET", "/health") => respond(c, 200, "application/json", b"{\"status\": \"ok\"}"),
+        ("GET", "/props") => respond(c, 200, "application/json", eng.props_json().as_bytes()),
+        ("GET", "/v1/models") => {
+            let id = st.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            respond(c, 200, "application/json", format!("{{\"object\": \"list\", \"data\": [{{\"id\": {}, \"object\": \"model\", \"owned_by\": \"bankML\"}}]}}", crate::gguf::jstr(&id)).as_bytes())
+        }
+        ("POST", "/tokenize") => {
+            let Some(v) = req() else { return respond(c, 400, "text/plain", b"body is not JSON") };
+            let text = v.get("content").and_then(Json::as_str).unwrap_or("");
+            let special = v.get("parse_special").and_then(Json::as_bool).unwrap_or(true);
+            let ids = eng.tok.encode(text, special);
+            respond(c, 200, "application/json", format!("{{\"tokens\": [{}]}}", ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",")).as_bytes())
+        }
+        ("POST", "/apply-template") => {
+            let Some(v) = req() else { return respond(c, 400, "text/plain", b"body is not JSON") };
+            match v.get("messages").ok_or("no messages".to_string()).and_then(crate::chat::messages_from_json).and_then(|m| crate::chat::render(&m)) {
+                Ok(p) => respond(c, 200, "application/json", format!("{{\"prompt\": {}}}", crate::gguf::jstr(&p)).as_bytes()),
+                Err(e) => respond(c, 400, "text/plain", e.as_bytes()),
+            }
+        }
+        ("POST", "/v1/chat/completions") => native_chat(c, st, eng, body),
+        _ => respond(c, 404, "text/plain", b"bankml serve --native: GET /bankml /bankml/usage /health /props /v1/models, POST /tokenize /apply-template /v1/chat/completions"),
+    }
+}
+
+/// `/v1/chat/completions` from bankML's own forward pass, streamed or not, with the receipt.
+fn native_chat(c: &mut TcpStream, st: &State, eng: &crate::native::Native, body: &[u8]) -> std::io::Result<()> {
+    let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return respond(c, 400, "text/plain", b"body is not JSON") };
+    if ident(&st.model).ok() != Some(st.ident) {
+        return respond(c, 503, "text/plain", b"the model file changed since bankml verified it; restart bankml serve to verify it again");
+    }
+    let stream = req.get("stream").and_then(Json::as_bool).unwrap_or(false);
+    let prompt = match req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt(m)) {
+        Ok(p) => p,
+        Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
+    };
+    let params = match eng.params(&req) {
+        Ok(p) => p,
+        Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
+    };
+    let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
+    let mut hq = crate::sha256::Sha256::default();
+    hq.update(body);
+    let mut t = Tally { request_sha256: crate::sha256::hex(&hq.finish()), t0: Instant::now(), ttft: None, text: String::new(), prompt: 0, completion: 0 };
+    let model_id = st.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if stream {
+        write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
+        let mut broken = false;
+        let done = eng.complete(&prompt, params, max, |piece| {
+            if t.ttft.is_none() {
+                t.ttft = Some(t.t0.elapsed());
+            }
+            let chunk = format!("data: {{\"choices\": [{{\"index\": 0, \"delta\": {{\"content\": {}}}, \"finish_reason\": null}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\"}}\n\n",
+                                crate::gguf::jstr(piece), crate::gguf::jstr(&model_id));
+            broken = c.write_all(chunk.as_bytes()).and_then(|_| c.flush()).is_err();
+            !broken
+        });
+        let d = match done {
+            Ok(d) => d,
+            Err(e) => return write!(c, "data: {{\"error\": {}}}\n\n", crate::gguf::jstr(&e)),
+        };
+        t.text = d.text.clone();
+        t.prompt = d.prompt_tokens as u64;
+        t.completion = d.completion_tokens as u64;
+        write!(c, "data: {{\"choices\": [{{\"index\": 0, \"delta\": {{}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}}}\n\n",
+               d.finish_reason, crate::gguf::jstr(&model_id), d.completion_tokens, d.prompt_tokens, d.completion_tokens + d.prompt_tokens, d.cached_tokens)?;
+        write!(c, "data: {{\"bankml_receipt\": {}}}\n\ndata: [DONE]\n\n", t.receipt(st))?;
+        return c.flush();
+    }
+    let d = match eng.complete(&prompt, params, max, |_| true) {
+        Ok(d) => d,
+        Err(e) => return respond(c, 500, "text/plain", e.as_bytes()),
+    };
+    t.text = d.text.clone();
+    t.prompt = d.prompt_tokens as u64;
+    t.completion = d.completion_tokens as u64;
+    let j = format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}, \"bankml_receipt\": {}}}",
+                    crate::gguf::jstr(&d.text), d.finish_reason, crate::gguf::jstr(&model_id), d.completion_tokens, d.prompt_tokens,
+                    d.completion_tokens + d.prompt_tokens, d.cached_tokens, t.receipt(st));
+    respond(c, 200, "application/json", j.as_bytes())
 }
 
 struct Tally {

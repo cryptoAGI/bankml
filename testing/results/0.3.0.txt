@@ -1,0 +1,181 @@
+# bankml 0.3.0 release gate — 2026-09-30T01:10:03Z
+# rustc 1.95.0 (59807616e 2026-04-14) · AMD Ryzen 3 3200U with Radeon Vega Mobile Gfx · 4 threads
+unittests: test result: ok. 60 passed; 0 failed; 32 ignored; 0 measured; 0 filtered out; finished in 0.65s
+testing/cli.rs: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+clippy: clean
+spdx: 64/64 files carry the licence of their layer
+ok   need_more
+ui data layer: all ok
+postgres connector (throwaway cluster): all ok
+iNFT mint and load (throwaway anvil devnet): all ok
+model importer (loopback source; carrier on spare ports): all ok
+28/28 agree
+## oracle_tokenizer
+tokenizer oracle: 4258 of 4258 cases token-identical to llama.cpp b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.35s
+## oracle_chat_template
+chat-template oracle: 317 of 317 conversations byte-identical to llama.cpp b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.01s
+## oracle_forward_embed_norm
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: inp_embd 300 of 300 rows and attn_norm-0 300 of 300 rows bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.97s
+## oracle_forward_qkv_rope
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: layer-0 Qcur/Kcur/Vcur 140 of 140 rows (28 tokens at positions 0–27 and 7–63214, YaRN attn_factor 1) bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.58s
+## oracle_forward_attention
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: layer-0 kqv_out/attn_out/ffn_inp/l_out 112 of 112 rows (28 tokens, causal, f16 K/V) bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.86s
+## oracle_forward_attention_tiled
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+forward oracle: tiled flash attention 150 of 150 rows bit-exact against the shipped ggml b11192 (the reference kernel would match 1)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 1.94s
+## oracle_forward_attention_split
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+forward oracle: split-KV flash attention 14 of 14 decode rows (257–1,000 cells, 3 and 4 threads) bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 1.34s
+## oracle_forward_swiglu_sweep
+forward oracle: swiglu 24600 of 24600 values bit-exact against the shipped ggml b11192 (±120 and the edges)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.01s
+## oracle_forward_model
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: Bonsai-8B-Q1_0: whole model 1064 of 1064 rows (36 layers' l_out, result_norm, logits × 28 tokens; greedy token 28 of 28) bit-exact against the shipped ggml b11192 — 14.5 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 15.09s
+## oracle_forward_model_ternary
+forward oracle: Ternary-Bonsai-8B-Q2_0_g64: whole model 1064 of 1064 rows (36 layers' l_out, result_norm, logits × 28 tokens; greedy token 28 of 28) bit-exact against the shipped ggml b11192 — 12.4 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 12.54s
+## oracle_greedy_llama_server
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+greedy oracle: Bonsai-8B-Q1_0: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (164 tokens, ends of turn included) — 149 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 149.38s
+## oracle_greedy_llama_server_ternary
+greedy oracle: Ternary-Bonsai-8B-Q2_0_g64: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (140 tokens, ends of turn included) — 101 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 101.34s
+## oracle_greedy_llama_server_long
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+greedy oracle: long-Bonsai-8B-Q1_0: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (117 tokens, ends of turn included) — 384 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 384.21s
+## oracle_greedy_llama_server_deep
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+greedy oracle: deep-Bonsai-8B-Q1_0: 3 of 3 chat prompts generate llama-server b11192's tokens exactly (600 tokens, ends of turn included) — 708 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 708.16s
+## oracle_sample_llama_server
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+sample oracle: 40 of 40 seeded continuations identical to llama-server b11192's (1175 tokens; top-k, top-p, min-p, temperature, the mt19937 draw)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 657.28s
+## oracle_native_serve
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 25% of each 1-bit matrix's rows
+native serve oracle: 9 of 9 conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — 346 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 346.66s
+## gpu_q1_0_mat_vec_bit_exact
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 64×128: 64 of 64 rows bit-exact against the CPU kernel (1.41 ms; CPU 1 thread 0.00 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 1000×512: 1000 of 1000 rows bit-exact against the CPU kernel (0.68 ms; CPU 1 thread 0.07 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 4096×4096: 4096 of 4096 rows bit-exact against the CPU kernel (3.55 ms; CPU 1 thread 2.62 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 1024×12288: 1024 of 1024 rows bit-exact against the CPU kernel (4.11 ms; CPU 1 thread 1.02 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 12288×4096: 12288 of 12288 rows bit-exact against the CPU kernel (7.38 ms; CPU 1 thread 7.94 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 64×128: 64 of 64 rows bit-exact against the CPU kernel (0.46 ms; CPU 1 thread 0.00 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 1000×512: 1000 of 1000 rows bit-exact against the CPU kernel (0.43 ms; CPU 1 thread 0.05 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 4096×4096: 4096 of 4096 rows bit-exact against the CPU kernel (2.80 ms; CPU 1 thread 2.25 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 1024×12288: 1024 of 1024 rows bit-exact against the CPU kernel (2.35 ms; CPU 1 thread 1.48 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 12288×4096: 12288 of 12288 rows bit-exact against the CPU kernel (7.84 ms; CPU 1 thread 7.32 ms)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.75s
+## oracle_train_script
+train oracle: author stage 84 of 84 scripts byte-identical to mindXtrain's scripts.py
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.02s
+## oracle_train_imprint
+train oracle: score stage 3000 of 3000 imprint reports identical to mindXtrain's score_imprint (lexical path)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.13s
+## oracle_ggml_b11192_real_bonsai_1_7b
+oracle: 197 tensors / 1719904256 weights dequantized bit-exact; 788 q8_0 rows byte-exact; 788 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 788/788
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 9.88s
+## oracle_ggml_b11192_real_bonsai_8b_q1_0
+oracle: 254 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 762/762
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 39.31s
+## oracle_ggml_b11192_real_ternary_bonsai_8b
+oracle: 254 Q2_0 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot_ref, vec_dot_act (AVX2) and scalar bit-exact vs ggml haswell; no-FMA model == ggml x64 in 762/762
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 38.84s
+## ab_vs_ggml
+GEMV 12288x4096, ns/block min/median: bankml mat_vec 10.00/10.08 (1.021x ggml median)
+GEMV 12288x4096, ns/block min/median: ggml b11192 10.22/10.29 | bankml vec_dot 10.95/11.11 (0.926x) | bankml vec_dot_act 10.02/10.09 (1.021x)
+prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair 10.06/10.08 | bankml 1x4 tile 9.16/9.20 (1.096x) | bankml Q8Act tile 8.21/8.25 (1.221x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.89s
+## ab_vs_ggml_q2_0
+decode GEMV, 1 thread, ns/block (64 weights) min/median, ms/matmul = median:
+  blk.0.attn_q.weight          4096x4096  ggml  33.88/ 34.40 (    9.0 ms) | bankml  3.47/ 3.54 (   0.9 ms) |  9.71x
+  blk.0.attn_k.weight          1024x4096  ggml  34.02/ 34.31 (    2.2 ms) | bankml  3.43/ 3.51 (   0.2 ms) |  9.76x
+  blk.0.attn_output.weight     4096x4096  ggml  33.91/ 34.27 (    9.0 ms) | bankml  3.49/ 3.52 (   0.9 ms) |  9.74x
+  blk.0.ffn_gate.weight       12288x4096  ggml  34.05/ 34.25 (   26.9 ms) | bankml  3.55/ 3.59 (   2.8 ms) |  9.54x
+  blk.0.ffn_down.weight        4096x12288 ggml  33.99/ 34.13 (   26.8 ms) | bankml  3.51/ 3.55 (   2.8 ms) |  9.61x
+  output.weight              151669x4096  ggml  34.49/ 34.62 (  336.1 ms) | bankml  3.60/ 3.69 (  35.9 ms) |  9.37x
+activation n=4096: q8_0 quantize 25.7 µs + bankml layout 8.0 µs (median)
+activation n=12288: q8_0 quantize 95.6 µs + bankml layout 21.5 µs (median)
+prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair 34.13/34.26 | bankml mat_vec per column 3.49/3.51 (9.77x) | bankml 1x4 tile 2.75/2.76 (12.40x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 4.47s
+## bench_q1_0_prefill_act
+prefill 1024x4096 x 32 ns/(block·col) min/median: 1x4 (q8 bytes) 9.13/9.24 | 1x4 sel (Q8Act) 8.14/8.23 (1.123x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.17s
+## bench_memory_floor
+1 thread(s): 16.36 GB/s read → floor for one ternary token (2.13 GB) 0.130 s, one 1-bit token (1.06 GB) 0.065 s
+2 thread(s): 17.57 GB/s read → floor for one ternary token (2.13 GB) 0.121 s, one 1-bit token (1.06 GB) 0.060 s
+3 thread(s): 17.47 GB/s read → floor for one ternary token (2.13 GB) 0.122 s, one 1-bit token (1.06 GB) 0.061 s
+4 thread(s): 17.48 GB/s read → floor for one ternary token (2.13 GB) 0.122 s, one 1-bit token (1.06 GB) 0.061 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 1.62s
+## decode_budget_q1_0
+decode budget: 253 Q1_0 matmuls, 7567003648 weights (1.06 GB of blocks) per token
+  1 thread(s): ggml b11192 0.600/0.601 s/token (min/median) | bankml 0.598/0.599 | 1.00x | matmul-only ceiling ggml 1.67, bankml 1.67 tok/s
+  2 thread(s): ggml b11192 0.412/0.413 s/token (min/median) | bankml 0.396/0.451 | 0.92x | matmul-only ceiling ggml 2.43, bankml 2.53 tok/s
+  3 thread(s): ggml b11192 0.320/0.341 s/token (min/median) | bankml 0.332/0.335 | 1.02x | matmul-only ceiling ggml 3.12, bankml 3.02 tok/s
+  4 thread(s): ggml b11192 0.332/0.333 s/token (min/median) | bankml 0.341/0.342 | 0.97x | matmul-only ceiling ggml 3.01, bankml 2.94 tok/s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 13.46s
+## decode_budget_q2_0
+decode budget: 253 Q2_0 matmuls, 7567003648 weights (2.13 GB of blocks) per token
+  1 thread(s): ggml b11192 4.073/4.099 s/token (min/median) | bankml 0.431/0.432 s/token | 9.45x | matmul-only ceiling ggml 0.25, bankml 2.32 tok/s
+      attn_k       ggml  0.081 s  bankml  0.009 s  (mean of 3 passes)
+      attn_output  ggml  0.328 s  bankml  0.034 s  (mean of 3 passes)
+      attn_q       ggml  0.328 s  bankml  0.034 s  (mean of 3 passes)
+      attn_v       ggml  0.082 s  bankml  0.009 s  (mean of 3 passes)
+      ffn_down     ggml  0.975 s  bankml  0.103 s  (mean of 3 passes)
+      ffn_gate     ggml  0.996 s  bankml  0.103 s  (mean of 3 passes)
+      ffn_up       ggml  0.979 s  bankml  0.103 s  (mean of 3 passes)
+      output       ggml  0.338 s  bankml  0.036 s  (mean of 3 passes)
+  3 thread(s): ggml b11192 2.139/2.184 s/token (min/median) | bankml 0.222/0.229 s/token | 9.62x | matmul-only ceiling ggml 0.47, bankml 4.50 tok/s
+      attn_k       ggml  0.044 s  bankml  0.005 s  (mean of 3 passes)
+      attn_output  ggml  0.173 s  bankml  0.019 s  (mean of 3 passes)
+      attn_q       ggml  0.176 s  bankml  0.019 s  (mean of 3 passes)
+      attn_v       ggml  0.045 s  bankml  0.005 s  (mean of 3 passes)
+      ffn_down     ggml  0.521 s  bankml  0.054 s  (mean of 3 passes)
+      ffn_gate     ggml  0.521 s  bankml  0.056 s  (mean of 3 passes)
+      ffn_up       ggml  0.522 s  bankml  0.056 s  (mean of 3 passes)
+      output       ggml  0.171 s  bankml  0.018 s  (mean of 3 passes)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 27.66s
+# gate done

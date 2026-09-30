@@ -2007,6 +2007,8 @@ def build(canon: Canon, mode: str):
                         ram_s = gr.Slider(0.5, round(_mt, 1), value=_r["ram_gb"] or resources_default_gb(), step=0.1, label="RAM budget for the engine (GB)")
                         spec_c = gr.Checkbox(value=bool(_r.get("spec_ngram")), label="n-gram speculation (exact at temperature 0, no extra memory; "
                                              "ahead in 5 of 6 paired runs here but not beyond this laptop's noise, so off by default)")
+                        eng_r = gr.Radio(["auto", "native", "llama.cpp"], value=_r.get("engine", "auto"), label="engine — native: bankML's own forward pass, "
+                                         "token-identical to llama.cpp (about 8x on the ternary model); auto picks it for the ternary files")
                         res_plan = gr.HTML(resources_plan_html(_r["ram_gb"] or resources_default_gb()))
                         with gr.Row():
                             res_apply = gr.Button("Apply (restarts the engine)", variant="primary")
@@ -2305,11 +2307,11 @@ def build(canon: Canon, mode: str):
 
             outs_m = [mjob, mlist, use_dd, carrier]
 
-            def do_resources(threads, ram, spec):
-                ok = MD.start_job(f"applying {int(threads)} threads and {ram:.1f} GB", MD.apply_resources, threads, ram, chat_busy, spec)
+            def do_resources(threads, ram, spec, engine):
+                ok = MD.start_job(f"applying {int(threads)} threads and {ram:.1f} GB", MD.apply_resources, threads, ram, chat_busy, spec, engine)
                 return ("<div class='bk-card'>restarting the engine with the new settings — the carrier card follows it</div>" if ok
                         else "<div class='bk-card bk-bad'>another import or switch is running; wait for it</div>")
-            res_apply.click(do_resources, [cpu_s, ram_s, spec_c], res_usage)
+            res_apply.click(do_resources, [cpu_s, ram_s, spec_c, eng_r], res_usage)
             demo.load(poll, seen, outs_m + [seen], every=2)
             cancel_btn.click(lambda: ("<div class='bk-card'>cancelling at the next chunk; the partial file is kept for resume</div>"
                                       if MD.cancel_job() else job_html()), None, mjob)

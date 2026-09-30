@@ -93,7 +93,7 @@ def main():
             [f"fastest of the runs (min) · median {bmed:g} s vs {gmed:g} s ({gmed / bmed:.2f}×) · {machine}",
              note,
              f"matmul ceiling {m.group(7)} tok/s vs {m.group(6)}" + (f" · memory floor {floor.group(2)} s/token ({floor.group(1)} GB read)" if floor else ""),
-             f"gate record testing/results/{v}.txt · matmuls only; bankml's own forward pass (P3, 0.2.7) is 1-bit so far"], "s"))
+             f"gate record testing/results/{v}.txt · matmuls only; since 0.3.0 bankML serves the whole model itself, token-identical"], "s"))
     print(f"cards drawn from testing/results/{v}.txt")
 
 

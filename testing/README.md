@@ -70,6 +70,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `oracle_sample_llama_server` *(real)* | `bankML/forward.rs`, `bankML/sampler.rs` | P3 step eleven: llama-server's seeded sampling, 40 of 40 continuations (1,175 tokens) identical |
 | `gpu_q1_0_mat_vec_bit_exact` | `bankML/gpu/kernels.rs` | both Q1_0 GPU kernels on every usable card, bit-exact against the CPU kernel (skipped without a GPU) |
 | `oracle_train_script`, `oracle_train_imprint` | `bankML/train/` | mindXtrain's author and score stages, identical to mindXtrain's Python (84 of 84; 3,000 of 3,000) |
+| `oracle_native_serve` *(real)* | `bankML/native.rs` | 0.3.0: three Savante-style conversations through llama-server's own chat endpoint, replayed through bankML's native engine: text, counts and prompt-cache reuse identical on 9 of 9 turns |
 | `oracle_forward_swiglu_sweep` | `forward.rs` | SwiGLU with ggml's vectorized expf on 24,600 values over ±120 and the edges, every output's bits |
 | `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
@@ -82,6 +83,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.3.0 | `results/0.3.0.txt` | milestone: Savante answered by bankML's own forward pass; conversations identical to llama-server's (9 of 9 turns) |
 | 0.2.14 | `results/0.2.14.txt` | the GPU in the forward pass, every token oracle exact with it working; the exact FMA; the on-card oracle catches an unfused driver |
 | 0.2.13 | `results/0.2.13.txt` | GPU kernels bit-exact on the Vega 3; mindXtrain author and score stages identical |
 | 0.2.12 | `results/0.2.12.txt` | batched prefill (checked by every prefill oracle); the GPU component's discovery |

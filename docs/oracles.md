@@ -250,6 +250,16 @@ that vary per block, so products are inexact in f32. On that data the card's unf
 where random data had let it pass. bankml now computes the FMA exactly (Boldo–Melquiond), and with the driver's
 `Fma` put back, `bankml gpu --verify` refuses the card.
 
+**0.3.0: whole conversations through the server.** `testing/serve_oracle.py` holds three Savante-style
+conversations, three turns each, with fresh seeds at temperature 0.3. It sends them to a fresh llama-server's
+`/v1/chat/completions`, the path Savante uses, so the server's prompt cache carries each conversation from turn to
+turn, and records every answer with its prompt count, completion count and the prompt tokens taken from the cache.
+`oracle_native_serve` replays the conversations through bankML's native engine in one process and requires all of
+it on **9 of 9 turns**: the same text, the same counts, the same cache reuse. The rule it reproduces is visible in
+the numbers. Turn 2 reuses 49 of turn 1's 53 prompt tokens, because the empty `<think>` block that ended turn 1's
+prompt is not rendered when that answer becomes history. A new conversation reuses the 38 tokens of the shared
+system prompt.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

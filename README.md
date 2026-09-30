@@ -1,4 +1,4 @@
-<h1 align="center">bankml</h1>
+<h1 align="center">bankML</h1>
 
 <p align="center">
   <b>Verified low-bit inference for the CPU you already have.</b><br>
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.4%E2%80%9310.0%C3%97-D9A23A?style=flat-square" alt="ternary 9.4–10.0x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
-  <img src="https://img.shields.io/badge/status-P0%20serving%20%C2%B7%20Savante%20UI%20%C2%B7%20forward%20pass%20next-F59E0B?style=flat-square" alt="status">
+  <img src="https://img.shields.io/badge/status-0.3.0%20%C2%B7%20Savante%20answered%20by%20bankML%27s%20own%20forward%20pass-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
 </p>
 
@@ -30,6 +30,26 @@ bankml found why and fixed it at the kernel: **llama.cpp b11192 has no vectorise
 at all** — it runs scalar C with 64 integer multiplies per block. bankml's kernel computes the **same bits**, verified
 against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.4–10.0× faster** per matrix
 (the 0.2.2 gate record; every gate since 0.0.1 has measured 9.4–10.8×).
+
+## 0.3.0 — bankML answers Savante itself
+
+Since 0.3.0, `bankml serve --native` answers Savante from **bankML's own forward pass**, with no llama-server
+underneath. It is built from zero-dependency Rust, step by step since 0.2.1, and every step is proven against
+llama.cpp b11192:
+- **the same tokens:** the tokenizer, the chat template, every layer and all 151,669 logits bit-exact, and all
+  three of ggml's CPU attention kernels. Greedy and seeded sampling give llama-server's tokens on every oracle case,
+  and whole Savante-style conversations through llama-server's own chat endpoint are **identical turn by turn**:
+  the text, the token counts and the prompt-cache reuse (9 of 9 turns);
+- **faster where llama.cpp is weakest:** on the ternary model, 2.3–2.4 tokens/s against llama-server's 0.30, about
+  8×, with the same tokens. On the 1-bit model llama-server is still faster (2.8 against 1.9–2.0), so Savante's
+  default engine setting, `auto`, uses bankML for the ternary files and llama-server for the rest;
+- **the video card, when there is one:** a GPU found through Vulkan works inside the forward pass after it proves on
+  the card that it gives the CPU's bits (`bankml gpu --verify`), and changes no token;
+- **verified, with receipts:** the same guard, sha256 pin and receipt as before, now naming the engine that did the
+  arithmetic.
+
+Limits, stated: the Qwen3 1-bit and ternary models; one conversation slot; top-k, top-p, min-p and temperature (the
+samplers Savante uses), refusing the others rather than approximating them.
 
 ## Documentation
 
@@ -91,9 +111,9 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | P1 | GGUF guard (the three low-bit traps) + sha256 pin | **done** — Rust guard == Python guard, JSON for JSON; `bankml verify` = guard + pin as one gate (0.0.2) |
 | P2 | `Q1_0` kernel (1-bit) | **done** — bit-exact on 1.72 B + 8.19 B weights (1.7B and 8B); decode at parity (1.02×), prefill 1.23× (0.2.2 gate) |
 | P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.4–10.0× decode per matrix, 12.9× prefill; one whole token 9.46× on three threads (0.2.2 gate) |
-| P3 | Qwen3 forward pass (tokenizer, template, YaRN RoPE, GQA, f16 KV cache, flash attention, SwiGLU, greedy) | **token-identical to llama.cpp for the 1-bit (0.2.7) and ternary (0.2.8) models, and 8× faster on the ternary one** — `bankml generate` produces llama-server b11192's greedy tokens on 6 of 6 chat prompts for each model (164 and 140 tokens); each whole model is bit-exact against the shipped ggml (1,064 of 1,064 rows: every layer, `result_norm`, all 151,669 logits). **Ternary: 2.3–2.4 tokens/s against llama-server's 0.30**, prompt 2.8 against 0.35. 1-bit: 1.8 against 2.8, not yet faster. Since 0.2.9 long prompts (llama.cpp's micro-batching and its tiled kernel: 150 of 150 rows; 6 of 6 prompts of 111–116 tokens), and since 0.2.10 long contexts (its split-KV decode kernel, which follows llama.cpp's thread count: 14 of 14 rows over 257–1,000 cells at 3 and 4 threads; 3 of 3 continuations of 200 tokens running to ~300 cells, 600 tokens identical). All three of ggml's CPU attention kernels are reproduced. Since 0.2.11 sampling too: llama-server's sampler chain (top-k by libstdc++'s partial sort, top-p, min-p, temperature, the `mt19937` draw) gives the same tokens with the same seed, 40 of 40 continuations (1,175 tokens). Built in steps 0.2.1–0.2.11, each against its oracle |
-| P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)** — `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
-| P4 | OpenAI-compatible endpoint; mindX provider; the sAGI engine on top | endpoint done (`bankml serve`); mindX provider next |
+| P3 | Qwen3 forward pass (tokenizer, template, YaRN RoPE, GQA, f16 KV cache, flash attention, SwiGLU, sampling) | **done (0.2.1–0.2.11)**: token-identical to llama.cpp for the 1-bit and ternary models, including seeded sampling and every CPU attention kernel; the whole model bit-exact (1,064 of 1,064 rows each); about 8× llama-server on the ternary model |
+| P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)**: `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
+| P4 | OpenAI-compatible endpoint; bankML's own engine behind it; mindX provider | **0.3.0: `bankml serve --native`**, Savante answered by bankML's own forward pass, conversations identical to llama-server's (9 of 9 turns); mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
 | models | import without friction: Bonsai-8B on first run; a pinned open-source catalogue, any Hugging Face GGUF, Ollama; open-source licences only; carrier switch with rollback | **0.1.5**, hardened 0.1.6 |
 | memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](docs/embedding.md)) |
@@ -102,9 +122,9 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | P5 | ARM / NEON, handheld | planned |
 
 Since 0.0.6 bankml answers through the reference engine (P0), behind its gate and with a receipt. Since 0.2.7 it also
-has its own forward pass (`bankml generate`), token-identical to llama.cpp on its oracle. Since 0.2.8 that includes
-the ternary model, **end to end at 2.3–2.4 tokens/s against llama-server's 0.30 on the same laptop, with the same
-tokens**. The kernel budget explains the lead: the ternary matrix work for one token takes
+has its own forward pass (`bankml generate`), token-identical to llama.cpp on its oracle; since 0.2.8 for the
+ternary model too, **end to end at 2.3–2.4 tokens/s against llama-server's 0.30 on the same laptop, with the same
+tokens**; and since **0.3.0 it serves Savante with it** (`bankml serve --native`). The kernel budget explains the lead: the ternary matrix work for one token takes
 **0.233 s** against llama.cpp's **2.204 s** on three threads, a matmul-bound ceiling of about **4.3 tokens/s**
 against **0.45** (0.2.2 gate, model resident). Five more bit-exact kernel variants were measured in 0.0.4–0.0.5, and
 none was reliably faster. On the test laptop bankml's ternary token runs about twice the memory floor (0.124 s), and
@@ -118,6 +138,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [**0.3.0**](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.0) | **milestone: Savante answered by bankML's own forward pass.** `bankml serve --native` gives llama-server's answers turn by turn (9 of 9 conversation turns identical: text, counts, prompt-cache reuse), about 8× faster on the ternary model; Savante's engine setting (`auto` uses it for the ternary files); the docs brought up to date |
 | [0.2.14](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.14) | the GPU works inside the forward pass (a calibrated share of every 1-bit matrix's rows, beside the CPU threads) with every token oracle still exact; the Vega 3's driver does not fuse FMA, so bankml computes a correctly rounded FMA itself (Boldo–Melquiond); the on-card oracle now catches an unfused driver. Speed on this laptop: unchanged within noise (next: batched submissions) |
 | [0.2.13](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.13) | the first GPU kernels (bankml's own SPIR-V, no shader compiler): Q1_0 matrix–vector bit-exact on the Radeon Vega 3, `bankml gpu --verify`; mindXtrain in Rust begins (author and score stages identical to mindXtrain: 84 of 84, 3,000 of 3,000); bankML branding and the DeltaVerse $ |
 | [0.2.12](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.12) | batched prefill (same bits, a micro-batch per matrix–matrix product); `bankML/gpu/`, the video-card component: every GPU found through Vulkan (no crates, loaded at run time) merged with the kernel's view, and the GPUs Hugging Face rents (`bankml gpu --remote`, listed never started); GPU kernels next, bit-exact before use |

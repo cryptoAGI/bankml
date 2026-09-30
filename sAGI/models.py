@@ -536,8 +536,10 @@ CTX_MIN, CTX_MAX = 512, 32768
 
 
 def resources() -> dict:
-    """{"threads", "ctx", "ram_gb"}: the saved choice, else the defaults (BANKML_THREADS_SERVE, BANKML_CTX)."""
-    r = {"threads": THREADS, "ctx": CTX, "ram_gb": None, "spec_ngram": False}
+    """{"threads", "ctx", "ram_gb", "spec_ngram", "engine"}: the saved choice, else the defaults (BANKML_THREADS_SERVE,
+    BANKML_CTX). engine: "auto" (bankML's own forward pass for the ternary Qwen3 files, where it is about 8x
+    llama-server; llama-server otherwise), "native" or "llama.cpp"."""
+    r = {"threads": THREADS, "ctx": CTX, "ram_gb": None, "spec_ngram": False, "engine": "auto"}
     try:
         r.update({k: v for k, v in json.loads(RESOURCES.read_text()).items() if k in r})
     except (OSError, ValueError):
@@ -593,7 +595,16 @@ def usage() -> dict:
             "mem_total_gb": round(mem_total() / 1e9, 1), "mem_available_gb": round(avail / 1e9, 2), "source": "sAGI/models.py (/proc)"}
 
 
-def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False) -> dict:
+def native_for(model: Path, engine: str | None = None) -> bool:
+    """Whether the carrier answers from bankML's own forward pass (`bankml serve --native`, 0.3.0) for this model:
+    "native" always (bankml refuses a model its forward pass does not run), "llama.cpp" never, "auto" for the
+    ternary (Q2_0_g64) files — there bankML is about 8x llama-server with the same tokens; on the 1-bit files
+    llama-server is still faster."""
+    e = engine or resources().get("engine", "auto")
+    return e == "native" or (e == "auto" and "Q2_0" in model.name)
+
+
+def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False, engine: str = "auto") -> dict:
     """Save the choice and restart the carrier on the same model with it (a verified switch, with rollback)."""
     threads = max(1, min(int(threads), os.cpu_count() or 1))
     st = serve_status()
@@ -607,7 +618,8 @@ def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram:
         raise RuntimeError(f"{ram_gb:.1f} GB cannot hold {path.name}: it needs at least {pl['min_ram_gb']} GB")
     prev = resources()  # the last settings that ran, restored if these do not
     RESOURCES.parent.mkdir(parents=True, exist_ok=True)
-    RESOURCES.write_text(json.dumps({"threads": threads, "ctx": pl["ctx"], "ram_gb": ram_gb, "spec_ngram": bool(spec_ngram)}) + "\n")
+    RESOURCES.write_text(json.dumps({"threads": threads, "ctx": pl["ctx"], "ram_gb": ram_gb, "spec_ngram": bool(spec_ngram),
+                                     "engine": engine if engine in ("auto", "native", "llama.cpp") else "auto"}) + "\n")
     if busy():
         raise RuntimeError("saved; an answer is being written, so the engine restarts with these settings on the next switch")
     JOB["what"] = f"restarting {path.name} with {threads} threads and a {pl['ctx']}-token context"
@@ -640,10 +652,16 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
             if not pl["fits"]:
                 raise RuntimeError(f"the saved RAM budget ({r['ram_gb']} GB) cannot hold {model.name}: it needs at least {pl['min_ram_gb']} GB")
             ctx = pl["ctx"]
-        proc = subprocess.Popen([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM,
-                                 "--listen", LISTEN, "--threads", str(threads or resources()["threads"]), "--ctx", str(ctx or resources()["ctx"])]
-                                + (["--spec-ngram"] if resources().get("spec_ngram") else []) + ["--slot-dir", str(SLOTS)], stdout=log, stderr=log,
-                                stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO))
+        n_threads, n_ctx = str(threads or resources()["threads"]), str(ctx or resources()["ctx"])
+        if native_for(model):
+            # bankML's own forward pass answers, on the gateway and on the engine address (0.3.0)
+            cmd = [str(BANKML), "serve", str(model), "--fork", str(fork), "--native", "--upstream", UPSTREAM, "--listen", LISTEN, "--ctx", n_ctx]
+            env = {**os.environ, "BANKML_THREADS": n_threads}
+        else:
+            cmd = ([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM, "--listen", LISTEN,
+                    "--threads", n_threads, "--ctx", n_ctx] + (["--spec-ngram"] if resources().get("spec_ngram") else []) + ["--slot-dir", str(SLOTS)])
+            env = None
+        proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO), env=env)
     t0 = time.time()
     why = "timed out"  # ctx: per model — the saved RAM budget is re-planned for this model's weights and KV size
     while time.time() - t0 < wait:

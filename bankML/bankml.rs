@@ -130,6 +130,7 @@ pub mod chat;
 pub mod forward;
 pub mod gguf;
 pub mod gpu;
+pub mod native;
 pub mod par;
 pub mod serve;
 pub mod q1_0;

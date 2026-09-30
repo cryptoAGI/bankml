@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.3.0 — 2026-09-29 — milestone: Savante answered by bankML's own forward pass
+
+**`bankml serve --native` answers Savante from bankML's own forward pass. Whole conversations are identical to
+llama-server's turn by turn, and about 8× faster on the ternary model.** Record: `testing/results/0.3.0.txt`.
+
+### Added
+- **`bankML/native.rs`, the native engine.**
+  - One conversation slot that reuses the KV cache exactly as llama-server's prompt cache does: it keeps the
+    longest common prefix, less one token when the whole prompt is cached, truncates there, and computes the rest
+    in micro-batches of 512, so every row takes the kernel llama.cpp's row takes. `KvCache::truncate` was added
+    for this.
+  - Sampling uses the request's parameters over the model's GGUF defaults. Samplers it does not reproduce are
+    refused with a reason.
+  - It streams whole UTF-8 characters and counts the end-of-turn token among the completion tokens, as
+    llama-server does.
+- **`bankml serve --native`.**
+  - The same gateway as before: guard, sha256 pin, loopback rules, and the file's identity checked before every
+    answer. It also listens on the engine address (`--upstream`) and answers llama-server's endpoints there
+    (`/health`, `/props`, `/tokenize`, `/apply-template`, `/v1/chat/completions`, `/v1/models`), so a client
+    written for llama-server, Savante included, reaches it unchanged.
+  - Streamed and non-streamed OpenAI-style answers, each with `usage`, `timings.cache_n` and the receipt. The
+    receipt's `engine` names bankML's own forward pass and the GPU when one works in it.
+- **Savante's engine setting** (Models → Resources: `auto`, `native` or `llama.cpp`; `models.py native_for`).
+  `auto` uses bankML for the ternary files, where it is about 8× llama-server, and llama-server for the rest, where
+  llama-server is still faster. The importer starts the carrier accordingly.
+- **The milestone oracle** (`testing/serve_oracle.py` → `oracle_native_serve`, in the gate). It runs three
+  Savante-style conversations of three turns each, sampled at Savante's temperature 0.3 with fixed seeds, through
+  llama-server b11192's own `/v1/chat/completions` in one fresh server process, so its prompt cache carries each
+  conversation. bankML's engine gives **the same answer text, prompt and completion counts and prompt-cache reuse
+  on 9 of 9 turns**, with the GPU working. Along the way the oracle caught that llama-server counts the
+  end-of-turn token among completion tokens.
+
+### Checked end to end
+- `python3 sAGI/models.py use Ternary-Bonsai-8B-Q2_0_g64.gguf` starts the native carrier on its own. The model is
+  verified, and it answers with llama-server's greedy answer.
+- Savante's own client code, unchanged, streams from it, reads its receipt, counts tokens through its `/tokenize`
+  and reads its context from `/props`.
+
+### Limits
+- The Qwen3 1-bit and ternary models; one conversation slot; no slot save or restore yet (Savante then prefills
+  as usual); top-k, top-p, min-p and temperature.
+- On the 1-bit model llama-server is still faster: 2.8 tokens/s against 1.9–2.0.
+
 ## 0.2.14 — 2026-09-29
 
 **The GPU works inside the forward pass without changing a bit, and the FMA a driver would not fuse.** Record:
