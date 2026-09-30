@@ -207,7 +207,9 @@ as llama.cpp, a pinned model and a receipt, on a phone as on a laptop. Then many
 **Distributed**
 - [ ] Several devices as one engine: 0.5.0's multi-card row split, generalised to devices on a network. Each device
   computes a share of every matrix's rows, or a span of layers, with kernels verified on that device, and **the
-  answer is bit-identical to one machine's**. The transport is authenticated with device keys held in Parsec custody.
+  answer is bit-identical to one machine's**. The transport is authenticated with device keys: Parsec custody, and
+  [pmVPN](https://pmvpn.pythai.net)'s keyring (one wallet signature, eight port-scoped SSH keys; v0.1.1,
+  github.com/poormanvpn/pmVPN).
 - [ ] Per-device receipts, signed (0.8.0): which device computed which share, so a distributed answer is as
   accountable as a local one.
 - [ ] The distributed research forks, by their upstreams' licences:
