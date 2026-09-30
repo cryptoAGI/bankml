@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.14 — 2026-09-29
+
+**The GPU works inside the forward pass without changing a bit, and the FMA a driver would not fuse.** Record:
+`testing/results/0.2.14.txt`.
+
+### Found
+- **The Vega 3's driver does not fuse `Fma`.** On real layer weights the 0.2.13 kernels differed from the CPU by
+  about one ulp on 70 % of rows, even though they had passed on random data. The card agreed on every row with the
+  CPU recipe whose outer `fma(d0, ab, acc)` is an unfused multiply-then-add; the inner `fma(d1, s, ab)` never
+  showed, because `d1·s` is exact in f32. Decorating the `Fma` `NoContraction` did not change it. The random
+  verification data was too kind: its products were mostly exact.
+
+### Fixed
+- **An exact FMA from plain arithmetic** (`spirv.rs` `fma_exact`), correct on every GPU whether its driver fuses
+  or not:
+  - `d0` comes from f16 and has 11 significant bits, so splitting the other operand into two 12-bit halves makes
+    both partial products exact;
+  - Knuth's TwoSum keeps every rounding error;
+  - Boldo and Melquiond's `RN(th + RO(tl + ul))` (rounding to odd, 2008) gives the FMA's single rounding.
+
+  Both kernels are now bit-exact on real weights: 0 of 4,096 and 0 of 12,288 rows differ.
+- **The on-card oracle** (`kernels::verify_q1_0`, `bankml gpu --verify`) adds a layer-shaped regime: weight
+  scales and activation magnitudes that vary per block, and no −128. With the driver's `Fma` put back, it now
+  refuses the card: "row 1 differs … bankml will not use this card".
+
+### Added
+- **`gpu/worker.rs`: the GPU as a worker beside the CPU's threads.** When a card is selected and passes the
+  on-card oracle, each 1-bit matrix–vector product gives the card the first share of its rows (asynchronously)
+  while the CPU pool computes the rest, then copies the card's rows in.
+  - The share is calibrated when the card is opened: the card rate divided by the combined rate, 26–35 % on the
+    Vega 3. `BANKML_GPU_SHARE` overrides it and `BANKML_GPU=off` disables the worker.
+  - Only the card's share of each matrix is copied to it (repacked exactly), on first use.
+  - `Gpu::submit` and `Gpu::wait` split a dispatch from its fence.
+- **Every token oracle now runs with the GPU working, and passes.** The whole 1-bit model is 1,064 of 1,064 rows
+  bit-exact with the Vega 3 computing 26 % of every matrix's rows, and the greedy and sampling checks go through
+  the same path.
+
+### Speed, honestly
+- Decode on this laptop is **unchanged within noise**: 1.93–2.00 tokens/s with the card against 1.96–1.97 without.
+  The card is worth about one CPU core here, and each of the 253 matrix calls per token pays one submit and wait
+  on it, which cancels the gain. Batching the submissions that share an input (Q, K, V; gate and up) into one is
+  the next step. A discrete card gains directly.
+
 ## 0.2.13 — 2026-09-29
 
 **The first GPU kernels, bit-exact on the card; mindXtrain begins in Rust; bankML branding.** Record:

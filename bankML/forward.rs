@@ -401,6 +401,7 @@ pub enum Acts {
 
 /// A weight matrix: its bytes, rows and type.
 pub struct Mat<'a> {
+    name: &'a str,
     bytes: &'a [u8],
     pub rows: usize,
     ty: u32,
@@ -429,6 +430,8 @@ pub struct Weights {
     /// cells into one chunk per thread, so the bits depend on it. `BANKML_LLAMA_THREADS`, default 3.
     pub llama_threads: usize,
     pool: Pool,
+    /// a verified GPU taking a share of every 1-bit matrix–vector product's rows (`gpu::worker`), if one was found
+    pub gpu: Option<std::sync::Mutex<crate::gpu::worker::Worker>>,
 }
 
 impl Weights {
@@ -463,9 +466,27 @@ impl Weights {
             return Err(format!("token_embd is type {wtype}; the forward pass runs Q1_0 and Q2_0_g64 models"));
         }
         let mm = Mmap::open(path).map_err(|e| e.to_string())?;
+        let pool = Pool::from_env();
+        // a card joins only for the 1-bit kernel (the ternary kernel is next), only after it passes the on-card
+        // oracle, and only if the calibration gives it a share worth sending; any failure leaves the CPU path alone
+        let gpu = if wtype == TYPE_Q1_0 {
+            match crate::gpu::worker::Worker::open(&pool) {
+                Ok(Some(w)) => {
+                    eprintln!("bankml: GPU {} verified; it computes {:.0}% of each 1-bit matrix's rows", w.name, w.share * 100.0);
+                    Some(std::sync::Mutex::new(w))
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    eprintln!("bankml: GPU not used: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(Weights { mm, tensors: h.tensors, data_start: h.data_start, n_embd, n_vocab, rms_eps, n_head, n_head_kv, head_dim, rope, n_layer, wtype,
                      llama_threads: std::env::var("BANKML_LLAMA_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(3),
-                     pool: Pool::from_env() })
+                     pool, gpu })
     }
 
     fn tensor(&self, name: &str) -> Result<(&TensorInfo, &[u8]), String> {
@@ -492,7 +513,7 @@ impl Weights {
             return Err(format!("{name}: type {} dims {:?}; expected type {} with {n_in} columns", t.ty, t.dims, self.wtype));
         }
         let rows = t.dims[1] as usize;
-        Ok(Mat { bytes: b.get(..rows * row_bytes(t.ty, n_in)).ok_or("tensor truncated")?, rows, ty: t.ty })
+        Ok(Mat { name: &t.name, bytes: b.get(..rows * row_bytes(t.ty, n_in)).ok_or("tensor truncated")?, rows, ty: t.ty })
     }
 
     /// `x` quantized to q8_0 as ggml quantizes a matmul's activation, prepared for the model's kernel.
@@ -528,7 +549,19 @@ impl Weights {
             return Err(format!("{} rows, buffer {}", m.rows, out.len()));
         }
         match (m.ty, a) {
-            (TYPE_Q1_0, Act::Q1(a)) => q1_0::mat_vec_par(&self.pool, m.bytes, m.rows, a, out),
+            (TYPE_Q1_0, Act::Q1(a)) => {
+                // a verified card, if there is one, takes the first rows while the CPU pool computes the rest
+                let mut worker = self.gpu.as_ref().and_then(|w| w.lock().ok());
+                let g = match worker.as_mut() {
+                    Some(w) => w.begin(m.name, m.bytes, m.rows, a)?,
+                    None => 0,
+                };
+                let rb = a.n() / QK1_0 * Q1_0_BYTES;
+                q1_0::mat_vec_par(&self.pool, &m.bytes[g * rb..], m.rows - g, a, &mut out[g..]);
+                if let Some(w) = worker.as_mut() {
+                    w.finish(&mut out[..g])?;
+                }
+            }
             (TYPE_Q2_0, Act::Q2(a)) => q2_0::mat_vec_par(&self.pool, m.bytes, m.rows, a, out),
             _ => return Err("activation prepared for another weight type".into()),
         }

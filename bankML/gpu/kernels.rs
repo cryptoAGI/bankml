@@ -66,6 +66,7 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
     let ci0 = m.const_u32(i32t, 0);
     let ci_m128 = m.const_u32(i32t, (-128i32) as u32);
     let cf0 = m.const_u32(f32t, 0);
+    let c_mask = m.const_u32(u32t, 0xFFFF_F000);
 
     let func = m.id();
     m.entry_point_compute(func, "main", &[gid], [LOCAL_SIZE, 1, 1]);
@@ -144,7 +145,8 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
     }
     for l in 0..8 {
         let a = m.op(op::LOAD, f32t, &[acc[l]]);
-        let n = m.op(op::EXT_INST, f32t, &[glsl, GLSL_FMA, d0, ab[l], a]);
+        // the outer fma's product is not exact in f32, and a driver may not fuse it: computed exactly (spirv.rs)
+        let n = m.fma_exact((f32t, u32t, tbool), d0, ab[l], a, c_mask, cu[1], cu[0], cf0);
         m.stmt(op::STORE, &[acc[l], n]);
     }
     m.stmt(op::BRANCH, &[l_cont]);
@@ -230,6 +232,7 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
     let ci0 = m.const_u32(i32t, 0);
     let ci_m128 = m.const_u32(i32t, (-128i32) as u32);
     let cf0 = m.const_u32(f32t, 0);
+    let c_mask = m.const_u32(u32t, 0xFFFF_F000);
 
     let func = m.id();
     m.entry_point_compute(func, "main", &[gid, lid], [LOCAL_SIZE, 1, 1]);
@@ -302,7 +305,7 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
         ab = if k == 0 { m.op(op::F_MUL, f32t, &[d1, sf]) } else { m.op(op::EXT_INST, f32t, &[glsl, GLSL_FMA, d1, sf, ab]) };
     }
     let a = m.op(op::LOAD, f32t, &[acc]);
-    let n = m.op(op::EXT_INST, f32t, &[glsl, GLSL_FMA, d0, ab, a]);
+    let n = m.fma_exact((f32t, u32t, tbool), d0, ab, a, c_mask, cu[1], cu[0], cf0);
     m.stmt(op::STORE, &[acc, n]);
     m.stmt(op::BRANCH, &[l_cont]);
     m.label(l_cont);
@@ -357,16 +360,25 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     for (kname, spv, per_row) in [("q1_0_mat_vec", q1_0_mat_vec(), 1u32), ("q1_0_mat_vec8", q1_0_mat_vec8(), 8)] {
         let pipe = gpu.pipeline(&spv, Q1_0_BINDINGS, 8)?;
-        for &(rows, n) in &[(1000usize, 512usize), (4096, 4096), (1024, 12288)] {
+        // two regimes: uniform data with a −128 quant (the wrapping negation), and data shaped like a real layer —
+        // weight scales and activation magnitudes that vary per block, so the products are inexact in f32 and a
+        // driver that does not fuse an FMA shows (the Vega 3's does not: 0.2.14 computes the FMA exactly instead)
+        for &(rows, n, real) in &[(1000usize, 512usize, false), (4096, 4096, false), (1024, 12288, false), (4096, 4096, true), (2048, 12288, true)] {
             let nb = n / 128;
             let w: Vec<u8> = (0..rows * nb).flat_map(|_| {
                 let mut b = [0u8; 18];
-                b[..2].copy_from_slice(&crate::q1_0::f32_to_f16(((next() % 2000) as f32 - 1000.0) * 1e-5).to_le_bytes());
+                let d = if real { (1.0 + (next() % 1900) as f32) * 1e-5 * if next() & 1 == 1 { -1.0 } else { 1.0 } } else { ((next() % 2000) as f32 - 1000.0) * 1e-5 };
+                b[..2].copy_from_slice(&crate::q1_0::f32_to_f16(d).to_le_bytes());
                 b[2..].iter_mut().for_each(|x| *x = next() as u8);
                 b
             }).collect();
-            let mut x: Vec<f32> = (0..n).map(|_| ((next() % 20001) as f32 - 10000.0) * 1e-3).collect();
-            x[3] = -1e9;
+            let mut x: Vec<f32> = (0..n).map(|i| {
+                let v = ((next() % 20001) as f32 - 10000.0) * 1e-4;
+                if real { v * (1.0 + (i / 32 % 7) as f32 * 0.37) * (0.05 + ((i / 32) * 2654435761 % 97) as f32 * 0.01) } else { v * 10.0 }
+            }).collect();
+            if !real {
+                x[3] = -1e9;
+            }
             let a = Q8Act::quantize(&x);
             let mut cpu = vec![0.0f32; rows];
             mat_vec(&w, rows, &a, &mut cpu);
@@ -383,7 +395,7 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
             if let Some(i) = got.iter().zip(&cpu).position(|(g, c)| g.to_bits() != c.to_bits()) {
                 return Err(format!("{kname} {rows}×{n}: row {i} differs from the CPU kernel (gpu {:e}, cpu {:e})", got[i], cpu[i]));
             }
-            lines.push(format!("{kname} {rows}×{n}: {rows} of {rows} rows bit-exact ({dt:.2} ms)"));
+            lines.push(format!("{kname} {rows}×{n}{}: {rows} of {rows} rows bit-exact ({dt:.2} ms)", if real { " (layer-shaped)" } else { "" }));
         }
     }
     Ok(lines)

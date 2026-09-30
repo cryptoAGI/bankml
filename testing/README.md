@@ -82,6 +82,7 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.2.14 | `results/0.2.14.txt` | the GPU in the forward pass, every token oracle exact with it working; the exact FMA; the on-card oracle catches an unfused driver |
 | 0.2.13 | `results/0.2.13.txt` | GPU kernels bit-exact on the Vega 3; mindXtrain author and score stages identical |
 | 0.2.12 | `results/0.2.12.txt` | batched prefill (checked by every prefill oracle); the GPU component's discovery |
 | 0.2.11 | `results/0.2.11.txt` | P3 step eleven: sampling — llama-server's chain, same seed, same tokens (40 of 40) |

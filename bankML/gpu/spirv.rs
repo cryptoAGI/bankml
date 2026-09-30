@@ -39,13 +39,19 @@ pub mod op {
     pub const COMPOSITE_EXTRACT: u16 = 81;
     pub const CONVERT_S_TO_F: u16 = 111;
     pub const S_NEGATE: u16 = 126;
+    pub const BITCAST: u16 = 124;
     pub const I_ADD: u16 = 128;
+    pub const I_SUB: u16 = 130;
+    pub const F_SUB: u16 = 131;
     pub const F_ADD: u16 = 129;
     pub const I_MUL: u16 = 132;
     pub const F_MUL: u16 = 133;
+    pub const LOGICAL_EQUAL: u16 = 164;
     pub const LOGICAL_AND: u16 = 167;
     pub const I_EQUAL: u16 = 170;
     pub const U_LESS_THAN: u16 = 176;
+    pub const F_ORD_NOT_EQUAL: u16 = 182;
+    pub const F_ORD_GREATER_THAN: u16 = 186;
     pub const SELECT: u16 = 169;
     pub const SHIFT_RIGHT_LOGICAL: u16 = 194;
     pub const SHIFT_RIGHT_ARITHMETIC: u16 = 195;
@@ -182,7 +188,7 @@ impl Module {
         let mut o = vec![result_ty, id];
         o.extend_from_slice(operands);
         inst(&mut self.code, opcode, &o);
-        if opcode == op::F_MUL || opcode == op::F_ADD {
+        if opcode == op::F_MUL || opcode == op::F_ADD || opcode == op::F_SUB || opcode == op::EXT_INST {
             self.decorate(id, &[dec::NO_CONTRACTION]);
         }
         id
@@ -193,6 +199,50 @@ impl Module {
     }
     pub fn label(&mut self, id: u32) {
         inst(&mut self.code, op::LABEL, &[id]);
+    }
+
+    /// Knuth's TwoSum: `s = a + b` rounded and the exact error `e` (`s + e = a + b`), without an FMA.
+    pub fn two_sum(&mut self, f32t: u32, a: u32, b: u32) -> (u32, u32) {
+        let s = self.op(op::F_ADD, f32t, &[a, b]);
+        let bb = self.op(op::F_SUB, f32t, &[s, a]);
+        let sb = self.op(op::F_SUB, f32t, &[s, bb]);
+        let ea = self.op(op::F_SUB, f32t, &[a, sb]);
+        let eb = self.op(op::F_SUB, f32t, &[b, bb]);
+        (s, self.op(op::F_ADD, f32t, &[ea, eb]))
+    }
+
+    /// A correctly rounded `fma(a, b, c)` from plain multiplies and adds, whatever the driver does with `Fma`: `a`
+    /// must carry at most 12 significant bits (an f16 value does), so splitting `b` into two 12-bit halves makes
+    /// both partial products exact; TwoSum keeps every rounding error; the last step is Boldo and Melquiond's
+    /// `RN(th + RO(tl + ul))` (rounding to odd, 2008), which gives the single rounding of an FMA.
+    /// `c_mask` is an OpConstant u32 0xFFFF_F000; `c1`, `c0` are u32 1 and 0; `cf0` is f32 0.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fma_exact(&mut self, tys: (u32, u32, u32), a: u32, b: u32, c: u32, c_mask: u32, c1: u32, c0: u32, cf0: u32) -> u32 {
+        let (f32t, u32t, tbool) = tys;
+        let bb = self.op(op::BITCAST, u32t, &[b]);
+        let hb = self.op(op::BITWISE_AND, u32t, &[bb, c_mask]);
+        let bhi = self.op(op::BITCAST, f32t, &[hb]);
+        let blo = self.op(op::F_SUB, f32t, &[b, bhi]);
+        let p1 = self.op(op::F_MUL, f32t, &[a, bhi]);
+        let p2 = self.op(op::F_MUL, f32t, &[a, blo]);
+        let (uh, ul) = self.two_sum(f32t, p1, p2);
+        let (th, tl) = self.two_sum(f32t, c, uh);
+        let (v, ve) = self.two_sum(f32t, tl, ul);
+        // round v to odd: when inexact and its last bit is even, step one ulp toward the lost part
+        let vb = self.op(op::BITCAST, u32t, &[v]);
+        let last = self.op(op::BITWISE_AND, u32t, &[vb, c1]);
+        let even = self.op(op::I_EQUAL, tbool, &[last, c0]);
+        let inexact = self.op(op::F_ORD_NOT_EQUAL, tbool, &[ve, cf0]);
+        let vpos = self.op(op::F_ORD_GREATER_THAN, tbool, &[v, cf0]);
+        let epos = self.op(op::F_ORD_GREATER_THAN, tbool, &[ve, cf0]);
+        let away = self.op(op::LOGICAL_EQUAL, tbool, &[vpos, epos]);
+        let up = self.op(op::I_ADD, u32t, &[vb, c1]);
+        let down = self.op(op::I_SUB, u32t, &[vb, c1]);
+        let step = self.op(op::SELECT, u32t, &[away, up, down]);
+        let fix = self.op(op::LOGICAL_AND, tbool, &[even, inexact]);
+        let vo = self.op(op::SELECT, u32t, &[fix, step, vb]);
+        let v_odd = self.op(op::BITCAST, f32t, &[vo]);
+        self.op(op::F_ADD, f32t, &[th, v_odd])
     }
 
     pub fn words(&self) -> Vec<u32> {

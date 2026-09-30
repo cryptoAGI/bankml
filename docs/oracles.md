@@ -241,6 +241,15 @@ line for line, because the order it leaves tied logits in decides which token a 
 - `oracle_train_imprint` checks the score stage against `score_imprint` on 3,000 randomized cases, value for
   value.
 
+**0.2.14: the GPU inside the forward pass.** With a verified card present, `Weights::open` gives it a share of every
+1-bit matrix's rows, so every token oracle runs with the GPU working. The whole-model check passes at 1,064 of
+1,064 rows with the Vega 3 on 26 % of every matrix.
+
+The on-card oracle learned the lesson of this release. It now includes layer-shaped data: scales and magnitudes
+that vary per block, so products are inexact in f32. On that data the card's unfused `Fma` differed by one ulp,
+where random data had let it pass. bankml now computes the FMA exactly (Boldo–Melquiond), and with the driver's
+`Fma` put back, `bankml gpu --verify` refuses the card.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

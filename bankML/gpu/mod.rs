@@ -24,6 +24,7 @@ pub mod hf;
 pub mod kernels;
 pub mod spirv;
 pub mod vulkan;
+pub mod worker;
 
 use std::path::PathBuf;
 

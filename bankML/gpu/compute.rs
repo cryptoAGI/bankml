@@ -266,6 +266,21 @@ impl Gpu {
 
     /// Bind `bufs` to the pipeline's bindings in order, push `push`, dispatch `groups` workgroups, and wait.
     pub fn run(&self, p: &Pipeline, bufs: &[&Buffer], push: &[u32], groups: u32) -> Result<(), String> {
+        self.submit(p, bufs, push, groups)?;
+        self.wait()
+    }
+
+    /// Wait for the work `submit` started, and make the fence ready for the next submit.
+    pub fn wait(&self) -> Result<(), String> {
+        unsafe {
+            check((self.fns.wait)(self.dev, 1, &self.fence, 1, u64::MAX), "vkWaitForFences")?;
+            check((self.fns.reset_fence)(self.dev, 1, &self.fence), "vkResetFences")
+        }
+    }
+
+    /// Start `groups` workgroups of `p` on `bufs` and return at once; `wait` finishes it. One submission is in
+    /// flight at a time (one command buffer, one fence).
+    pub fn submit(&self, p: &Pipeline, bufs: &[&Buffer], push: &[u32], groups: u32) -> Result<(), String> {
         assert_eq!(bufs.len() as u32, p.bindings);
         assert_eq!(push.len() as u32 * 4, p.push_bytes);
         unsafe {
@@ -286,12 +301,17 @@ impl Gpu {
             check((self.fns.end)(self.cb), "vkEndCommandBuffer")?;
             let si = SubmitInfo { s_type: 4, p_next: std::ptr::null(), wait_count: 0, waits: std::ptr::null(), wait_stages: std::ptr::null(),
                                   cb_count: 1, cbs: &self.cb, signal_count: 0, signals: std::ptr::null() };
-            check((self.fns.submit)(self.queue, 1, &si, self.fence), "vkQueueSubmit")?;
-            check((self.fns.wait)(self.dev, 1, &self.fence, 1, u64::MAX), "vkWaitForFences")?;
-            check((self.fns.reset_fence)(self.dev, 1, &self.fence), "vkResetFences")
+            check((self.fns.submit)(self.queue, 1, &si, self.fence), "vkQueueSubmit")
         }
     }
 }
+
+// SAFETY: every Vulkan call on a Gpu is made through &self from one thread at a time (the forward pass holds it
+// behind a Mutex); Vulkan objects are not tied to the thread that made them.
+unsafe impl Send for Gpu {}
+unsafe impl Send for Buffer {}
+unsafe impl Sync for Buffer {}
+unsafe impl Send for Pipeline {}
 
 impl Drop for Gpu {
     fn drop(&mut self) {
