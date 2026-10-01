@@ -73,6 +73,17 @@ def use_agent(slug):
     else:
         HISTORY, MEMORY = STATE / "savante.history", STATE / "savante.memory"
     ACTIVE["slug"] = slug or None
+
+
+# The agent the UI starts with: BANKML_AGENT (default "mindx" — mindX's own persona, adopted with
+# `python3 sAGI/agents.py adopt …`), falling back to Savante when that agent is not installed.
+DEFAULT_AGENT = os.environ.get("BANKML_AGENT", "mindx").strip() or None
+
+
+def _start_with_default_agent():
+    import agents
+    if DEFAULT_AGENT and DEFAULT_AGENT in agents.list_agents():
+        use_agent(DEFAULT_AGENT)
 RAGE_PATH = Path(os.environ.get("RAGE_PATH", Path.home() / "mindX" / "mindx" / "godel" / "mindxtrain" / "hf" / "space_ui")).expanduser()
 REPO = Path(os.environ.get("BANKML_REPO", Path(__file__).resolve().parents[1])).expanduser()
 LIVE = REPO / "testing" / "live.log"
@@ -2379,7 +2390,7 @@ def build(canon: Canon, mode: str):
                         "save; an agent that does not verify does not speak. The chat, .history, .memory, Responses and Metrics follow "
                         "the agent in use. Nothing here mints.")
             with gr.Row():
-                apick = gr.Dropdown([SAV] + agents.list_agents(), value=SAV, label="agent", scale=3)
+                apick = gr.Dropdown([SAV] + agents.list_agents(), value=ACTIVE["slug"] or SAV, label="agent", scale=3)
                 b_use = gr.Button("use this agent", variant="primary", scale=1)
             active_md = gr.Markdown("in use: **Savante** (the canon)")
             with gr.Accordion("derive a new agent from Savante", open=False):
@@ -2658,6 +2669,7 @@ def main():
     canon = Canon(CANON)
     bad = [r for r in canon.rows if not r[2]]
     print(f"canon {CANON}: {len(canon.rows) - len(bad)}/{len(canon.rows)} ledger files verify" + (f"; FAILING: {bad}" if bad else ""))
+    _start_with_default_agent()  # mindX by default (BANKML_AGENT), Savante when it is not installed
     demo = build(canon, a.mode)
     try:  # concurrency > 1 so the 1 s timer ticks while an answer streams (Gradio 3: concurrency_count)
         demo.queue(concurrency_count=4)

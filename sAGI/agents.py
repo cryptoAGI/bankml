@@ -175,6 +175,32 @@ def derive(template_persona: dict, template_ledger: dict, name: str, *, system_p
     return slug
 
 
+def adopt(persona: dict, *, source: str, slug: str | None = None) -> str:
+    """Install an existing persona as its own agent — its own doctrine, not derived from Savante.
+
+    For an agent that already has a canonical persona elsewhere (mindX's lives in mindX's mindxtrain
+    personas). It must pass the same preflight and carry every doctrine clause, so its doctrine root is
+    computable; that root is fixed from here on, exactly as a derived agent's is. Never touches `source`.
+    """
+    p = copy.deepcopy(persona)
+    slug = slug or slugify(str(p.get("persona") or p.get("name") or "agent"))
+    d = agent_dir(slug)
+    if d.exists():
+        raise FileExistsError(f"agent {slug!r} exists")
+    bad = preflight(p)
+    if bad:
+        raise ValueError("; ".join(bad[:5]))
+    doctrine_root(p)  # raises when a doctrine clause is missing
+    raw = json.dumps(p, indent=1, ensure_ascii=False) + "\n"
+    d.mkdir(parents=True)
+    f = files(slug)
+    f["persona"].write_text(raw, encoding="utf-8")
+    f["prompt"].write_text(str(p.get("system_prompt", "")).rstrip("\n") + "\n", encoding="utf-8")
+    rebind(slug, derived_from={"agent": None, "adopted_from": source,
+                               "persona_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest()})
+    return slug
+
+
 def save(slug: str, persona_text: str | None = None, prompt_text: str | None = None) -> dict:
     """Write edited .persona / .prompt (validated), then re-ledger."""
     f = files(slug)
@@ -279,3 +305,26 @@ def verify(slug: str) -> list:
     rows.append(("doctrine root", now == dr.get("value") and list(dr.get("pointers") or []) == DOCTRINE_POINTERS, dr.get("value")))
     rows.append(("doctrine unchanged since derivation", now == (dr.get("fixed_at_derivation") or dr.get("value")), dr.get("fixed_at_derivation") or dr.get("value")))
     return rows
+
+
+if __name__ == "__main__":  # python3 sAGI/agents.py adopt PERSONA [--slug SLUG] | list | verify SLUG
+    import argparse
+    ap = argparse.ArgumentParser(description="bankml custom agents")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    a1 = sub.add_parser("adopt", help="install an existing .persona as its own agent")
+    a1.add_argument("persona")
+    a1.add_argument("--slug")
+    sub.add_parser("list")
+    a3 = sub.add_parser("verify")
+    a3.add_argument("slug")
+    a = ap.parse_args()
+    if a.cmd == "adopt":
+        src = Path(a.persona).expanduser().resolve()
+        slug = adopt(json.loads(src.read_text(encoding="utf-8")), source=str(src), slug=a.slug)
+        led = json.loads(files(slug)["commitments.json"].read_text(encoding="utf-8"))
+        print(f"adopted {slug} into {agent_dir(slug)} · doctrine root {led['doctrine_root']['value']}")
+    elif a.cmd == "list":
+        print("\n".join(list_agents()))
+    else:
+        for name, ok, detail in verify(a.slug):
+            print(("✓" if ok else "✗"), name, detail)
