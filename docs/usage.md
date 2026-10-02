@@ -138,6 +138,21 @@ An import is kept only if its sha256 equals the one its publisher lists, `bankml
 pin is written; `bankml serve` checks that pin before every start. Only open-source models are accepted (Gemma and
 Llama are refused), and an import that would not fit this machine's RAM or disk is refused with the numbers.
 
+**Converted models (0.3.4).** SmolLM2-135M-Instruct and mindX's `mindx-gen39` have no published F16 GGUF. They are
+made from their pinned safetensors by llama.cpp b11192's own converter, and `sAGI/models.py` pins the result against
+the recorded conversion (`CONVERTED` in the file says how each was made):
+
+```sh
+python3 llama.cpp/convert_hf_to_gguf.py SmolLM2-135M-Instruct/ --outtype f16 --outfile .models/SmolLM2-135M-Instruct-F16.gguf
+#   (b11192, commit 171e8846; the safetensors at HuggingFaceTB/SmolLM2-135M-Instruct@12fd25f7; torch is needed here only)
+python3 -c "import sys; sys.path.insert(0, 'sAGI'); import models; print(models.adopt('SmolLM2-135M-Instruct-F16.gguf'))"
+#   → hashes the file against the recorded e9aba089…, re-reads the source's LFS sha256 at the revision, writes FORK.json
+```
+
+What bankML's own forward pass plays (`bankml serve --native`, `bankml generate`, the C API): Qwen3 in Q1_0 and
+Q2_0_g64 (Bonsai-8B, Ternary-Bonsai-8B, Bonsai-1.7B) and the Llama architecture in F16 (SmolLM2-135M-Instruct,
+`mindx-gen39`). Anything else is refused with the reason; `/api/tags` lists it with that reason.
+
 ## 6. By hand: build, verify, serve
 
 What the installer does, step by step:
@@ -210,8 +225,11 @@ curl -s $B/api/generate -H "$J" -d '{"model": "bonsai-8b-q1_0", "keep_alive": 0}
 curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "keep_alive": "30m"}'  # verify and load (done_reason "load")
 ```
 
-- **Names.** A model's name is its file's stem, lower-cased: `bonsai-8b-q1_0`, `ternary-bonsai-8b-q2_0_g64`.
+- **Names.** A model's name is its file's stem, lower-cased: `bonsai-8b-q1_0`, `ternary-bonsai-8b-q2_0_g64`,
+  `smollm2-135m-instruct-f16`, `mindx-gen39-f16`.
   - `:latest` and the file name are accepted as aliases.
+  - Since 0.3.4 so is the name without its weight-type suffix, when exactly one pin has that base: `mindx-gen39`
+    (Ollama's tag for mindX's generation 39), `smollm2-135m-instruct`, `bonsai-1.7b`.
   - A request without a model uses the one `serve` started with.
   - An unknown name answers 404.
 - **Where models come from.** Without `--registry`, only the startup model is served. With it, every GGUF pinned in
@@ -220,7 +238,7 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
 - **`/api/tags` lists every pin, honestly.** A pin bankML cannot play is listed with `"native": false` and the reason.
   Asking for one answers 400 with that reason. Two examples:
   - `qwen3-0.6b-q8_0`: Q8_0 weights, O3;
-  - `bonsai-1.7b-q1_0`: tied embeddings, O4.
+  - `qwen3-0.6b` (Ollama's blob): Q4_K weights, O3.
 - **One resident model.** A request for another model drops the resident one, then verifies the new one before it
   loads it: the guard, then the sha256 pin, as at the start.
 - **`keep_alive`** is read as Ollama reads it:

@@ -56,11 +56,11 @@ typedef void (*bankml_log_cb)(int level, const char *msg, size_t len, void *user
 1. the GGUF guard: it refuses fork-only types, legacy group-128 Q2_0 and Bonsai 2 on mainline;
 2. the sha256 pin to the `FORK.json` at `fork_json_path`;
 3. the file-identity check: the file must not change while it is being hashed;
-4. the native check `serve --native` makes: Qwen3, Q1_0 or Q2_0_g64 weights, its own output matrix, and a chat
-   template bankML renders.
+4. the native check `serve --native` makes: Qwen3 in Q1_0 or Q2_0_g64, or (0.3.4) Llama in F16, tied embeddings or
+   not, a tokenizer and a chat template bankML reproduces.
 
 On a refusal it returns NULL, with the reason in `*err` in `serve`'s words. Two examples:
-- `refuse: Bonsai-1.7B-Q1_0.gguf: bankML's native forward pass does not play it: tied embeddings (no output.weight) …`
+- `refuse: Qwen3-0.6B-Q8_0.gguf: bankML's native forward pass does not play it: weights are Q8_0 … (… O3)`
 - `refuse: X.gguf has no sha256 record in FORK.json: unpinned, refused`
 
 `n_ctx` is the context in tokens. 0 means 4096, `serve`'s default.
@@ -209,8 +209,10 @@ width means `-`, and a negative precision means none).
   - **Bonsai-8B Q1_0.** llama-server b11192's recorded conversations go through `bankml_chat`, and the same text and
     counts must come back, with `response_sha256` equal to the sha256 of llama-server's text. The gate's
     `serve_oracle --bankml` ties the same record to `serve --native`.
-  - **Refusals.** Bonsai-1.7B is refused (tied embeddings, as `serve --native` refuses it), and so is a file that its
-    `FORK.json` does not pin. The library's own log reaches the installed sink.
+  - **The O4 models (0.3.4).** Bonsai-1.7B, SmolLM2-135M-Instruct and mindx-gen39, each against its own
+    llama-server record, as Bonsai-8B above.
+  - **Refusals.** Qwen3-0.6B Q8_0 is refused (Q8_0 weights, as `serve --native` refuses them), and so is a file that
+    its `FORK.json` does not pin. The library's own log reaches the installed sink.
 
 ## Why it exists
 

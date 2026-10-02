@@ -12,8 +12,10 @@
         receipt's response_sha256, request_sha256 and model_sha256 must all be equal, turn by turn;
       - Bonsai-8B-Q1_0: the recorded llama-server b11192 conversations (serve-Bonsai-8B-Q1_0.jsonl, which
         serve_oracle.py --bankml ties to serve --native) through bankml_chat: the same text and counts, and
-        response_sha256 = sha256 of llama-server's text;
-      - refusals: Bonsai-1.7B (tied embeddings) is refused with serve's reason, and a file its FORK.json does not
+        response_sha256 = sha256 of llama-server's text; since 0.3.4 the same for the models O4 opened, each against
+        llama-server running it: Bonsai-1.7B-Q1_0 (tied embeddings), SmolLM2-135M-Instruct-F16 and mindx-gen39-F16
+        (the Llama graph in F16);
+      - refusals: Qwen3-0.6B-Q8_0 (Q8_0 weights, O3) is refused with serve's reason, and a file its FORK.json does not
         pin is refused; the library's own messages reach the sink bankml_set_log installed.
 Models in .models/, pins in $BANKML_FORKS (default ~/.local/share/bankml/forks). A missing model skips its case."""
 import hashlib, json, os, subprocess, sys, time, urllib.request
@@ -103,14 +105,14 @@ def chat_case():
     failed, t0 = 0, time.time()
 
     # refusals, before any model is loaded
-    small, small_fork = models / "Bonsai-1.7B-Q1_0.gguf", forks / "Bonsai-1.7B-Q1_0.gguf.FORK.json"
+    small, small_fork = models / "Qwen3-0.6B-Q8_0.gguf", forks / "Qwen3-0.6B-Q8_0.gguf.FORK.json"
     if small.exists() and small_fork.exists():
         c = Chat(exe, small, small_fork)
         rc, err = c.close()
-        ok = c.opened.get("open") is False and rc == 2 and "native forward pass does not play it: tied embeddings" in c.opened.get("error", "") \
+        ok = c.opened.get("open") is False and rc == 2 and "native forward pass does not play it: weights are Q8_0" in c.opened.get("error", "") \
             and "[bankml log 0] bankml_open: refuse:" in err
         failed += not ok
-        print(f"capi refusal: Bonsai-1.7B-Q1_0 {'refused' if ok else 'NOT refused as serve refuses it'}: {c.opened.get('error')}")
+        print(f"capi refusal: Qwen3-0.6B-Q8_0 {'refused' if ok else 'NOT refused as serve refuses it'}: {c.opened.get('error')}")
     q1, q1_fork = models / "Bonsai-8B-Q1_0.gguf", forks / "Bonsai-8B-Q1_0.gguf.FORK.json"
     tern, tern_fork = models / "Ternary-Bonsai-8B-Q2_0_g64.gguf", forks / "Ternary-Bonsai-8B-gguf-fork.FORK.json"
     if q1.exists() and tern_fork.exists():
@@ -177,13 +179,21 @@ def chat_case():
     else:
         print("capi chat oracle: Ternary-Bonsai-8B skipped: model, FORK.json or target/release/bankml missing")
 
-    # Bonsai-8B-Q1_0: llama-server b11192's recorded conversations
-    record = models / "oracle-forward" / "serve-Bonsai-8B-Q1_0.jsonl"
+    # llama-server b11192's recorded conversations, each model against the server that ran it
+    for stem in ("Bonsai-8B-Q1_0", "Bonsai-1.7B-Q1_0", "SmolLM2-135M-Instruct-F16", "mindx-gen39-F16"):
+        failed += recorded_case(exe, stem)
+    return 1 if failed else 0
+
+
+def recorded_case(exe, stem):
+    q1, q1_fork = models / f"{stem}.gguf", forks / f"{stem}.gguf.FORK.json"
+    record = models / "oracle-forward" / f"serve-{stem}.jsonl"
+    failed = 0
     if q1.exists() and q1_fork.exists() and record.exists():
         t1 = time.time()
         c = Chat(exe, q1, q1_fork)
         if not c.opened.get("open"):
-            print(f"FAILED: bankml_open refused Bonsai-8B-Q1_0: {c.opened.get('error')}"); return 1
+            print(f"FAILED: bankml_open refused {stem}: {c.opened.get('error')}"); return 1
         turns = [json.loads(x) for x in record.read_text().splitlines()]
         ok = 0
         for i, t in enumerate(turns):
@@ -197,12 +207,12 @@ def chat_case():
             ok += got["rc"] == 0 and same_turn(i, have, want, list(want))
         rc, _ = c.close()
         failed += (ok != len(turns)) + (rc != 0)
-        print(f"capi chat oracle: Bonsai-8B-Q1_0: {ok} of {len(turns)} turns through bankml_chat identical to llama-server b11192's "
+        print(f"capi chat oracle: {stem}: {ok} of {len(turns)} turns through bankml_chat identical to llama-server b11192's "
               f"record (text, streamed pieces, counts, cache reuse, finish; response_sha256 = sha256 of llama-server's text) — "
               f"{time.time() - t1:.0f} s")
     else:
-        print("capi chat oracle: Bonsai-8B-Q1_0 skipped: model, FORK.json or its serve record missing")
-    return 1 if failed else 0
+        print(f"capi chat oracle: {stem} skipped: model, FORK.json or its serve record missing")
+    return failed
 
 
 if __name__ == "__main__":

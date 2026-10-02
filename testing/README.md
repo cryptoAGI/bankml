@@ -36,9 +36,10 @@ memory floor and both whole-model decode budgets.
 | `test_models.py` | the model importer against a loopback server and a synthetic GGUF: the sha256 pin (tampered downloads discarded), the open-source licence gate, resume, the guard, Ollama adoption by link, URL and search parsing; with `BANKML_TEST_CARRIER=1`, a real carrier switch and rollback on spare ports |
 | `test_ui.py` | the Savante UI's data layer, offline: CIDs, Merkle commitments, inclusion proofs (and their failures), RAGE search, metrics, `.memory`, and the view server's routes |
 | `capi/printf_oracle.c` | 0.3.2: the C API's `bankml_log` (a C-variadic function defined in Rust) against libc `snprintf`, byte for byte, on every supported conversion; every unsupported one must give its marker and read no argument it cannot type |
-| `capi/chat.c`, `capi/capi_oracle.py` | 0.3.2: a C program embedding `libbankml`; `--chat` compares `bankml_chat` with a live `serve --native` (ternary) and llama-server's record (1-bit), and checks the refusals; `--printf` builds and runs the printf oracle |
+| `capi/chat.c`, `capi/capi_oracle.py` | 0.3.2 (0.3.4: also the O4 models against their records): a C program embedding `libbankml`; `--chat` compares `bankml_chat` with a live `serve --native` (ternary) and llama-server's record (1-bit), and checks the refusals; `--printf` builds and runs the printf oracle |
 | `grammar_oracle.cpp`, `grammar_oracle.py` | 0.3.3: llama.cpp b11192's own grammar sampler through libllama's public API on the pinned vocabulary: every token's piece and end flag, then the whole-vocabulary mask before every token of 196 runs (12 grammars — llama-server's JSON-mode grammar with its prefill, every grammar in llama.cpp's `grammars/`, three written for token terminals, edges and UTF-8 — × inputs × the tokenizer's tokens and one token per byte) and where llama.cpp rejects; for `oracle_grammar_masks` |
 | `json_oracle.py` | 0.3.3: `--record MODEL` launches llama-server b11192 (Savante's flags, `--verbose`) and records its `/v1/chat/completions` answers under `response_format: json_object` (and two user `grammar`s on the 1-bit model), greedy and seeded, tokens and grammar included, for `oracle_json_mode*`; `--bankml` sends a subset through a live `serve --native` on `/v1` (streamed once) and Ollama's `/api/chat` with `format: "json"` |
+| `f16_oracle.py` | 0.3.4: the shipped ggml's `mul_mat` on F16 weights through ctypes (one column → `ggml_vec_dot_f16`, two or more → llamafile's tinyBLAS, and the fallbacks): SmolLM2's real matrices by 1–28 columns and synthetic shapes for the tails; every F16 tensor widened by `ggml_fp16_to_fp32_row`; for `oracle_ggml_b11192_f16` |
 | `guard_agree.py` | runs both guards on every synthetic case and any real file given; exit 0 only if the JSON is identical |
 | `results/<version>.txt` | each release's record |
 | `experiments/` | kernels that were measured and not adopted, with their numbers, for re-running elsewhere |
@@ -88,7 +89,15 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
 | `oracle_chat_template` *(real)*, `a_short_conversation`, `python_split_semantics` | `chat.rs` | P3 step two: every recorded conversation byte-identical to llama.cpp b11192's rendering (317 of 317) |
-| `oracle_tokenizer` *(real)*, `pretokenizer_shapes`, `byte_chars_are_gpt2s` | `tokenizer.rs` | P3 step one: every recorded case token-identical to llama.cpp b11192 (4,258 of 4,258) |
+| `oracle_tokenizer` *(real)*, `pretokenizer_shapes`, `byte_chars_are_gpt2s` | `tokenizer.rs` | P3 step one: every recorded case token-identical to llama.cpp b11192 (4,258 of 4,258; re-recorded in 0.3.4 on the grown corpus, 4,346 of 4,346, after the `</s>` fix) |
+| `avx2_equals_the_scalar_models`, `the_two_reductions_differ`, `mad_and_scale_match_the_scalar_definitions` | `bankML/f16.rs` | 0.3.4: the F16 kernels' AVX2 paths equal their scalar definitions (tails, fallbacks, 1–6 columns); ggml's two F16 reductions give different bits, so the path matters |
+| `oracle_ggml_b11192_f16` *(real)* | `bankML/f16.rs` | 0.3.4: 211 of 211 F16 tensors widened and 552,268 of 552,268 `mul_mat` elements bit-exact against the shipped ggml (61 tinyBLAS products, 26 `vec_dot_f16`) |
+| `oracle_forward_model_bonsai_1_7b`, `oracle_forward_model_llama_f16` *(real)* | `bankML/forward.rs` | 0.3.4: the whole model bit-exact — Bonsai-1.7B (tied embeddings) 840 of 840 rows; SmolLM2-135M-Instruct and mindx-gen39 (Llama, F16, tied) 800 of 800 each |
+| `oracle_llama_server_bonsai_1_7b`, `oracle_llama_server_llama_f16` *(real)* | `bankML/forward.rs` | 0.3.4: llama-server's tokens on each model: greedy short, long and deep (SmolLM2, mindx-gen39), short (Bonsai-1.7B), seeded 40 of 40 each |
+| `oracle_native_serve_o4` *(real)* | `bankML/native.rs` | 0.3.4: the Savante conversations (9 of 9 turns) and JSON mode (23 of 23) on Bonsai-1.7B, SmolLM2-135M-Instruct and mindx-gen39 |
+| `oracle_tokenizer_smollm`, `smollm_pretokenizer_shapes` | `bankML/tokenizer.rs` | 0.3.4: SmolLM2's vocabulary and `smollm` pre-tokenizer, 4,346 of 4,346 cases |
+| `oracle_chat_template_chatml`, `chatml_templates` | `bankML/chat.rs` | 0.3.4: SmolLM2-Instruct's template and mindx-gen39's ChatML, 317 of 317 each |
+| `o4_live` *(real, gate)* | `testing/serve_oracle.py --bankml STEM [NAME]`, `testing/json_oracle.py --bankml STEM [NAME]` | 0.3.4: the live Ollama-shape and JSON-mode checks on Bonsai-1.7B, SmolLM2-135M-Instruct and mindx-gen39 (asked for as `mindx-gen39`) |
 | `type_ids_match_mainline`, `verified_json_escapes_what_the_header_says` | `bankml.rs` | type ids; `/bankml`'s JSON stays valid for a hostile model name |
 | `hardware_path_equals_portable_on_every_length` | `sha256.rs` | SHA-NI equals the portable rounds (lengths 0–1,000, 4 KiB, 64 KiB, split updates) |
 
@@ -96,6 +105,8 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.3.4 | `results/0.3.4.txt` | O4: mindX's own `mindx-gen39`, SmolLM2-135M-Instruct (Llama, F16) and Bonsai-1.7B (tied embeddings) token-identical to llama-server on every oracle family; F16 products bit-exact against ggml |
+| 0.3.3 | `results/0.3.3.txt` | JSON mode: llama-server's grammar, prefill and redraw; token-identical greedy and seeded |
 | 0.3.2 | `results/0.3.2.txt` | the C API (`libbankml`): `bankml_chat` identical to `serve --native` and llama-server's record; `bankml_log` identical to libc `snprintf`; Rust 1.99 passing every bit-exact oracle |
 | 0.3.1 | `results/0.3.1.txt` | Ollama's API on `serve --native`: `/api/chat` identical to `/v1` and llama-server's record, unload/reload unchanged |
 | 0.3.0 | `results/0.3.0.txt` | milestone: Savante answered by bankML's own forward pass; conversations identical to llama-server's (9 of 9 turns) |

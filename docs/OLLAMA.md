@@ -1,22 +1,24 @@
 # bankML as mindX's Ollama, and as its replacement for llama.cpp
 
-*Written for 0.3.1 (2026-10-01), updated for 0.3.3 (2026-10-02). Phase O1 shipped in 0.3.1 and O6's first cut, JSON
-mode, in 0.3.3; every later phase is a plan, folded into the milestones of [TODO.md](TODO.md). Nothing here counts
-until its oracle passes in a gate record.*
+*Written for 0.3.1 (2026-10-01), updated for 0.3.4 (2026-10-02). Phase O1 shipped in 0.3.1, O6's first cut (JSON
+mode) in 0.3.3, and O4 (the Llama graph, tied embeddings) with O3's F16 kernels in 0.3.4; every later phase is a plan,
+folded into the milestones of [TODO.md](TODO.md). Nothing here counts until its oracle passes in a gate record.*
 
 ## The question, and the short answer
 
 Can bankML become a complete, optimized Ollama for mindX, and replace llama.cpp there? **As a direction, yes.
 Today, no.** bankML is narrow on purpose:
 
-- **What it runs.** Qwen3 in `Q1_0` and `Q2_0_g64`, with AVX2 (plus a verified Vulkan GPU share for 1-bit). One
-  conversation slot.
+- **What it runs.** Qwen3 in `Q1_0` and `Q2_0_g64`, tied embeddings or not (Bonsai-8B, Ternary-Bonsai-8B,
+  Bonsai-1.7B), and since 0.3.4 the Llama architecture in F16 (SmolLM2-135M-Instruct, and mindX's own `mindx-gen39`),
+  with AVX2 (plus a verified Vulkan GPU share for 1-bit). One conversation slot.
 - **What it proves.** It is token-identical to llama.cpp b11192 on every oracle in the gate, and about 8× faster on
-  the ternary model.
-- **What mindX asks of Ollama.** None of the models mindX serves through Ollama today is `Q1_0` or `Q2_0`:
-  - `mindx-genN`: SmolLM2, Llama architecture, F16;
-  - `qwen3`: `Q4_K`;
-  - `bge-m3`: an XLM-R encoder.
+  the ternary model; on the F16 Llama models it is within about 10 % of llama-server's speed (PERFORMANCE.md).
+- **What mindX asks of Ollama.** Of the models mindX serves through Ollama today:
+  - `mindx-genN`: SmolLM2, Llama architecture, F16 — **native since 0.3.4** for every generation converted and
+    pinned (gen 39 is; `bankml create`, which would make one from mindXtrain's output, is O5);
+  - `qwen3`: `Q4_K`, and the `qwen3:0.6b` pin in `Q8_0` — refused (O3);
+  - `bge-m3`: an XLM-R encoder — refused (O7).
 
 **The decision (the operator's): native only.** bankML answers only what its own verified forward pass can do. It
 never proxies to llama-server or to Ollama to fill a gap; it refuses with HTTP 400 and a reason. Ollama keeps
@@ -42,7 +44,7 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 | `/api/embed` with `bge-m3` (XLM-R encoder, 1024 dimensions), `truncate: true` | `agents/memory_pgvector.py:937-958` | **refused** (400): no encoder graph yet | O7 |
 | `ollama create` from a Modelfile (`FROM` + `ADAPTER`), then a persona `SYSTEM` layer (`ollama show --modelfile`, re-create) | `mindx/godel/mindxtrain/promote.py:52-85`, `:181-323` | `/api/show` **done** (a read-only modelfile); `create` **refused** | O4 + O5 |
 | `ollama show <tag>` to check a base's architecture | `mindx/godel/mindxtrain/promote.py:88-119`; `/api/show` at `llm/ollama_handler.py:479` | **done (0.3.1)**: `details`, `model_info` from the GGUF header, `parameters` from its sampling defaults | O1 |
-| the models themselves: SmolLM2-135M `mindx-genN` (Llama architecture, F16 safetensors merged to GGUF) | `mindx/godel/mindxtrain/promote.py` | **not native**: Llama architecture and F16 | O3 + O4 |
+| the models themselves: SmolLM2-135M `mindx-genN` (Llama architecture, F16 safetensors merged to GGUF) | `mindx/godel/mindxtrain/promote.py` | **done (0.3.4)** for a pinned conversion: `mindx-gen39` (asked for as Ollama's tag `mindx-gen39`) token-identical to llama-server b11192, greedy, seeded, `/v1`, `/api`, C API, JSON mode. Converting a new generation is a manual, pinned step until O5 | O3 + O4 (O5 for `create`) |
 | the boardroom's `num_ctx 8192` | `daio/governance/boardroom.py:988-996` | accepted when `serve --ctx` is at least 8192; the f16 KV cache is what makes it costly | O8 (quantized KV) |
 
 **Also refused, each with a reason:**
@@ -67,8 +69,8 @@ it.
 |---|---|---|---|
 | **O1** | Ollama's native API, a model registry and residency (**0.3.1, done**) | 0.3.x | — |
 | O2 | The sampler chain, including repeat, presence and frequency penalties (`last_n`), each with a seeded oracle; behaviour at the context limit; more than one slot | 0.4.0 | the coach's `repeat_penalty: 1.3` |
-| O3 | `Q8_0`, F16 and BF16 weight kernels, then `Q4_K`, each bit-exact against ggml | 0.6.0 | opens the standard-quant Qwen3 family |
-| O4 | The Llama architecture: optional QK-norm, tied embeddings (which also opens Bonsai-1.7B), SmolLM2's tokenizer and template | 0.6.0 | **`mindx-genN` served natively** |
+| O3 | `Q8_0`, **F16 (0.3.4, done)** and BF16 weight kernels, then `Q4_K`, each bit-exact against ggml | 0.3.4 → 0.6.0 | opens the standard-quant Qwen3 family |
+| **O4** | The Llama architecture, tied embeddings (which also opens Bonsai-1.7B), SmolLM2's tokenizer and templates (**0.3.4, done**) | 0.3.4 | **`mindx-genN` served natively** |
 | O5 | `bankml create`: a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded in FORK.json, and a Rust safetensors → GGUF converter for the merged SmolLM2; then `promote.py --to bankml` | 0.7.0 (beside mindXtrain in Rust) | `ollama create` |
 | **O6** | A grammar engine: **JSON mode and GBNF (0.3.3, done)**; then JSON schemas (`json_schema_to_grammar`), then tool calls | 0.3.3 → 0.6.0 | **`format: "json"`, used across mindX** |
 | O7 | The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling), `/api/embed` and `/v1/embeddings`, with a bge-m3 oracle against llama.cpp's embedding output | 0.6.0 | step 2 of the embedding cascade |
@@ -89,7 +91,7 @@ it.
   - **One engine for both APIs.** `/v1/chat/completions` goes through the same resolver, so both APIs share one engine and one slot.
 - **Honest listing.** `/api/tags` lists a pin bankML cannot play with the reason:
   - `qwen3-0.6b-q8_0`: "weights are Q8_0 … O3";
-  - `bonsai-1.7b-q1_0`: "tied embeddings (no output.weight) … O4".
+  - `bonsai-1.7b-q1_0` said "tied embeddings (no output.weight) … O4" until 0.3.4, which plays it.
   - A startup model of that kind is now refused at start. In 0.3.0 it started and then failed every request.
 - **The oracle** (`testing/serve_oracle.py --bankml`, in the gate). It runs the 0.3.0 conversations through three paths:
   - `/api/chat`, the first conversation streamed;
@@ -126,6 +128,31 @@ it.
   - `bankml generate --json`.
 
   Everything else is refused with the reason.
+
+### What O4 built (0.3.4)
+
+- **The models, pinned.** No F16 GGUF is published for SmolLM2-135M-Instruct or for any `mindx-genN`, so each is
+  converted from its pinned safetensors by llama.cpp b11192's own `convert_hf_to_gguf.py --outtype f16`, unmodified.
+  The conversion is reproducible (twice, the same sha256), every tensor was checked against the safetensors rounded
+  to f16, and the FORK.json records the source's LFS sha256, the revision and the tools (`sAGI/models.py`
+  `CONVERTED` / `pin_converted`):
+  - `SmolLM2-135M-Instruct-F16.gguf` (`e9aba089…`) from HuggingFaceTB/SmolLM2-135M-Instruct@`12fd25f7`, Apache-2.0;
+  - `mindx-gen39-F16.gguf` (`6b64c748…`) from the dataset PYTHAI/mindXascension@`4bd31b9d`,
+    `weights/gen39/ollama_push/merged/`, Apache-2.0 (the card; base SmolLM2-135M). Generation 39 is mindXtrain39,
+    the last generation the imprint gate accepted.
+- **What llama.cpp does, and bankML now does** (CHANGELOG 0.3.4 has the detail): the Llama graph (NORM RoPE, no Q/K
+  norms); tied embeddings (the logits from `token_embd`); F16 products by the two paths ggml takes, chosen by the
+  product's shape; only the output rows through the last layer; SmolLM2's `smollm` pre-tokenizer; SmolLM2-Instruct's
+  template and the plain ChatML of `mindx-genN`; JSON mode with the grammar llama-server builds for a ChatML template.
+- **Surfaces.** The new models are `native: true` in `/api/tags`; `/api/chat`, `/api/generate`, `/v1/chat/completions`,
+  `bankml_chat` and `bankml generate` answer them; a name without its type suffix (`mindx-gen39`) resolves to the one
+  pin with that base.
+- **Ollama's persona layer is not in the GGUF.** mindX's `promote.py` puts each generation's persona in its
+  Modelfile's `SYSTEM`; bankML serves the GGUF, so that persona is the caller's system message until `bankml create`
+  (O5) records a Modelfile subset in FORK.json.
+- **Still refused, with the reason:** Q8_0 (the Qwen3-0.6B pin: its own template differs from the Bonsai one on 4 of
+  317 oracle conversations), BF16, Q4_K, other architectures, and any Llama variant outside what was proven (biases,
+  fused QKV, rope factors or scaling, experts).
 
 ## "Replacement for llama.cpp" means bankML's own 1.0.0
 

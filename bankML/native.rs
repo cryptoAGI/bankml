@@ -39,6 +39,8 @@ pub struct Native {
     pub defaults: Params,
     pub n_ctx: usize,
     pub model: PathBuf,
+    /// the model's chat template (by the sha256 of its text, `chat::TEMPLATES`)
+    pub template: chat::Template,
     eog: Vec<u32>,
     slot: Mutex<Slot>,
     /// every token's piece and the end set, as the grammar reads them; built on the first constrained request
@@ -67,13 +69,13 @@ pub struct Done {
 
 impl Native {
     pub fn open(model: &Path, n_ctx: usize) -> Result<Native, String> {
-        chat::check_template(model)?;
+        let template = chat::template_of(model)?;
         let tok = Tokenizer::from_gguf(model)?;
         let w = Weights::open(model)?;
         let defaults = Params::from_gguf(model)?;
         let eog = eog_from_gguf(model, &tok)?;
         let caches = w.caches();
-        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }),
+        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }),
                     gvocab: Default::default(), json_rules: Default::default() })
     }
 
@@ -85,15 +87,17 @@ impl Native {
     /// The grammar a request's constraint asks for, in its starting state: JSON mode's grammar with the generation
     /// prompt already taken in (llama-server prefills an output-format grammar), or the user's GBNF as it is.
     pub fn grammar(&self, c: &crate::grammar::Constraint) -> Result<Option<crate::grammar::Grammar>, String> {
-        use crate::grammar::{Constraint, Grammar, Rules, JSON_OBJECT_GRAMMAR, JSON_OBJECT_PREFILL};
+        use crate::grammar::{json_object_grammar, Constraint, Grammar, Rules};
         let tokenize = |b: &[u8]| self.tok.encode(&String::from_utf8_lossy(b), true);
         match c {
             Constraint::None => Ok(None),
             Constraint::JsonObject => {
-                let r = self.json_rules.get_or_init(|| Arc::new(Rules::parse(JSON_OBJECT_GRAMMAR, &tokenize).expect("the JSON-mode grammar parses")));
+                // the template's own JSON-mode grammar: its root opens with the template's generation prompt
+                let (text, prefill) = json_object_grammar(self.template);
+                let r = self.json_rules.get_or_init(|| Arc::new(Rules::parse(text, &tokenize).expect("the JSON-mode grammar parses")));
                 let v = self.grammar_vocab();
                 let mut g = Grammar::new(r.clone());
-                for id in self.tok.encode(JSON_OBJECT_PREFILL, true) {
+                for id in self.tok.encode(prefill, true) {
                     g.accept(v, id)?;
                 }
                 Ok(Some(g))
@@ -114,7 +118,7 @@ impl Native {
     /// The prompt a conversation becomes, as token ids (llama-server: the template, then tokenization with specials).
     pub fn prompt(&self, messages: &Json) -> Result<Vec<u32>, String> {
         let msgs: Vec<Message> = chat::messages_from_json(messages)?;
-        Ok(self.tok.encode(&chat::render(&msgs)?, true))
+        Ok(self.tok.encode(&self.template.render(&msgs)?, true))
     }
 
     /// One completion. `emit` receives the answer as whole UTF-8 pieces as they come, and returns false to stop.
@@ -301,6 +305,16 @@ pub struct Registry {
     pub default: usize,
 }
 
+/// A pinned name without its weight-type suffix (`-f16`, `-q1_0`, `-q2_0_g64`, `-q8_0`, …): the base an alias may use.
+pub fn base_name(name: &str) -> &str {
+    for t in ["-f16", "-bf16", "-f32", "-q1_0", "-q2_0_g64", "-q2_0", "-q8_0", "-q4_k_m", "-q4_0"] {
+        if let Some(b) = name.strip_suffix(t) {
+            return b;
+        }
+    }
+    name
+}
+
 /// A model's name from its file name: the stem, lower-cased.
 pub fn model_name(file: &str) -> String {
     let f = file.rsplit('/').next().unwrap_or(file);
@@ -317,7 +331,7 @@ pub fn header_info(path: &Path) -> Info {
         Err(e) => return none(format!("cannot read {}: {e}", path.display())),
     };
     let quant = r.types.iter().filter(|(n, _)| n != "F32").max_by_key(|(_, c)| *c).map(|(n, _)| n.clone()).unwrap_or_else(|| "F32".into());
-    let (mut params, mut emb, mut tied) = (String::new(), None, false);
+    let mut params = String::new();
     if let Some(h) = &r.header {
         let n: u128 = h.tensors.iter().map(|t| t.nelem()).sum();
         params = match h.kv.get("general.size_label") {
@@ -325,18 +339,14 @@ pub fn header_info(path: &Path) -> Info {
             _ if n >= 1_000_000_000 => format!("{:.1}B", n as f64 / 1e9),
             _ => format!("{:.0}M", n as f64 / 1e6),
         };
-        emb = h.tensors.iter().find(|t| t.name == "token_embd.weight").map(|t| t.ty);
-        tied = !h.tensors.iter().any(|t| t.name == "output.weight");
     }
-    let native = match (&r.verdict, r.arch.as_deref(), emb) {
-        (crate::Verdict::Refuse(w), _, _) => Err(format!("the guard refuses it: {}", w.join("; "))),
-        (crate::Verdict::NeedMore(_), _, _) => Err("the guard needs more header bytes: the file is truncated".into()),
-        (_, Some(a), _) if a != "qwen3" => Err(format!("architecture {a}: the forward pass is Qwen3 only (Llama is O4, 0.6.0)")),
-        (_, None, _) => Err("no general.architecture".into()),
-        (_, _, Some(t)) if t != 41 && t != 42 => Err(format!("weights are {}: the forward pass runs Q1_0 and Q2_0_g64 (Q8_0, F16 and Q4_K are O3, 0.6.0)", crate::gguf::type_name(t))),
-        (_, _, None) => Err("no token_embd.weight".into()),
-        _ if tied => Err("tied embeddings (no output.weight): the forward pass needs its own output matrix (tied embeddings are O4, 0.6.0)".into()),
-        _ => chat::check_template(path),
+    let native = match (&r.verdict, &r.header) {
+        (crate::Verdict::Refuse(w), _) => Err(format!("the guard refuses it: {}", w.join("; "))),
+        (crate::Verdict::NeedMore(_), _) => Err("the guard needs more header bytes: the file is truncated".into()),
+        (_, None) => Err("no GGUF header".into()),
+        // the architecture, the weight type and the graph's options, from the header (forward::plan); then the
+        // tokenizer and the chat template this build reproduces
+        (_, Some(h)) => crate::forward::plan(h).map(|_| ()).and_then(|_| crate::tokenizer::check_gguf(h)).and_then(|_| chat::check_template(path)),
     };
     let defaults = Params::from_gguf(path).ok();
     Info { arch: r.arch, quant, params, native, defaults }
@@ -387,7 +397,10 @@ impl Registry {
             return Ok(&self.entries[self.default]);
         }
         let n = model_name(m.strip_suffix(":latest").unwrap_or(m));
-        self.entries.iter().find(|e| e.name == n).ok_or_else(|| {
+        // 0.3.4: a name without its weight-type suffix is accepted when exactly one pin has that base (`mindx-gen39`
+        // for mindx-gen39-f16, as mindX's Ollama tag names it)
+        let base: Vec<&Entry> = self.entries.iter().filter(|e| base_name(&e.name) == n).collect();
+        self.entries.iter().find(|e| e.name == n).or(if base.len() == 1 { Some(base[0]) } else { None }).ok_or_else(|| {
             format!("model '{m}' not found: bankml serves pinned models only ({})",
                     self.entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>().join(", "))
         })
@@ -551,9 +564,25 @@ mod tests {
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its serve-*.jsonl (testing/serve_oracle.py); --release"]
     fn oracle_native_serve() {
+        native_serve("Bonsai-8B-Q1_0");
+    }
+
+    /// 0.3.4: the same conversations on the models O4 opens: Bonsai-1.7B (tied embeddings), and the Llama graph in F16
+    /// (SmolLM2-135M-Instruct and mindx-gen39), each against llama-server running that model; then each one's JSON
+    /// mode, with its template's own grammar.
+    #[test]
+    #[ignore = "needs .models/{Bonsai-1.7B-Q1_0,SmolLM2-135M-Instruct-F16,mindx-gen39-F16}.gguf + their serve-*/json-*.jsonl; --release"]
+    fn oracle_native_serve_o4() {
+        for stem in ["Bonsai-1.7B-Q1_0", "SmolLM2-135M-Instruct-F16", "mindx-gen39-F16"] {
+            native_serve(stem);
+            json_replay(stem);
+        }
+    }
+
+    fn native_serve(stem: &str) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
-        let eng = Native::open(&dir.join("Bonsai-8B-Q1_0.gguf"), 2048).unwrap();
-        let turns = std::fs::read_to_string(dir.join("oracle-forward/serve-Bonsai-8B-Q1_0.jsonl")).unwrap();
+        let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
+        let turns = std::fs::read_to_string(dir.join(format!("oracle-forward/serve-{stem}.jsonl"))).unwrap();
         let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n as usize, _ => usize::MAX };
         let (mut n, mut ok) = (0, 0);
         let t0 = std::time::Instant::now();
@@ -575,7 +604,7 @@ mod tests {
                           num(&t, "completion_tokens"), t.get("finish_reason").and_then(Json::as_str), &want_text[..want_text.len().min(60)]);
             }
         }
-        eprintln!("native serve oracle: {ok} of {n} conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — {:.0} s",
+        eprintln!("native serve oracle: {stem}: {ok} of {n} conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — {:.0} s",
                   t0.elapsed().as_secs_f64());
         assert_eq!(ok, n);
     }
@@ -584,7 +613,7 @@ mod tests {
     /// cache: the same tokens (end token included), raw text, message content, finish reason and counts; and the
     /// grammar and generation prompt the server reports are the ones bankML uses.
     fn json_replay(stem: &str) {
-        use crate::grammar::{json_content, Constraint, JSON_OBJECT_GRAMMAR, JSON_OBJECT_PREFILL};
+        use crate::grammar::{json_content, json_object_grammar, Constraint};
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
         let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
         let rec = std::fs::read_to_string(dir.join(format!("oracle-json/json-{stem}.jsonl"))).unwrap();
@@ -598,8 +627,9 @@ mod tests {
             let constraint = crate::grammar::from_openai(req).unwrap();
             match &constraint {
                 Constraint::JsonObject => {
-                    assert_eq!(s(&c, "grammar"), JSON_OBJECT_GRAMMAR, "{}: the server's grammar", s(&c, "name"));
-                    assert_eq!(s(&c, "generation_prompt"), JSON_OBJECT_PREFILL);
+                    let (text, prefill) = json_object_grammar(eng.template);
+                    assert_eq!(s(&c, "grammar"), text, "{}: the server's grammar", s(&c, "name"));
+                    assert_eq!(s(&c, "generation_prompt"), prefill);
                 }
                 Constraint::Gbnf(g) => assert_eq!(&s(&c, "grammar"), g),
                 Constraint::None => panic!("an unconstrained record"),

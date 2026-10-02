@@ -459,7 +459,7 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
                     m.push(crate::chat::Message::new("system", s));
                 }
                 m.push(crate::chat::Message::new("user", p));
-                crate::chat::render(&m).map(|text| eng.tok.encode(&text, true))
+                eng.template.render(&m).map(|text| eng.tok.encode(&text, true))
             }
         }
     };

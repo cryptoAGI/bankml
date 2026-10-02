@@ -270,3 +270,61 @@ grammar per token.
 The mask is a straight port of llama.cpp's `reject_candidates`, which walks every candidate's code points per grammar
 stack. A byte trie over the pieces would share their prefixes (TODO.md). It would need the same oracle, and it is not
 worth much at today's cost.
+
+## F16 and the Llama graph (0.3.4) — laptop, against llama-server b11192
+
+The models O4 opened: SmolLM2-135M-Instruct and mindX's own `mindx-gen39` (SmolLM2-135M + a LoRA, merged), both F16
+with tied embeddings (270 MB), and Bonsai-1.7B Q1_0. Both engines at **3 threads**, greedy, the same chat messages,
+alternated in pairs (`bankml generate` against `llama-server -t 3 -c 2048 -np 1 --jinja --reasoning off`, its
+`/v1/chat/completions` timings, `cache_prompt: false`). The machine was not idle (load average 1–2.8): read the ranges,
+not single numbers.
+
+| model, case | bankML | llama-server b11192 | ratio |
+|---|---:|---:|---:|
+| SmolLM2-135M-Instruct F16, 45-token prompt, 128 tokens decoded | decode **38.0–38.9 tok/s** (3 runs) | 40.4–42.7 tok/s | ≈ 0.93× |
+| the same, prompt | 0.3–0.4 s | 0.4 s (115–119 tok/s) | ≈ 1× |
+| SmolLM2-135M-Instruct F16, 858-token prompt (docs/OLLAMA.md's first 2,400 characters), 64 decoded | prompt **8.6–9.6 s**, decode at ~900 cells 27.2–30.1 tok/s | prompt 7.8–8.6 s (100–110 tok/s), decode 20.2–29.9 tok/s | prompt ≈ 0.9×, decode ≈ 1× |
+| Bonsai-1.7B Q1_0, 29-token prompt, 64 decoded | 8.4–8.6 tok/s (2 runs) | 10.6–10.9 tok/s | ≈ 0.8× (the 1-bit decode gap of TODO 0.4.0, O8) |
+
+`mindx-gen39` has SmolLM2-135M's shapes, so it runs at SmolLM2's speed. Reproduce: `bankml generate
+.models/SmolLM2-135M-Instruct-F16.gguf --max 128 < messages.json` with `BANKML_THREADS=3`, beside a llama-server on the
+same file.
+
+**What it took, each change the same bits** (every oracle reran after each):
+
+| change (0.3.4) | SmolLM2 decode, 45-token prompt | 858-token prompt |
+|---|---:|---:|
+| first correct build (scalar f16 helpers in attention, a linear scan per tensor lookup) | 12.8 tok/s | 18.5 s |
+| the reference kernel's f16 dot, scale and accumulate on F16C + FMA; tensors by hash map; norms read once | 36.1 tok/s | — |
+| tinyBLAS's 4 × 3 register blocking for F16 prompts, the activations widened once per product | — | 14.4 s |
+| heads and rows of attention on the pool | 37.1 tok/s | 10.8 s |
+| the tiled kernel widening each 64-cell tile once per 16 rows (compiled with FMA and F16C) | — | 7.8–9.6 s |
+
+**Rejected, with its numbers:** a bounded spin before the pool's workers sleep (to save the ~15.6 µs condvar wake per
+matmul, `bench_pool_overhead`). On this 2-core SMT laptop the spinning threads took the siblings' cycles:
+`pool.run` went from **15.6 µs to 162.6 µs per call**, and decode did not move (33.7–36.1 tok/s). Reverted.
+
+The bits did not move with any of it: F16 products are checked against the shipped library at every shape class
+(`oracle_ggml_b11192_f16`), and the end-to-end oracles (`oracle_llama_server_llama_f16`, the live serve and JSON
+oracles) compare whole answers with llama-server's.
+
+**The 8B models gained from the same attention work** (the 0.3.3 and 0.3.4 gates on this laptop, wall time of the same
+oracle runs, token-identical in both; not a controlled benchmark — the machine's load differs between the runs):
+
+| gate oracle (same requests, same tokens) | 0.3.3 | 0.3.4 |
+|---|---:|---:|
+| `oracle_greedy_llama_server_long` (Bonsai-8B Q1_0, 6 prompts of 64+ tokens) | 435 s | 261 s |
+| `oracle_greedy_llama_server_deep` (Bonsai-8B Q1_0, 600 tokens past 256 cells) | 756 s | 320 s |
+| `oracle_native_serve` (Bonsai-8B Q1_0, 9 turns) | 400 s | 192 s |
+| `oracle_json_mode` (Bonsai-8B Q1_0, 23 answers) | 901 s | 541 s |
+| `oracle_json_mode_ternary` (Ternary-Bonsai-8B, 13 answers) | 454 s | 242 s |
+| `decode_budget_q1_0`, matmuls only, 3 threads (median) | 0.389 s | 0.397 s |
+
+The matmul budget did not move, so the gain is the work around the matmuls: before 0.3.4 the reference attention
+kernel converted every f16 value in software, one at a time, and every tensor lookup scanned the list.
+
+One paired check after the gate, end to end, Bonsai-8B Q1_0, the same 29-token prompt, 32 tokens, 3 threads each
+(`bench.sh`-style pairs as above; load average 2.9–3.7, so read it as a hint, not a result): bankML decode
+**2.59 and 2.30 tok/s**, llama-server **2.33 and 2.48 tok/s**; prompts 8.7 / 10.5 s against 10.9 / 10.1 s. TODO 0.4.0
+recorded 1.9–2.0 against 2.8 before. Whether 1-bit decode is now at parity needs the pinned, idle-machine
+measurement (`testing/pinned.sh`); it is not claimed here.

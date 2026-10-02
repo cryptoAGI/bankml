@@ -522,7 +522,11 @@ fn native_route(c: &mut TcpStream, st: &State, method: &str, path: &str, body: &
         }
         ("POST", "/apply-template") => {
             let Some(v) = req() else { return respond(c, 400, "text/plain", b"body is not JSON") };
-            match v.get("messages").ok_or("no messages".to_string()).and_then(crate::chat::messages_from_json).and_then(|m| crate::chat::render(&m)) {
+            let l = match eng() {
+                Ok(l) => l,
+                Err((code, e)) => return respond(c, code, "text/plain", e.as_bytes()),
+            };
+            match v.get("messages").ok_or("no messages".to_string()).and_then(crate::chat::messages_from_json).and_then(|m| l.native.template.render(&m)) {
                 Ok(p) => respond(c, 200, "application/json", format!("{{\"prompt\": {}}}", crate::gguf::jstr(&p)).as_bytes()),
                 Err(e) => respond(c, 400, "text/plain", e.as_bytes()),
             }

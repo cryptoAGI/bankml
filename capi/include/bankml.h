@@ -56,7 +56,7 @@ const char *bankml_version(void);
 /*
  * Verify `model_path` against the FORK.json at `fork_json_path` — the GGUF guard, then the sha256 pin — and open it
  * in bankML's own forward pass with a context of `n_ctx` tokens (0 = 4096). A model bankML does not play natively
- * (another architecture, other weight types, tied embeddings) is refused with the reason `bankml serve --native`
+ * (an architecture or weight type it has no oracle for: Qwen3 Q1_0/Q2_0_g64 and Llama F16 are played) is refused with the reason `bankml serve --native`
  * gives. Returns NULL on refusal or error, with the reason in *err (if err is not NULL; free it with bankml_free).
  */
 bankml_t *bankml_open(const char *model_path, const char *fork_json_path, uint32_t n_ctx, char **err);

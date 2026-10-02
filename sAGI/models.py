@@ -85,6 +85,28 @@ CATALOG = [
      "note": "the newest Qwen (Aug 2026), strong at code; 16.5 GB, for a machine with 24 GB or more"},
 ]
 
+# 0.3.4 (O4): models with no published GGUF, converted here from their pinned safetensors by llama.cpp b11192's own
+# `convert_hf_to_gguf.py --outtype f16` (commit 171e8846, unmodified). The conversion is reproducible (run twice, the
+# same sha256) and was checked tensor by tensor: every GGUF tensor equals the safetensors tensor rounded to f16 (the
+# norms kept f32), Q/K rows in llama's NORM-RoPE order. `pin_converted` re-reads the source repository's LFS sha256
+# at the revision before it writes the FORK.json; the conversion itself needs torch and is not run by bankML.
+CONVERTED = [
+    {"id": "smollm2-135m-instruct", "title": "SmolLM2-135M-Instruct · F16", "file": "SmolLM2-135M-Instruct-F16.gguf",
+     "bytes": 270885888, "sha256": "e9aba089704487f72efa3c6cbb6d4c748d4c515428247f97679063137e45a222", "licence": "apache-2.0",
+     "kind": "model", "repo": "HuggingFaceTB/SmolLM2-135M-Instruct", "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+     "source_file": "model.safetensors", "source_bytes": 269060552, "source_sha256": "5af571cbf074e6d21a03528d2330792e532ca608f24ac70a143f6b369968ab8c",
+     "tools": "llama.cpp b11192 convert_hf_to_gguf.py --outtype f16; torch 2.11.0+cpu, transformers 4.57.6, numpy 2.2.6 (b11192's requirements)",
+     "note": "the base of mindX's lineage family (SmolLM2-135M, Llama architecture); HuggingFaceTB publishes no F16 GGUF of it"},
+    {"id": "mindx-gen39", "title": "mindx-gen39 · F16 (mindXtrain39, the last accepted generation)", "file": "mindx-gen39-F16.gguf",
+     "bytes": 270885600, "sha256": "6b64c748d96ad26fd72402299bd27b2ae82f489bd0469498dd18eb6054058266", "licence": "apache-2.0",
+     "kind": "dataset", "repo": "PYTHAI/mindXascension", "revision": "4bd31b9db75e3c4c0159af631edc27b1e142ff11",
+     "source_file": "weights/gen39/ollama_push/merged/model.safetensors", "source_bytes": 269060552,
+     "source_sha256": "19b62829de298cc06925947976b33d34f9ffb24f5d0e05f349feabae4d83357c",
+     "tools": "llama.cpp b11192 convert_hf_to_gguf.py --outtype f16; torch 2.11.0+cpu, transformers 5.8.0 (its tokenizer_config.json was "
+              "written by transformers 5.8.0, which 4.57.6 cannot read), numpy 2.2.6",
+     "note": "mindX's own generation 39: SmolLM2-135M + its LoRA, merged by mindXtrain; Ollama serves it as mindx-gen39"},
+]
+
 
 # ── small helpers ──────────────────────────────────────────────────────────────────────────────────────────
 def _get(url: str, timeout=30, raw=False):
@@ -736,9 +758,45 @@ def switch(file: str, busy=lambda: False) -> dict:
         raise
 
 
+def pin_converted(file: str) -> Path:
+    """Pin a converted model (CONVERTED): the file must hash to the recorded conversion, and the source repository must
+    still list the source safetensors with the recorded sha256 at the revision (read now). The FORK.json says how the
+    file was made."""
+    c = next((x for x in CONVERTED if x["file"] == file), None)
+    if not c:
+        raise RuntimeError(f"{file} is not a recorded conversion")
+    if not licence_open(c["licence"]):
+        raise PermissionError(f"{c['repo']}: licence {c['licence']!r} is not open source")
+    kind = "datasets/" if c["kind"] == "dataset" else ""
+    folder = c["source_file"].rsplit("/", 1)[0] if "/" in c["source_file"] else ""
+    listing = _get(f"https://huggingface.co/api/{'datasets' if kind else 'models'}/{c['repo']}/tree/{c['revision']}/{folder}")
+    src = next((x for x in listing if x.get("path") == c["source_file"]), None)
+    if not src or (src.get("lfs") or {}).get("oid") != c["source_sha256"] or src.get("size") != c["source_bytes"]:
+        raise RuntimeError(f"{c['repo']}@{c['revision'][:12]} no longer lists {c['source_file']} with the recorded sha256: refused")
+    p = MODELS / file
+    JOB.update(what=f"hashing {file} to pin it", total=c["bytes"], done=0)
+    if _hash_file(p, lambda n: JOB.__setitem__("done", JOB["done"] + n)) != c["sha256"]:
+        raise RuntimeError(f"{file} is not the recorded conversion (sha256 differs): refused")
+    g = guard(p)
+    if g.get("verdict") != "play":
+        raise RuntimeError(f"bankml's guard refused {file}: {'; '.join(g.get('reasons') or [])}")
+    page = f"https://huggingface.co/{'datasets/' if kind else ''}{c['repo']}/blob/{c['revision']}/{c['source_file']}"
+    f = write_fork(file, c["bytes"], c["sha256"], c["repo"], page, c["revision"], c["licence"],
+                   f"sha256 of the GGUF that {c['tools'].split(';')[0]} makes from {c['source_file']} (LFS sha256 {c['source_sha256']}) at {c['revision']}")
+    j = json.loads(f.read_text(encoding="utf-8"))
+    j["kind"] = "bankml conversion (safetensors pinned by LFS sha256, converted by llama.cpp b11192, checked tensor by tensor)"
+    j["converted_from"] = {"repo": c["repo"], "revision": c["revision"], "file": c["source_file"], "bytes": c["source_bytes"],
+                           "sha256": c["source_sha256"], "tools": c["tools"]}
+    f.write_text(json.dumps(j, indent=1) + "\n", encoding="utf-8")
+    return f
+
+
 def adopt(file: str) -> Path:
     """Pin a file that is already here but has no FORK.json, if the catalogue knows it: hash it and compare to the
-    repository's published sha256 (fetched now, not trusted from the catalogue's prefix alone)."""
+    repository's published sha256 (fetched now, not trusted from the catalogue's prefix alone). A recorded conversion
+    (CONVERTED) is pinned by `pin_converted`."""
+    if any(x["file"] == file for x in CONVERTED):
+        return pin_converted(file)
     c = next((x for x in CATALOG if x["file"] == file), None)
     if not c:
         raise RuntimeError(f"{file} has no FORK.json pin and is not in the catalogue: import it from its source to pin it")

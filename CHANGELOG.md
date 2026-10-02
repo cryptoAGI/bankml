@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.3.4 — 2026-10-02 — mindX's own model, natively: the Llama graph, F16, tied embeddings (O4)
+
+**mindX serves its own trained lineage, `mindx-genN`, through Ollama. Generation 39 (mindXtrain39, the last accepted
+generation: SmolLM2-135M + its LoRA, merged, F16) is now answered by bankML's own forward pass, token-identical to
+llama-server b11192 — greedy, seeded, on `/v1`, on Ollama's `/api`, through the C API and in JSON mode. So are
+SmolLM2-135M-Instruct and Bonsai-1.7B, which was refused until now only because its embeddings are tied.** Phase O4 of
+docs/OLLAMA.md, with the F16 part of O3. Record: `testing/results/0.3.4.txt`.
+
+### What llama.cpp does, read from its source (b11192, `171e8846b`)
+- **F16 weights take two paths, chosen by the product's shape** (`ggml_compute_forward_mul_mat`). The activation is
+  rounded to f16 first (F16's `vec_dot_type`). With one column (a decode step, the logits, a one-token micro-batch)
+  `llamafile_sgemm` refuses (`n < 2`) and every element is `ggml_vec_dot_f16`: four 8-lane FMA accumulators over
+  32-element steps, then a fixed reduction, any tail summed in double. With two or more columns `llamafile_sgemm`
+  runs `tinyBLAS<8, __m256>`: each element one 8-lane FMA chain over the row and its own `hsum` — **other bits** —
+  whenever the weight has a multiple of 4 rows and the row a multiple of 8. The two differ, so a prompt's
+  micro-batch and a decode step must each take their own.
+- **The last layer of a prompt only computes the rows that are output** (`inp_out_ids`): llama-server asks for the
+  last token's logits, so the last layer's feed-forward block is a one-column product there. For the quantized types
+  that changed nothing; for F16 it decides the bits.
+- **Tied embeddings**: with no `output.weight`, the loader duplicates `token_embd` (`TENSOR_DUPLICATED`) and the
+  logits are that table times the final row.
+- **The Llama graph** (`llm_build_llama`): no Q/K norms, RoPE in NORM mode (`rotate_pairs` on adjacent pairs, the same
+  contracted arithmetic as NEOX), no YaRN (`ext_factor` 0, `attn_factor` 1), GQA from the header.
+- **SmolLM2's pre-tokenizer** (`smollm`) is two passes: every digit cut out alone (a `std::regex` over the collapsed
+  text), then GPT-2's pattern inside each piece, where the end of a piece is the end of the text. Its vocabulary has
+  no token for 21 bytes; llama-vocab drops them.
+- **llama-vocab overrides the file's token types by text**: every end-of-generation name and the fill-in-the-middle
+  token of each role become CONTROL. In the Qwen3 vocabulary `</s>` (token 128247) is NORMAL in the file and CONTROL
+  in llama.cpp, so the text `</s>` is cut out as one special token.
+
+### Added
+- **`bankML/f16.rs`**: ggml's two F16 products, each a scalar definition and an AVX2 + FMA + F16C path with the same
+  bits (tinyBLAS's own 4 × 3 register blocking for prompts); `mat_mul_par` chooses the path as ggml does.
+- **`forward::plan`**: from the header alone, the architecture (`qwen3`, `llama`), the weight type (Q1_0, Q2_0_g64,
+  F16), the logits matrix (tied or not), and a refusal with the reason for everything else: other architectures,
+  other types, mixed types, biases, fused QKV, rope factors, experts, Q/K norms on Llama, RoPE scaling on Llama,
+  partial RoPE, a head width that is not a multiple of 32.
+- **The Llama graph** in `forward.rs` (NORM RoPE, no Q/K norms) and tied embeddings for both architectures.
+- **The `smollm` pre-tokenizer** in `tokenizer.rs`; a byte without a token is dropped as llama.cpp drops it.
+- **Chat templates per model** (`chat::TEMPLATES`, each pinned by the sha256 of its text): Bonsai / Qwen3,
+  SmolLM2-Instruct's (ChatML with a default system message), and the plain ChatML `mindx-genN` carries. Ollama's
+  persona `SYSTEM` for `mindx-genN` lives in its Modelfile, not the GGUF: here it is the caller's system message
+  (`bankml create` is O5).
+- **JSON mode on ChatML templates**: llama-server builds another grammar there (its root opens with
+  `<|im_start|>assistant\n` and has no `<think>` block); `grammar::json_object_grammar` picks the template's, checked
+  against the server's own report on every recorded request.
+- **The models, pinned** (`sAGI/models.py` `CONVERTED`, `pin_converted`): no F16 GGUF is published for either, so each
+  is converted from its pinned safetensors by llama.cpp b11192's own `convert_hf_to_gguf.py --outtype f16`
+  (unmodified). The conversion is reproducible (twice, the same sha256), and every tensor was checked against the
+  safetensors rounded to f16. The FORK.json records the source's LFS sha256, the revision and the tools.
+  - `SmolLM2-135M-Instruct-F16.gguf` `e9aba089…5a222` from HuggingFaceTB/SmolLM2-135M-Instruct@`12fd25f7`
+    (`model.safetensors` `5af571cb…`), Apache-2.0.
+  - `mindx-gen39-F16.gguf` `6b64c748…58266` from the dataset PYTHAI/mindXascension@`4bd31b9d`
+    (`weights/gen39/ollama_push/merged/model.safetensors` `19b62829…`), Apache-2.0 (the dataset card; the base is
+    SmolLM2-135M).
+- **Registry aliases**: a name without its weight-type suffix resolves when one pin has that base, so Ollama's tag
+  `mindx-gen39` reaches `mindx-gen39-f16`.
+- **Oracles, in the gate:**
+  - `oracle_ggml_b11192_f16` (`testing/f16_oracle.py`): the shipped library's `mul_mat` on SmolLM2's real F16 matrices
+    and on synthetic shapes for the tails and the fallbacks — 211 of 211 tensors widened bit-exact, **552,268 of
+    552,268 elements** bit-exact (61 products through tinyBLAS, 26 through `ggml_vec_dot_f16`).
+  - `oracle_forward_model_bonsai_1_7b`, `oracle_forward_model_llama_f16`: the whole model (every layer, `result_norm`,
+    logits) bit-exact — Bonsai-1.7B **840 of 840** rows, SmolLM2-135M-Instruct and mindx-gen39 **800 of 800** each.
+  - `oracle_tokenizer_smollm` **4,346 of 4,346**; `oracle_chat_template_chatml` **317 of 317** on each template.
+  - `oracle_llama_server_llama_f16`, `oracle_llama_server_bonsai_1_7b`: llama-server's tokens — greedy on short, long
+    (the tiled kernel, tinyBLAS over the micro-batch) and deep prompts (the split-KV kernel), and seeded sampling:
+    SmolLM2 6 / 6 / 3 and **40 of 40**; mindx-gen39 6 / 6 / 3 and **40 of 40**; Bonsai-1.7B 6 and **40 of 40**.
+  - `oracle_native_serve_o4`: the Savante conversations (**9 of 9** turns each) and JSON mode (**23 of 23** answers
+    each) on the three models.
+  - Live: `serve_oracle.py --bankml` and `json_oracle.py --bankml` on each (mindx-gen39 asked for as `mindx-gen39`),
+    and the C API's `bankml_chat` against each model's llama-server record.
+
+### Fixed
+- **The tokenizer took `</s>` in the Qwen3 vocabulary as plain text.** llama.cpp makes it a CONTROL token by its name,
+  so with special tokens parsed it is one token there and three here. The old oracle corpus never contained it; the
+  corpus grew with the docs and the oracle caught it (2 of 4,346 cases). bankML now applies llama-vocab's type
+  overrides; a vocabulary where they are ambiguous, or whose header sets FIM ids, is refused.
+- A vocabulary whose merges name a string outside it is refused: llama.cpp merges by text, bankML by id.
+
+### Changed (faster, the same bits)
+- **Attention** (every model): the reference kernel's f16 dot, scale and accumulate run on F16C + FMA; the tiled
+  kernel is compiled with FMA and F16C and widens each 64-cell tile once per block of 16 rows; heads (and rows) run on
+  the pool. Each head is still computed whole by one thread in llama.cpp's order.
+- Tensor lookups by name are a hash map, and the norm vectors are read once at load.
+- **The 8B models gained most**: the same gate oracles ran in about half the wall time (Bonsai-8B conversations 400 →
+  192 s, deep greedy 756 → 320 s, JSON mode 901 → 541 s; ternary JSON 454 → 242 s), with the matmul budget unchanged
+  — the old reference attention converted every f16 value in software. Gate wall times, not a controlled benchmark.
+- **Speed, SmolLM2-135M-Instruct F16, laptop (Ryzen 3 3200U), 3 threads each, paired:** decode 38.0–38.9 tok/s vs
+  llama-server's 40.4–42.7 (about 0.93×); an 858-token prompt in 8.6–9.6 s vs 7.8–8.6 s, then decode at ~900 cells
+  27.2–30.1 vs 20.2–29.9 tok/s. Bonsai-1.7B decode 8.4–8.6 vs 10.6–10.9 tok/s (the known 1-bit decode gap, O8).
+  docs/PERFORMANCE.md has the table and a rejected experiment.
+
+### Not in this release (refused, with the reason)
+- **Q8_0** (Qwen3-0.6B, mindX's `qwen3:0.6b` pin): from the source the kernels look cheap (ggml's AVX2
+  `vec_dot_q8_0_q8_0` and tinyBLAS's Q8_0 path appear to share their per-block arithmetic; not built, not measured),
+  but that file's template is Qwen's own, which renders 4 of 317 oracle conversations differently from the Bonsai
+  template (reasoning rules). It stays refused ("weights are Q8_0 … O3") until its template has an oracle.
+- BF16, Q4_K and other architectures: refused by `forward::plan`, as before.
+
 ## 0.3.3 — 2026-10-02 — JSON mode, token-identical to llama-server
 
 **mindX's most common request that bankML refused, `format: "json"`, is now answered natively. The answer has the

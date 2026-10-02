@@ -120,6 +120,26 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
   `n_probs` (bit-exact), the slot's save/restore, more than one handle sharing one mapping, and a semver promise for
   the ABI (1.0.0).
 
+## 0.3.4 — mindX's own model, natively (O4, done)
+
+- [x] **Tied embeddings** (Bonsai-1.7B native): the logits from `token_embd`, as llama.cpp duplicates it. Whole model
+  840 of 840 rows; llama-server's tokens greedy and seeded (6, 40 of 40); conversations 9 of 9; JSON mode 23 of 23.
+- [x] **F16 weights** (`f16.rs`, O3's first kernel): ggml's `vec_dot_f16` for one column and llamafile's tinyBLAS for
+  two or more, chosen by shape exactly as ggml chooses; 552,268 of 552,268 `mul_mat` elements bit-exact on real and
+  synthetic shapes.
+- [x] **The Llama graph** (NORM RoPE, no Q/K norms, GQA), SmolLM2's `smollm` pre-tokenizer (4,346 of 4,346) and two
+  ChatML templates (317 of 317 each); JSON mode's grammar on ChatML.
+- [x] **SmolLM2-135M-Instruct and `mindx-gen39`**, converted by b11192's own converter from pinned safetensors and
+  pinned (`sAGI/models.py` `CONVERTED`): whole model 800 of 800 rows each; greedy short, long and deep, seeded 40 of
+  40, conversations 9 of 9, JSON 23 of 23, live on `/v1`, `/api` and the C API.
+- [x] Fixed on the way: the Qwen3 tokenizer took `</s>` as text (llama-vocab makes it CONTROL by name).
+- [ ] **Q8_0** (the Qwen3-0.6B pin): the kernels (read, not built), and an oracle for Qwen's own template, which differs
+  from the Bonsai template on 4 of 317 conversations.
+- [ ] Decode on the F16 models at llama-server's speed: 38 vs 41 tok/s on SmolLM2 (the pool's condvar hand-off is the
+  suspect; a spin was measured and rejected on this SMT laptop, PERFORMANCE.md).
+- [ ] mindX's seam for its lineage: convert-and-pin each new generation (O5's Rust converter and `bankml create`, with
+  the persona `SYSTEM` from the Modelfile recorded in FORK.json), then `promote.py --to bankml`.
+
 ## The road from 0.3.0 to 1.0.0
 
 **What 1.0.0 means.** bankML is the engine, not a companion to one:
@@ -160,7 +180,8 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle. (O2)
 - [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated
   4-bit KV (O8: what makes the boardroom's `num_ctx 8192` affordable).
-- [ ] **1-bit decode at least at llama-server's speed**: currently 1.9–2.0 tokens/s against 2.8. Cache the norm
+- [ ] **1-bit decode at least at llama-server's speed**: 1.9–2.0 tokens/s against 2.8 before 0.3.4; after 0.3.4's
+  attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48 (PERFORMANCE.md) — re-measure pinned and idle. Cache the norm
   weights, cut per-token allocations, share one quantized activation across Q/K/V and gate/up, and compute logits
   only where sampled. (O8)
 - [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files.
@@ -180,12 +201,12 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] CI builds and unit-tests across the x86 variants and aarch64.
 
 ### 0.6.0 — more models
-- [ ] The **Llama architecture** (SmolLM2, Llama 3.x): the first beyond Qwen3, needed by mindXtrain's probe. Optional
-  QK-norm, tied embeddings (which also opens Bonsai-1.7B, refused today), SmolLM2's tokenizer and template (O4:
-  `mindx-genN` served natively).
+- [x] The **Llama architecture** for SmolLM2 (O4, **0.3.4**): tied embeddings (Bonsai-1.7B too), SmolLM2's tokenizer
+  and templates, `mindx-genN` served natively. Still open: Llama 3.x (rope factors, the `llama3` pre-tokenizer, its
+  template), which are refused today.
 - [ ] Qwen2 and Qwen2.5 (the coder models in the catalogue).
-- [ ] ggml's standard formats as kernels bit-exact against ggml: `Q8_0`, F16 and BF16 first, then `Q4_K_M`, so that
-  catalogue models run natively (O3).
+- [ ] ggml's standard formats as kernels bit-exact against ggml: **F16 done (0.3.4)**; `Q8_0` and BF16 next, then
+  `Q4_K_M`, so that catalogue models run natively (O3).
 - [ ] The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling) with `/api/embed` and
   `/v1/embeddings`; the oracle is llama.cpp's bge-m3 embedding output (O7).
 - [ ] Grammar beyond JSON: a GBNF subset for JSON schemas, then tool calls through the template (O6).

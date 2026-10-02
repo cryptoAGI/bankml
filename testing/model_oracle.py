@@ -8,7 +8,9 @@ flash-attention path, as testing/forward_oracle.py's layer-0 checks do).
 The graph is computed one layer at a time, each in its own context, carrying the residual stream between them as
 f32 bytes, so memory stays near one layer's weights; the arithmetic is the same as one graph's.
 
-Runs Q1_0 (1-bit) and Q2_0_g64 (ternary) models. Writes .models/oracle-forward/model-<gguf stem>.tsv: a header line (the tokens), then per token and layer the sha256 of l_out's
+Runs Q1_0 (1-bit) and Q2_0_g64 (ternary) models; since 0.3.4 also tied embeddings (no output.weight: the logits
+from token_embd, as llama.cpp duplicates it), F16 weights and the Llama graph (no Q/K norms, RoPE in NORM mode, no
+YaRN: ext_factor 0, attn_factor 1, as llama-context.cpp derives them without rope scaling). Writes .models/oracle-forward/model-<gguf stem>.tsv: a header line (the tokens), then per token and layer the sha256 of l_out's
 f32 row, per token the sha256 of result_norm and of the logits row, the argmax, and the top five ids with their
 logits (for eyes).
 usage: python3 testing/model_oracle.py GGUF LIBDIR [OUT]"""
@@ -48,42 +50,52 @@ base.ggml_free.argtypes = [P]
 base.ggml_prec_set_acc.argtypes = [P, C.c_int]
 cpu.ggml_graph_compute_with_ctx.argtypes = [P, P, C.c_int]
 F32, F16, I32, Q1_0, Q2_0 = 0, 1, 26, 41, 42
-QK = {Q1_0: 128, Q2_0: 64}
+QK = {Q1_0: 128, Q2_0: 64, F16: 1}
+BLOCK = {Q1_0: 18, Q2_0: 18, F16: 2}
 
 fh = open(gguf, "rb")
 mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
 ver, kv, tensors, align, data_start = parse(mm[:64 << 20])
 T = {t["name"]: t for t in tensors}
 arch = kv["general.architecture"]
-assert arch == "qwen3", arch
-eps = float(kv["qwen3.attention.layer_norm_rms_epsilon"])
-n_layer = int(kv["qwen3.block_count"])
-n_embd = int(kv["qwen3.embedding_length"])
-n_ff = int(kv["qwen3.feed_forward_length"])
-n_head, n_head_kv, head = int(kv["qwen3.attention.head_count"]), int(kv["qwen3.attention.head_count_kv"]), int(kv["qwen3.attention.key_length"])
+assert arch in ("qwen3", "llama"), arch
+A = lambda k, d=None: kv.get(f"{arch}.{k}", d)  # noqa: E731
+eps = float(A("attention.layer_norm_rms_epsilon"))
+n_layer = int(A("block_count"))
+n_embd = int(A("embedding_length"))
+n_ff = int(A("feed_forward_length"))
+n_head, n_head_kv = int(A("attention.head_count")), int(A("attention.head_count_kv"))
+head = int(A("attention.key_length", n_embd // n_head))
 n_vocab = T["token_embd.weight"]["dims"][1]
+OUTPUT = "output.weight" if "output.weight" in T else "token_embd.weight"  # tied embeddings: llama.cpp duplicates token_embd
+ROPE_MODE = 2 if arch == "qwen3" else 0  # NEOX for Qwen3, NORM for Llama (llama_model_rope_type)
 
 libm = C.CDLL("libm.so.6")
 libm.logf.restype = C.c_float
 libm.logf.argtypes = [C.c_float]
 f32 = lambda x: struct.unpack("<f", struct.pack("<f", x))[0]  # noqa: E731
-factor = f32(float(kv.get("qwen3.rope.scaling.factor", 1.0)))
+yarn = A("rope.scaling.type") == "yarn"
+factor = f32(float(A("rope.scaling.factor", 1.0))) if yarn else 1.0
 freq_scale = f32(1.0 / factor)
 logfac = libm.logf(f32(1.0 / freq_scale))
 mscale = f32(f32(f32(0.1) * logfac) + 1.0) if factor > 1.0 else 1.0
-attn_factor = f32(mscale * f32(1.0 / f32(1.0 + f32(0.1 * logfac))))
-n_ctx_orig = int(kv.get("qwen3.rope.scaling.original_context_length", kv["qwen3.context_length"]))
-freq_base = float(kv["qwen3.rope.freq_base"])
+attn_factor = f32(mscale * f32(1.0 / f32(1.0 + f32(0.1 * logfac)))) if yarn else 1.0
+ext_factor = 1.0 if yarn else 0.0
+n_ctx_orig = int(A("rope.scaling.original_context_length", A("context_length")))
+freq_base = float(A("rope.freq_base", 10000.0))
 kq_scale = f32(1.0 / f32(head ** 0.5))
 
-prompt = [151644, 8948, 198, 2610, 525, 20739, 5409, 13, 151645, 198, 151644, 872, 198, 3838, 1558, 264, 22725, 12118, 30, 151645, 198,
-          151644, 77091, 198, 151667, 271, 151668, 271]
+if n_vocab > 150000:  # the Qwen3 vocabulary: "You are Savante." / "What does a bonsai need?" in the Bonsai template
+    prompt = [151644, 8948, 198, 2610, 525, 20739, 5409, 13, 151645, 198, 151644, 872, 198, 3838, 1558, 264, 22725, 12118, 30, 151645, 198,
+              151644, 77091, 198, 151667, 271, 151668, 271]
+else:  # the SmolLM2 vocabulary, the same conversation in ChatML (llama-server b11192's /apply-template + /tokenize)
+    prompt = [1, 9690, 198, 2683, 359, 12404, 14648, 30, 2, 198, 1, 4093, 198, 1780, 1072, 253, 48219, 737, 47, 2, 198, 1, 520, 9531, 198]
 n = len(prompt)
 assert n < 64, "the reference attention path needs fewer than 64 query rows"
 
 
-def q1_bytes(t):  # a quantized matrix's bytes: 18-byte blocks of 128 (Q1_0) or 64 (Q2_0_g64) weights
-    return t["dims"][1] * (t["dims"][0] // QK[t["type"]]) * 18
+def q1_bytes(t):  # a matrix's bytes: 18-byte blocks of 128 (Q1_0) or 64 (Q2_0_g64) weights, or 2 bytes per F16 weight
+    return t["dims"][1] * (t["dims"][0] // QK[t["type"]]) * BLOCK[t["type"]]
 
 
 def load(ctx, name):
@@ -127,7 +139,7 @@ lines = []
 mask_vals = (C.c_uint16 * (n * n))(*[0 if j <= i else 0xFC00 for i in range(n) for j in range(n)])
 for il in range(n_layer):
     names = [f"blk.{il}.{w}.weight" for w in ("attn_norm", "attn_q", "attn_k", "attn_v", "attn_q_norm", "attn_k_norm", "attn_output",
-                                              "ffn_norm", "ffn_gate", "ffn_up", "ffn_down")]
+                                              "ffn_norm", "ffn_gate", "ffn_up", "ffn_down") if f"blk.{il}.{w}.weight" in T]
     ctx = new_ctx(sum(q1_bytes(T[m]) if T[m]["type"] in QK else 4 * T[m]["dims"][0] for m in names))
     W = {m.split(".")[2]: load(ctx, m) for m in names}
     inp = base.ggml_new_tensor_2d(ctx, F32, n_embd, n)
@@ -140,9 +152,10 @@ for il in range(n_layer):
 
     def qk(wname, nname, nh):
         r = base.ggml_reshape_3d(ctx, base.ggml_mul_mat(ctx, W[wname], xn), head, nh, n)
-        r = base.ggml_mul(ctx, base.ggml_rms_norm(ctx, r, C.c_float(eps)), W[nname])
-        return base.ggml_rope_ext(ctx, r, pos, None, head, 2, n_ctx_orig, C.c_float(freq_base), C.c_float(freq_scale),
-                                  C.c_float(1.0), C.c_float(attn_factor), C.c_float(32.0), C.c_float(1.0))
+        if nname in W:  # Qwen3's per-head norms; Llama has none
+            r = base.ggml_mul(ctx, base.ggml_rms_norm(ctx, r, C.c_float(eps)), W[nname])
+        return base.ggml_rope_ext(ctx, r, pos, None, head, ROPE_MODE, n_ctx_orig, C.c_float(freq_base), C.c_float(freq_scale),
+                                  C.c_float(ext_factor), C.c_float(attn_factor), C.c_float(32.0), C.c_float(1.0))
     q = qk("attn_q", "attn_q_norm", n_head)
     k = qk("attn_k", "attn_k_norm", n_head_kv)
     v = base.ggml_reshape_3d(ctx, base.ggml_mul_mat(ctx, W["attn_v"], xn), head, n_head_kv, n)
@@ -163,11 +176,11 @@ for il in range(n_layer):
     print(f"layer {il + 1}/{n_layer}", end="\r", flush=True)
 
 # output_norm and the logits
-ctx = new_ctx(q1_bytes(T["output.weight"]) + 4 * n_embd + 4 * n_vocab * n)
+ctx = new_ctx(q1_bytes(T[OUTPUT]) + 4 * n_embd + 4 * n_vocab * n)
 inp = base.ggml_new_tensor_2d(ctx, F32, n_embd, n)
 C.memmove(base.ggml_get_data(inp), C.c_char_p(stream), len(stream))
 rn = base.ggml_mul(ctx, base.ggml_rms_norm(ctx, inp, C.c_float(eps)), load(ctx, "output_norm.weight"))
-logits = base.ggml_mul_mat(ctx, load(ctx, "output.weight"), rn)
+logits = base.ggml_mul_mat(ctx, load(ctx, OUTPUT), rn)
 compute(ctx, logits)
 for p, r in enumerate(rows(rn, n_embd)):
     lines.append(f"result_norm\t-\t{p}\t{hashlib.sha256(r).hexdigest()}\t{' '.join(f'{v:.6g}' for v in struct.unpack('<3f', r[:12]))}")

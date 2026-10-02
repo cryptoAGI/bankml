@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Record llama.cpp's own tokenization as the oracle for bankml's tokenizer (tokenizer.rs), as ggml_oracle.py
-records its kernels. It asks a running llama-server (b11192, the Bonsai/Qwen3 vocabulary) to tokenize a corpus — every
+records its kernels. It asks a running llama-server (b11192, the Bonsai/Qwen3 vocabulary; since 0.3.4 also SmolLM2's,
+written to .models/oracle-tokenizer-smollm) to tokenize a corpus — every
 document in the repository, Savante's canon texts, the chat template's markers, and Unicode edge cases — once with
 special tokens parsed and once without, and writes the cases for the Rust test to reproduce, token for token.
 usage: python3 testing/tokenizer_oracle.py [HOST:PORT] [OUT]   (default 127.0.0.1:18092 and .models/oracle-tokenizer)"""
@@ -41,7 +42,7 @@ edge = [
     "<think>\n\n</think>\n\n", "<|endoftext|> <|im_start|><|im_end|>x", "a<|im_start|>b",
     "fn main() { println!(\"{}\", x[0]); } // code", "$ cargo test --release -- --ignored", "Σ c·x − Σ x ∈ {−1, 0, +1} ≈ 1.585",
     "URL https://github.com/cryptoAGI/bankml/blob/v0.2.0/README.md?x=1#y", "mixed123abc456 ABC123def", "\\n literal backslash-n",
-    "\x00\x01 control", "  \n\n  \n", "!!!???...", "---\n| a | b |\n|---|---|", "0x92fe83eb…ae137d0 sha256:284a335a",
+    "\x00\x01 control", "\x04\x06 bytes \x13\x14\x16\x1d SmolLM2 has no token for", "\U00040000\U00050000 plane 4", "  \n\n  \n", "!!!???...", "---\n| a | b |\n|---|---|", "0x92fe83eb…ae137d0 sha256:284a335a",
 ]
 corpus += edge
 # a seeded fuzz set: random strings over many scripts, whitespace kinds, digits, marks, symbols and special markers

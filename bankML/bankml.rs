@@ -128,6 +128,10 @@
 //!     builds for `response_format: json_object` with its prefill, and the sample → check → masked redraw of
 //!     `common_sampler_sample`; `/v1` `response_format`/`grammar`, Ollama `format: "json"`, `bankml_chat`,
 //!     `bankml generate --json`, token-identical to llama-server b11192 greedy and seeded.
+//!   - [x] 0.3.4: O4 — tied embeddings (Bonsai-1.7B native), F16 weights (`f16.rs`: ggml's `vec_dot_f16` and
+//!     llamafile's tinyBLAS, chosen by shape as ggml chooses them), the Llama graph (NORM RoPE, no Q/K norms), SmolLM2's
+//!     `smollm` pre-tokenizer and two ChatML templates: SmolLM2-135M-Instruct and mindX's own `mindx-gen39` served
+//!     natively, token-identical to llama-server b11192 (greedy, seeded, `/v1`, `/api`, C API, JSON mode).
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's
@@ -136,6 +140,7 @@
 #![allow(dead_code)]
 
 pub mod chat;
+pub mod f16;
 pub mod forward;
 pub mod gguf;
 pub mod grammar;

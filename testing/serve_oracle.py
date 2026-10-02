@@ -16,7 +16,9 @@ the same conversations go through it three ways, each from an empty slot (the mo
 OpenAI's `/v1/chat/completions`, Ollama's `/api/chat` (options, NDJSON streaming for the first conversation), and
 `/v1/chat/completions` once more after load → unload → reload. All three must give the same text and counts turn by
 turn, and the first must equal llama-server's recorded answers above, so `/api/chat` is tied to llama-server too.
-    python3 testing/serve_oracle.py --bankml        (needs target/release/bankml, the model and its FORK.json)"""
+    python3 testing/serve_oracle.py --bankml        (needs target/release/bankml, the model and its FORK.json)
+0.3.4: `--bankml STEM [NAME]` runs the same case on another pinned model against its own record (Bonsai-1.7B-Q1_0;
+SmolLM2-135M-Instruct-F16; mindx-gen39-F16 asked for by Ollama's tag `mindx-gen39`, the alias without the type)."""
 import json, os, subprocess, sys, time, urllib.request
 from pathlib import Path
 
@@ -40,17 +42,18 @@ conversations = [
 ]
 
 
-def bankml_case():
+def bankml_case(stem="Bonsai-8B-Q1_0", name=None):
     """/api/chat == /v1/chat/completions == llama-server's record, and load → unload → reload changes nothing."""
-    model = root / ".models" / "Bonsai-8B-Q1_0.gguf"
-    fork = Path(os.environ.get("BANKML_FORK", Path.home() / ".local/share/bankml/forks/Bonsai-8B-Q1_0.gguf.FORK.json"))
-    record = out / "serve-Bonsai-8B-Q1_0.jsonl"
+    model = root / ".models" / f"{stem}.gguf"
+    forks = Path(os.environ.get("BANKML_FORKS", Path.home() / ".local/share/bankml/forks"))
+    fork = Path(os.environ.get("BANKML_FORK", forks / f"{stem}.gguf.FORK.json")) if stem == "Bonsai-8B-Q1_0" else forks / f"{stem}.gguf.FORK.json"
+    record = out / f"serve-{stem}.jsonl"
     binary = root / "target" / "release" / "bankml"
     missing = [str(p) for p in (model, fork, record, binary) if not p.exists()]
     if missing:
         print("ollama-shape oracle skipped: missing " + ", ".join(missing))
         return 0
-    base, name = "http://127.0.0.1:18195", "bonsai-8b-q1_0"
+    base, name = "http://127.0.0.1:18195", name or stem.lower()
     proc = subprocess.Popen([str(binary), "serve", str(model), "--fork", str(fork), "--native", "--listen", "127.0.0.1:18195",
                              "--upstream", "127.0.0.1:18196", "--ctx", "2048"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -114,7 +117,7 @@ def bankml_case():
             if not good:
                 print(f"  turn {i}: v1 {ra!r}\n          api {rb!r}\n          llama-server {want[i]!r}\n          reload {c[i][1] if i < len(c) else None!r}")
         n = len(want)
-        print(f"ollama-shape oracle: {ok} of {n} turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions "
+        print(f"ollama-shape oracle ({stem} as {name!r}): {ok} of {n} turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions "
               f"and llama-server b11192's record (text, prompt/completion counts, cache reuse); {len(c)} turns unchanged after "
               f"unload and reload — {time.time() - t0:.0f} s")
         return 0 if ok == n and len(a) == len(b) == n else 1
@@ -124,7 +127,8 @@ def bankml_case():
 
 
 if "--bankml" in sys.argv:
-    sys.exit(bankml_case())
+    rest = sys.argv[sys.argv.index("--bankml") + 1:]
+    sys.exit(bankml_case(*rest[:2]))
 turns = []
 seed = 3000
 for ci, conv in enumerate(conversations):

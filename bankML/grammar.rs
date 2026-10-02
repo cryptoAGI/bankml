@@ -37,26 +37,35 @@
 use crate::sampler::Cand;
 use crate::serve::Json;
 
+/// The rules every JSON-mode grammar of llama-server b11192 shares (the schema `{"type": "object"}` turned into GBNF).
+macro_rules! json_object_rules {
+    () => {
+        concat!(
+            "array ::= \"[\" space ( value (\",\" space value)* )? space \"]\"\n",
+            "boolean ::= (\"true\" | \"false\")\n",
+            "char ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\n",
+            "decimal-part ::= [0-9]{1,16}\n",
+            "integral-part ::= [0] | [1-9] [0-9]{0,15}\n",
+            "json-array ::= \"[\" space (\"]\" | json-value (space \",\" space json-value)* space \"]\")\n",
+            "json-bool ::= \"true\" | \"false\"\n",
+            "json-null ::= \"null\"\n",
+            "json-number ::= \"-\"? (\"0\" | [1-9] [0-9]*) (\".\" [0-9]+)? ((\"e\" | \"E\") [+-]? [0-9]+)?\n",
+            "json-object ::= \"{\" space (\"}\" | json-string space \":\" space json-value (space \",\" space json-string space \":\" space json-value)* space \"}\")\n",
+            "json-string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\n",
+            "json-value ::= json-object | json-array | json-string | json-number | json-bool | json-null\n",
+            "null ::= \"null\"\n",
+            "number ::= (\"-\"? integral-part) (\".\" decimal-part)? ([eE] [-+]? integral-part)?\n",
+            "object ::= \"{\" space ( string \":\" space value (\",\" space string \":\" space value)* )? space \"}\"\n",
+            "response-format ::= response-format-schema\n",
+            "response-format-schema ::= object\n",
+        )
+    };
+}
+
 /// The grammar llama-server b11192 builds for `response_format: {"type": "json_object"}` (and for the schemas `{}` and
 /// `{"type": "object"}`) on the pinned Qwen3 template with `--reasoning off`.
 pub const JSON_OBJECT_GRAMMAR: &str = concat!(
-    "array ::= \"[\" space ( value (\",\" space value)* )? space \"]\"\n",
-    "boolean ::= (\"true\" | \"false\")\n",
-    "char ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\n",
-    "decimal-part ::= [0-9]{1,16}\n",
-    "integral-part ::= [0] | [1-9] [0-9]{0,15}\n",
-    "json-array ::= \"[\" space (\"]\" | json-value (space \",\" space json-value)* space \"]\")\n",
-    "json-bool ::= \"true\" | \"false\"\n",
-    "json-null ::= \"null\"\n",
-    "json-number ::= \"-\"? (\"0\" | [1-9] [0-9]*) (\".\" [0-9]+)? ((\"e\" | \"E\") [+-]? [0-9]+)?\n",
-    "json-object ::= \"{\" space (\"}\" | json-string space \":\" space json-value (space \",\" space json-string space \":\" space json-value)* space \"}\")\n",
-    "json-string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\n",
-    "json-value ::= json-object | json-array | json-string | json-number | json-bool | json-null\n",
-    "null ::= \"null\"\n",
-    "number ::= (\"-\"? integral-part) (\".\" decimal-part)? ([eE] [-+]? integral-part)?\n",
-    "object ::= \"{\" space ( string \":\" space value (\",\" space string \":\" space value)* )? space \"}\"\n",
-    "response-format ::= response-format-schema\n",
-    "response-format-schema ::= object\n",
+    json_object_rules!(),
     "root ::= \"<|im_start|>assistant\\n\" space (\"<think>\" \"\\n\"? until-13 \"\\n\"? \"</think>\" \"\\n\"? \"\\n\"?)? space (\"```json\" space response-format space \"```\" | space response-format space)\n",
     "space ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\n",
     "string ::= \"\\\"\" char* \"\\\"\"\n",
@@ -70,6 +79,25 @@ pub const JSON_OBJECT_GRAMMAR: &str = concat!(
     "until-13-07 ::= | [<] until-13-01 | [^<>] until-13\n",
     "value ::= object | array | string | number | boolean | null\n",
 );
+
+/// The same request on a ChatML template without reasoning (SmolLM2-Instruct's, mindx-genN's; 0.3.4): the root
+/// opens with that template's generation prompt and has no `<think>` block.
+pub const JSON_OBJECT_GRAMMAR_CHATML: &str = concat!(
+    json_object_rules!(),
+    "root ::= \"<|im_start|>assistant\\n\" space space (\"```json\" space response-format space \"```\" | space response-format space)\n",
+    "space ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\n",
+    "string ::= \"\\\"\" char* \"\\\"\"\n",
+    "value ::= object | array | string | number | boolean | null\n",
+);
+
+/// The JSON-mode grammar and its prefill (the generation prompt the sampler accepts before the first draw) for a
+/// model's template.
+pub fn json_object_grammar(t: crate::chat::Template) -> (&'static str, &'static str) {
+    match t {
+        crate::chat::Template::Qwen3 => (JSON_OBJECT_GRAMMAR, JSON_OBJECT_PREFILL),
+        crate::chat::Template::SmolLm2 | crate::chat::Template::ChatMl => (JSON_OBJECT_GRAMMAR_CHATML, t.generation_prompt()),
+    }
+}
 
 /// The template's generation prompt (thinking off): the tokens the JSON grammar accepts before the first draw.
 pub const JSON_OBJECT_PREFILL: &str = "<|im_start|>assistant\n<think>\n\n</think>\n\n";

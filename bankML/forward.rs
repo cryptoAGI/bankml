@@ -37,12 +37,110 @@
 //! product over the micro-batch's rows (`q1_0::mat_mul_act_par`, `q2_0::mat_mul_par`: each element has the bits of
 //! the per-pair dot, so the result is the token-by-token result), the micro-batch's K and V enter the cache before
 //! its attention (as llama.cpp writes them), and each row attends over the cells up to its own position.
+//!
+//! 0.3.4 (O4): tied embeddings (no `output.weight`: the logits read `token_embd`, as llama.cpp's
+//! `TENSOR_DUPLICATED` does), F16 weights (`f16.rs`: ggml's two F16 paths, chosen by the product's shape exactly
+//! as `ggml_compute_forward_mul_mat` chooses them), and the Llama graph (`llm_build_llama`: no Q/K norms, RoPE in
+//! NORM mode on adjacent pairs, GQA). On the last layer of a prompt only the rows llama.cpp outputs go through the
+//! feed-forward block (its `inp_out_ids`), which is where an F16 model's shapes, and so its bits, would differ.
+//! What the forward pass plays is decided from the header alone (`plan`); everything else is refused with the reason.
 
-use crate::gguf::{guard_file, Engine, Mmap, TensorInfo, Val};
+use crate::gguf::{guard_file, Engine, Header, Mmap, TensorInfo, Val};
 use crate::par::Pool;
 use crate::q1_0::{self, f16_to_f32, f32_to_f16, Q8Act, Q1_0_BYTES, QK1_0};
 use crate::q2_0::{self, Q8Act2, Q2_0_BYTES, QK2_0};
 use std::path::Path;
+
+/// The architectures the forward pass plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arch {
+    /// `llm_build_qwen3`: per-head RMS norms on Q and K, RoPE in NEOX mode (YaRN when the header asks for it)
+    Qwen3,
+    /// `llm_build_llama`: no Q/K norms, RoPE in NORM mode (adjacent pairs), no biases, no rope factors
+    Llama,
+}
+
+/// What bankML's forward pass needs to know about a file before a weight is read, or why it does not play it.
+#[derive(Debug, Clone)]
+pub struct Plan {
+    pub arch: Arch,
+    /// every matrix's type: `TYPE_Q1_0`, `TYPE_Q2_0` or `TYPE_F16`
+    pub wtype: u32,
+    /// the matrix the logits come from: `output.weight`, or `token_embd.weight` when the embeddings are tied
+    pub output: &'static str,
+}
+
+/// From the header alone: the architecture, the weight type and the graph's options this forward pass reproduces.
+/// Anything outside them is refused with what it is and where it is on the road (docs/OLLAMA.md).
+pub fn plan(h: &Header) -> Result<Plan, String> {
+    let arch_s = match h.kv.get("general.architecture") {
+        Some(Val::S(a)) => a.clone(),
+        _ => return Err("no general.architecture".into()),
+    };
+    let arch = match arch_s.as_str() {
+        "qwen3" => Arch::Qwen3,
+        "llama" => Arch::Llama,
+        a => return Err(format!("architecture {a}: the forward pass plays Qwen3 and Llama (each new architecture needs its own oracle set)")),
+    };
+    let num = |k: &str| match h.kv.get(&format!("{arch_s}.{k}")) {
+        Some(Val::U(v)) => Some(*v as f64),
+        Some(Val::I(v)) => Some(*v as f64),
+        Some(Val::F(v)) => Some(*v),
+        _ => None,
+    };
+    let emb = h.tensors.iter().find(|t| t.name == "token_embd.weight").ok_or("no token_embd.weight")?;
+    let wtype = emb.ty;
+    if ![TYPE_Q1_0, TYPE_Q2_0, TYPE_F16].contains(&wtype) {
+        return Err(format!("weights are {}: the forward pass runs Q1_0, Q2_0_g64 and F16 (Q8_0, BF16 and Q4_K are O3)", crate::gguf::type_name(wtype)));
+    }
+    let has = |n: &str| h.tensors.iter().any(|t| t.name == n);
+    let qk_norm = has("blk.0.attn_q_norm.weight");
+    for t in &h.tensors {
+        let kind = t.name.strip_prefix("blk.").and_then(|r| r.split_once('.')).map(|(_, k)| k).unwrap_or(&t.name);
+        let known = match kind {
+            "token_embd.weight" | "output.weight" | "attn_q.weight" | "attn_k.weight" | "attn_v.weight" | "attn_output.weight"
+            | "ffn_gate.weight" | "ffn_up.weight" | "ffn_down.weight" => Some(true),
+            "output_norm.weight" | "attn_norm.weight" | "ffn_norm.weight" => Some(false),
+            "attn_q_norm.weight" | "attn_k_norm.weight" if arch == Arch::Qwen3 => Some(false),
+            _ => None,
+        };
+        match known {
+            None => {
+                return Err(format!("tensor {}: not part of the {arch_s} graph this forward pass reproduces (biases, fused QKV, rope factors, \
+                                    experts and Q/K norms on Llama are not proven)", t.name))
+            }
+            Some(true) if t.ty != wtype => {
+                return Err(format!("{} is {} while token_embd is {}: mixed weight types are not proven", t.name, crate::gguf::type_name(t.ty),
+                                   crate::gguf::type_name(wtype)))
+            }
+            Some(false) if t.ty != 0 => return Err(format!("{} is {}, not F32", t.name, crate::gguf::type_name(t.ty))),
+            _ => {}
+        }
+    }
+    if arch == Arch::Qwen3 && !qk_norm {
+        return Err("a Qwen3 file without attn_q_norm".into());
+    }
+    if arch == Arch::Llama {
+        if let Some(Val::S(t)) = h.kv.get(&format!("{arch_s}.rope.scaling.type")) {
+            if t != "none" {
+                return Err(format!("RoPE scaling {t} on Llama: not proven (the oracle covers plain RoPE)"));
+            }
+        }
+        if num("attention.scale").is_some() || num("expert_count").is_some_and(|e| e > 0.0) {
+            return Err("a Llama variant (attention scale or experts): not proven".into());
+        }
+    }
+    let n_embd = emb.dims[0] as f64;
+    let n_head = num("attention.head_count").ok_or("no head count")?;
+    let head_dim = num("attention.key_length").unwrap_or(n_embd / n_head);
+    if num("attention.value_length").is_some_and(|v| v != head_dim) || num("rope.dimension_count").is_some_and(|r| r != head_dim) {
+        return Err("partial RoPE or a value head of another width: not proven".into());
+    }
+    if !(head_dim as usize).is_multiple_of(32) {
+        return Err(format!("head width {head_dim}: the attention kernels reproduced here need a multiple of 32"));
+    }
+    Ok(Plan { arch, wtype, output: if has("output.weight") { "output.weight" } else { "token_embd.weight" } })
+}
 
 /// `ggml_compute_forward_rms_norm_f32` followed by `mul` (fused or not, the same arithmetic): the sum of squares is
 /// accumulated in double, one float product at a time, in order; `mean = sum / n` is rounded to float;
@@ -66,7 +164,8 @@ fn yarn_corr_dims(n_dims: usize, n_ctx_orig: u32, freq_base: f32, beta_fast: f32
     [dim(beta_fast).floor().max(0.0), dim(beta_slow).ceil().min(n_dims as f32 - 1.0)]
 }
 
-/// RoPE as llama.cpp's `rope_ext` applies it to a Qwen3 head: NEOX pairs (i, i + n/2), with YaRN. The C source
+/// RoPE as llama.cpp's `rope_ext` applies it: NEOX pairs (i, i + n/2) for Qwen3, with YaRN; NORM pairs (i, i + 1)
+/// for Llama (`rotate_pairs` with `scale` 1, the same arithmetic). The C source
 /// writes plain `a*b ± c*d`; the shipped CPU backend is built with FMA contraction, and the bits follow the binary,
 /// so the three contracted expressions are written here as the `mul_add`s the disassembly shows.
 #[derive(Debug, Clone, Copy)]
@@ -78,6 +177,8 @@ pub struct Rope {
     pub attn_factor: f32,
     corr: [f32; 2],
     theta_scale: f32,
+    /// NEOX mode (Qwen3) or NORM mode (Llama)
+    pub neox: bool,
 }
 
 impl Rope {
@@ -97,6 +198,7 @@ impl Rope {
             n_dims, freq_base, freq_scale, ext_factor, attn_factor,
             corr: yarn_corr_dims(n_dims, n_ctx_orig, freq_base, 32.0, 1.0),
             theta_scale: freq_base.powf(-2.0f32 / n_dims as f32),
+            neox: true,
         }
     }
 
@@ -120,16 +222,17 @@ impl Rope {
         }
     }
 
-    /// `rotate_pairs` in NEOX mode over one head, in place, from a cache built by `cache`.
+    /// `rotate_pairs` over one head, in place, from a cache built by `cache`: NEOX mode pairs (i/2, i/2 + n/2), NORM
+    /// mode pairs (i, i + 1).
     pub fn apply(&self, cache: &[f32], head: &mut [f32]) {
-        let half = self.n_dims / 2;
+        let (half, neox) = (self.n_dims / 2, self.neox);
         for i0 in (0..self.n_dims).step_by(2) {
-            let ic = i0 / 2;
+            let (ic, off) = if neox { (i0 / 2, half) } else { (i0, 1) };
             let (c, s) = (cache[i0], cache[i0 + 1]);
-            let (x0, x1) = (head[ic], head[ic + half]);
+            let (x0, x1) = (head[ic], head[ic + off]);
             // as compiled: x1's products rounded, x0's fused (vmulss + vfmsub231ss / vfmadd132ss)
             head[ic] = c.mul_add(x0, -(x1 * s));
-            head[ic + half] = s.mul_add(x0, x1 * c);
+            head[ic + off] = s.mul_add(x0, x1 * c);
         }
     }
 }
@@ -137,6 +240,12 @@ impl Rope {
 /// `ggml_vec_dot_f16` as the AVX2 build computes it: four 8-lane f32 accumulators fed by FMAs over 32-element
 /// steps, reduced as `(a0 + a2) + (a1 + a3)`, then low half + high half, then two horizontal adds. `n % 32 == 0`.
 pub fn dot_f16(x: &[u16], y: &[u16]) -> f32 {
+    assert!(x.len() == y.len() && x.len().is_multiple_of(32));
+    crate::f16::vec_dot_u16(x, y)
+}
+
+/// `dot_f16` written out (the definition the oracle tests pinned; `f16::vec_dot` has its bits on every path).
+pub fn dot_f16_ref(x: &[u16], y: &[u16]) -> f32 {
     assert!(x.len() == y.len() && x.len().is_multiple_of(32));
     let mut acc = [[0.0f32; 8]; 4];
     for (xs, ys) in x.as_chunks::<32>().0.iter().zip(y.as_chunks::<32>().0.iter()) {
@@ -169,7 +278,7 @@ pub fn attend_head(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, 
 /// `flash_attn_ext_f16_one_chunk` writes as a partial for the split-KV kernel.
 pub fn attend_head_partial(q: &[f32], k: &[u16], v: &[u16], from: usize, to: usize, stride: usize, scale: f32) -> (f32, f32, Vec<u16>) {
     let hd = q.len();
-    let q16: Vec<u16> = q.iter().map(|&x| f32_to_f16(x)).collect();
+    let q16 = crate::f16::to_f16(q);
     let mut acc = vec![0u16; hd];
     let (mut sum, mut max) = (0.0f32, f32::NEG_INFINITY);
     for ic in from..to {
@@ -179,15 +288,11 @@ pub fn attend_head_partial(q: &[f32], k: &[u16], v: &[u16], from: usize, to: usi
             let old = max;
             max = s;
             ms = (old - max).exp();
-            for a in acc.iter_mut() {
-                *a = f32_to_f16(f16_to_f32(*a) * ms);
-            }
+            crate::f16::scale(&mut acc, ms); // vec_scale_f16: f16(acc · ms)
         } else {
             vs = (s - max).exp();
         }
-        for (a, &vv) in acc.iter_mut().zip(&v[ic * stride..ic * stride + hd]) {
-            *a = f32_to_f16(f16_to_f32(vv).mul_add(vs, f16_to_f32(*a)));
-        }
+        crate::f16::mad(&mut acc, &v[ic * stride..ic * stride + hd], vs); // vec_mad_f16: f16(fma(v, vs, acc))
         sum = sum * ms + vs;
     }
     (max, sum, acc)
@@ -242,57 +347,104 @@ pub fn attend_head_split(q: &[f32], k: &[u16], v: &[u16], cells: usize, padded: 
 /// then the V GEMM (one FMA chain over the tile's cells); finally `acc · (1/S)`. A row's result does not depend on
 /// which rows share its tile; cells a row cannot see weigh 0 and are left out.
 pub fn attend_head_tiled(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: usize, scale: f32, out: &mut [f32]) {
+    attend_heads_tiled(&[q], &[n_kv], k, v, stride, scale, &mut [out]);
+}
+
+/// `attend_head_tiled` for several rows of one head at once (0.3.4): each 64-cell tile's keys and values are widened
+/// (and the keys transposed) once for the block, then every row that sees the tile takes its step with its own state,
+/// in the per-row order — so each row has the per-row bits. Compiled with FMA and F16C where the CPU has them.
+pub fn attend_heads_tiled(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize, scale: f32, outs: &mut [&mut [f32]]) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::q1_0::has_avx2() {
+        // SAFETY: AVX2 + FMA + F16C checked
+        return unsafe { attend_heads_tiled_avx2(qs, n_kv, k, v, stride, scale, outs) };
+    }
+    tiled_body(qs, n_kv, k, v, stride, scale, outs)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma,f16c")]
+unsafe fn attend_heads_tiled_avx2(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize, scale: f32, outs: &mut [&mut [f32]]) {
+    tiled_body(qs, n_kv, k, v, stride, scale, outs)
+}
+
+#[inline(always)]
+fn tiled_body(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize, scale: f32, outs: &mut [&mut [f32]]) {
     const T: usize = 64;
-    let hd = q.len();
-    let mut acc = vec![0.0f32; hd];
-    let (mut sum, mut max) = (0.0f32, f32::NEG_INFINITY);
-    let mut kq = [0.0f32; T];
-    for ic in (0..n_kv).step_by(T) {
-        let tile = T.min(n_kv - ic);
-        for (tk, s) in kq.iter_mut().enumerate() {
-            *s = if tk < tile {
-                let kr = &k[(ic + tk) * stride..(ic + tk) * stride + hd];
-                let mut a = 0.0f32;
-                for (&kd, &qd) in kr.iter().zip(q) {
-                    a = f16_to_f32(kd).mul_add(qd, a);
+    let hd = qs[0].len();
+    let rows = qs.len();
+    // per row: the f32 accumulator, the running sum and max (ggml's tiled kernel state)
+    let mut acc = vec![0.0f32; rows * hd];
+    let mut st = vec![(0.0f32, f32::NEG_INFINITY); rows];
+    // the tile's keys widened and transposed (kt[d·T + cell]) and its values widened (vt[cell·hd + d])
+    let (mut kt, mut vt) = (vec![0.0f32; hd * T], vec![0.0f32; T * hd]);
+    let mut row = vec![0.0f32; hd];
+    let most = n_kv.iter().copied().max().unwrap_or(0);
+    for ic in (0..most).step_by(T) {
+        let width = T.min(most - ic);
+        for tk in 0..width {
+            crate::f16::widen(&k[(ic + tk) * stride..(ic + tk) * stride + hd], &mut row);
+            for (d, &x) in row.iter().enumerate() {
+                kt[d * T + tk] = x;
+            }
+            crate::f16::widen(&v[(ic + tk) * stride..(ic + tk) * stride + hd], &mut vt[tk * hd..(tk + 1) * hd]);
+        }
+        for r in 0..rows {
+            if ic >= n_kv[r] {
+                continue; // this row sees none of the tile: its loop has already ended
+            }
+            let tile = T.min(n_kv[r] - ic);
+            let mut chains = [0.0f32; T];
+            for (d, &qd) in qs[r].iter().enumerate() {
+                for (c, &kd) in chains.iter_mut().zip(&kt[d * T..d * T + tile]) {
+                    *c = kd.mul_add(qd, *c); // each cell's own chain over the head dimension, in order
                 }
-                a * scale + 0.0 // the mask adds 0 to a visible cell
-            } else {
-                f32::NEG_INFINITY
-            };
-        }
-        let tile_max = kq.iter().fold(f32::NEG_INFINITY, |m, &x| if m > x { m } else { x });
-        if tile_max == f32::NEG_INFINITY {
-            continue;
-        }
-        let new_max = max.max(tile_max);
-        if new_max > max {
-            let ms = (max - new_max).exp();
-            for a in acc.iter_mut() {
-                *a *= ms;
             }
-            sum *= ms;
-        }
-        max = new_max;
-        let mut tsum = 0.0f64;
-        for g in kq.as_chunks_mut::<8>().0.iter_mut() {
-            for x in g.iter_mut() {
-                *x = v_expf(*x - new_max);
+            let mut kq = [0.0f32; T];
+            for (tk, s) in kq.iter_mut().enumerate() {
+                *s = if tk < tile {
+                    chains[tk] * scale + 0.0 // the mask adds 0 to a visible cell
+                } else {
+                    f32::NEG_INFINITY
+                };
             }
-            let h: [f32; 4] = std::array::from_fn(|l| g[l + 4] + g[l]);
-            tsum += ((h[0] + h[2]) + (h[1] + h[3])) as f64;
-        }
-        sum = (sum as f64 + tsum) as f32;
-        for (tk, &p) in kq.iter().enumerate().take(tile) {
-            let vr = &v[(ic + tk) * stride..(ic + tk) * stride + hd];
-            for (a, &vd) in acc.iter_mut().zip(vr) {
-                *a = f16_to_f32(vd).mul_add(p, *a);
+            let tile_max = kq.iter().fold(f32::NEG_INFINITY, |m, &x| if m > x { m } else { x });
+            if tile_max == f32::NEG_INFINITY {
+                continue;
+            }
+            let (sum, max) = &mut st[r];
+            let a = &mut acc[r * hd..(r + 1) * hd];
+            let new_max = max.max(tile_max);
+            if new_max > *max {
+                let ms = (*max - new_max).exp();
+                for x in a.iter_mut() {
+                    *x *= ms;
+                }
+                *sum *= ms;
+            }
+            *max = new_max;
+            let mut tsum = 0.0f64;
+            for g in kq.as_chunks_mut::<8>().0.iter_mut() {
+                for x in g.iter_mut() {
+                    *x = v_expf(*x - new_max);
+                }
+                let h: [f32; 4] = std::array::from_fn(|l| g[l + 4] + g[l]);
+                tsum += ((h[0] + h[2]) + (h[1] + h[3])) as f64;
+            }
+            *sum = (*sum as f64 + tsum) as f32;
+            for (tk, &p) in kq.iter().enumerate().take(tile) {
+                for (x, &vd) in a.iter_mut().zip(&vt[tk * hd..(tk + 1) * hd]) {
+                    *x = vd.mul_add(p, *x);
+                }
             }
         }
     }
-    let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
-    for (o, &a) in out.iter_mut().zip(&acc) {
-        *o = a * inv;
+    for (r, o) in outs.iter_mut().enumerate() {
+        let sum = st[r].0;
+        let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
+        for (x, &a) in o.iter_mut().zip(&acc[r * hd..(r + 1) * hd]) {
+            *x = a * inv;
+        }
     }
 }
 
@@ -330,6 +482,7 @@ pub fn kernel_for(rows: usize, cells: usize, llama_threads: usize) -> Result<Ker
 /// ggml's AVX2 `ggml_v_expf` (vec.h, "adapted from arm limited optimized routine"), one lane: a range reduction by
 /// `2^n`, a degree-5 polynomial in FMAs, and the scaled path for `|n| > 126`. Each lane depends only on itself, so
 /// the scalar form gives the vector's bits.
+#[inline(always)]
 pub fn v_expf(x: f32) -> f32 {
     let c = |b: u32| f32::from_bits(b);
     let r = c(0x4b40_0000); // 0x1.8p23
@@ -352,6 +505,23 @@ pub fn v_expf(x: f32) -> f32 {
 
 /// `ggml_vec_swiglu_f32` on AVX2: `silu(g) · u` with `silu(x) = x / (1 + v_expf(0 − x))`.
 pub fn swiglu(gate: &[f32], up: &[f32], out: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::q1_0::has_avx2() {
+        // SAFETY: AVX2 + FMA checked
+        return unsafe { swiglu_avx2(gate, up, out) };
+    }
+    swiglu_body(gate, up, out)
+}
+
+/// `swiglu` compiled with FMA (the polynomial's `mul_add`s become instructions, not libm calls): the same bits.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn swiglu_avx2(gate: &[f32], up: &[f32], out: &mut [f32]) {
+    swiglu_body(gate, up, out)
+}
+
+#[inline(always)]
+fn swiglu_body(gate: &[f32], up: &[f32], out: &mut [f32]) {
     for ((o, &g), &u) in out.iter_mut().zip(gate).zip(up) {
         *o = g / (1.0 + v_expf(0.0 - g)) * u;
     }
@@ -389,6 +559,7 @@ impl KvCache {
 }
 
 /// GGUF tensor types bankml's forward pass runs.
+pub const TYPE_F16: u32 = 1;
 pub const TYPE_Q1_0: u32 = 41;
 pub const TYPE_Q2_0: u32 = 42;
 
@@ -397,12 +568,15 @@ pub const TYPE_Q2_0: u32 = 42;
 pub enum Act {
     Q1(Q8Act),
     Q2(Q8Act2),
+    /// an F16 model's activation, rounded to f16 (`ggml_cpu_fp32_to_fp16`)
+    F16(Vec<u16>),
 }
 
 /// Activation rows prepared for the model's weight type: one per token of a micro-batch.
 pub enum Acts {
     Q1(Vec<Q8Act>),
     Q2(Vec<Q8Act2>),
+    F16(Vec<Vec<u16>>),
 }
 
 /// A weight matrix: its bytes, rows and type.
@@ -414,13 +588,29 @@ pub struct Mat<'a> {
 }
 
 fn row_bytes(ty: u32, n: usize) -> usize {
-    if ty == TYPE_Q1_0 { n / QK1_0 * Q1_0_BYTES } else { n / QK2_0 * Q2_0_BYTES }
+    match ty {
+        TYPE_Q1_0 => n / QK1_0 * Q1_0_BYTES,
+        TYPE_F16 => n * crate::f16::F16_BYTES,
+        _ => n / QK2_0 * Q2_0_BYTES,
+    }
+}
+
+/// Which rows of a prompt's last micro-batch leave the last layer: llama-server asks for the last token's logits
+/// only (`inp_out_ids`); the model oracle asks for every row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outputs {
+    Last,
+    All,
 }
 
 /// The model's tensors by name, read through bankml's own memory map.
 pub struct Weights {
     mm: Mmap,
     tensors: Vec<TensorInfo>,
+    /// tensor name → index into `tensors` (0.3.4: a lookup per matrix per layer was a linear scan)
+    index: std::collections::HashMap<String, usize>,
+    /// every F32 tensor (the norms), read once at open
+    vecs: std::collections::HashMap<String, Vec<f32>>,
     data_start: u64,
     pub n_embd: usize,
     pub n_vocab: usize,
@@ -430,8 +620,11 @@ pub struct Weights {
     pub head_dim: usize,
     pub rope: Rope,
     pub n_layer: usize,
-    /// the matrices' type: `TYPE_Q1_0` or `TYPE_Q2_0`
+    /// the matrices' type: `TYPE_Q1_0`, `TYPE_Q2_0` or `TYPE_F16`
     pub wtype: u32,
+    pub arch: Arch,
+    /// the matrix the logits come from (`token_embd.weight` when the embeddings are tied)
+    pub output: &'static str,
     /// the thread count of the llama.cpp being matched (`-t`; Savante runs 3): its split-KV decode kernel cuts the KV
     /// cells into one chunk per thread, so the bits depend on it. `BANKML_LLAMA_THREADS`, default 3.
     pub llama_threads: usize,
@@ -444,6 +637,7 @@ impl Weights {
     pub fn open(path: &Path) -> Result<Self, String> {
         let rep = guard_file(path, Engine::Mainline).map_err(|e| format!("{}: {e}", path.display()))?;
         let h = rep.header.ok_or("no GGUF header")?;
+        let plan = plan(&h).map_err(|e| format!("{}: {e}", path.display()))?;
         let arch = match h.kv.get("general.architecture") {
             Some(Val::S(a)) => a.clone(),
             _ => return Err("no architecture".into()),
@@ -465,12 +659,10 @@ impl Weights {
             _ => None,
         };
         let n_ctx_orig = num("rope.scaling.original_context_length").or_else(|| num("context_length")).ok_or("no context length")? as u32;
-        let rope = Rope::new(head_dim, num("rope.freq_base").unwrap_or(10000.0) as f32, yarn, n_ctx_orig);
+        let mut rope = Rope::new(head_dim, num("rope.freq_base").unwrap_or(10000.0) as f32, yarn, n_ctx_orig);
+        rope.neox = plan.arch == Arch::Qwen3;
         let n_layer = num("block_count").ok_or("no block count")? as usize;
-        let wtype = emb.ty;
-        if wtype != TYPE_Q1_0 && wtype != TYPE_Q2_0 {
-            return Err(format!("token_embd is type {wtype}; the forward pass runs Q1_0 and Q2_0_g64 models"));
-        }
+        let wtype = plan.wtype;
         let mm = Mmap::open(path).map_err(|e| e.to_string())?;
         let pool = Pool::from_env();
         // a card joins only for the 1-bit kernel (the ternary kernel is next), only after it passes the on-card
@@ -490,26 +682,33 @@ impl Weights {
         } else {
             None
         };
-        Ok(Weights { mm, tensors: h.tensors, data_start: h.data_start, n_embd, n_vocab, rms_eps, n_head, n_head_kv, head_dim, rope, n_layer, wtype,
+        let index = h.tensors.iter().enumerate().map(|(i, t)| (t.name.clone(), i)).collect();
+        let mut vecs = std::collections::HashMap::new();
+        for t in h.tensors.iter().filter(|t| t.ty == 0) {
+            let n = t.dims.iter().product::<u64>() as usize;
+            let b = mm.bytes().get((h.data_start + t.offset) as usize..).and_then(|b| b.get(..n * 4)).ok_or_else(|| format!("{} truncated", t.name))?;
+            vecs.insert(t.name.clone(), b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect::<Vec<f32>>());
+        }
+        Ok(Weights { mm, index, vecs, tensors: h.tensors, data_start: h.data_start, n_embd, n_vocab, rms_eps, n_head, n_head_kv, head_dim, rope, n_layer, wtype,
+                     arch: plan.arch, output: plan.output,
                      llama_threads: std::env::var("BANKML_LLAMA_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(3),
                      pool, gpu })
     }
 
     fn tensor(&self, name: &str) -> Result<(&TensorInfo, &[u8]), String> {
-        let t = self.tensors.iter().find(|t| t.name == name).ok_or_else(|| format!("no tensor {name}"))?;
+        let t = self.index.get(name).map(|&i| &self.tensors[i]).ok_or_else(|| format!("no tensor {name}"))?;
         let start = (self.data_start + t.offset) as usize;
         Ok((t, self.mm.bytes().get(start..).ok_or("tensor outside the file")?))
     }
 
-    /// An f32 vector tensor (norm weights).
+    /// An f32 vector tensor (norm weights), copied.
     pub fn f32_vec(&self, name: &str) -> Result<Vec<f32>, String> {
-        let (t, b) = self.tensor(name)?;
-        if t.ty != 0 {
-            return Err(format!("{name} is type {}, not F32", t.ty));
-        }
-        let n = t.dims.iter().product::<u64>() as usize;
-        let b = b.get(..n * 4).ok_or("tensor truncated")?;
-        Ok(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
+        self.norm(name).map(<[f32]>::to_vec)
+    }
+
+    /// An f32 vector tensor (norm weights), as read at open.
+    pub fn norm(&self, name: &str) -> Result<&[f32], String> {
+        self.vecs.get(name).map(Vec::as_slice).ok_or_else(|| format!("no F32 tensor {name}"))
     }
 
     /// A weight matrix of the model's type, checked against the input width.
@@ -524,26 +723,32 @@ impl Weights {
 
     /// `x` quantized to q8_0 as ggml quantizes a matmul's activation, prepared for the model's kernel.
     pub fn quantize(&self, x: &[f32]) -> Act {
-        if self.wtype == TYPE_Q1_0 { Act::Q1(Q8Act::quantize(x)) } else { Act::Q2(Q8Act2::quantize(x)) }
+        match self.wtype {
+            TYPE_Q1_0 => Act::Q1(Q8Act::quantize(x)),
+            TYPE_F16 => Act::F16(crate::f16::to_f16(x)),
+            _ => Act::Q2(Q8Act2::quantize(x)),
+        }
     }
 
     /// Every row of `xs` quantized to q8_0, prepared for the model's kernel.
     pub fn quantize_rows(&self, xs: &[Vec<f32>]) -> Acts {
-        if self.wtype == TYPE_Q1_0 {
-            Acts::Q1(xs.iter().map(|x| Q8Act::quantize(x)).collect())
-        } else {
-            Acts::Q2(xs.iter().map(|x| Q8Act2::quantize(x)).collect())
+        match self.wtype {
+            TYPE_Q1_0 => Acts::Q1(xs.iter().map(|x| Q8Act::quantize(x)).collect()),
+            TYPE_F16 => Acts::F16(xs.iter().map(|x| crate::f16::to_f16(x)).collect()),
+            _ => Acts::Q2(xs.iter().map(|x| Q8Act2::quantize(x)).collect()),
         }
     }
 
     /// `m` times every prepared row, one matrix–matrix product on the pool; returns one output row per input row.
     /// Each element has the bits of the per-pair dot, so the rows equal `mv` on each row.
     pub fn mm(&self, m: &Mat, a: &Acts) -> Result<Vec<Vec<f32>>, String> {
-        let n = match a { Acts::Q1(v) => v.len(), Acts::Q2(v) => v.len() };
+        let n = match a { Acts::Q1(v) => v.len(), Acts::Q2(v) => v.len(), Acts::F16(v) => v.len() };
         let mut out = vec![0.0f32; m.rows * n];
         match (m.ty, a) {
             (TYPE_Q1_0, Acts::Q1(cols)) => q1_0::mat_mul_act_par(&self.pool, m.bytes, m.rows, cols, &mut out),
             (TYPE_Q2_0, Acts::Q2(cols)) => q2_0::mat_mul_par(&self.pool, m.bytes, m.rows, cols, &mut out),
+            // one column takes ggml_vec_dot_f16, two or more llamafile's tinyBLAS (f16.rs): mat_mul_par chooses as ggml does
+            (TYPE_F16, Acts::F16(cols)) => crate::f16::mat_mul_par(&self.pool, m.bytes, m.rows, cols, &mut out),
             _ => return Err("activations prepared for another weight type".into()),
         }
         Ok(out.chunks_exact(m.rows).map(<[f32]>::to_vec).collect())
@@ -569,7 +774,24 @@ impl Weights {
                 }
             }
             (TYPE_Q2_0, Act::Q2(a)) => q2_0::mat_vec_par(&self.pool, m.bytes, m.rows, a, out),
+            (TYPE_F16, Act::F16(a)) => crate::f16::mat_vec_par(&self.pool, m.bytes, m.rows, a, out),
             _ => return Err("activation prepared for another weight type".into()),
+        }
+        Ok(())
+    }
+
+    /// Several matrices by the same prepared row: one pass of the pool for F16 (`f16::mat_vec_multi_par`), each
+    /// matrix in turn otherwise. The same bits as `mv` on each.
+    pub fn mv_many(&self, ms: &[&Mat], a: &Act, outs: &mut [&mut [f32]]) -> Result<(), String> {
+        if let Act::F16(a) = a {
+            if ms.iter().zip(outs.iter()).all(|(m, o)| m.ty == TYPE_F16 && o.len() == m.rows) {
+                let ws: Vec<(&[u8], usize)> = ms.iter().map(|m| (m.bytes, m.rows)).collect();
+                crate::f16::mat_vec_multi_par(&self.pool, &ws, a, outs);
+                return Ok(());
+            }
+        }
+        for (m, o) in ms.iter().zip(outs.iter_mut()) {
+            self.mv(m, a, o).map_err(|e| format!("{}: {e}", m.name))?;
         }
         Ok(())
     }
@@ -583,14 +805,18 @@ impl Weights {
         let mut cache = vec![0.0f32; hd];
         self.rope.cache(pos, &mut cache);
         let mut tmp = vec![0.0f32; hd];
-        for (w, norm, out) in [("attn_q", Some("attn_q_norm"), &mut *q), ("attn_k", Some("attn_k_norm"), &mut *k), ("attn_v", None, &mut *v)] {
-            let m = self.matrix(&format!("blk.{il}.{w}.weight"), self.n_embd)?;
-            self.mv(&m, &a, out).map_err(|e| format!("{w}: {e}"))?;
+        let qk_norm = self.arch == Arch::Qwen3;
+        let (wq, wk, wv) = (self.matrix(&format!("blk.{il}.attn_q.weight"), self.n_embd)?, self.matrix(&format!("blk.{il}.attn_k.weight"), self.n_embd)?,
+                            self.matrix(&format!("blk.{il}.attn_v.weight"), self.n_embd)?);
+        self.mv_many(&[&wq, &wk, &wv], &a, &mut [&mut *q, &mut *k, &mut *v])?;
+        for (norm, out) in [(Some("attn_q_norm"), &mut *q), (Some("attn_k_norm"), &mut *k), (None, &mut *v)] {
             if let Some(norm) = norm {
-                let g = self.f32_vec(&format!("blk.{il}.{norm}.weight"))?;
+                let g = if qk_norm { Some(self.norm(&format!("blk.{il}.{norm}.weight"))?) } else { None };
                 for h in out.chunks_exact_mut(hd) {
-                    tmp.copy_from_slice(h);
-                    rms_norm_mul(&tmp, &g, self.rms_eps, h);
+                    if let Some(g) = g {
+                        tmp.copy_from_slice(h);
+                        rms_norm_mul(&tmp, g, self.rms_eps, h);
+                    }
                     self.rope.apply(&cache, h);
                 }
             }
@@ -614,27 +840,72 @@ impl Weights {
 
     /// Every head of one query row over the first `visible` cached cells (causal: the row's own position + 1).
     pub fn attend(&self, q: &[f32], cache: &KvCache, visible: usize, kernel: Kernel, kqv: &mut [f32]) {
-        let hd = self.head_dim;
-        let group = self.n_head / self.n_head_kv;
+        kqv.copy_from_slice(&self.attend_rows(&[q.to_vec()], cache, visible - 1, kernel)[0]);
+    }
+
+    /// Every head of every query row, row `i` seeing the cells up to position `p0 + i` (causal), on the pool: a head is
+    /// computed whole by one worker, so the bits do not depend on the thread count. Returns the rows' `kqv`.
+    fn attend_rows(&self, qs: &[Vec<f32>], cache: &KvCache, p0: usize, kernel: Kernel) -> Vec<Vec<f32>> {
+        let (hd, nh) = (self.head_dim, self.n_head);
+        let group = nh / self.n_head_kv;
         let scale = 1.0f32 / (hd as f32).sqrt();
-        for (h, (qh, oh)) in q.chunks_exact(hd).zip(kqv.chunks_exact_mut(hd)).enumerate() {
-            let off = (h / group) * hd;
+        let mut out = vec![0.0f32; qs.len() * nh * hd];
+        let one = |j: usize, oh: &mut [f32]| {
+            let (i, h) = (j / nh, j % nh);
+            let (qh, off, visible) = (&qs[i][h * hd..(h + 1) * hd], (h / group) * hd, p0 + i + 1);
             match kernel {
                 Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
                 Kernel::Tiled => attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
-                Kernel::Split { padded, nth } => {
-                    attend_head_split(qh, &cache.k[off..], &cache.v[off..], visible, padded, nth, cache.width, scale, oh)
-                }
+                Kernel::Split { padded, nth } => attend_head_split(qh, &cache.k[off..], &cache.v[off..], visible, padded, nth, cache.width, scale, oh),
             }
+        };
+        if kernel == Kernel::Tiled {
+            // ggml's tiled kernel: a job is one head over a block of 16 rows, so each tile is widened once per block
+            const B: usize = 16;
+            let blocks = qs.len().div_ceil(B);
+            let (next, base) = (std::sync::atomic::AtomicUsize::new(0), out.as_mut_ptr() as usize);
+            self.pool.run(&|_| loop {
+                let j = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if j >= blocks * nh {
+                    break;
+                }
+                let (blk, h) = (j / nh, j % nh);
+                let rs = blk * B..(blk * B + B).min(qs.len());
+                let off = (h / group) * hd;
+                let q: Vec<&[f32]> = rs.clone().map(|i| &qs[i][h * hd..(h + 1) * hd]).collect();
+                let vis: Vec<usize> = rs.clone().map(|i| p0 + i + 1).collect();
+                // SAFETY: job (blk, h) alone writes head h of rows rs, disjoint slices inside the buffer
+                let mut o: Vec<&mut [f32]> = rs.map(|i| unsafe { std::slice::from_raw_parts_mut((base as *mut f32).add((i * nh + h) * hd), hd) }).collect();
+                attend_heads_tiled(&q, &vis, &cache.k[off..], &cache.v[off..], cache.width, scale, &mut o);
+            });
+            return out.chunks_exact(nh * hd).map(<[f32]>::to_vec).collect();
         }
+        let jobs = qs.len() * nh;
+        // a few short heads are cheaper here than waking the pool
+        if self.pool.threads() == 1 || jobs * (p0 + qs.len()) < 2048 {
+            for (j, oh) in out.chunks_exact_mut(hd).enumerate() {
+                one(j, oh);
+            }
+        } else {
+            let (next, base) = (std::sync::atomic::AtomicUsize::new(0), out.as_mut_ptr() as usize);
+            self.pool.run(&|_| loop {
+                let j = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if j >= jobs {
+                    break;
+                }
+                // SAFETY: job j alone writes out[j·hd .. (j + 1)·hd], inside the buffer
+                one(j, unsafe { std::slice::from_raw_parts_mut((base as *mut f32).add(j * hd), hd) });
+            });
+        }
+        out.chunks_exact(nh * hd).map(<[f32]>::to_vec).collect()
     }
 
     /// Layer `il`'s feed-forward block on `ffn_inp` (the residual stream after attention), written back in place as
     /// `l_out`: `ffn_norm`, gate and up (one q8_0 activation), SwiGLU, `ffn_down`, the residual.
     pub fn ffn(&self, il: usize, x: &mut [f32]) -> Result<(), String> {
-        let g = self.f32_vec(&format!("blk.{il}.ffn_norm.weight"))?;
+        let g = self.norm(&format!("blk.{il}.ffn_norm.weight"))?;
         let mut xn = vec![0.0f32; x.len()];
-        rms_norm_mul(x, &g, self.rms_eps, &mut xn);
+        rms_norm_mul(x, g, self.rms_eps, &mut xn);
         let a = self.quantize(&xn);
         let wg = self.matrix(&format!("blk.{il}.ffn_gate.weight"), self.n_embd)?;
         let wu = self.matrix(&format!("blk.{il}.ffn_up.weight"), self.n_embd)?;
@@ -643,8 +914,7 @@ impl Weights {
             return Err(format!("ffn_gate has {n_ff} rows, ffn_up {}", wu.rows));
         }
         let (mut gate, mut up, mut h) = (vec![0.0f32; n_ff], vec![0.0f32; n_ff], vec![0.0f32; n_ff]);
-        self.mv(&wg, &a, &mut gate)?;
-        self.mv(&wu, &a, &mut up)?;
+        self.mv_many(&[&wg, &wu], &a, &mut [&mut gate, &mut up])?;
         swiglu(&gate, &up, &mut h);
         let wd = self.matrix(&format!("blk.{il}.ffn_down.weight"), n_ff)?;
         let mut down = vec![0.0f32; x.len()];
@@ -669,18 +939,33 @@ impl Weights {
 
     /// A prompt, as llama.cpp computes it: micro-batches of up to `N_UBATCH` tokens, each row's attention by the
     /// kernel llama.cpp chooses for its micro-batch (`kernel_for`). Returns the last token's `result_norm`.
-    pub fn prefill(&self, caches: &mut [KvCache], tokens: &[u32], mut each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String> {
+    pub fn prefill(&self, caches: &mut [KvCache], tokens: &[u32], each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String> {
+        Ok(self.prefill_with(caches, tokens, Outputs::Last, each)?.pop().unwrap_or_default())
+    }
+
+    /// `prefill` with the rows asked for: `Outputs::Last` gives the last token's `result_norm` (llama-server's
+    /// request: only the last micro-batch's last row leaves the last layer); `Outputs::All` gives every token's.
+    pub fn prefill_with(&self, caches: &mut [KvCache], tokens: &[u32], outputs: Outputs, mut each: impl FnMut(usize, usize, &[f32]))
+                        -> Result<Vec<Vec<f32>>, String> {
         let mut rn = Vec::new();
-        for ub in tokens.chunks(N_UBATCH) {
+        let n_ub = tokens.len().div_ceil(N_UBATCH);
+        for (i, ub) in tokens.chunks(N_UBATCH).enumerate() {
             let kernel = kernel_for(ub.len(), caches[0].len() + ub.len(), self.llama_threads)?;
-            rn = self.ubatch(caches, ub, kernel, &mut each)?;
+            let out = match outputs {
+                Outputs::All => Some(Outputs::All),
+                Outputs::Last if i + 1 == n_ub => Some(Outputs::Last),
+                Outputs::Last => None,
+            };
+            rn.extend(self.ubatch(caches, ub, kernel, out, &mut each)?);
         }
         Ok(rn)
     }
 
-    /// One micro-batch through every layer together (see the module notes: the same bits as token by token).
-    /// Returns the last row's `result_norm`.
-    fn ubatch(&self, caches: &mut [KvCache], toks: &[u32], kernel: Kernel, each: &mut impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String> {
+    /// One micro-batch through every layer together (see the module notes: the same bits as token by token for the
+    /// quantized types, ggml's batched bits for F16). On the last layer only the output rows go on, as llama.cpp's
+    /// `inp_out_ids` selects them (none, the last, or all); returns their `result_norm`s.
+    fn ubatch(&self, caches: &mut [KvCache], toks: &[u32], kernel: Kernel, outputs: Option<Outputs>, each: &mut impl FnMut(usize, usize, &[f32]))
+              -> Result<Vec<Vec<f32>>, String> {
         let (n, p0, hd) = (toks.len(), caches[0].len(), self.head_dim);
         let mut xs = vec![vec![0.0f32; self.n_embd]; n];
         for (x, &t) in xs.iter_mut().zip(toks) {
@@ -699,17 +984,25 @@ impl Weights {
             }).collect()
         };
         let mut tmp = vec![0.0f32; hd];
+        let n_layer = caches.len();
+        // the rows that leave the last layer, by position in the micro-batch
+        let mut rows: Vec<usize> = (0..n).collect();
         for (il, cache) in caches.iter_mut().enumerate() {
-            let a = self.quantize_rows(&norm_rows(&xs, &self.f32_vec(&format!("blk.{il}.attn_norm.weight"))?));
+            let a = self.quantize_rows(&norm_rows(&xs, self.norm(&format!("blk.{il}.attn_norm.weight"))?));
             let mut q = self.mm(&self.matrix(&format!("blk.{il}.attn_q.weight"), self.n_embd)?, &a)?;
             let mut k = self.mm(&self.matrix(&format!("blk.{il}.attn_k.weight"), self.n_embd)?, &a)?;
             let v = self.mm(&self.matrix(&format!("blk.{il}.attn_v.weight"), self.n_embd)?, &a)?;
-            let (gq, gk) = (self.f32_vec(&format!("blk.{il}.attn_q_norm.weight"))?, self.f32_vec(&format!("blk.{il}.attn_k_norm.weight"))?);
-            for (rows, g) in [(&mut q, &gq), (&mut k, &gk)] {
-                for (row, rc) in rows.iter_mut().zip(&ropes) {
+            let norms = match self.arch {
+                Arch::Qwen3 => Some((self.norm(&format!("blk.{il}.attn_q_norm.weight"))?, self.norm(&format!("blk.{il}.attn_k_norm.weight"))?)),
+                Arch::Llama => None,
+            };
+            for (which, rws) in [(0, &mut q), (1, &mut k)] {
+                for (row, rc) in rws.iter_mut().zip(&ropes) {
                     for h in row.chunks_exact_mut(hd) {
-                        tmp.copy_from_slice(h);
-                        rms_norm_mul(&tmp, g, self.rms_eps, h);
+                        if let Some((gq, gk)) = &norms {
+                            tmp.copy_from_slice(h);
+                            rms_norm_mul(&tmp, if which == 0 { gq } else { gk }, self.rms_eps, h);
+                        }
                         self.rope.apply(rc, h);
                     }
                 }
@@ -717,18 +1010,27 @@ impl Weights {
             for (kr, vr) in k.iter().zip(&v) {
                 cache.push(kr, vr); // the whole micro-batch's K and V first, as llama.cpp writes them; causality is `visible`
             }
-            let mut kqv = vec![vec![0.0f32; self.n_head * hd]; n];
-            for (i, (qr, o)) in q.iter().zip(kqv.iter_mut()).enumerate() {
-                self.attend(qr, cache, p0 + i + 1, kernel, o);
-            }
+            let kqv = self.attend_rows(&q, cache, p0, kernel);
             let att = self.mm(&self.matrix(&format!("blk.{il}.attn_output.weight"), self.n_head * hd)?, &self.quantize_rows(&kqv))?;
-            for (x, a) in xs.iter_mut().zip(&att) {
-                for (xi, ai) in x.iter_mut().zip(a) {
+            if il + 1 == n_layer {
+                // llama.cpp's get_rows(inp_out_ids) after attention: the rest of the last layer sees only the output rows
+                rows = match outputs {
+                    None => Vec::new(),
+                    Some(Outputs::Last) => vec![n - 1],
+                    Some(Outputs::All) => (0..n).collect(),
+                };
+                if rows.is_empty() {
+                    return Ok(Vec::new());
+                }
+                xs = rows.iter().map(|&i| xs[i].clone()).collect();
+            }
+            for (x, &i) in xs.iter_mut().zip(&rows) {
+                for (xi, ai) in x.iter_mut().zip(&att[i]) {
                     *xi += ai;
                 }
             }
             // the feed-forward block
-            let a = self.quantize_rows(&norm_rows(&xs, &self.f32_vec(&format!("blk.{il}.ffn_norm.weight"))?));
+            let a = self.quantize_rows(&norm_rows(&xs, self.norm(&format!("blk.{il}.ffn_norm.weight"))?));
             let gate = self.mm(&self.matrix(&format!("blk.{il}.ffn_gate.weight"), self.n_embd)?, &a)?;
             let up = self.mm(&self.matrix(&format!("blk.{il}.ffn_up.weight"), self.n_embd)?, &a)?;
             let h: Vec<Vec<f32>> = gate.iter().zip(&up).map(|(g, u)| {
@@ -738,16 +1040,14 @@ impl Weights {
             }).collect();
             let n_ff = h[0].len();
             let down = self.mm(&self.matrix(&format!("blk.{il}.ffn_down.weight"), n_ff)?, &self.quantize_rows(&h))?;
-            for (i, (x, d)) in xs.iter_mut().zip(&down).enumerate() {
+            for ((x, d), &i) in xs.iter_mut().zip(&down).zip(&rows) {
                 for (xi, di) in x.iter_mut().zip(d) {
                     *xi += di;
                 }
                 each(p0 + i, il, x);
             }
         }
-        let mut rn = vec![0.0f32; self.n_embd];
-        rms_norm_mul(&xs[n - 1], &self.f32_vec("output_norm.weight")?, self.rms_eps, &mut rn);
-        Ok(rn)
+        Ok(norm_rows(&xs, self.norm("output_norm.weight")?))
     }
 
     /// One generated token (a micro-batch of one), with the kernel llama.cpp would use at this length.
@@ -768,7 +1068,7 @@ impl Weights {
         let (mut xn, mut q, mut k, mut v) = (vec![0.0f32; self.n_embd], vec![0.0f32; qd], vec![0.0f32; kd], vec![0.0f32; kd]);
         let (mut kqv, mut att) = (vec![0.0f32; qd], vec![0.0f32; self.n_embd]);
         for (il, cache) in caches.iter_mut().enumerate() {
-            rms_norm_mul(&x, &self.f32_vec(&format!("blk.{il}.attn_norm.weight"))?, self.rms_eps, &mut xn);
+            rms_norm_mul(&x, self.norm(&format!("blk.{il}.attn_norm.weight"))?, self.rms_eps, &mut xn);
             self.qkv(il, &xn, pos, &mut q, &mut k, &mut v)?;
             cache.push(&k, &v);
             self.attention_with(il, &q, cache, kernel, &mut kqv, &mut att)?;
@@ -779,20 +1079,26 @@ impl Weights {
             each_layer(il, &x);
         }
         let mut rn = vec![0.0f32; self.n_embd];
-        rms_norm_mul(&x, &self.f32_vec("output_norm.weight")?, self.rms_eps, &mut rn);
+        rms_norm_mul(&x, self.norm("output_norm.weight")?, self.rms_eps, &mut rn);
         Ok(rn)
     }
 
-    /// The logits: `output.weight` (Q1_0, one row per vocabulary entry) times the q8_0-quantized `result_norm`.
+    /// The logits: the output matrix (`output.weight`, or `token_embd.weight` when the embeddings are tied; one row
+    /// per vocabulary entry) times `result_norm`, prepared for the weight type.
     pub fn logits(&self, result_norm: &[f32]) -> Result<Vec<f32>, String> {
-        let m = self.matrix("output.weight", self.n_embd)?;
+        let m = self.matrix(self.output, self.n_embd)?;
         let mut out = vec![0.0f32; m.rows];
         self.mv(&m, &self.quantize(result_norm), &mut out)?;
         Ok(out)
     }
 
+    /// The logits of several rows as one product (what a graph asking for every row's logits computes).
+    pub fn logits_rows(&self, result_norms: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+        self.mm(&self.matrix(self.output, self.n_embd)?, &self.quantize_rows(result_norms))
+    }
+
     /// `get_rows(token_embd, [id])`: the id's row of the table, dequantized (bit-exact with ggml's
-    /// `dequantize_row_q1_0` / `dequantize_row_q2_0`, §III.4, §III.6).
+    /// `dequantize_row_q1_0` / `dequantize_row_q2_0`, §III.4, §III.6, and its f16 → f32 widening).
     pub fn embed(&self, id: u32, out: &mut [f32]) -> Result<(), String> {
         let (t, b) = self.tensor("token_embd.weight")?;
         let ty = t.ty;
@@ -801,7 +1107,11 @@ impl Weights {
         }
         let rb = row_bytes(ty, self.n_embd);
         let row = b.get(id as usize * rb..(id as usize + 1) * rb).ok_or("tensor truncated")?;
-        if ty == TYPE_Q1_0 { q1_0::dequantize_row(row, out) } else { q2_0::dequantize_row(row, out) }
+        match ty {
+            TYPE_Q1_0 => q1_0::dequantize_row(row, out),
+            TYPE_F16 => crate::f16::dequantize_row(row, out),
+            _ => q2_0::dequantize_row(row, out),
+        }
         Ok(())
     }
 }
@@ -998,10 +1308,25 @@ mod tests {
         let (mut n, mut ok, mut argmax_ok) = (0, 0, 0);
         let mut first_bad: Option<String> = None;
         let t0 = std::time::Instant::now();
+        // the oracle's graph computes the whole prompt at once and asks every row's logits: for the quantized types
+        // that is token by token's bits (the per-pair dot), for F16 it is ggml's batched product (f16.rs), so an F16
+        // model is replayed as one micro-batch with every row output
+        let batched = (w.wtype == TYPE_F16).then(|| {
+            let mut rows: Vec<Vec<(usize, String)>> = vec![Vec::new(); toks.len()];
+            let rns = w.prefill_with(&mut caches, &toks, Outputs::All, |p, il, l| rows[p].push((il, sha(l)))).unwrap();
+            let logits = w.logits_rows(&rns).unwrap();
+            (rows, rns, logits)
+        });
         for (p, &t) in toks.iter().enumerate() {
-            let mut layer_rows = Vec::new();
-            let rn = w.step(&mut caches, t, |il, l| layer_rows.push((il, sha(l)))).unwrap();
-            let logits = w.logits(&rn).unwrap();
+            let (layer_rows, rn, logits) = match &batched {
+                Some((rows, rns, lg)) => (rows[p].clone(), rns[p].clone(), lg[p].clone()),
+                None => {
+                    let mut layer_rows = Vec::new();
+                    let rn = w.step(&mut caches, t, |il, l| layer_rows.push((il, sha(l)))).unwrap();
+                    let logits = w.logits(&rn).unwrap();
+                    (layer_rows, rn, logits)
+                }
+            };
             let mut check = |kind: &str, key: String, got: String| {
                 n += 1;
                 let good = want[&(kind.to_string(), key.clone(), p)].0 == got;
@@ -1037,6 +1362,21 @@ mod tests {
     #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + its model-*.tsv (testing/model_oracle.py); --release"]
     fn oracle_forward_model_ternary() {
         model_oracle("Ternary-Bonsai-8B-Q2_0_g64");
+    }
+
+    /// 0.3.4: Bonsai-1.7B, whose logits come from its tied token table (no output.weight).
+    #[test]
+    #[ignore = "needs .models/Bonsai-1.7B-Q1_0.gguf + its model-*.tsv (testing/model_oracle.py); --release"]
+    fn oracle_forward_model_bonsai_1_7b() {
+        model_oracle("Bonsai-1.7B-Q1_0");
+    }
+
+    /// 0.3.4: the Llama graph in F16 with tied embeddings — SmolLM2-135M-Instruct and mindX's gen 39.
+    #[test]
+    #[ignore = "needs .models/{SmolLM2-135M-Instruct,mindx-gen39}-F16.gguf + their model-*.tsv (testing/model_oracle.py); --release"]
+    fn oracle_forward_model_llama_f16() {
+        model_oracle("SmolLM2-135M-Instruct-F16");
+        model_oracle("mindx-gen39-F16");
     }
 
     /// Greedy generation against llama-server b11192 itself (testing/greedy_oracle.py): the same chat prompts, the
@@ -1222,11 +1562,37 @@ mod tests {
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its sample-*.jsonl (testing/sample_oracle.py); --release"]
     fn oracle_sample_llama_server() {
+        sample_oracle("Bonsai-8B-Q1_0");
+    }
+
+    /// 0.3.4: Bonsai-1.7B (tied embeddings) against llama-server running it: greedy and seeded.
+    #[test]
+    #[ignore = "needs .models/Bonsai-1.7B-Q1_0.gguf + its greedy-*/sample-*.jsonl (testing/{greedy,sample}_oracle.py); --release"]
+    fn oracle_llama_server_bonsai_1_7b() {
+        greedy_oracle("", "Bonsai-1.7B-Q1_0");
+        sample_oracle("Bonsai-1.7B-Q1_0");
+    }
+
+    /// 0.3.4: the Llama graph in F16 against llama-server running SmolLM2-135M-Instruct and mindx-gen39: short prompts
+    /// (ggml's reference attention), long ones (the tiled kernel, and tinyBLAS over the micro-batch), continuations
+    /// past 256 cells (the split-KV kernel), and seeded sampling.
+    #[test]
+    #[ignore = "needs .models/{SmolLM2-135M-Instruct,mindx-gen39}-F16.gguf + their greedy-*/sample-*.jsonl (testing/{greedy,sample}_oracle.py); --release"]
+    fn oracle_llama_server_llama_f16() {
+        for stem in ["SmolLM2-135M-Instruct-F16", "mindx-gen39-F16"] {
+            for kind in ["", "long-", "deep-"] {
+                greedy_oracle(kind, stem);
+            }
+            sample_oracle(stem);
+        }
+    }
+
+    fn sample_oracle(stem: &str) {
         use crate::sampler::{Params, Sampler};
         use crate::serve::Json;
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
-        let w = Weights::open(&dir.join("Bonsai-8B-Q1_0.gguf")).unwrap();
-        let cases = std::fs::read_to_string(dir.join("oracle-forward/sample-Bonsai-8B-Q1_0.jsonl")).unwrap();
+        let w = Weights::open(&dir.join(format!("{stem}.gguf"))).unwrap();
+        let cases = std::fs::read_to_string(dir.join(format!("oracle-forward/sample-{stem}.jsonl"))).unwrap();
         let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n, other => panic!("{k}: {other:?}") };
         let ids = |v: &Json, k: &str| -> Vec<u32> {
             match v.get(k) { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!("{k}") }
@@ -1270,7 +1636,7 @@ mod tests {
                           num(pr, "temperature"), num(pr, "top_k"), num(pr, "top_p"), num(pr, "min_p"), num(pr, "seed"));
             }
         }
-        eprintln!("sample oracle: {n_same} of {n_cases} seeded continuations identical to llama-server b11192's ({n_tok} tokens; top-k, top-p, min-p, temperature, the mt19937 draw)");
+        eprintln!("sample oracle: {stem}: {n_same} of {n_cases} seeded continuations identical to llama-server b11192's ({n_tok} tokens; top-k, top-p, min-p, temperature, the mt19937 draw)");
         assert_eq!(n_same, n_cases);
     }
 }

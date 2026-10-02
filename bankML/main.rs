@@ -47,10 +47,10 @@ fn main() {
             // P3 step two: the prompt a conversation becomes, byte-identical to llama.cpp's /apply-template
             let mut text = String::new();
             let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
-            let r = bankml::chat::check_template(Path::new(file)).and_then(|_| {
+            let r = bankml::chat::template_of(Path::new(file)).and_then(|t| {
                 let v = bankml::serve::Json::parse(&text).ok_or("stdin is not JSON")?;
                 let msgs = v.get("messages").unwrap_or(&v);
-                bankml::chat::render(&bankml::chat::messages_from_json(msgs)?)
+                t.render(&bankml::chat::messages_from_json(msgs)?)
             });
             match r {
                 Ok(p) => {
@@ -263,7 +263,7 @@ fn main() {
 fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sampler::Params>, json: bool) -> Result<(), String> {
     use bankml::{chat, forward::Weights, serve::Json, tokenizer::Tokenizer};
     use std::io::Write;
-    chat::check_template(model)?;
+    let template = chat::template_of(model)?;
     let msgs = match Json::parse(input.trim()) {
         Some(v) if matches!(v, Json::Arr(_)) || v.get("messages").is_some() => chat::messages_from_json(v.get("messages").unwrap_or(&v))?,
         _ => vec![chat::Message::new("user", input.trim_end_matches('\n'))],
@@ -274,7 +274,7 @@ fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sample
         use bankml::grammar::{Constraint, ContentStream};
         let eng = bankml::native::Native::open(model, 4096)?;
         let params = sample.unwrap_or_else(|| bankml::sampler::Params { temp: 0.0, ..eng.defaults.clone() });
-        let prompt = eng.tok.encode(&chat::render(&msgs)?, true);
+        let prompt = eng.tok.encode(&template.render(&msgs)?, true);
         let mut cs = ContentStream::new(&Constraint::JsonObject);
         let mut out = std::io::stdout();
         let d = eng.complete(&prompt, params, Some(max), eng.grammar(&Constraint::JsonObject)?, |piece| {
@@ -288,9 +288,9 @@ fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sample
         return Ok(());
     }
     let tok = Tokenizer::from_gguf(model)?;
-    let prompt = tok.encode(&chat::render(&msgs)?, true);
+    let prompt = tok.encode(&template.render(&msgs)?, true);
     let w = Weights::open(model)?;
-    let ends: Vec<u32> = ["<|im_end|>", "<|endoftext|>"].iter().filter_map(|t| tok.id(t)).collect();
+    let ends = bankml::native::eog_from_gguf(model, &tok)?;
     let mut sampler = sample.map(bankml::sampler::Sampler::new).transpose()?;
     let t0 = std::time::Instant::now();
     let mut caches = w.caches();

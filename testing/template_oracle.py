@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Record llama.cpp's own chat-template rendering (llama-server /apply-template, b11192, the Bonsai / Qwen3 template)
-as the oracle for bankml's renderer (chat.rs), the way tokenizer_oracle.py records tokenization. Conversations cover
+"""Record llama.cpp's own chat-template rendering (llama-server /apply-template, b11192, the Bonsai / Qwen3 template;
+since 0.3.4 any model's: SmolLM2-Instruct's and mindx-genN's ChatML, written to cases-<model stem>.jsonl) as the oracle
+for bankml's renderer (chat.rs), the way tokenizer_oracle.py records tokenization. Conversations cover
 every rule of the template in bankml's scope — a system prompt first or later or absent, multi-turn, assistant turns
 with and without <think> blocks before and after the last real user query, reasoning_content, runs of tool results,
 user messages that look like tool responses, empty content, special markers and Unicode inside content, plus a seeded
@@ -56,7 +57,11 @@ for _ in range(300):
     conv.append(m(rng.choice([U, T]), "".join(rng.choice(words) for _ in range(rng.randint(0, 6)))))  # ends with a request
     convs.append(conv)
 out.mkdir(parents=True, exist_ok=True)
-with open(out / "cases.jsonl", "w", encoding="utf-8") as f:
+# the Bonsai / Qwen3 template keeps its historic name; another model's template is recorded under its model's stem
+with urllib.request.urlopen(f"http://{up}/props", timeout=60) as r:
+    stem = Path(json.loads(r.read())["model_path"]).stem
+name = "cases.jsonl" if stem.startswith(("Bonsai", "Ternary-Bonsai")) else f"cases-{stem}.jsonl"
+with open(out / name, "w", encoding="utf-8") as f:
     for c in convs:
         f.write(json.dumps({"messages": c, "prompt": render(c)}, ensure_ascii=False) + "\n")
-print(f"{len(convs)} conversations rendered by llama-server at {up} → {out / 'cases.jsonl'}")
+print(f"{len(convs)} conversations rendered by llama-server at {up} → {out / name}")

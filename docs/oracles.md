@@ -380,6 +380,37 @@ Two oracles hold O6's first cut (`bankML/grammar.rs`). Neither compares bankML w
     `serve --native`, each from an empty slot: `/v1` with `response_format`, streamed once; `/v1` with `grammar`; and
     Ollama's `/api/chat` with `format: "json"`. Every answer must equal the record: **8 of 8**.
 
+## 5d. O4 (0.3.4): F16 products, the Llama graph, tied embeddings — the same oracles, three new models
+
+Every oracle family the 8B models have, extended to Bonsai-1.7B (tied embeddings), SmolLM2-135M-Instruct and
+`mindx-gen39` (the Llama graph in F16), each against llama-server b11192 running that very file; plus one new kernel
+oracle.
+
+- **F16 products against the shipped library** (`testing/f16_oracle.py` → `oracle_ggml_b11192_f16`). ggml multiplies
+  an F16 weight two ways: `ggml_vec_dot_f16` for one column, llamafile's tinyBLAS for two or more (when the weight has
+  a multiple of 4 rows and the row a multiple of 8). The oracle builds `ggml_mul_mat` graphs through ctypes and has
+  the shipped `libggml-cpu-haswell.so` compute them: SmolLM2's real matrices (layers 0 and 29, and the 49,152-row token
+  table) by 1, 2, 3, 5 and 28 columns, and synthetic shapes that reach the tails (`k % 32 ≠ 0`) and the fallbacks
+  (`rows % 4 ≠ 0`, `k % 8 ≠ 0`). Every F16 tensor widened by `ggml_fp16_to_fp32_row` is hashed too. The result:
+  **211 of 211 tensors; 552,268 of 552,268 elements** in 87 products (61 tinyBLAS, 26 `vec_dot`). The two paths give
+  different bits for the same row and column (`the_two_reductions_differ`), so the oracle checks the choice as well.
+- **The whole model** (`testing/model_oracle.py`, now for tied embeddings, F16 and the Llama graph:
+  `rope_ext` mode 0, no Q/K norms, `ext_factor` 0): every layer's `l_out`, `result_norm` and the logits. An F16
+  model is replayed as one micro-batch with every row output, because that is what the oracle's graph computes.
+  Bonsai-1.7B **840 of 840** rows, SmolLM2-135M-Instruct and mindx-gen39 **800 of 800** each.
+- **The tokenizer** (`tokenizer_oracle.py 127.0.0.1:PORT .models/oracle-tokenizer-smollm`): the same corpus on
+  SmolLM2's vocabulary, **4,346 of 4,346**, with two new edge strings: bytes SmolLM2 has no token for, and plane-4
+  characters. Re-recorded on the Qwen3 vocabulary, the grown corpus caught a bug: `</s>` (NORMAL in the file, CONTROL
+  in llama.cpp by its name) was taken as text in 2 of 4,346 cases. Fixed; 4,346 of 4,346.
+- **The templates** (`template_oracle.py`, written per model as `cases-<stem>.jsonl`): SmolLM2-Instruct's and
+  mindx-gen39's ChatML, **317 of 317** each.
+- **llama-server's tokens** (greedy short, `--long`, `--deep`; seeded; conversations; JSON mode, each recorded from that
+  model's server): SmolLM2 6, 6, 3 and 40 of 40; mindx-gen39 6, 6, 3 and 40 of 40; Bonsai-1.7B 6 and 40 of 40;
+  conversations 9 of 9 and JSON mode 23 of 23 on each. On a ChatML template llama-server builds a different JSON
+  grammar (no `<think>` in its root); the record shows it, and bankML carries it per template.
+- **Live and through the C API**: `serve_oracle.py --bankml STEM [NAME]` and `json_oracle.py --bankml STEM [NAME]` on
+  each model (mindx-gen39 asked for as `mindx-gen39`), and `capi_oracle.py --chat` against each model's record.
+
 ## 6. Oracles planned
 
 - **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer

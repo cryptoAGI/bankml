@@ -221,6 +221,14 @@ try:
     check("the catalogue: every entry open source, fully pinned (64-hex sha256, 40-hex revision), one default, no Gemma",
           all(M.licence_open(c["licence"]) and len(c["sha256"]) == 64 and len(c["revision"]) == 40 for c in M.CATALOG)
           and sum(bool(c.get("default")) for c in M.CATALOG) == 1 and not any("gemma" in c["id"] for c in M.CATALOG))
+    check("the recorded conversions (0.3.4): open source, the GGUF and its source both pinned by sha256, a 40-hex revision, the tools named",
+          all(M.licence_open(c["licence"]) and len(c["sha256"]) == 64 and len(c["source_sha256"]) == 64 and len(c["revision"]) == 40
+              and "convert_hf_to_gguf.py" in c["tools"] for c in M.CONVERTED))
+    try:
+        M.pin_converted("not-a-conversion.gguf")
+        check("pin_converted refuses a file it has no record of", False)
+    except RuntimeError:
+        check("pin_converted refuses a file it has no record of", True)
 
     # a real carrier, on spare ports, when asked and when the small Bonsai is here
     b17 = ROOT / ".models" / "Bonsai-1.7B-Q1_0.gguf"

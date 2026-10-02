@@ -14,7 +14,8 @@ generation prompt the server used.
     → .models/oracle-json/json-<model>.jsonl
 `oracle_json_mode` / `oracle_json_mode_ternary` (cargo, --ignored) replay the records through bankML's engine.
 
-Live (`--bankml`): bankml serve --native with the 1-bit model on spare ports; a subset of the records goes through
+Live (`--bankml [STEM [NAME]]`; 0.3.4: any recorded model, e.g. SmolLM2-135M-Instruct-F16, or mindx-gen39-F16 asked for
+as `mindx-gen39`): bankml serve --native with the 1-bit model on spare ports; a subset of the records goes through
 `/v1/chat/completions` (`response_format`, streamed once) and through Ollama's `/api/chat` with `format: "json"`
 (the Ollama shape is mapped onto the same request), each from an empty slot; every answer must equal the record."""
 import json, os, subprocess, sys, time, urllib.request
@@ -106,10 +107,10 @@ def record(stem):
     print(f"{len(cases)} constrained answers from llama-server b11192 ({stem}) → {dest}")
 
 
-def bankml():
-    stem = "Bonsai-8B-Q1_0"
+def bankml(stem="Bonsai-8B-Q1_0", name=None):
     model = root / ".models" / f"{stem}.gguf"
-    fork = Path(os.environ.get("BANKML_FORK", Path.home() / ".local/share/bankml/forks/Bonsai-8B-Q1_0.gguf.FORK.json"))
+    forks = Path(os.environ.get("BANKML_FORKS", Path.home() / ".local/share/bankml/forks"))
+    fork = Path(os.environ.get("BANKML_FORK", forks / f"{stem}.gguf.FORK.json")) if stem == "Bonsai-8B-Q1_0" else forks / f"{stem}.gguf.FORK.json"
     rec = out / f"json-{stem}.jsonl"
     binary = root / "target" / "release" / "bankml"
     missing = [str(p) for p in (model, fork, rec, binary) if not p.exists()]
@@ -118,7 +119,7 @@ def bankml():
         return 0
     cases = {c["name"]: c for c in map(json.loads, rec.read_text().splitlines())}
     pick = [cases[n] for n in ("cat-greedy", "haiku-t0.7-s11", "yes-greedy", "gbnf-yesno-t1.0-s7")]
-    base, name = "http://127.0.0.1:18197", "bonsai-8b-q1_0"
+    base, name = "http://127.0.0.1:18197", name or stem.lower()
     proc = subprocess.Popen([str(binary), "serve", str(model), "--fork", str(fork), "--native", "--listen", "127.0.0.1:18197",
                              "--upstream", "127.0.0.1:18198", "--ctx", "2048"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     t0, n, ok = time.time(), 0, 0
@@ -164,7 +165,7 @@ def bankml():
     finally:
         proc.terminate()
         proc.wait()
-    print(f"json live oracle: {ok} of {n} answers through bankml serve --native (/v1 response_format and grammar, streamed once; /api/chat "
+    print(f"json live oracle ({stem}): {ok} of {n} answers through bankml serve --native (/v1 response_format and grammar, streamed once; /api/chat "
           f"format \"json\") identical to llama-server b11192's record (content, finish, prompt/completion counts) — {time.time() - t0:.0f} s")
     return 0 if ok == n else 1
 
@@ -173,6 +174,6 @@ if __name__ == "__main__":
     if "--record" in sys.argv:
         record(sys.argv[sys.argv.index("--record") + 1])
     elif "--bankml" in sys.argv:
-        sys.exit(bankml())
+        sys.exit(bankml(*sys.argv[sys.argv.index("--bankml") + 1:][:2]))
     else:
         sys.exit(__doc__)
