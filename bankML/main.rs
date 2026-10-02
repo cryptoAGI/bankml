@@ -12,8 +12,10 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
-       bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N]
-                                                              (answers from bankML's own forward pass; also serves the engine address)
+       bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR]
+                                                              (answers from bankML's own forward pass; also serves the engine address;
+                                                              OpenAI /v1 and Ollama /api; --registry: every model pinned in DIR,
+                                                              default ~/.local/share/bankml/forks, by name, one resident at a time)
        bankml tokenize MODEL.gguf [--no-special] < text      (token ids, as llama.cpp's /tokenize)
        bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
        bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
@@ -230,6 +232,13 @@ fn main() {
                     spec_ngram: flag("--spec-ngram"),
                     slot_dir: opt("--slot-dir").map(Into::into),
                     native: flag("--native"),
+                    // `--registry` alone means the importer's forks directory ($BANKML_FORKS, as sAGI/models.py)
+                    registry: a.iter().position(|x| x == "--registry").map(|i| match a.get(i + 1) {
+                        Some(d) if !d.starts_with("--") => d.into(),
+                        _ => std::env::var("BANKML_FORKS").map(std::path::PathBuf::from)
+                            .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share/bankml/forks")),
+                    }),
+                    keep_alive: opt("--keep-alive"),
                 };
                 match bankml::serve::run(cfg) {
                     Ok(()) => 0,

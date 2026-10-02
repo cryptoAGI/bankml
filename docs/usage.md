@@ -159,6 +159,78 @@ curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' 
   -d '{"messages":[{"role":"user","content":"Say hello. /no_think"}],"max_tokens":32}'
 ```
 
+## 6a. Ollama's API
+
+Since 0.3.1 `bankml serve --native` also speaks Ollama's API, over the same engine, gate and receipts. **Native
+only:** bankML answers what its own verified forward pass can do and refuses the rest with HTTP 400
+`{"error": "…"}` that says why; it never hands a request to llama-server or to Ollama. What mindX asks of Ollama,
+and what is still missing, is in [OLLAMA.md](OLLAMA.md).
+
+```sh
+target/release/bankml serve .models/Bonsai-8B-Q1_0.gguf --fork ~/.local/share/bankml/forks/Bonsai-8B-Q1_0.gguf.FORK.json \
+    --native --registry --ctx 2048            # --registry [DIR]: every model pinned there, by name; --keep-alive 5m
+B=127.0.0.1:18093; J='Content-Type: application/json'
+curl -s $B/api/version
+curl -s $B/api/tags                          # every pin: name, size, digest = its sha256, details, "bankml": {"native", "reason"}
+curl -s $B/api/ps                            # the resident model and its expires_at
+curl -s $B/api/show -H "$J" -d '{"model": "bonsai-8b-q1_0"}'
+curl -s $B/api/chat -H "$J" -d '{"model": "bonsai-8b-q1_0", "messages": [{"role": "user", "content": "Name a prime."}],
+    "stream": false, "options": {"temperature": 0.3, "seed": 7, "num_predict": 32}}'
+curl -s $B/api/generate -H "$J" -d '{"model": "bonsai-8b-q1_0", "system": "Answer in one word.", "prompt": "Capital of France?", "stream": false}'
+curl -s $B/api/generate -H "$J" -d '{"model": "bonsai-8b-q1_0", "keep_alive": 0}'          # unload now (done_reason "unload")
+curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "keep_alive": "30m"}'  # verify and load (done_reason "load")
+```
+
+- **Names.** A model's name is its file's stem, lower-cased: `bonsai-8b-q1_0`, `ternary-bonsai-8b-q2_0_g64`.
+  - `:latest` and the file name are accepted as aliases.
+  - A request without a model uses the one `serve` started with.
+  - An unknown name answers 404.
+- **Where models come from.** Without `--registry`, only the startup model is served. With it, every GGUF pinned in
+  `DIR` (default `$BANKML_FORKS`, else `~/.local/share/bankml/forks`) can be asked for. The file is looked for
+  beside the startup model and in `DIR`.
+- **`/api/tags` lists every pin, honestly.** A pin bankML cannot play is listed with `"native": false` and the reason.
+  Asking for one answers 400 with that reason. Two examples:
+  - `qwen3-0.6b-q8_0`: Q8_0 weights, O3;
+  - `bonsai-1.7b-q1_0`: tied embeddings, O4.
+- **One resident model.** A request for another model drops the resident one, then verifies the new one before it
+  loads it: the guard, then the sha256 pin, as at the start.
+- **`keep_alive`** is read as Ollama reads it:
+  - `"5m"`, `"1h"`, `"1h30m"`, or a number of seconds;
+  - `0` unloads after the answer;
+  - a negative value keeps the model for good.
+
+  `/api/*` requests that name none get `--keep-alive` (default `5m`). An idle model is dropped when its time runs out,
+  and its memory map with it. The OpenAI and llama-server endpoints name no keep-alive. They keep the model resident,
+  as 0.3.0 did, and load the startup model again if nothing is resident.
+- **An empty prompt only loads or unloads.** That is a `/api/generate` without a `prompt`, or a `/api/chat` without
+  `messages`. The answer's `done_reason` is `load` or `unload`.
+- **Streaming is on by default**, as in Ollama: NDJSON (`application/x-ndjson`), one object per line, then a final
+  `done: true` object. That object carries:
+  - `done_reason` (`stop` or `length`);
+  - `total_duration`, `load_duration`, `prompt_eval_duration` and `eval_duration`, in nanoseconds;
+  - `prompt_eval_count`: the whole prompt;
+  - `eval_count`: generated tokens, the end-of-turn token included, as llama-server counts it;
+  - `bankml_cache_n`: prompt tokens reused from the cache;
+  - `bankml_receipt`, as on `/v1/chat/completions`.
+- **Options.**
+  - **Honoured:** `temperature`, `top_k`, `top_p`, `min_p`, `seed`, `num_predict` and `stop` (also on `/v1`).
+  - **`num_ctx`:** accepted up to the served `--ctx`, refused above it.
+  - **Penalties:** a neutral value passes, anything else is refused, until the penalty sampler has its oracle.
+  - **Ignored**, because they do not change the answer bankML gives: `num_thread`, `num_batch`, `num_gpu`, `use_mmap`
+    and the other resource options.
+  - **Refused:** any other option.
+- **Refused, with the reason:**
+  - `format` (JSON mode, O6);
+  - `tools` and `tool_calls` (O6);
+  - `images`;
+  - `suffix`, `template`, `context`;
+  - `think: true` (the template is rendered with thinking off; `think: false` is accepted);
+  - `/api/embed` (O7), `/api/create` (O5), `/api/pull`, `DELETE /api/delete`, `/api/copy`, `/api/push`.
+- **`raw: true`** tokenizes `prompt` as given, with special tokens and no template. `system` is ignored then, as in
+  Ollama.
+- **The loopback rules still apply.** POST bodies need `Content-Type: application/json` (`curl -d` alone sends a
+  form type and gets 415), and `Host` must be a loopback name.
+
 ## 7. Let others watch (view mode, on the LAN)
 
 ```sh
@@ -450,7 +522,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
 | `BANKML_GPU=off` · `BANKML_GPU_SHARE=0.3` | the GPU worker (0.2.14): a verified card takes a calibrated share of every 1-bit matrix's rows; `off` disables it, a number overrides the share |
-| `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N]` | answers from bankML's own forward pass (0.3.0), token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. Savante's Models → Resources **engine** setting chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
+| `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N] [--registry [DIR]] [--keep-alive DUR]` | answers from bankML's own forward pass (0.3.0); since 0.3.1 also Ollama's API (§6a) and, with `--registry`, any pinned model by name, one resident at a time; token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. Savante's Models → Resources **engine** setting chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
 | `bankml gpu --verify` | runs the bit-exact kernel oracle on every usable card (0.2.13); a card that fails is named and never used |
 | `bankml gpu [--remote]` | every video card found (Vulkan, merged with `/sys/class/drm`) and which bankml will use; `--remote` adds the GPUs Hugging Face rents (22 NVIDIA flavors with card counts and prices; listed, never started); `BANKML_GPU=off` turns the component off, `BANKML_GPU=0,2` picks cards (0.2.12; the GPU kernels are the next steps) |
 | `bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json` (or plain text) | bankml's own forward pass, greedy, or with `--sample` llama-server's sampler chain (the model's defaults unless given; same seed, same tokens as llama-server, 0.2.11), streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts of any length and contexts of any length (all three of ggml's CPU attention kernels, since 0.2.10); `BANKML_LLAMA_THREADS` (default 3) must equal the `-t` of the llama.cpp being matched, because its long-context decode kernel chunks by thread; `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |

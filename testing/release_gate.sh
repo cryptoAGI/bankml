@@ -31,6 +31,9 @@ out=testing/results/$v.txt
       log=$(cargo test --release --locked -q -- --ignored --exact "$name" --nocapture --test-threads=1 2>&1) || { echo "$log"; echo "FAILED: $t"; exit 1; }
       echo "$log" | grep -vE '^(running|$)|^test result: ok. 0' || true
     done
+    # 0.3.1: the Ollama shape — /api/chat == /v1/chat/completions == llama-server's record, and unload/reload unchanged
+    echo "## serve_oracle_ollama_shape"
+    python3 -B testing/serve_oracle.py --bankml || { echo "FAILED: serve_oracle_ollama_shape"; exit 1; }
   else
     echo "BANKML_GGML_LIB unset: oracles, A/B and budgets skipped"
   fi

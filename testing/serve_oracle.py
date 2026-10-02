@@ -9,16 +9,24 @@ bankml's native engine must give the same text and the same counts, turn by turn
 
 Start a FRESH llama-server (an empty cache) with Savante's flags on a spare port, then:
     python3 testing/serve_oracle.py http://127.0.0.1:18094
-Writes .models/oracle-forward/serve-<model stem>.jsonl."""
-import json, sys, urllib.request
+Writes .models/oracle-forward/serve-<model stem>.jsonl.
+
+The 0.3.1 Ollama-shape case (`--bankml`): bankml serve --native is started on spare ports with the 8B 1-bit model and
+the same conversations go through it three ways, each from an empty slot (the model unloaded and loaded again):
+OpenAI's `/v1/chat/completions`, Ollama's `/api/chat` (options, NDJSON streaming for the first conversation), and
+`/v1/chat/completions` once more after load → unload → reload. All three must give the same text and counts turn by
+turn, and the first must equal llama-server's recorded answers above, so `/api/chat` is tied to llama-server too.
+    python3 testing/serve_oracle.py --bankml        (needs target/release/bankml, the model and its FORK.json)"""
+import json, os, subprocess, sys, time, urllib.request
 from pathlib import Path
 
-url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18094"
-out = Path(__file__).resolve().parents[1] / ".models" / "oracle-forward"
+root = Path(__file__).resolve().parents[1]
+url = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] != "--bankml" else "http://127.0.0.1:18094"
+out = root / ".models" / "oracle-forward"
 
 
-def post(path, body):
-    req = urllib.request.Request(url + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+def post(path, body, base=None):
+    req = urllib.request.Request((base or url) + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=3600) as r:
         return json.load(r)
 
@@ -30,6 +38,93 @@ conversations = [
     ["Name a prime number.", "Is 91 prime?", "Why not?"],
     ["Say hello in French.", "Now in Spanish.", "Which of the two did you find easier to write, and why?"],
 ]
+
+
+def bankml_case():
+    """/api/chat == /v1/chat/completions == llama-server's record, and load → unload → reload changes nothing."""
+    model = root / ".models" / "Bonsai-8B-Q1_0.gguf"
+    fork = Path(os.environ.get("BANKML_FORK", Path.home() / ".local/share/bankml/forks/Bonsai-8B-Q1_0.gguf.FORK.json"))
+    record = out / "serve-Bonsai-8B-Q1_0.jsonl"
+    binary = root / "target" / "release" / "bankml"
+    missing = [str(p) for p in (model, fork, record, binary) if not p.exists()]
+    if missing:
+        print("ollama-shape oracle skipped: missing " + ", ".join(missing))
+        return 0
+    base, name = "http://127.0.0.1:18195", "bonsai-8b-q1_0"
+    proc = subprocess.Popen([str(binary), "serve", str(model), "--fork", str(fork), "--native", "--listen", "127.0.0.1:18195",
+                             "--upstream", "127.0.0.1:18196", "--ctx", "2048"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(300):
+            try:
+                urllib.request.urlopen(base + "/health", timeout=2).read()
+                break
+            except Exception:
+                if proc.poll() is not None:
+                    print("FAILED: bankml serve exited"); return 1
+                time.sleep(1)
+
+        def fresh(load=True):
+            assert post("/api/generate", {"model": name, "keep_alive": 0}, base)["done_reason"] == "unload"
+            assert json.load(urllib.request.urlopen(base + "/api/ps"))["models"] == []
+            if load:
+                assert post("/api/generate", {"model": name, "keep_alive": -1, "stream": False}, base)["done_reason"] == "load"
+
+        def v1(body):
+            r = post("/v1/chat/completions", body, base)
+            return (r["choices"][0]["message"]["content"], r["usage"]["prompt_tokens"], r["usage"]["completion_tokens"], r["timings"]["cache_n"])
+
+        def api(body, stream):
+            o = {"model": name + ":latest", "messages": body["messages"], "stream": stream, "keep_alive": -1,
+                 "options": {"temperature": body["temperature"], "seed": body["seed"], "num_predict": body["max_tokens"]}}
+            req = urllib.request.Request(base + "/api/chat", json.dumps(o).encode(), {"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=3600) as r:
+                lines = [json.loads(x) for x in r.read().decode().splitlines() if x.strip()]
+            assert all(not x["done"] for x in lines[:-1]) and lines[-1]["done"] and "bankml_receipt" in lines[-1], "NDJSON framing"
+            assert stream or len(lines) == 1
+            text = "".join(x["message"]["content"] for x in lines)
+            f = lines[-1]
+            return (text, f["prompt_eval_count"], f["eval_count"], f["bankml_cache_n"])
+
+        def run(ask, convs, stream_first=False):
+            got, seed = [], 3000
+            for ci, conv in enumerate(conversations):
+                messages = [{"role": "system", "content": SYSTEM}]
+                for q in conv:
+                    messages.append({"role": "user", "content": q})
+                    body = {"messages": list(messages), "temperature": 0.3, "seed": seed, "max_tokens": 64, "stream": False}
+                    seed += 1
+                    if ci not in convs:
+                        continue
+                    r = ask(body) if ask is v1 else ask(body, stream_first and ci == 0)
+                    got.append((ci, r))
+                    messages.append({"role": "assistant", "content": r[0]})
+                if ci not in convs:
+                    break
+            return got
+
+        want = [(t["text"], t["prompt_tokens"], t["completion_tokens"], t["cache_n"]) for t in map(json.loads, record.read_text().splitlines())]
+        t0 = time.time()
+        fresh(); a = run(v1, {0, 1, 2})
+        fresh(); b = run(api, {0, 1, 2}, stream_first=True)
+        fresh(load=False); c = run(v1, {0})  # nothing resident: /v1 loads (and verifies) the startup model itself
+        ok = 0
+        for i, ((_, ra), (_, rb)) in enumerate(zip(a, b)):
+            good = ra == rb == want[i] and (i >= len(c) or c[i][1] == ra)
+            ok += good
+            if not good:
+                print(f"  turn {i}: v1 {ra!r}\n          api {rb!r}\n          llama-server {want[i]!r}\n          reload {c[i][1] if i < len(c) else None!r}")
+        n = len(want)
+        print(f"ollama-shape oracle: {ok} of {n} turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions "
+              f"and llama-server b11192's record (text, prompt/completion counts, cache reuse); {len(c)} turns unchanged after "
+              f"unload and reload — {time.time() - t0:.0f} s")
+        return 0 if ok == n and len(a) == len(b) == n else 1
+    finally:
+        proc.terminate()
+        proc.wait(timeout=30)
+
+
+if "--bankml" in sys.argv:
+    sys.exit(bankml_case())
 turns = []
 seed = 3000
 for ci, conv in enumerate(conversations):

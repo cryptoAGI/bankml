@@ -27,6 +27,7 @@ run-to-run noise. Rejected experiments are kept with their numbers (`testing/exp
 | `bankML/forward.rs` | the Qwen3 forward pass: `Weights`, `KvCache`, the three ggml attention kernels, `prefill` (micro-batches), `decode`, `logits` |
 | `bankML/sampler.rs` | llama-server's sampler chain (libstdc++ `partial_sort` port, mt19937) |
 | `bankML/native.rs` | the engine behind `serve --native`: one slot with llama-server's prompt-cache rule |
+| `bankML/ollama.rs` | Ollama's API on `serve --native` (0.3.1): `/api/chat` `/api/generate` (NDJSON) `/api/tags` `/api/ps` `/api/show`, option mapping, refusals, `keep_alive`, stop strings; the registry and residency (`Registry`, `Residency`, one resident model, verify on every load) are in `native.rs`; native only, never proxied; roadmap `docs/OLLAMA.md` |
 | `bankML/gpu/` | the video-card component: `mod.rs` registry, `vulkan.rs`, `hf.rs` (rented, listed only), `spirv.rs`, `kernels.rs`, `compute.rs`, `worker.rs` |
 | `bankML/train/` | mindXtrain in Rust: `script.rs` (author), `imprint.rs` (score) |
 | `bankML/gguf.rs` | header parser, the guard (`judge`: the three low-bit traps, hostile headers), `type_name` for every ggml type, `Mmap` |
@@ -136,7 +137,7 @@ Llama refused). Never copy KoboldCpp code (AGPL); take llama.cpp/ggml code (MIT)
 
 ## Status (keep current)
 
-Released through **0.3.0** (milestone, 2026-09-29): **Savante answered by bankML's own forward pass.** Docs reader:
+Released through **0.3.1** (2026-10-01: Ollama's API natively, a registry of pinned models with one resident and `keep_alive`; docs/OLLAMA.md is the gap matrix against mindX and the O1–O8 track). Milestone **0.3.0** (2026-09-29): **Savante answered by bankML's own forward pass.** Docs reader:
 **https://cryptoagi.github.io/bankml/** (GitHub Pages from `main` `/docs`; `docs/index.html` reads the repo at the
 latest release through the GitHub API, falling back to its `FALLBACK_TAG`. **Bump that tag and the masthead's gate-record
 line at each release.**)

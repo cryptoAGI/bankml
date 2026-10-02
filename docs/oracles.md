@@ -260,6 +260,14 @@ the numbers. Turn 2 reuses 49 of turn 1's 53 prompt tokens, because the empty `<
 prompt is not rendered when that answer becomes history. A new conversation reuses the 38 tokens of the shared
 system prompt.
 
+**0.3.1: the Ollama shape.** `testing/serve_oracle.py --bankml` starts `bankml serve --native` with the 8B 1-bit model
+on spare ports and sends the same conversations three ways, each from an empty slot (the model unloaded, then loaded
+again, so each run starts as a fresh llama-server does): through Ollama's `/api/chat`, with the first conversation
+streamed as NDJSON and the options mapped from Ollama's names; through `/v1/chat/completions`; and through `/v1` once
+more after an unload in which `/v1` itself loads, and verifies, the startup model. Every turn must give the same text,
+prompt and completion counts and cache reuse on every path, equal to llama-server b11192's record. So the Ollama
+path inherits the conversation oracle, and a reload changes nothing.
+
 Each later step of the forward pass (RoPE, attention, the feed-forward block,
 the logits) is added to the same oracle before it counts.
 

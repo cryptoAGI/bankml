@@ -1,0 +1,138 @@
+# bankML as mindX's Ollama, and as its replacement for llama.cpp
+
+*Written for 0.3.1 (2026-10-01). Phase O1 below shipped in 0.3.1; every later phase is a plan, folded into the
+milestones of [TODO.md](TODO.md). Nothing here counts until its oracle passes in a gate record.*
+
+## The question, and the short answer
+
+Can bankML become a complete, optimized Ollama for mindX, and replace llama.cpp there? **As a direction, yes.
+Today, no.** bankML is narrow on purpose:
+
+- **What it runs.** Qwen3 in `Q1_0` and `Q2_0_g64`, with AVX2 (plus a verified Vulkan GPU share for 1-bit). One
+  conversation slot.
+- **What it proves.** It is token-identical to llama.cpp b11192 on every oracle in the gate, and about 8× faster on
+  the ternary model.
+- **What mindX asks of Ollama.** None of the models mindX serves through Ollama today is `Q1_0` or `Q2_0`:
+  - `mindx-genN`: SmolLM2, Llama architecture, F16;
+  - `qwen3`: `Q4_K`;
+  - `bge-m3`: an XLM-R encoder.
+
+**The decision (the operator's): native only.** bankML answers only what its own verified forward pass can do. It
+never proxies to llama-server or to Ollama to fill a gap; it refuses with HTTP 400 and a reason. Ollama keeps
+running beside it until native coverage catches up. The field agrees with the narrow scope. Ollama left llama.cpp in
+2025 for its own ggml-based engine, met regressions llama.cpp had already fixed, and went back to depending on
+llama.cpp in **v0.30.0 (May 2026)** (the field survey below). Replacing llama.cpp across the board is a treadmill.
+bankML wins where it owns the format, proves every bit, and grows one oracle-backed architecture at a time.
+
+## The gap matrix: what mindX calls, and where bankML stands
+
+The evidence is mindX's own code (file:line in the mindX repository, read 2026-10-01).
+
+| mindX asks for | where (mindX) | bankML | phase |
+|---|---|---|---|
+| `POST /api/generate`, non-streamed; reads `prompt_eval_count` and `eval_count` | `llm/ollama_handler.py:312` | **done (0.3.1)**: Ollama's counts and durations (ns), plus `bankml_receipt` | O1 |
+| `format: "json"` on generate | `llm/ollama_handler.py:121`, `:265` | **refused** (400): needs a grammar-constrained sampler | O6 |
+| `/api/chat` and `/api/generate` with `keep_alive: "5m"`, `options.num_predict`, `options.temperature` | `api/ollama/ollama_url.py:219-243` | **done (0.3.1)** | O1 |
+| passthrough fields `format`, `system`, `template`, `raw`, `suffix`, `images`, `think` | `api/ollama/ollama_url.py:250-256` | `system` and `raw` **done**; `think: false` accepted; `format`, `template`, `suffix`, `images` and `think: true` **refused** with the reason | O1 · O6 |
+| `/api/tags` and `/api/ps` (the lineage models, which are resident, `expires_at`) | `agents/storage/hf_client.py:3728-3753` | **done (0.3.1)**: every pinned model, `digest` = the pinned sha256, plus `"bankml": {"native", "reason"}` | O1 |
+| load and unload by an empty `/api/generate` with `keep_alive` (`done_reason` `load` / `unload`) | `agents/storage/hf_client.py:3760-3777` | **done (0.3.1)**; each load runs the full guard + sha256 pin | O1 |
+| `ollama_predict`: `/api/chat` with `temperature 0`, **`repeat_penalty 1.3`**, `num_ctx 2048` | `agents/storage/hf_client.py:2423-2431` | `num_ctx` **done**; `repeat_penalty` **refused** until the penalty sampler has an oracle | O2 |
+| prune old generations with `DELETE /api/delete` | `agents/storage/hf_client.py:945`, `:974` | **refused by design**: pinned files are not deleted over HTTP | — |
+| `/api/embed` with `bge-m3` (XLM-R encoder, 1024 dimensions), `truncate: true` | `agents/memory_pgvector.py:937-958` | **refused** (400): no encoder graph yet | O7 |
+| `ollama create` from a Modelfile (`FROM` + `ADAPTER`), then a persona `SYSTEM` layer (`ollama show --modelfile`, re-create) | `mindx/godel/mindxtrain/promote.py:52-85`, `:181-323` | `/api/show` **done** (a read-only modelfile); `create` **refused** | O4 + O5 |
+| `ollama show <tag>` to check a base's architecture | `mindx/godel/mindxtrain/promote.py:88-119`; `/api/show` at `llm/ollama_handler.py:479` | **done (0.3.1)**: `details`, `model_info` from the GGUF header, `parameters` from its sampling defaults | O1 |
+| the models themselves: SmolLM2-135M `mindx-genN` (Llama architecture, F16 safetensors merged to GGUF) | `mindx/godel/mindxtrain/promote.py` | **not native**: Llama architecture and F16 | O3 + O4 |
+| the boardroom's `num_ctx 8192` | `daio/governance/boardroom.py:988-996` | accepted when `serve --ctx` is at least 8192; the f16 KV cache is what makes it costly | O8 (quantized KV) |
+
+**Also refused in 0.3.1, each with a reason:**
+- `tools` and message `tool_calls` (O6);
+- `images` (vision is out of scope);
+- `/api/pull`: import through the pinned importer instead;
+- `/api/copy` and `/api/push`;
+- `mirostat`, `tfs_z`, and any option bankML does not know.
+
+**Accepted and ignored**, because they change scheduling, not the answer bankML gives:
+`num_thread`, `num_gpu`, `main_gpu`, `num_batch`, `use_mmap`, `use_mlock`, `low_vram`, `numa`, `f16_kv`,
+`vocab_only`, `logits_all`, `num_keep`, `repeat_last_n`. The last two matter only with a context shift or a
+penalty, and bankML does neither.
+
+## The track: O1–O8, folded into the milestones
+
+Each phase is ordered by what mindX needs, and sits inside an existing milestone of [TODO.md](TODO.md), never beside
+it.
+
+| phase | content | milestone | what it retires in mindX |
+|---|---|---|---|
+| **O1** | Ollama's native API, a model registry and residency (**0.3.1, done**) | 0.3.x | — |
+| O2 | The sampler chain, including repeat, presence and frequency penalties (`last_n`), each with a seeded oracle; behaviour at the context limit; more than one slot | 0.4.0 | the coach's `repeat_penalty: 1.3` |
+| O3 | `Q8_0`, F16 and BF16 weight kernels, then `Q4_K`, each bit-exact against ggml | 0.6.0 | opens the standard-quant Qwen3 family |
+| O4 | The Llama architecture: optional QK-norm, tied embeddings (which also opens Bonsai-1.7B), SmolLM2's tokenizer and template | 0.6.0 | **`mindx-genN` served natively** |
+| O5 | `bankml create`: a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded in FORK.json, and a Rust safetensors → GGUF converter for the merged SmolLM2; then `promote.py --to bankml` | 0.7.0 (beside mindXtrain in Rust) | `ollama create` |
+| O6 | A grammar engine: first a JSON-only mask (`format: "json"`), then a GBNF subset (JSON schema), then tool calls | 0.4.x → 0.6.0 | `format: "json"`, used across mindX |
+| O7 | The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling), `/api/embed` and `/v1/embeddings`, with a bge-m3 oracle against llama.cpp's embedding output | 0.6.0 | step 2 of the embedding cascade |
+| O8 | Optimisation: continuous batching across slots, AVX-512 and VNNI, NEON, a quantized KV cache, and 1-bit decode at least at llama-server's speed | 0.4.0 / 0.5.0 | — |
+
+### What O1 built (0.3.1)
+
+- **`bankML/ollama.rs`**: the Ollama shape over the existing engine:
+  - `GET /api/version`, `/api/tags`, `/api/ps`; `POST /api/show`, `/api/chat`, `/api/generate`;
+  - NDJSON streaming, Ollama's default;
+  - option mapping and the refusals above;
+  - stop strings, which `/v1/chat/completions` now honours too.
+- **The registry and residency** (`native.rs`):
+  - **Registry.** `bankml serve --native --registry [DIR]` names every GGUF pinned in the forks directory: the file's stem, lower-cased (`bonsai-8b-q1_0`, `ternary-bonsai-8b-q2_0_g64`). `:latest` and the file name are accepted as aliases.
+  - **One resident model.** As Ollama's `MAX_LOADED_MODELS=1`. A switch drops the old model before the new one is read.
+  - **Every load verified.** Each load runs the same `verify` as the start (the guard, then the sha256 pin).
+  - **keep_alive.** `keep_alive` and `--keep-alive` (default `5m`) drop an idle model and its memory map.
+  - **One engine for both APIs.** `/v1/chat/completions` goes through the same resolver, so both APIs share one engine and one slot.
+- **Honest listing.** `/api/tags` lists a pin bankML cannot play with the reason:
+  - `qwen3-0.6b-q8_0`: "weights are Q8_0 … O3";
+  - `bonsai-1.7b-q1_0`: "tied embeddings (no output.weight) … O4".
+  - A startup model of that kind is now refused at start. In 0.3.0 it started and then failed every request.
+- **The oracle** (`testing/serve_oracle.py --bankml`, in the gate). It runs the 0.3.0 conversations through three paths:
+  - `/api/chat`, the first conversation streamed;
+  - `/v1/chat/completions`;
+  - `/v1/chat/completions` again, after unload and reload.
+
+  All three must equal each other and llama-server b11192's record, turn by turn.
+
+## "Replacement for llama.cpp" means bankML's own 1.0.0
+
+The criteria are the six in [TODO.md](TODO.md#the-road-from-030-to-100), unchanged:
+- llama.cpp is needed only as the **oracle in the gate**, never at run time;
+- every supported architecture × format passes its full oracle set;
+- bankML is **at parity or better** on every supported format, on named reference machines;
+- the interfaces are stable under semver;
+- receipts are signed;
+- Savante and mindX run on bankML by default.
+
+An Ollama-shaped API does not make bankML a replacement. Coverage proven by oracles does.
+
+## Out of scope, stated honestly
+
+- **Ollama Cloud models** (gpt-oss cloud and the others). They stay with mindX's `tools/cloud/ollama_cloud_tool.py`.
+- **Vision**: `images` is refused.
+- **Models without an OSI licence** (Gemma, Llama weights). The importer already refuses them; the Llama
+  *architecture* is in scope (O4) for open weights such as SmolLM2.
+- **GPU parity beyond Vulkan**: no CUDA, ROCm or Metal backends.
+- **Proxying**: bankML never forwards a request it cannot answer natively.
+
+## Field survey (2026-10-01)
+
+The survey of Rust serving and low-bit kernels is in the mindX repository, at `docs/BANKML_RUST_SERVING_RESEARCH.md`.
+Its figures are what each project reports; none has been reproduced on our hardware.
+
+Two findings matter most:
+- **Crane**, in Rust on Candle, natively loads Prism's `PTQ1_0` and `PQ2_0` GGUF. That makes it the direct competitor in bankML's own format.
+- **Ollama v0.30.0** went back to llama.cpp after its own engine regressed. That supports the native-only, narrow scope.
+
+Its ranked adoption list, mapped onto this track:
+
+| rank | adopt | phase |
+|---|---|---|
+| 1 | Bench Crane's CPU ternary path against bankML on the same Ternary-Bonsai-8B file, pinned (`testing/pinned.sh`) | now (O8 baseline) |
+| 2 | A native JSON-mode grammar mask, with llama.cpp's `json.gbnf` mask as the oracle, token for token | O6 |
+| 3 | Continuous batching across slots (the boardroom's parallel soldiers) | O8, after O2's multi-slot |
+| 4 | A `q8_0` KV cache (llama.cpp's `--cache-type-k/v q8_0`, so the oracle exists), then a Hadamard-rotated 4-bit KV | O3 → O8 |
+| 5 | A lookup-table (TL-style) ternary matrix–vector product, and tunable tiling | O8 |
+| 6 | Prompt-lookup (n-gram) speculation: no model memory, exact under greedy verification | O8, adopted only on a measured gain |

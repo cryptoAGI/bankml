@@ -94,6 +94,19 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 - [ ] Optional external engines at a process boundary (bitnet.cpp, KoboldCpp) as benchmark rivals and cross-checks,
   never linked (LICENSING.md).
 
+## 0.3.1 — Ollama's API, natively (done)
+
+- [x] **Phase O1 of [OLLAMA.md](OLLAMA.md)**: `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`,
+  `/api/generate` on `bankml serve --native`; a model registry (`--registry`) with one resident model, each load
+  verified, and `keep_alive`. Native only: what the forward pass cannot do is refused with a reason, never proxied.
+  Oracle: `/api/chat` gives the same turns as `/v1/chat/completions` and llama-server's record, and unload/reload
+  changes nothing (`serve_oracle.py --bankml`, in the gate).
+- [ ] **Bench Crane's CPU ternary path** against bankML on the same Ternary-Bonsai-8B file, pinned
+  (`testing/pinned.sh`): the one Rust engine that loads the Bonsai formats (the field survey in OLLAMA.md).
+
+**The Ollama track (O2–O8)** is folded into the milestones below; each item is marked with its phase. The gap matrix
+of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
+
 ## The road from 0.3.0 to 1.0.0
 
 **What 1.0.0 means.** bankML is the engine, not a companion to one:
@@ -113,14 +126,19 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] Slot save and restore in `--native` (Savante's warm start); oracle: the tokens after a restore equal the
   tokens without one.
 - [ ] More than one slot (`-np N`) with llama-server's queueing, or a stated single-slot contract; the conversation
-  oracle extended to interleaved sessions.
+  oracle extended to interleaved sessions. (O2; then continuous batching across slots, O8.)
 - [ ] The rest of llama-server's sampler chain, each with a seeded oracle: repetition, presence and frequency
-  penalties (`last_n`), typical-p, DRY, XTC, top-n-σ, dynamic temperature.
+  penalties (`last_n`), typical-p, DRY, XTC, top-n-σ, dynamic temperature. (O2: retires the refusal of the coach's
+  `repeat_penalty: 1.3`.)
+- [ ] **JSON mode** (O6, first cut): a JSON-only grammar mask over the tokenizer's byte trie, with llama.cpp's
+  `json.gbnf` mask as the oracle, token for token; then `format: "json"` on `/api/*` and `response_format` on `/v1`.
 - [ ] `/completion` with `n_probs`, and logprobs on `/v1/chat/completions`, bit-exact probabilities.
-- [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle.
+- [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle. (O2)
+- [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated
+  4-bit KV (O8: what makes the boardroom's `num_ctx 8192` affordable).
 - [ ] **1-bit decode at least at llama-server's speed**: currently 1.9–2.0 tokens/s against 2.8. Cache the norm
   weights, cut per-token allocations, share one quantized activation across Q/K/V and gate/up, and compute logits
-  only where sampled.
+  only where sampled. (O8)
 - [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files.
 
 ### 0.5.0 — hardware
@@ -131,18 +149,24 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   multi-card machine; a Hugging Face Job (`l4x4`, `a10g-largex2`) is the candidate, **only on the owner's go-ahead
   and budget**.
 - [ ] A discrete-card measurement (the first rented T4 or L4 run, with the owner's approval): verify, then speed.
-- [ ] AVX-512 and VNNI kernels where present (Zen 4, Intel), bit-exact; Zen 3 and Zen 4 rows in PERFORMANCE.md.
+- [ ] AVX-512 and VNNI kernels where present (Zen 4, Intel), bit-exact; Zen 3 and Zen 4 rows in PERFORMANCE.md. (O8)
 - [ ] **NEON kernels for ARM** (P5), with the oracle against llama.cpp's ARM build on an ARM machine: the first step of
   the handheld track below.
 - [ ] The target-feature 1.1 clean-up: the same bits with fewer `unsafe`.
 - [ ] CI builds and unit-tests across the x86 variants and aarch64.
 
 ### 0.6.0 — more models
-- [ ] The **Llama architecture** (SmolLM2, Llama 3.x): the first beyond Qwen3, needed by mindXtrain's probe.
+- [ ] The **Llama architecture** (SmolLM2, Llama 3.x): the first beyond Qwen3, needed by mindXtrain's probe. Optional
+  QK-norm, tied embeddings (which also opens Bonsai-1.7B, refused today), SmolLM2's tokenizer and template (O4:
+  `mindx-genN` served natively).
 - [ ] Qwen2 and Qwen2.5 (the coder models in the catalogue).
-- [ ] ggml's standard formats as kernels bit-exact against ggml: `Q8_0` and `Q4_K_M` first, so that catalogue models
-  run natively.
-- [ ] A GGUF writer (merged models from mindXtrain; repacked forks).
+- [ ] ggml's standard formats as kernels bit-exact against ggml: `Q8_0`, F16 and BF16 first, then `Q4_K_M`, so that
+  catalogue models run natively (O3).
+- [ ] The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling) with `/api/embed` and
+  `/v1/embeddings`; the oracle is llama.cpp's bge-m3 embedding output (O7).
+- [ ] Grammar beyond JSON: a GBNF subset for JSON schemas, then tool calls through the template (O6).
+- [ ] A GGUF writer (merged models from mindXtrain; repacked forks); the safetensors → GGUF converter for the merged
+  SmolLM2 (O5).
 - [ ] Each architecture and format gets the full oracle set (the whole model, greedy, sampling, conversations) in the
   gate.
 
@@ -153,6 +177,8 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   each identical to mindXtrain's Python.
 - [ ] **LoRA training on the CPU**: a backward pass and AdamW for the 135M–0.6B imprint recipe. Gradients are checked
   against PyTorch f32 within a stated bound, and the recall gate's verdict must agree.
+- [ ] `bankml create` (O5): a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded in
+  FORK.json; then mindXtrain's `promote.py --to bankml` replaces `ollama create`.
 - [ ] One generation end to end in Rust: author → imprint → probe → score → verdict → GGUF. Also use the exact
   pipeline to find out why the gate has refused every generation since 39.
 

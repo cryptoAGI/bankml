@@ -12,14 +12,21 @@
 //!   with a reason, never approximated;
 //! - the answer streams as whole UTF-8 characters; the end-of-turn token ends it, is not part of the text, and is
 //!   counted among the completion tokens as llama-server counts it.
+//!
+//! 0.3.1 adds the model's lifecycle (`Registry`, `Residency`): every pinned GGUF in the forks directory gets a name,
+//! one model is resident at a time, a load runs the full `verify` (guard, then the sha256 pin) exactly as `serve`'s
+//! start does, and an idle model is dropped (its mmap with it) when its keep-alive runs out — Ollama's lifecycle,
+//! bankML's gate.
 
 use crate::chat::{self, Message};
 use crate::forward::{KvCache, Weights};
 use crate::sampler::{Params, Sampler};
-use crate::serve::Json;
+use crate::serve::{ident, FileIdent, Json};
 use crate::tokenizer::Tokenizer;
+use crate::Verified;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct Slot {
     tokens: Vec<u32>,
@@ -44,6 +51,9 @@ pub struct Done {
     pub completion_tokens: usize,
     pub finish_reason: &'static str,
     pub text: String,
+    /// wall time of the prompt's computation (the uncached part) and of the generation after it, in nanoseconds
+    pub prompt_ns: u64,
+    pub eval_ns: u64,
 }
 
 impl Native {
@@ -59,31 +69,7 @@ impl Native {
 
     /// The request's sampling parameters over the model's defaults; an unsupported sampler is refused.
     pub fn params(&self, req: &Json) -> Result<Params, String> {
-        let num = |k: &str| match req.get(k) {
-            Some(Json::Num(n)) => Some(*n),
-            _ => None,
-        };
-        let mut p = self.defaults.clone();
-        if let Some(v) = num("temperature") { p.temp = v as f32 }
-        if let Some(v) = num("top_k") { p.top_k = v as i32 }
-        if let Some(v) = num("top_p") { p.top_p = v as f32 }
-        if let Some(v) = num("min_p") { p.min_p = v as f32 }
-        if let Some(v) = num("min_keep") { p.min_keep = v as usize }
-        if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
-        for (k, neutral) in [("repeat_penalty", 1.0), ("presence_penalty", 0.0), ("frequency_penalty", 0.0), ("typical_p", 1.0),
-                             ("xtc_probability", 0.0), ("dry_multiplier", 0.0), ("dynatemp_range", 0.0)] {
-            if let Some(v) = num(k) {
-                if v != neutral {
-                    return Err(format!("{k} = {v}: bankML's native engine reproduces llama.cpp's top-k, top-p, min-p and temperature; this sampler is not reproduced yet"));
-                }
-            }
-        }
-        if let Some(v) = num("top_n_sigma") {
-            if v > 0.0 {
-                return Err("top_n_sigma: not reproduced yet".into());
-            }
-        }
-        Ok(p)
+        sampling(self.defaults.clone(), req)
     }
 
     /// The prompt a conversation becomes, as token ids (llama-server: the template, then tokenization with specials).
@@ -102,6 +88,7 @@ impl Native {
         }
         let mut sampler = Sampler::new(params)?;
         let mut slot = self.slot.lock().map_err(|_| "the slot is poisoned")?;
+        let t0 = Instant::now();
         // llama-server's prompt cache: the longest common prefix, less one when the whole prompt is cached
         let mut n_past = slot.tokens.iter().zip(prompt).take_while(|(a, b)| a == b).count();
         if n_past == prompt.len() {
@@ -114,6 +101,8 @@ impl Native {
         let Slot { tokens, caches } = &mut *slot;
         let mut rn = self.w.prefill(caches, &prompt[n_past..], |_, _, _| {})?;
         tokens.extend_from_slice(&prompt[n_past..]);
+        let prompt_ns = t0.elapsed().as_nanos() as u64;
+        let t1 = Instant::now();
         let (mut pending, mut text, mut n, mut finish) = (Vec::<u8>::new(), String::new(), 0usize, "length");
         loop {
             if max_tokens.is_some_and(|m| n >= m) {
@@ -150,13 +139,327 @@ impl Native {
             text.push_str(&piece);
             emit(&piece);
         }
-        Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text })
+        Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text, prompt_ns,
+                  eval_ns: t1.elapsed().as_nanos() as u64 })
     }
 
     /// `/props`, in the shape Savante reads (the context and the model's path).
     pub fn props_json(&self) -> String {
         format!("{{\"model_path\": {}, \"n_ctx\": {}, \"default_generation_settings\": {{\"n_ctx\": {}, \"params\": {{\"temperature\": {}, \"top_k\": {}, \"top_p\": {}, \"min_p\": {}}}}}, \"build_info\": \"bankML {} native\"}}",
                 crate::gguf::jstr(&self.model.to_string_lossy()), self.n_ctx, self.n_ctx, self.defaults.temp, self.defaults.top_k, self.defaults.top_p, self.defaults.min_p, crate::VERSION)
+    }
+}
+
+/// The request's sampling parameters over a model's defaults (llama-server's resolution); a sampler bankML does not
+/// reproduce (penalties, dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason.
+pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
+    let num = |k: &str| match req.get(k) {
+        Some(Json::Num(n)) => Some(*n),
+        _ => None,
+    };
+    let mut p = defaults;
+    if let Some(v) = num("temperature") { p.temp = v as f32 }
+    if let Some(v) = num("top_k") { p.top_k = v as i32 }
+    if let Some(v) = num("top_p") { p.top_p = v as f32 }
+    if let Some(v) = num("min_p") { p.min_p = v as f32 }
+    if let Some(v) = num("min_keep") { p.min_keep = v as usize }
+    if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
+    for (k, neutral) in [("repeat_penalty", 1.0), ("presence_penalty", 0.0), ("frequency_penalty", 0.0), ("typical_p", 1.0),
+                         ("xtc_probability", 0.0), ("dry_multiplier", 0.0), ("dynatemp_range", 0.0)] {
+        if let Some(v) = num(k) {
+            if v != neutral {
+                return Err(format!("{k} = {v}: bankML's native engine reproduces llama.cpp's top-k, top-p, min-p and temperature; this sampler is not reproduced yet"));
+            }
+        }
+    }
+    if let Some(v) = num("top_n_sigma") {
+        if v > 0.0 {
+            return Err("top_n_sigma: not reproduced yet".into());
+        }
+    }
+    Ok(p)
+}
+
+/// What the receipt's `engine` says for a loaded model (and whether a GPU works in it).
+pub fn engine_name(eng: &Native) -> String {
+    let gpu = eng.w.gpu.as_ref().and_then(|g| g.lock().ok().map(|w| format!(", GPU {} on {:.0}% of each 1-bit matrix", w.name, w.share * 100.0))).unwrap_or_default();
+    format!("bankML {} native: its own forward pass, token-identical to llama.cpp b11192 on its oracle{gpu}", crate::VERSION)
+}
+
+// ---------------------------------------------------------------- the registry and residency (0.3.1) ----------
+
+/// What the header says about a pinned file, read once when the registry is built.
+#[derive(Debug, Clone)]
+pub struct Info {
+    pub arch: Option<String>,
+    /// the most frequent non-F32 tensor type, e.g. `Q1_0`
+    pub quant: String,
+    /// `general.size_label`, or the weights counted, e.g. `1.7B`
+    pub params: String,
+    /// `Ok` when bankML's forward pass plays this file; otherwise why not, and the milestone that would
+    pub native: Result<(), String>,
+    pub defaults: Option<Params>,
+}
+
+/// One pinned GGUF: a name, the file, and the FORK.json that pins it.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    /// the file's stem, lower-cased (`bonsai-1.7b-q1_0`); `:latest` and the file name are accepted as aliases
+    pub name: String,
+    pub file: String,
+    /// where the file was found; `None` when it is pinned but not on this machine
+    pub path: Option<PathBuf>,
+    pub fork_json: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub info: Info,
+}
+
+/// The models `serve --native` can be asked for: the one it started with, and with `--registry` every GGUF pinned in
+/// the forks directory. The pins are read at start; a load verifies the file against them again.
+#[derive(Debug, Clone)]
+pub struct Registry {
+    pub entries: Vec<Entry>,
+    pub default: usize,
+}
+
+/// A model's name from its file name: the stem, lower-cased.
+pub fn model_name(file: &str) -> String {
+    let f = file.rsplit('/').next().unwrap_or(file);
+    let stem = if f.to_ascii_lowercase().ends_with(".gguf") { &f[..f.len() - 5] } else { f };
+    stem.to_lowercase()
+}
+
+/// Whether bankML's forward pass plays a file, from its header alone (the guard, the architecture, the weight type,
+/// the chat template); the reason names what is missing and where it is on the road.
+pub fn header_info(path: &Path) -> Info {
+    let none = |why: String| Info { arch: None, quant: String::new(), params: String::new(), native: Err(why), defaults: None };
+    let r = match crate::gguf::guard_file(path, crate::gguf::Engine::Mainline) {
+        Ok(r) => r,
+        Err(e) => return none(format!("cannot read {}: {e}", path.display())),
+    };
+    let quant = r.types.iter().filter(|(n, _)| n != "F32").max_by_key(|(_, c)| *c).map(|(n, _)| n.clone()).unwrap_or_else(|| "F32".into());
+    let (mut params, mut emb, mut tied) = (String::new(), None, false);
+    if let Some(h) = &r.header {
+        let n: u128 = h.tensors.iter().map(|t| t.nelem()).sum();
+        params = match h.kv.get("general.size_label") {
+            Some(crate::gguf::Val::S(s)) if !s.is_empty() => s.clone(),
+            _ if n >= 1_000_000_000 => format!("{:.1}B", n as f64 / 1e9),
+            _ => format!("{:.0}M", n as f64 / 1e6),
+        };
+        emb = h.tensors.iter().find(|t| t.name == "token_embd.weight").map(|t| t.ty);
+        tied = !h.tensors.iter().any(|t| t.name == "output.weight");
+    }
+    let native = match (&r.verdict, r.arch.as_deref(), emb) {
+        (crate::Verdict::Refuse(w), _, _) => Err(format!("the guard refuses it: {}", w.join("; "))),
+        (crate::Verdict::NeedMore(_), _, _) => Err("the guard needs more header bytes: the file is truncated".into()),
+        (_, Some(a), _) if a != "qwen3" => Err(format!("architecture {a}: the forward pass is Qwen3 only (Llama is O4, 0.6.0)")),
+        (_, None, _) => Err("no general.architecture".into()),
+        (_, _, Some(t)) if t != 41 && t != 42 => Err(format!("weights are {}: the forward pass runs Q1_0 and Q2_0_g64 (Q8_0, F16 and Q4_K are O3, 0.6.0)", crate::gguf::type_name(t))),
+        (_, _, None) => Err("no token_embd.weight".into()),
+        _ if tied => Err("tied embeddings (no output.weight): the forward pass needs its own output matrix (tied embeddings are O4, 0.6.0)".into()),
+        _ => chat::check_template(path),
+    };
+    let defaults = Params::from_gguf(path).ok();
+    Info { arch: r.arch, quant, params, native, defaults }
+}
+
+impl Registry {
+    /// The startup model first (it is the default), then, with `dir`, every `*.FORK.json` there: each `.gguf` it
+    /// pins, looked for beside the startup model and in `dir`. A name pinned twice keeps its first entry.
+    pub fn build(model: &Path, fork_json: &str, dir: Option<&Path>) -> Registry {
+        let file = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let entry = |file: &str, path: Option<PathBuf>, fork_json: &str| {
+            let sha256 = crate::sha256::pinned_sha256(fork_json, file).unwrap_or_default();
+            let bytes = path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0);
+            let info = match &path {
+                Some(p) => header_info(p),
+                None => Info { arch: None, quant: String::new(), params: String::new(), native: Err("pinned, but the file is not on this machine".into()), defaults: None },
+            };
+            Entry { name: model_name(file), file: file.to_string(), path, fork_json: fork_json.to_string(), sha256, bytes, info }
+        };
+        let mut entries = vec![entry(&file, Some(model.to_path_buf()), fork_json)];
+        if let Some(dir) = dir {
+            let mut forks: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path())
+                .filter(|p| p.to_string_lossy().ends_with(".FORK.json")).collect();
+            forks.sort();
+            let look: Vec<PathBuf> = model.parent().into_iter().map(Path::to_path_buf).chain([dir.to_path_buf()]).collect();
+            for f in forks {
+                let Ok(text) = std::fs::read_to_string(&f) else { continue };
+                let Some(v) = Json::parse(&text) else { continue };
+                let Some(Json::Arr(files)) = v.get("files") else { continue };
+                for p in files.iter().filter_map(|x| x.get("path").and_then(Json::as_str)) {
+                    let base = p.rsplit('/').next().unwrap_or(p);
+                    if !base.to_ascii_lowercase().ends_with(".gguf") || entries.iter().any(|e| e.name == model_name(base)) {
+                        continue;
+                    }
+                    let found = look.iter().map(|d| d.join(base)).find(|c| c.is_file());
+                    entries.push(entry(base, found, &text));
+                }
+            }
+        }
+        Registry { entries, default: 0 }
+    }
+
+    /// A request's `model` to a pinned entry: absent or empty is the startup model; otherwise the name, with or
+    /// without `:latest`, or the file name, case-insensitively.
+    pub fn resolve(&self, model: Option<&str>) -> Result<&Entry, String> {
+        let m = model.map(str::trim).unwrap_or("");
+        if m.is_empty() {
+            return Ok(&self.entries[self.default]);
+        }
+        let n = model_name(m.strip_suffix(":latest").unwrap_or(m));
+        self.entries.iter().find(|e| e.name == n).ok_or_else(|| {
+            format!("model '{m}' not found: bankml serves pinned models only ({})",
+                    self.entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>().join(", "))
+        })
+    }
+}
+
+/// How long a model stays resident after a request: Ollama's `keep_alive`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeepAlive {
+    Unload,
+    For(Duration),
+    Forever,
+}
+
+/// A model loaded behind the gate, as a request holds it.
+#[derive(Clone)]
+pub struct Loaded {
+    pub name: String,
+    pub native: Arc<Native>,
+    pub verified: Arc<Verified>,
+    /// the canonical path that was hashed, and its identity then
+    pub model: PathBuf,
+    pub ident: FileIdent,
+    pub engine: String,
+    pub hashed_at: u64,
+    pub size: u64,
+    pub sha256: String,
+}
+
+pub struct Resident {
+    pub loaded: Loaded,
+    /// `None`: resident until told otherwise
+    pub expires: Option<SystemTime>,
+}
+
+/// One resident model at a time (Ollama's `MAX_LOADED_MODELS=1`). `run` is held for a whole completion, load or
+/// unload, so the one engine has one user and a switch never has two models in memory; `cur` is held only briefly.
+pub struct Residency {
+    pub reg: Registry,
+    pub n_ctx: usize,
+    pub engine: crate::gguf::Engine,
+    pub run: Mutex<()>,
+    pub cur: Mutex<Option<Resident>>,
+    /// the most recent verification (what `/bankml` reports when nothing is resident)
+    pub last: Mutex<Option<Loaded>>,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+impl Residency {
+    /// `serve --native`'s start: the startup model, already verified by `serve::run`, resident until told otherwise.
+    pub fn start(reg: Registry, n_ctx: usize, engine: crate::gguf::Engine, verified: Verified, model: PathBuf, id: FileIdent) -> Result<Residency, String> {
+        let e = &reg.entries[reg.default];
+        if let Err(why) = &e.info.native {
+            return Err(format!("{}: bankML's native forward pass does not play it: {why}", e.file));
+        }
+        let native = Native::open(&model, n_ctx)?;
+        let loaded = Loaded { name: e.name.clone(), engine: engine_name(&native), native: Arc::new(native), sha256: verified.model_sha256.clone(),
+                              verified: Arc::new(verified), model, ident: id, hashed_at: now_secs(), size: e.bytes };
+        Ok(Residency { reg, n_ctx, engine, run: Mutex::new(()), last: Mutex::new(Some(loaded.clone())),
+                       cur: Mutex::new(Some(Resident { loaded, expires: None })) })
+    }
+
+    fn lock_cur(&self) -> MutexGuard<'_, Option<Resident>> {
+        self.cur.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn lock_run(&self) -> MutexGuard<'_, ()> {
+        self.run.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The resident model, if any, without waiting for a completion (for the tokenizer, `/props`, `/api/ps`).
+    pub fn peek(&self) -> Option<(Loaded, Option<SystemTime>)> {
+        self.lock_cur().as_ref().map(|r| (r.loaded.clone(), r.expires))
+    }
+
+    /// The model `e` names, loaded: the resident one if it is that model and its file is unchanged, else the resident
+    /// one dropped and `e` verified (guard, then the sha256 pin) and opened. The caller holds `run`. Returns the load
+    /// time in nanoseconds (0 when it was resident). Errors carry the HTTP status they answer with.
+    pub fn acquire(&self, _run: &MutexGuard<'_, ()>, e: &Entry) -> Result<(Loaded, u64), (u16, String)> {
+        {
+            let mut cur = self.lock_cur();
+            if let Some(r) = cur.as_ref().filter(|r| r.loaded.name == e.name) {
+                if ident(&r.loaded.model).ok() == Some(r.loaded.ident) {
+                    return Ok((r.loaded.clone(), 0));
+                }
+                *cur = None;
+                return Err((503, format!("{} changed since bankml verified it: unloaded, and refused; the next request verifies it again", e.file)));
+            }
+        }
+        // what can be refused without reading the file is refused before the resident model is touched
+        let path = e.path.as_ref().ok_or((404, format!("{} is pinned but not on this machine", e.file)))?;
+        if let Err(why) = &e.info.native {
+            return Err((400, format!("{}: bankML's native forward pass does not play it: {why}", e.name)));
+        }
+        *self.lock_cur() = None; // one resident model: the old one goes before the new one is read
+        let t0 = Instant::now();
+        let before = ident(path).map_err(|err| (500, format!("{}: {err}", path.display())))?;
+        let verified = crate::verify(path, &e.fork_json, self.engine).map_err(|why| (400, format!("refuse: {why}")))?;
+        let model = path.canonicalize().map_err(|err| (500, format!("{}: {err}", path.display())))?;
+        let id = ident(&model).map_err(|err| (500, format!("{}: {err}", model.display())))?;
+        if id != before {
+            return Err((503, format!("{} changed while it was being hashed: refused", model.display())));
+        }
+        eprintln!("bankml serve --native: {} verified (sha256 {}); loading it", e.name, verified.model_sha256);
+        let native = Native::open(&model, self.n_ctx).map_err(|why| (500, why))?;
+        let loaded = Loaded { name: e.name.clone(), engine: engine_name(&native), native: Arc::new(native), sha256: verified.model_sha256.clone(),
+                              verified: Arc::new(verified), model, ident: id, hashed_at: now_secs(), size: e.bytes };
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(loaded.clone());
+        *self.lock_cur() = Some(Resident { loaded: loaded.clone(), expires: None });
+        Ok((loaded, t0.elapsed().as_nanos() as u64))
+    }
+
+    /// After a request: the keep-alive starts now (`Unload` drops the model at once).
+    pub fn touch(&self, name: &str, ka: KeepAlive) {
+        let mut cur = self.lock_cur();
+        if cur.as_ref().is_some_and(|r| r.loaded.name == name) {
+            match ka {
+                KeepAlive::Unload => {
+                    *cur = None;
+                    eprintln!("bankml serve --native: {name} unloaded (keep_alive 0)");
+                }
+                KeepAlive::For(d) => cur.as_mut().unwrap().expires = Some(SystemTime::now() + d),
+                KeepAlive::Forever => cur.as_mut().unwrap().expires = None,
+            }
+        }
+    }
+
+    /// The resident model, or the startup model loaded (for llama-server's endpoints, which name no model).
+    pub fn current_or_default(&self) -> Result<Loaded, (u16, String)> {
+        if let Some((l, _)) = self.peek() {
+            return Ok(l);
+        }
+        let run = self.lock_run();
+        let e = &self.reg.entries[self.reg.default];
+        let (l, _) = self.acquire(&run, e)?;
+        self.touch(&e.name, KeepAlive::Forever);
+        Ok(l)
+    }
+
+    /// Drop the resident model once its keep-alive has run out, unless a request is using the engine.
+    pub fn reap(&self) {
+        let Ok(_run) = self.run.try_lock() else { return };
+        let mut cur = self.lock_cur();
+        if let Some(r) = cur.as_ref().filter(|r| r.expires.is_some_and(|t| t <= SystemTime::now())) {
+            eprintln!("bankml serve --native: {} unloaded (keep_alive expired)", r.loaded.name);
+            *cur = None;
+        }
     }
 }
 

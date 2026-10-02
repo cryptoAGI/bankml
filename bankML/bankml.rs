@@ -119,6 +119,8 @@
 //! - [ ] **P4 — mindX seam.** Serve on loopback; register as an OpenAI-compatible provider in mindX
 //!   (the vLLM handler shape); `inference_budget.record_inference(..., model=, caller=)` sees real
 //!   usage; `/substrate/` and feedback show its row. Then the 8B migration can route to it.
+//!   - [x] 0.3.1: Ollama's API on `serve --native` (`ollama.rs`), a registry of pinned models, one resident, verified on
+//!     every load, `keep_alive`; native only (docs/OLLAMA.md: what mindX asks of Ollama, and the O1–O8 track).
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's
@@ -131,6 +133,7 @@ pub mod forward;
 pub mod gguf;
 pub mod gpu;
 pub mod native;
+pub mod ollama;
 pub mod par;
 pub mod serve;
 pub mod q1_0;

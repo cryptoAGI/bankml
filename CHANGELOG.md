@@ -1,8 +1,56 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — 2026-10-01 — Ollama's API, natively
+
+**`bankml serve --native` speaks Ollama's API over bankML's own forward pass, and can be asked for any pinned model
+by name. It is native only: what the verified forward pass cannot do is refused with a reason, never proxied to
+llama-server or Ollama.** The roadmap is [docs/OLLAMA.md](docs/OLLAMA.md): what mindX asks of Ollama, with
+file:line evidence, against what bankML does, and the O1–O8 track folded into docs/TODO.md. Record:
+`testing/results/0.3.1.txt`.
+
+### Added
+- **`bankML/ollama.rs`, Ollama's API (phase O1).**
+  - **Listing:** `GET /api/version`. `GET /api/tags` lists every pinned model: the digest is its pinned sha256,
+    the details come from the GGUF header, and `"bankml": {"native", "reason"}` says whether bankML plays it.
+  - **State and metadata:** `GET /api/ps` (the resident model and its `expires_at`); `POST /api/show` (a
+    read-only modelfile, the sampling defaults, the template, `model_info` from the header).
+  - **Answers:** `POST /api/chat` and `POST /api/generate`: `system`, and `raw: true` for direct tokenization.
+  - **Streaming:** NDJSON, Ollama's default. The final object carries `done_reason`, the durations in
+    nanoseconds, `prompt_eval_count`, `eval_count`, `bankml_cache_n` and `bankml_receipt`.
+  - **Options:** `temperature`, `top_k`, `top_p`, `min_p`, `seed`, `num_predict` and `stop` are honoured.
+    `num_ctx` is accepted up to the served context. The penalties go through the engine's own refusal. Resource
+    options are ignored, because they do not change the answer. Anything else is refused.
+  - **Refused (400, with the reason):** `format` (O6), `tools` and `tool_calls` (O6), `images`, `suffix`,
+    `template`, `context`, `think: true`. Also `/api/embed` (O7), `/api/create` (O5), `/api/pull`,
+    `DELETE /api/delete`, `/api/copy` and `/api/push`.
+- **A model registry, and residency** (`native.rs`: `Registry`, `Residency`).
+  - `--registry [DIR]` names every GGUF pinned in the forks directory (default `$BANKML_FORKS`, else
+    `~/.local/share/bankml/forks`). A name is the file's stem, lower-cased; `:latest` and the file name are
+    accepted as aliases.
+  - **One resident model.** A switch drops the old model before the new one is read, then runs the full `verify`
+    (the guard, then the sha256 pin) exactly as the start does.
+  - **`keep_alive`** as Ollama reads it (`"5m"`, `"1h"`, seconds, `0`, negative), with `--keep-alive` for the
+    `/api` default (`5m`). A reaper thread drops an idle model and its memory map when its time runs out.
+  - **Load or unload only:** an empty prompt with a `keep_alive` answers `done_reason` `load` or `unload`, as
+    mindX's coach uses it.
+  - **The file-identity check now lives with the resident model.** A changed file is unloaded and refused; the
+    next request verifies it again, with no restart.
+- **`Done.prompt_ns` and `Done.eval_ns`.** The prefill and the generation are timed inside `complete()`.
+- **The Ollama-shape oracle** (`testing/serve_oracle.py --bankml`, in the release gate). The 0.3.0 conversations
+  go three ways, each from an empty slot:
+  - through `/api/chat` (the first conversation streamed as NDJSON);
+  - through `/v1/chat/completions`;
+  - through `/v1/chat/completions` again, after unload and a reload that verifies the file again.
+
+  All of them must equal each other and llama-server b11192's record, turn by turn.
 
 ### Changed
+- **`/v1/chat/completions` now honours `stop`.** 0.3.0 ignored it silently. It also resolves `model` through the
+  registry: absent means the startup model, and an unknown name now answers 404 where 0.3.0 ignored the field.
+  The OpenAI and llama-server endpoints keep the model resident, as 0.3.0 did.
+- **A startup model the forward pass cannot play is refused at start, with the reason.** 0.3.0 started and then
+  failed every request: Bonsai-1.7B has tied embeddings (no `output.weight`), which is phase O4.
+- `GET /bankml` (native) adds `resident` and `models`. Its `verified` is the most recent verification.
 - **The way back to the Interaction tab.**
   - Savante's card, and every derived agent's card, now has a bar pinned to its top: **← back to Interaction**. It
     stays visible however far the card is scrolled, and Esc closes the card. Before, the only close control was a ✕
