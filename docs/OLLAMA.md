@@ -1,7 +1,8 @@
 # bankML as mindX's Ollama, and as its replacement for llama.cpp
 
-*Written for 0.3.1 (2026-10-01). Phase O1 below shipped in 0.3.1; every later phase is a plan, folded into the
-milestones of [TODO.md](TODO.md). Nothing here counts until its oracle passes in a gate record.*
+*Written for 0.3.1 (2026-10-01), updated for 0.3.3 (2026-10-02). Phase O1 shipped in 0.3.1 and O6's first cut, JSON
+mode, in 0.3.3; every later phase is a plan, folded into the milestones of [TODO.md](TODO.md). Nothing here counts
+until its oracle passes in a gate record.*
 
 ## The question, and the short answer
 
@@ -31,9 +32,9 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 | mindX asks for | where (mindX) | bankML | phase |
 |---|---|---|---|
 | `POST /api/generate`, non-streamed; reads `prompt_eval_count` and `eval_count` | `llm/ollama_handler.py:312` | **done (0.3.1)**: Ollama's counts and durations (ns), plus `bankml_receipt` | O1 |
-| `format: "json"` on generate | `llm/ollama_handler.py:121`, `:265` | **refused** (400): needs a grammar-constrained sampler | O6 |
+| `format: "json"` on generate | `llm/ollama_handler.py:121`, `:265` | **done (0.3.3)**: llama-server b11192's `json_object` grammar, its prefill and its redraw; token-identical, greedy and seeded. A schema beyond "any object" is **refused** (needs `json_schema_to_grammar`) | O6 |
 | `/api/chat` and `/api/generate` with `keep_alive: "5m"`, `options.num_predict`, `options.temperature` | `api/ollama/ollama_url.py:219-243` | **done (0.3.1)** | O1 |
-| passthrough fields `format`, `system`, `template`, `raw`, `suffix`, `images`, `think` | `api/ollama/ollama_url.py:250-256` | `system` and `raw` **done**; `think: false` accepted; `format`, `template`, `suffix`, `images` and `think: true` **refused** with the reason | O1 · O6 |
+| passthrough fields `format`, `system`, `template`, `raw`, `suffix`, `images`, `think` | `api/ollama/ollama_url.py:250-256` | `system`, `raw` and `format: "json"` **done**; `think: false` accepted; `format` with a real schema or with `raw`, `template`, `suffix`, `images` and `think: true` **refused** with the reason | O1 · O6 |
 | `/api/tags` and `/api/ps` (the lineage models, which are resident, `expires_at`) | `agents/storage/hf_client.py:3728-3753` | **done (0.3.1)**: every pinned model, `digest` = the pinned sha256, plus `"bankml": {"native", "reason"}` | O1 |
 | load and unload by an empty `/api/generate` with `keep_alive` (`done_reason` `load` / `unload`) | `agents/storage/hf_client.py:3760-3777` | **done (0.3.1)**; each load runs the full guard + sha256 pin | O1 |
 | `ollama_predict`: `/api/chat` with `temperature 0`, **`repeat_penalty 1.3`**, `num_ctx 2048` | `agents/storage/hf_client.py:2423-2431` | `num_ctx` **done**; `repeat_penalty` **refused** until the penalty sampler has an oracle | O2 |
@@ -44,8 +45,9 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 | the models themselves: SmolLM2-135M `mindx-genN` (Llama architecture, F16 safetensors merged to GGUF) | `mindx/godel/mindxtrain/promote.py` | **not native**: Llama architecture and F16 | O3 + O4 |
 | the boardroom's `num_ctx 8192` | `daio/governance/boardroom.py:988-996` | accepted when `serve --ctx` is at least 8192; the f16 KV cache is what makes it costly | O8 (quantized KV) |
 
-**Also refused in 0.3.1, each with a reason:**
-- `tools` and message `tool_calls` (O6);
+**Also refused, each with a reason:**
+- `tools` and message `tool_calls` (O6, after JSON schemas);
+- a `format` / `response_format` JSON schema other than `{}` or `{"type": "object"}` (O6: `json_schema_to_grammar`);
 - `images` (vision is out of scope);
 - `/api/pull`: import through the pinned importer instead;
 - `/api/copy` and `/api/push`;
@@ -68,7 +70,7 @@ it.
 | O3 | `Q8_0`, F16 and BF16 weight kernels, then `Q4_K`, each bit-exact against ggml | 0.6.0 | opens the standard-quant Qwen3 family |
 | O4 | The Llama architecture: optional QK-norm, tied embeddings (which also opens Bonsai-1.7B), SmolLM2's tokenizer and template | 0.6.0 | **`mindx-genN` served natively** |
 | O5 | `bankml create`: a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded in FORK.json, and a Rust safetensors → GGUF converter for the merged SmolLM2; then `promote.py --to bankml` | 0.7.0 (beside mindXtrain in Rust) | `ollama create` |
-| O6 | A grammar engine: first a JSON-only mask (`format: "json"`), then a GBNF subset (JSON schema), then tool calls | 0.4.x → 0.6.0 | `format: "json"`, used across mindX |
+| **O6** | A grammar engine: **JSON mode and GBNF (0.3.3, done)**; then JSON schemas (`json_schema_to_grammar`), then tool calls | 0.3.3 → 0.6.0 | **`format: "json"`, used across mindX** |
 | O7 | The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling), `/api/embed` and `/v1/embeddings`, with a bge-m3 oracle against llama.cpp's embedding output | 0.6.0 | step 2 of the embedding cascade |
 | O8 | Optimisation: continuous batching across slots, AVX-512 and VNNI, NEON, a quantized KV cache, and 1-bit decode at least at llama-server's speed | 0.4.0 / 0.5.0 | — |
 
@@ -95,6 +97,35 @@ it.
   - `/v1/chat/completions` again, after unload and reload.
 
   All three must equal each other and llama-server b11192's record, turn by turn.
+
+### What O6's first cut built (0.3.3)
+
+- **What llama-server actually does with `response_format: {"type": "json_object"}`.** It is not `grammars/json.gbnf`.
+  On the jinja chat path (Savante's flags) the server turns the schema `{"type": "object"}` into a PEG parser, and
+  that parser into GBNF. The GBNF's root begins with the template's generation prompt
+  (`<|im_start|>assistant\n` and the empty `<think>` block). It allows an optional ```` ```json ```` fence, then the
+  object, with `space ::= | " " | "\n"{1,2} [ \t]{0,20}` around it. The sampler then *accepts the generation
+  prompt's seven tokens* into the grammar before the first draw. The answer's `content` is the JSON value alone,
+  without the fence. bankML carries that grammar text as a constant, and the oracle checks it on every recorded
+  request against the `generation_settings.grammar` the server reports.
+- **`bankML/grammar.rs`: llama.cpp's grammar engine, ported** (MIT, attributed; zero crates). It holds:
+  - the GBNF parser (repetitions, character classes, token terminals, comments);
+  - the left-recursion check;
+  - the pushdown stacks and `advance_stack`;
+  - `reject_candidates` over code points, with partial UTF-8 carried across tokens;
+  - accept and apply, the end-of-generation rule, and llama-vocab's end set. That set is 6 tokens on Qwen3, not 2:
+    an answer under the grammar did end on `<|file_sep|>`.
+- **Where it sits** (`sampler.rs`, as `common_sampler_sample`). The chain draws first. If the token passes the grammar,
+  it stands. If it does not, the logits are masked and the chain draws again from the same `mt19937`, so a seeded
+  answer consumes the generator exactly as llama-server's does.
+- **Surfaces.**
+  - `/v1/chat/completions`: `response_format` (`json_object`, or `json_schema` whose schema is `{}` or
+    `{"type": "object"}`), the top-level `json_schema`, and `grammar` (any GBNF; a user grammar, no prefill).
+  - `/api/chat` and `/api/generate` with `format: "json"`.
+  - `bankml_chat` (C API).
+  - `bankml generate --json`.
+
+  Everything else is refused with the reason.
 
 ## "Replacement for llama.cpp" means bankML's own 1.0.0
 
@@ -131,7 +162,7 @@ Its ranked adoption list, mapped onto this track:
 | rank | adopt | phase |
 |---|---|---|
 | 1 | Bench Crane's CPU ternary path against bankML on the same Ternary-Bonsai-8B file, pinned (`testing/pinned.sh`) | now (O8 baseline) |
-| 2 | A native JSON-mode grammar mask, with llama.cpp's `json.gbnf` mask as the oracle, token for token | O6 |
+| 2 | A native JSON-mode grammar mask, with llama.cpp's mask as the oracle, token for token (**0.3.3, done**: the server's own grammar, not `json.gbnf`) | O6 |
 | 3 | Continuous batching across slots (the boardroom's parallel soldiers) | O8, after O2's multi-slot |
 | 4 | A `q8_0` KV cache (llama.cpp's `--cache-type-k/v q8_0`, so the oracle exists), then a Hadamard-rotated 4-bit KV | O3 → O8 |
 | 5 | A lookup-table (TL-style) ternary matrix–vector product, and tunable tiling | O8 |

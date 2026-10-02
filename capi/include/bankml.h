@@ -32,7 +32,8 @@ typedef struct bankml bankml_t;
 /* bankml_chat()'s return codes. */
 #define BANKML_OK          0
 #define BANKML_E_ARG      (-1) /* a NULL handle or request, or a request that is not UTF-8 */
-#define BANKML_E_REQUEST  (-2) /* refused: not JSON, no messages, a sampler bankML does not reproduce, a bad stop */
+#define BANKML_E_REQUEST  (-2) /* refused: not JSON, no messages, a sampler bankML does not reproduce, a bad stop,
+                                  a schema or grammar not taken */
 #define BANKML_E_CHANGED  (-3) /* the model file changed since it was verified: no answer; open it again */
 #define BANKML_E_ENGINE   (-4) /* the engine failed (e.g. the prompt does not fit the context) */
 #define BANKML_E_PANIC    (-5) /* a panic was caught (unwinding builds only) */
@@ -63,9 +64,11 @@ bankml_t *bankml_open(const char *model_path, const char *fork_json_path, uint32
 /*
  * One chat completion. `request_json` is the OpenAI / llama-server chat request `bankml serve --native` takes:
  *   {"messages": [{"role": "system"|"user"|"assistant", "content": "…"}, …],
- *    "temperature", "top_k", "top_p", "min_p", "min_keep", "seed", "max_tokens" (or "n_predict"), "stop"}
+ *    "temperature", "top_k", "top_p", "min_p", "min_keep", "seed", "max_tokens" (or "n_predict"), "stop",
+ *    "response_format": {"type": "json_object"}, "json_schema", "grammar"}   (0.3.3: JSON mode and GBNF, as llama-server)
  * Unset sampling keys take the model's GGUF defaults; a sampler bankML does not reproduce (penalties, dry,
- * typical-p, xtc, top-n-sigma, dynamic temperature) is refused, never approximated. "model" and "stream" are ignored.
+ * typical-p, xtc, top-n-sigma, dynamic temperature) is refused, never approximated, as is a JSON schema other than
+ * {} / {"type": "object"} or a grammar llama.cpp would not parse. "model" and "stream" are ignored.
  * The answer streams to `cb` (may be NULL); *result_json (if not NULL) receives the non-streamed
  * /v1/chat/completions object — choices, usage, timings.cache_n, bankml_receipt — or {"error": {"code", "message"}}.
  * The slot keeps its KV cache between calls and reuses the longest common prefix, as llama-server's -np 1 does.

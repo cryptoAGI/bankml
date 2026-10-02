@@ -143,8 +143,19 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] The rest of llama-server's sampler chain, each with a seeded oracle: repetition, presence and frequency
   penalties (`last_n`), typical-p, DRY, XTC, top-n-σ, dynamic temperature. (O2: retires the refusal of the coach's
   `repeat_penalty: 1.3`.)
-- [ ] **JSON mode** (O6, first cut): a JSON-only grammar mask over the tokenizer's byte trie, with llama.cpp's
-  `json.gbnf` mask as the oracle, token for token; then `format: "json"` on `/api/*` and `response_format` on `/v1`.
+- [x] **JSON mode** (O6, first cut; **0.3.3**). It is not a JSON-only mask: the request turned out to need
+  llama-server's own grammar. That grammar is generated from the chat template's parser, its root starts with the
+  generation prompt, and it is prefilled. So llama.cpp's whole GBNF engine is ported (`grammar.rs`), with the
+  sampler's redraw and llama-vocab's end set. The oracles: the grammar sampler's masks (196 of 196 runs, 1,645
+  masks) and llama-server's answers, greedy and seeded (Bonsai-8B Q1_0 23 of 23; ternary 13 of 13, 534 tokens). The surfaces:
+  `format: "json"` on `/api/*`, `response_format`, `json_schema` and `grammar` on `/v1`, `bankml_chat` and
+  `bankml generate --json`.
+- [ ] **JSON schemas** (O6, next): port `common/json-schema-to-grammar.cpp` and the chat-parser path that wraps a
+  schema, with llama-server's `generation_settings.grammar` as the text oracle and the answers as the token oracle;
+  then `format: {schema}` and `response_format.json_schema` with real schemas; then tool calls.
+- [ ] A faster whole-vocabulary mask: a byte trie over the token pieces, so each grammar stack walks shared prefixes
+  once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
+  over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.
 - [ ] `/completion` with `n_probs`, and logprobs on `/v1/chat/completions`, bit-exact probabilities.
 - [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle. (O2)
 - [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated

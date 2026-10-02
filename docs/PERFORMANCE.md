@@ -242,3 +242,31 @@ stayed in the page cache. `decode_budget_q2_0` at one to four threads gave:
 the explanation above: the kernels never slowed down. The gates in between measured a laptop that could not keep the
 model in memory.
 
+
+## JSON mode's cost (0.3.3) — laptop
+
+The grammar costs time only in three places, and the gate measures each:
+- **The check.** The token the chain drew is run through the grammar alone: one candidate, microseconds.
+- **The mask.** When that token breaks the grammar, the grammar runs over the whole vocabulary of 151,669 tokens,
+  and the chain draws again.
+- **The accept.** The chosen token advances the grammar's stacks.
+
+`oracle_grammar_masks` times the mask on every one of its 1,645 recorded steps, over 12 grammars.
+`oracle_json_mode{,_ternary}` time the grammar's whole share of real constrained answers: check, mask, accept and
+prefill, divided over every generated token.
+
+| measure (gate 0.3.3, laptop) | Bonsai-8B Q1_0 | Ternary-Bonsai-8B |
+|---|---:|---:|
+| one whole-vocabulary mask, 151,669 tokens (`oracle_grammar_masks`: 1,645 masks over 12 grammars; the vocabulary is shared) | median **24.2 ms** · p90 47.0 · max 101.0 | the same |
+| tokens redrawn under the mask, in the recorded answers | 152 of 860 (17.7 %) | 49 of 534 (9.2 %) |
+| grammar time per generated token: check, mask when needed, accept, and the prefill, spread over the answer | **3.90 ms** | **3.95 ms** |
+| for scale: the matmul-only decode budget at 3 threads (`decode_budget_*`, same gate) | 0.389 s | 0.279 s |
+
+So JSON mode costs about **1 %** of a 1-bit step and 1.4 % of a ternary step on average. When a token has to be
+redrawn, that step costs one mask more, about 6 % of a 1-bit step at the median. An answer the model writes as valid
+JSON on its own costs almost nothing: `bankml generate --json` on the cat prompt redrew no token and spent 0.4 ms of
+grammar per token.
+
+The mask is a straight port of llama.cpp's `reject_candidates`, which walks every candidate's code points per grammar
+stack. A byte trie over the pieces would share their prefixes (TODO.md). It would need the same oracle, and it is not
+worth much at today's cost.

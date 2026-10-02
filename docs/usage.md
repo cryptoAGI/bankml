@@ -161,6 +161,33 @@ curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' 
   -d '{"messages":[{"role":"user","content":"Say hello. /no_think"}],"max_tokens":32}'
 ```
 
+### JSON mode and grammars (0.3.3)
+
+`/v1/chat/completions` (and the C API's `bankml_chat`) takes what llama-server takes, resolved the way it resolves it:
+
+```sh
+curl -s $B/v1/chat/completions -H "$J" -d '{"messages": [{"role": "user", "content": "Describe a cat."}],
+    "response_format": {"type": "json_object"}, "temperature": 0, "max_tokens": 64}'
+curl -s $B/v1/chat/completions -H "$J" -d '{"messages": [{"role": "user", "content": "Is the sun a star?"}],
+    "grammar": "root ::= (\"yes\" | \"no\") \".\""}'
+echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.gguf --json --max 64
+```
+
+- **`response_format: {"type": "json_object"}`**, and the schemas `{}` and `{"type": "object"}` (in `response_format`
+  or the top-level `json_schema`), give **llama-server b11192's grammar for this template**, byte for byte. Its root
+  begins with the generation prompt, which the sampler takes in before the first token, as the server does. Under
+  that grammar the model may open with a fenced ```` ```json ```` block, and `content` is the JSON value alone. That
+  is the object once it closes, or what there is of it when `max_tokens` cuts the answer. A stream sends the
+  content's growth.
+- **`grammar`**: any GBNF that llama.cpp parses, with root `root`. It is taken as a user grammar, with no prefill, and
+  `content` is the text as generated. A grammar llama.cpp would not parse is refused with its parser's reason.
+- **Every token is drawn as llama-server draws it under a grammar.** The usual sampler chain runs first. If its token
+  breaks the grammar, the logits are masked and the chain runs again, which takes a second draw from the seeded
+  generator. Greedy and seeded answers are token-identical to the server (the oracle is in [oracles.md](oracles.md)).
+- **Refused, with the reason:** any other JSON schema (llama.cpp's `json_schema_to_grammar` is not ported);
+  `response_format` together with `grammar`; `json_schema` together with `grammar`; a `response_format` type other
+  than `text`, `json_object` or `json_schema`.
+
 ## 6a. Ollama's API
 
 Since 0.3.1 `bankml serve --native` also speaks Ollama's API, over the same engine, gate and receipts. **Native
@@ -221,8 +248,13 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
   - **Ignored**, because they do not change the answer bankML gives: `num_thread`, `num_batch`, `num_gpu`, `use_mmap`
     and the other resource options.
   - **Refused:** any other option.
+- **`format: "json"` is JSON mode (0.3.3).** It is answered by the same grammar llama-server b11192 uses for
+  `response_format: {"type": "json_object"}` (below), so `/api/chat` with `format: "json"` gives llama-server's tokens.
+  `format: {}` and `format: {"type": "object"}` are the same request. Any other schema is refused (llama.cpp's
+  `json_schema_to_grammar` is not ported), and so is `format` with `raw: true` (JSON mode's grammar begins with the
+  template's generation prompt, which a raw prompt does not have).
 - **Refused, with the reason:**
-  - `format` (JSON mode, O6);
+  - a `format` schema other than "any object";
   - `tools` and `tool_calls` (O6);
   - `images`;
   - `suffix`, `template`, `context`;

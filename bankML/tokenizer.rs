@@ -183,6 +183,63 @@ impl Tokenizer {
         }
     }
 
+    /// A token's piece as llama.cpp's `token_to_piece(…, special = true)` gives it, the bytes its grammar matches:
+    /// control, user-defined and unknown tokens as written; a normal token's GPT-2 characters mapped back to bytes
+    /// (`llama_decode_text`, with its `[UNK_BYTE_0x…]` for a character outside the map); anything else nothing.
+    pub fn piece(&self, id: u32) -> Vec<u8> {
+        let Some(t) = self.tokens.get(id as usize) else { return Vec::new() };
+        match self.types.get(id as usize) {
+            Some(2..=4) => t.as_bytes().to_vec(),
+            Some(1) => {
+                let chars = byte_chars();
+                let mut out = Vec::with_capacity(t.len());
+                for c in t.chars() {
+                    match chars.iter().position(|&b| b == c) {
+                        Some(b) => out.push(b as u8),
+                        None => {
+                            let mut u = [0u8; 4];
+                            out.extend(b"[UNK_BYTE_0x");
+                            for b in c.encode_utf8(&mut u).bytes() {
+                                out.extend(format!("{b:02x}").bytes());
+                            }
+                            out.extend(t.bytes());
+                            out.push(b']');
+                        }
+                    }
+                }
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The tokens that end generation, as llama-vocab.cpp b11192 collects them: the FIM pad / repo / file-separator
+    /// tokens, every token named in its end-of-turn list, and the GGUF's own eos / eot / eom ids.
+    pub fn eog_ids(&self, kv_ids: &[u32]) -> Vec<u32> {
+        const NAMES: [&str; 22] = ["<|eot_id|>", "<|im_end|>", "<|end|>", "<|return|>", "<|call|>", "<|flush|>", "<|calls|>", "<end_of_turn>",
+            "<|endoftext|>", "</s>", "<|eom_id|>", "<EOT>", "_<EOT>", "[EOT]", "[EOS]", "<|end_of_text|>", "<end_of_utterance>", "<eos>",
+            "<turn|>", "<|tool_response>", "<｜end▁of▁sentence｜>", "[e~["];
+        const FIM: [&[&str]; 3] = [&["<|fim_pad|>", "<fim-pad>", "<fim_pad>", "<PAD>", "[PAD]"],
+            &["<|fim_repo|>", "<|repo_name|>", "<fim-repo>", "<REPO>", "<reponame>"], &["<|file_sep|>"]];
+        let mut out: Vec<u32> = FIM.iter().filter_map(|names| names.iter().find_map(|n| self.id(n))).collect();
+        out.extend(NAMES.iter().filter_map(|n| self.id(n)));
+        out.extend(kv_ids.iter().copied().filter(|&i| (i as usize) < self.tokens.len()));
+        let text = |i: &u32| self.tokens[*i as usize].as_str();
+        // b11192's two exceptions: <|end|> is not an end when <|return|> and <|call|> (or <|calls|>, <|flush|>) are;
+        // </s> is not when <|tool_response> is
+        let has = |out: &[u32], s: &str| out.iter().any(|i| text(i) == s);
+        let call = has(&out, "<|call|>") || has(&out, "<|calls|>");
+        if call && has(&out, "<|end|>") && (has(&out, "<|return|>") || has(&out, "<|flush|>")) {
+            out.retain(|i| text(i) != "<|end|>");
+        }
+        if has(&out, "<|tool_response>") && has(&out, "</s>") {
+            out.retain(|i| text(i) != "</s>");
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     pub fn encode(&self, text: &str, parse_special: bool) -> Vec<u32> {
         // 1. cut out special tokens, longest first, from the spans that are still raw text
         let mut parts: Vec<Result<u32, &str>> = vec![Err(text)];

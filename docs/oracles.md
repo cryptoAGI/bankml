@@ -341,6 +341,45 @@ Two oracles hold the C API (`capi/`, [CAPI.md](CAPI.md)), both run from C progra
   - on Bonsai-8B Q1_0, `bankml_chat` must give llama-server b11192's recorded turns;
   - Bonsai-1.7B and an unpinned file must be refused, with `serve`'s reasons.
 
+## 5c. JSON mode and grammars (0.3.3): llama.cpp's grammar sampler, and llama-server's answers
+
+Two oracles hold O6's first cut (`bankML/grammar.rs`). Neither compares bankML with itself.
+
+- **The grammar engine against llama.cpp's own** (`testing/grammar_oracle.py` → `oracle_grammar_masks`).
+  `testing/grammar_oracle.cpp` drives libllama b11192's public API (`llama_sampler_init_grammar`, `_apply`,
+  `_accept`) on the pinned vocabulary, loaded vocab-only. The grammar functions inside llama.cpp are not exported,
+  but the sampler that wraps them is, so the oracle is the code the server runs, not a model of it.
+  - **The vocabulary as the grammar reads it.** Every token's piece (`llama_token_to_piece`, special tokens
+    rendered) and whether it ends generation. bankML must agree on **151,669 of 151,669** tokens and on the end set
+    of 6. That set includes `<|fim_pad|>`, `<|repo_name|>`, `<|file_sep|>` and token 128247 `</s>`, which bankML's
+    engine had not counted as ends before.
+  - **Masks.** The whole-vocabulary mask, before every token and after the last, is recorded as how many tokens are
+    allowed and an FNV-1a hash of which. The runs span 12 grammars:
+    - llama-server's JSON-mode grammar, with its generation-prompt prefill;
+    - all 8 grammars in llama.cpp's `grammars/` (json, json_arr, arithmetic, c, chess, english, japanese, list);
+    - three written for what those miss: token terminals `<think>`, `!<|im_end|>` and `<[151644]>`; `.`; `{m,n}`
+      edges; comments and CRLF; astral and CJK ranges.
+
+    The inputs are valid, invalid, partial, escaped and unicode JSON, whitespace past `space`'s 20-character and
+    2-newline limits, prose, fences and truncations. Each goes in twice: tokenized as the tokenizer does, and as one
+    token per byte, which splits every multi-byte character across tokens and exercises the partial-UTF-8 path.
+    The result: **196 of 196 runs; 1,645 of 1,645 masks and 116 of 116 rejection points identical**.
+- **llama-server's answers under a grammar** (`testing/json_oracle.py --record` → `oracle_json_mode`,
+  `oracle_json_mode_ternary`). llama-server b11192 runs with Savante's flags and `--verbose`, so that each answer
+  reports its tokens and the grammar it ran.
+  - **What is sent.** `/v1/chat/completions` with `response_format: {"type": "json_object"}` on 7 prompts, greedy
+    and seeded at temperatures 0.7, 1.0 and 1.3 (top-k 40). Some prompts invite JSON. Others tempt prose, a haiku or
+    code, so that the grammar has to reject what the model wants: 152 of 860 tokens on the 1-bit model were redrawn
+    under the mask. One is a nested object of 159 tokens, one is unicode, and two answers are cut by `max_tokens`.
+    The 1-bit model also gets two user `grammar` requests.
+  - **What is required.** Each case runs from an empty cache. bankML's engine must give the same token ids, the end
+    token included (one answer ends on `<|file_sep|>`), and the same raw text, `content`, finish reason and counts.
+    The grammar text and generation prompt the server reports must be bankML's constant and prefill.
+  - **The result:** Bonsai-8B Q1_0 **23 of 23** (860 tokens); Ternary-Bonsai-8B **13 of 13** (534 tokens, 49 redrawn).
+  - **The live check** (`testing/json_oracle.py --bankml`, in the gate) sends a subset through a running
+    `serve --native`, each from an empty slot: `/v1` with `response_format`, streamed once; `/v1` with `grammar`; and
+    Ollama's `/api/chat` with `format: "json"`. Every answer must equal the record: **8 of 8**.
+
 ## 6. Oracles planned
 
 - **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer

@@ -154,7 +154,8 @@ fn chat(h: &Bankml, body: &[u8], cb: Option<PieceCb>, user: *mut c_void) -> Resu
 }
 
 /// One chat completion: `request_json` in the OpenAI / llama-server shape (`messages`, and `temperature`, `top_k`,
-/// `top_p`, `min_p`, `seed`, `max_tokens`/`n_predict`, `stop`; a sampler bankML does not reproduce is refused). The
+/// `top_p`, `min_p`, `seed`, `max_tokens`/`n_predict`, `stop`, and since 0.3.3 `response_format` / `json_schema` /
+/// `grammar` as `serve --native` takes them; a sampler bankML does not reproduce is refused). The
 /// answer streams to `cb` (may be NULL) as whole UTF-8 pieces; `cb` returns 0 to stop. `*result_json` (when not NULL)
 /// receives the `/v1/chat/completions` object with `usage`, `timings.cache_n` and `bankml_receipt` — or, on an error,
 /// `{"error": {"code": …, "message": …}}`; free it with `bankml_free`. Returns `BANKML_OK` or a `BANKML_E_*` code.

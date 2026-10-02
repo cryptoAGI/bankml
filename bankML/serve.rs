@@ -596,15 +596,22 @@ pub struct NativeChat {
     pub params: crate::sampler::Params,
     pub max: Option<usize>,
     pub stops: Vec<String>,
+    /// 0.3.3: `response_format` / `json_schema` / `grammar`, resolved as llama-server resolves them
+    pub constraint: crate::grammar::Constraint,
 }
 
 impl NativeChat {
     pub fn parse(eng: &crate::native::Native, req: &Json) -> Result<NativeChat, String> {
         let stops = crate::ollama::stops(req.get("stop"))?;
+        let constraint = crate::grammar::from_openai(req)?;
+        if let crate::grammar::Constraint::Gbnf(g) = &constraint {
+            // a grammar llama.cpp would not parse is refused here, with its parser's reason (a 400, not a failed run)
+            crate::grammar::Rules::parse(g, &|b: &[u8]| eng.tok.encode(&String::from_utf8_lossy(b), true))?;
+        }
         let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt(m))?;
         let params = eng.params(req)?;
         let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
-        Ok(NativeChat { prompt, params, max, stops })
+        Ok(NativeChat { prompt, params, max, stops, constraint })
     }
 
     /// Run it: the answer through the stop filter, each passed-on piece to `emit` when `stream` (which also starts
@@ -612,7 +619,9 @@ impl NativeChat {
     /// false to stop; it may receive empty pieces.
     pub fn run(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(&str) -> bool) -> Result<crate::native::Done, String> {
         let mut stop = crate::ollama::StopFilter::new(self.stops);
-        let done = eng.complete(&self.prompt, self.params, self.max, |piece| {
+        let grammar = eng.grammar(&self.constraint)?;
+        let mut content = crate::grammar::ContentStream::new(&self.constraint);
+        let done = eng.complete(&self.prompt, self.params, self.max, grammar, |piece| {
             if !stream {
                 return stop.push(piece).1;
             }
@@ -620,14 +629,14 @@ impl NativeChat {
                 t.ttft = Some(t.t0.elapsed());
             }
             let (out, go) = stop.push(piece);
-            emit(&out) && go
+            emit(&content.push(&out)) && go
         });
         let rest = stop.finish();
         if stream {
-            emit(&rest);
+            emit(&content.push(&rest));
         }
         let d = done?;
-        t.text = stop.text().to_string();
+        t.text = content.content(stop.text());
         t.prompt = d.prompt_tokens as u64;
         t.completion = d.completion_tokens as u64;
         Ok(d)
@@ -757,7 +766,7 @@ fn chat(c: &mut TcpStream, st: &State, body: &[u8]) -> std::io::Result<()> {
 // ---------------------------------------------------------------- JSON (just enough) -----------
 
 /// A JSON value; numbers kept as f64 (token counts are small integers).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Json {
     Null,
     Bool(bool),

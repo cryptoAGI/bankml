@@ -72,10 +72,14 @@ On a refusal it returns NULL, with the reason in `*err` in `serve`'s words. Two 
 - the sampling keys: `temperature`, `top_k`, `top_p`, `min_p`, `min_keep` and `seed`. A key that is not set takes
   the model's GGUF default;
 - `max_tokens` (or llama-server's `n_predict`);
-- `stop`.
+- `stop`;
+- since 0.3.3, `response_format` (`{"type": "json_object"}`, or the schemas `{}` / `{"type": "object"}`), `json_schema`
+  and `grammar` (GBNF), exactly as `serve --native` takes them ([usage.md](usage.md), "JSON mode and grammars"). In
+  JSON mode the callback receives the content's growth, and `result_json`'s `content` is the JSON value.
 
 A sampler bankML does not reproduce is refused with a reason (`BANKML_E_REQUEST`), never approximated: the penalties,
-DRY, typical-p, XTC, top-n-σ and dynamic temperature. `model` and `stream` are ignored: the handle names the model,
+DRY, typical-p, XTC, top-n-σ and dynamic temperature. So is a JSON schema beyond "any object", or a grammar llama.cpp
+would not parse. `model` and `stream` are ignored: the handle names the model,
 and the callback is the stream.
 
 The answer streams to `cb` as whole UTF-8 pieces, each `len` bytes long and NUL-terminated. To stop, return 0. A NULL
@@ -95,7 +99,7 @@ The return code is one of these:
 |---|---|
 | `BANKML_OK` (0) | answered |
 | `BANKML_E_ARG` (−1) | a NULL handle or request, or a request that is not UTF-8 |
-| `BANKML_E_REQUEST` (−2) | the request is refused: not JSON, no messages, a sampler that is not reproduced, or a bad `stop` |
+| `BANKML_E_REQUEST` (−2) | the request is refused: not JSON, no messages, a sampler that is not reproduced, a bad `stop`, a schema or grammar that is not taken |
 | `BANKML_E_CHANGED` (−3) | the model file changed since it was verified. There is no answer; open it again to verify it again |
 | `BANKML_E_ENGINE` (−4) | the engine failed, for example because the prompt does not fit the context |
 | `BANKML_E_PANIC` (−5) | a panic was caught (unwinding builds only; see below) |

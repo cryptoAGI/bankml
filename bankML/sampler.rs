@@ -60,6 +60,10 @@ impl Mt19937 {
     }
 }
 
+fn cands(logits: &[f32]) -> Vec<Cand> {
+    logits.iter().enumerate().map(|(i, &l)| Cand { id: i as u32, logit: l, p: 0.0 }).collect()
+}
+
 /// `llama_token_data`.
 #[derive(Clone, Copy, Debug)]
 pub struct Cand {
@@ -192,7 +196,25 @@ impl Sampler {
 
     /// One token from the logits, through the chain; the RNG advances once per token, as llama.cpp's does.
     pub fn sample(&mut self, logits: &[f32]) -> u32 {
-        let mut c: Vec<Cand> = logits.iter().enumerate().map(|(i, &l)| Cand { id: i as u32, logit: l, p: 0.0 }).collect();
+        self.chain(cands(logits))
+    }
+
+    /// One token under a grammar, as `common_sampler_sample` (`grammar_first = false`) draws it: the chain on the
+    /// raw logits; if `allows` the token, it stands (one draw). Otherwise the logits are taken afresh, `mask` sets
+    /// every token the grammar rejects to −∞, and the chain runs again — a second draw from the same generator.
+    /// Returns the token and whether it had to be drawn again under the mask.
+    pub fn sample_constrained(&mut self, logits: &[f32], allows: impl Fn(u32) -> bool, mask: impl Fn(&mut [Cand])) -> (u32, bool) {
+        let id = self.chain(cands(logits));
+        if allows(id) {
+            return (id, false);
+        }
+        let mut c = cands(logits);
+        mask(&mut c);
+        (self.chain(c), true)
+    }
+
+    /// The chain on a candidate list in vocabulary order: top-k, top-p, min-p, temperature, dist.
+    fn chain(&mut self, mut c: Vec<Cand>) -> u32 {
         // top-k (k ≤ 128: std::partial_sort in place; the set is sorted from here on)
         let k = (self.p.top_k as usize).min(c.len());
         partial_sort(&mut c, k);

@@ -124,6 +124,10 @@
 //!   - [x] 0.3.2: a C API (`capi/`, `libbankml.so`/`.a`, `capi/include/bankml.h`, docs/CAPI.md) — open (the same
 //!     verify), chat (the same answer and receipt as `serve --native`), and a printf-style `bankml_log` defined in
 //!     Rust as a C-variadic function (Rust 1.99); the llama.h-shaped seam for embedding bankML in another program.
+//!   - [x] 0.3.3: JSON mode (O6's first cut, `grammar.rs`) — llama.cpp's GBNF engine ported, the grammar llama-server
+//!     builds for `response_format: json_object` with its prefill, and the sample → check → masked redraw of
+//!     `common_sampler_sample`; `/v1` `response_format`/`grammar`, Ollama `format: "json"`, `bankml_chat`,
+//!     `bankml generate --json`, token-identical to llama-server b11192 greedy and seeded.
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's
@@ -134,6 +138,7 @@
 pub mod chat;
 pub mod forward;
 pub mod gguf;
+pub mod grammar;
 pub mod gpu;
 pub mod native;
 pub mod ollama;

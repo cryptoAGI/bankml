@@ -41,6 +41,10 @@ pub struct Native {
     pub model: PathBuf,
     eog: Vec<u32>,
     slot: Mutex<Slot>,
+    /// every token's piece and the end set, as the grammar reads them; built on the first constrained request
+    gvocab: std::sync::OnceLock<crate::grammar::Vocab>,
+    /// the JSON-mode grammar, parsed once
+    json_rules: std::sync::OnceLock<Arc<crate::grammar::Rules>>,
 }
 
 /// How a completion ended, and its counts (llama-server's `usage` and `timings.cache_n`).
@@ -54,6 +58,11 @@ pub struct Done {
     /// wall time of the prompt's computation (the uncached part) and of the generation after it, in nanoseconds
     pub prompt_ns: u64,
     pub eval_ns: u64,
+    /// the generated token ids (with the end token, when one ended the answer)
+    pub tokens: Vec<u32>,
+    /// under a grammar: the time spent in it (the checks, the masks, the accepts) and how many tokens were redrawn
+    pub grammar_ns: u64,
+    pub resampled: usize,
 }
 
 impl Native {
@@ -62,9 +71,39 @@ impl Native {
         let tok = Tokenizer::from_gguf(model)?;
         let w = Weights::open(model)?;
         let defaults = Params::from_gguf(model)?;
-        let eog = ["<|im_end|>", "<|endoftext|>"].iter().filter_map(|t| tok.id(t)).collect();
+        let eog = eog_from_gguf(model, &tok)?;
         let caches = w.caches();
-        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }) })
+        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }),
+                    gvocab: Default::default(), json_rules: Default::default() })
+    }
+
+    /// The vocabulary as the grammar reads it (built once, ~10 MB, on the first constrained request).
+    pub fn grammar_vocab(&self) -> &crate::grammar::Vocab {
+        self.gvocab.get_or_init(|| crate::grammar::Vocab::new((0..self.tok.n_tokens() as u32).map(|i| self.tok.piece(i)).collect(), &self.eog))
+    }
+
+    /// The grammar a request's constraint asks for, in its starting state: JSON mode's grammar with the generation
+    /// prompt already taken in (llama-server prefills an output-format grammar), or the user's GBNF as it is.
+    pub fn grammar(&self, c: &crate::grammar::Constraint) -> Result<Option<crate::grammar::Grammar>, String> {
+        use crate::grammar::{Constraint, Grammar, Rules, JSON_OBJECT_GRAMMAR, JSON_OBJECT_PREFILL};
+        let tokenize = |b: &[u8]| self.tok.encode(&String::from_utf8_lossy(b), true);
+        match c {
+            Constraint::None => Ok(None),
+            Constraint::JsonObject => {
+                let r = self.json_rules.get_or_init(|| Arc::new(Rules::parse(JSON_OBJECT_GRAMMAR, &tokenize).expect("the JSON-mode grammar parses")));
+                let v = self.grammar_vocab();
+                let mut g = Grammar::new(r.clone());
+                for id in self.tok.encode(JSON_OBJECT_PREFILL, true) {
+                    g.accept(v, id)?;
+                }
+                Ok(Some(g))
+            }
+            Constraint::Gbnf(text) => {
+                let r = Rules::parse(text, &tokenize)?;
+                self.grammar_vocab();
+                Ok(Some(Grammar::new(Arc::new(r))))
+            }
+        }
     }
 
     /// The request's sampling parameters over the model's defaults; an unsupported sampler is refused.
@@ -79,7 +118,9 @@ impl Native {
     }
 
     /// One completion. `emit` receives the answer as whole UTF-8 pieces as they come, and returns false to stop.
-    pub fn complete(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut emit: impl FnMut(&str) -> bool) -> Result<Done, String> {
+    /// With a grammar (`Native::grammar`) every token is drawn as `common_sampler_sample` draws it under one.
+    pub fn complete(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
+                    mut emit: impl FnMut(&str) -> bool) -> Result<Done, String> {
         if prompt.is_empty() {
             return Err("an empty prompt".into());
         }
@@ -104,11 +145,25 @@ impl Native {
         let prompt_ns = t0.elapsed().as_nanos() as u64;
         let t1 = Instant::now();
         let (mut pending, mut text, mut n, mut finish) = (Vec::<u8>::new(), String::new(), 0usize, "length");
+        let (mut out, mut grammar_ns, mut resampled) = (Vec::new(), 0u64, 0usize);
         loop {
             if max_tokens.is_some_and(|m| n >= m) {
                 break;
             }
-            let next = sampler.sample(&self.w.logits(&rn)?);
+            let logits = self.w.logits(&rn)?;
+            let next = match grammar.as_mut() {
+                None => sampler.sample(&logits),
+                Some(g) => {
+                    let tg = Instant::now();
+                    let v = self.grammar_vocab();
+                    let (t, again) = sampler.sample_constrained(&logits, |id| g.allows(v, id), |c| g.apply(v, c));
+                    g.accept(v, t)?;
+                    resampled += again as usize;
+                    grammar_ns += tg.elapsed().as_nanos() as u64;
+                    t
+                }
+            };
+            out.push(next);
             if self.eog.contains(&next) {
                 n += 1; // llama-server counts the end-of-turn token it sampled among the completion tokens
                 finish = "stop";
@@ -140,7 +195,16 @@ impl Native {
             emit(&piece);
         }
         Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text, prompt_ns,
-                  eval_ns: t1.elapsed().as_nanos() as u64 })
+                  eval_ns: t1.elapsed().as_nanos() as u64, tokens: out, grammar_ns, resampled })
+    }
+
+    /// Empty the slot (the next request computes its whole prompt, as a fresh llama-server or `cache_prompt: false`).
+    pub fn reset(&self) {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        slot.tokens.clear();
+        for c in slot.caches.iter_mut() {
+            c.truncate(0);
+        }
     }
 
     /// `/props`, in the shape Savante reads (the context and the model's path).
@@ -148,6 +212,20 @@ impl Native {
         format!("{{\"model_path\": {}, \"n_ctx\": {}, \"default_generation_settings\": {{\"n_ctx\": {}, \"params\": {{\"temperature\": {}, \"top_k\": {}, \"top_p\": {}, \"min_p\": {}}}}}, \"build_info\": \"bankML {} native\"}}",
                 crate::gguf::jstr(&self.model.to_string_lossy()), self.n_ctx, self.n_ctx, self.defaults.temp, self.defaults.top_k, self.defaults.top_p, self.defaults.min_p, crate::VERSION)
     }
+}
+
+/// llama-vocab.cpp's end-of-generation set for a GGUF: by name, plus the eos / eot / eom / FIM ids its header names.
+pub fn eog_from_gguf(model: &Path, tok: &Tokenizer) -> Result<Vec<u32>, String> {
+    let rep = crate::gguf::guard_file(model, crate::gguf::Engine::Mainline).map_err(|e| format!("{}: {e}", model.display()))?;
+    let kv = rep.header.map(|h| h.kv).unwrap_or_default();
+    let ids: Vec<u32> = ["eos", "eot", "eom", "fim_pad", "fim_rep", "fim_sep"].iter()
+        .filter_map(|k| match kv.get(&format!("tokenizer.ggml.{k}_token_id")) {
+            Some(crate::gguf::Val::U(v)) => u32::try_from(*v).ok(),
+            Some(crate::gguf::Val::I(v)) => u32::try_from(*v).ok(),
+            _ => None,
+        })
+        .collect();
+    Ok(tok.eog_ids(&ids))
 }
 
 /// The request's sampling parameters over a model's defaults (llama-server's resolution); a sampler bankML does not
@@ -485,7 +563,7 @@ mod tests {
             let prompt = eng.prompt(req.get("messages").unwrap()).unwrap();
             let params = eng.params(req).unwrap();
             let max = req.get("max_tokens").and_then(|v| match v { Json::Num(x) => Some(*x as usize), _ => None });
-            let d = eng.complete(&prompt, params, max, |_| true).unwrap();
+            let d = eng.complete(&prompt, params, max, None, |_| true).unwrap();
             n += 1;
             let want_text = t.get("text").and_then(Json::as_str).unwrap();
             let good = d.text == want_text && d.prompt_tokens == num(&t, "prompt_tokens") && d.completion_tokens == num(&t, "completion_tokens")
@@ -501,5 +579,68 @@ mod tests {
                   t0.elapsed().as_secs_f64());
         assert_eq!(ok, n);
     }
+
+    /// llama-server b11192's answers under JSON mode and user grammars (testing/json_oracle.py), each from an empty
+    /// cache: the same tokens (end token included), raw text, message content, finish reason and counts; and the
+    /// grammar and generation prompt the server reports are the ones bankML uses.
+    fn json_replay(stem: &str) {
+        use crate::grammar::{json_content, Constraint, JSON_OBJECT_GRAMMAR, JSON_OBJECT_PREFILL};
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
+        let rec = std::fs::read_to_string(dir.join(format!("oracle-json/json-{stem}.jsonl"))).unwrap();
+        let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n as usize, _ => usize::MAX };
+        let s = |v: &Json, k: &str| v.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+        let (mut n, mut ok, mut toks, mut redrawn, mut gns) = (0, 0, 0, 0, 0u64);
+        let t0 = std::time::Instant::now();
+        for line in rec.lines() {
+            let c = Json::parse(line).unwrap();
+            let req = c.get("request").unwrap();
+            let constraint = crate::grammar::from_openai(req).unwrap();
+            match &constraint {
+                Constraint::JsonObject => {
+                    assert_eq!(s(&c, "grammar"), JSON_OBJECT_GRAMMAR, "{}: the server's grammar", s(&c, "name"));
+                    assert_eq!(s(&c, "generation_prompt"), JSON_OBJECT_PREFILL);
+                }
+                Constraint::Gbnf(g) => assert_eq!(&s(&c, "grammar"), g),
+                Constraint::None => panic!("an unconstrained record"),
+            }
+            assert_eq!(c.get("grammar_lazy"), Some(&Json::Bool(false)));
+            let prompt = eng.prompt(req.get("messages").unwrap()).unwrap();
+            let params = eng.params(req).unwrap();
+            let max = match req.get("max_tokens") { Some(Json::Num(x)) => Some(*x as usize), _ => None };
+            eng.reset();
+            let d = eng.complete(&prompt, params, max, eng.grammar(&constraint).unwrap(), |_| true).unwrap();
+            let want: Vec<u32> = match c.get("tokens") { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!() };
+            let content = if constraint == Constraint::JsonObject { json_content(&d.text).to_string() } else { d.text.clone() };
+            let good = d.tokens == want && d.text == s(&c, "raw") && content == s(&c, "content") && d.finish_reason == s(&c, "finish_reason")
+                && d.prompt_tokens == num(&c, "prompt_tokens") && d.completion_tokens == num(&c, "completion_tokens");
+            n += 1;
+            ok += good as usize;
+            toks += d.tokens.len();
+            redrawn += d.resampled;
+            gns += d.grammar_ns;
+            if !good {
+                let at = d.tokens.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(d.tokens.len().min(want.len()));
+                eprintln!("  {}: first token difference at {at} of {} / {}; content {:?} want {:?}; finish {} want {}", s(&c, "name"), d.tokens.len(), want.len(),
+                          &content[..content.len().min(60)], &s(&c, "content")[..s(&c, "content").len().min(60)], d.finish_reason, s(&c, "finish_reason"));
+            }
+        }
+        eprintln!("json-mode oracle ({stem}): {ok} of {n} constrained answers token-identical to llama-server b11192 ({toks} tokens, {redrawn} redrawn \
+                   under the mask; grammar {:.2} ms per token) — {:.0} s", gns as f64 / 1e6 / toks.max(1) as f64, t0.elapsed().as_secs_f64());
+        assert_eq!(ok, n);
+    }
+
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-json/json-*.jsonl (testing/json_oracle.py --record); --release"]
+    fn oracle_json_mode() {
+        json_replay("Bonsai-8B-Q1_0");
+    }
+
+    #[test]
+    #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + oracle-json/json-*.jsonl (testing/json_oracle.py --record); --release"]
+    fn oracle_json_mode_ternary() {
+        json_replay("Ternary-Bonsai-8B-Q2_0_g64");
+    }
+
 }
 

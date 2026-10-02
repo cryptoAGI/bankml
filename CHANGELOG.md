@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.3.3 — 2026-10-02 — JSON mode, token-identical to llama-server
+
+**mindX's most common request that bankML refused, `format: "json"`, is now answered natively. The answer has the
+same tokens llama-server b11192 gives under the same request, greedy and seeded.** O6's first cut (docs/OLLAMA.md).
+Record: `testing/results/0.3.3.txt`.
+
+### What llama-server does, read from its source (b11192, `171e8846b`)
+- **The grammar is not `grammars/json.gbnf`.** On the jinja chat path (Savante's flags), `response_format: {"type":
+  "json_object"}` becomes the schema `{"type": "object"}`. The chat layer turns the schema into a PEG parser
+  (`common/chat-auto-parser-generator.cpp`), and that parser into GBNF. The GBNF's root begins with the template's
+  generation prompt, then allows an optional ```` ```json ```` fence around the object.
+- **The grammar is prefilled.** It is typed as a tool-call grammar, so `common_sampler_init` *accepts the generation
+  prompt's 7 tokens* into it before the first draw (`common_grammar_needs_prefill`).
+- **The sampler draws, then checks, then redraws.** `common_sampler_sample` (`grammar_first = false`) runs the whole
+  chain on the raw logits. If the token it picks passes the grammar, it stands. If not, the logits are reset, every
+  rejected token goes to −∞, and the chain runs again: **a second draw from the same `mt19937`**.
+- **The end set is wider.** An end-of-generation token passes only when the grammar is complete, and llama-vocab's end
+  set on Qwen3 is 6 tokens: `<|endoftext|>`, `<|im_end|>`, `<|fim_pad|>`, `<|repo_name|>`, `<|file_sep|>` and token
+  128247 `</s>`. One recorded answer ends on `<|file_sep|>`.
+- **The content is the value alone.** The answer's `content` is the JSON value, without the fence or the space around it.
+
+### Added
+- **`bankML/grammar.rs`: llama.cpp's grammar engine, ported** (MIT, attributed with its notice; no crates). It holds:
+  - the GBNF parser (literals, classes, `.`, token terminals `<…>` `!<…>` `<[id]>`, groups, `* + ? {m,n}`, comments);
+  - the reference and left-recursion checks;
+  - the pushdown stacks and `advance_stack`;
+  - `reject_candidates` over code points, with partial UTF-8 carried across tokens;
+  - accept and apply, with the end rule.
+
+  It also carries the server's JSON-mode grammar (a constant the oracle checks against the server's own report) and
+  its prefill, the request resolution of `oaicompat_chat_params_parse`, and the content rule.
+- **`Sampler::sample_constrained`**: the draw, the check and the masked redraw, in the server's order.
+- **Surfaces.** All of them use one engine path (`Native::grammar`, `Native::complete`):
+  - `/v1/chat/completions`: `response_format` (`json_object`, `json_schema` with schema `{}` or
+    `{"type": "object"}`), the top-level `json_schema`, and `grammar` (any GBNF; a user grammar, not prefilled);
+  - Ollama's `/api/chat` and `/api/generate` with `format: "json"`;
+  - the C API's `bankml_chat`;
+  - `bankml generate --json`.
+
+  A stream sends the content's growth.
+- **Oracles, in the gate:**
+  - `oracle_grammar_masks` (`testing/grammar_oracle.cpp` + `.py`) drives libllama b11192's public grammar sampler on
+    the pinned vocabulary. All 151,669 token pieces and the end set are identical. Then 196 of 196 runs over 12
+    grammars are identical: llama-server's JSON grammar with its prefill, every grammar in llama.cpp's `grammars/`,
+    and three written for token terminals, edges and UTF-8. Each input goes in tokenized and byte by byte. That is
+    **1,645 of 1,645 whole-vocabulary masks and 116 of 116 rejection points**.
+  - `oracle_json_mode` and `oracle_json_mode_ternary` (`testing/json_oracle.py --record`) replay llama-server's
+    answers under `response_format: json_object`. The prompts invite JSON or tempt prose and code; one is a nested
+    object and one is unicode. They run greedy and seeded at 0.7, 1.0 and 1.3, plus two user grammars, each from an
+    empty cache. The results: Bonsai-8B Q1_0 **23 of 23** (860 tokens, 152 of them redrawn under the mask), and
+    Ternary-Bonsai-8B **13 of 13** (534 tokens, 49 redrawn). The same token ids, end token included, and the same raw text, content, finish
+    and counts.
+  - `json_oracle_live` (`testing/json_oracle.py --bankml`) runs a live `serve --native` through `/v1` (streamed
+    once), `grammar`, and `/api/chat` with `format: "json"`: **8 of 8**.
+
+### Changed
+- **The end of an answer** is llama-vocab's whole end set (6 tokens), not `<|im_end|>` and `<|endoftext|>` alone,
+  with or without a grammar. Before this, an answer that sampled `<|file_sep|>` would have run on where llama-server
+  stops.
+- **`response_format` on `serve --native`'s `/v1` was silently ignored before** (an unconstrained answer; the proxy mode always passed it to llama-server). It is now honoured, or
+  refused with the reason.
+- `serve::Json` derives `Clone`. `native::Done` carries the generated token ids, the time spent in the grammar and
+  the number of redraws.
+
+### Still refused, with the reason
+- A JSON schema other than `{}` or `{"type": "object"}`, in `response_format`, `json_schema` or Ollama's `format`:
+  llama.cpp's `json_schema_to_grammar` and its chat-parser wrapping are not ported (O6, next).
+- `format` with `raw: true`, because JSON mode's grammar starts with the template's generation prompt;
+  `response_format` or `json_schema` together with `grammar`; tools.
+
+### Measured
+- **Grammar cost** (PERFORMANCE.md, "JSON mode's cost"):
+  - one whole-vocabulary mask over 151,669 tokens costs a median of **24.2 ms** (p90 47.0, max 101.0) across 1,645
+    masks;
+  - spread over real answers, the grammar costs **3.90 ms per token** on the 1-bit model (152 of 860 tokens
+    redrawn) and **3.95 ms** on the ternary model (49 of 534). That is about 1 % of a decode step.
+- **The rest of the gate, against 0.3.2.** No kernel changed, and every bit-exact oracle passed again: tokenizer
+  4,258/4,258, template 317/317, whole model 1,064/1,064 for both models, greedy 6/6, 6/6, 6/6 long and 3/3 deep,
+  sampling 40/40, native serve 9/9, the Ollama shape 9/9, the C API 9/9 + 9/9, and printf 47/47.
+  - The decode budgets read faster than in 0.3.2's gate because the laptop was quieter, not because of the code.
+    1-bit: bankML 0.641 s/token at 1 thread (0.3.2: 0.677) and 0.389 s at 3 (0.3.2: 0.787, under load). Ternary:
+    0.436 s at 1 thread (0.477) and 0.279 s at 3 (0.394), **9.62×** and 8.36× ahead of ggml b11192.
+
 ## 0.3.2 — 2026-10-01 — a C API, on Rust 1.99
 
 **bankML is now also a C library, `libbankml`, with one hand-written header. A program that embeds it gets the same

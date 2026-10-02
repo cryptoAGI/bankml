@@ -18,8 +18,9 @@ const USAGE: &str = "usage: bankml usage [PID …]
                                                               default ~/.local/share/bankml/forks, by name, one resident at a time)
        bankml tokenize MODEL.gguf [--no-special] < text      (token ids, as llama.cpp's /tokenize)
        bankml chat-template MODEL.gguf < messages.json        (the prompt, as llama.cpp's /apply-template)
-       bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
-                                                              (bankml's own forward pass: greedy, or llama-server's sampler chain)
+       bankml generate MODEL.gguf [--max N] [--json] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
+                                                              (bankml's own forward pass: greedy, or llama-server's sampler chain;
+                                                              --json: JSON mode, llama-server's response_format json_object)
        bankml gpu [--remote | --verify]                        (every video card found, and which bankml will use;
                                                               --remote adds the GPUs Hugging Face rents, listed only;
                                                               --verify runs the bit-exact kernel oracle on each card)
@@ -87,7 +88,7 @@ fn main() {
             } else {
                 None
             };
-            match generate(Path::new(file), &text, max, sample) {
+            match generate(Path::new(file), &text, max, sample, flag("--json")) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("bankml generate: {e}");
@@ -259,7 +260,7 @@ fn main() {
 
 /// `bankml generate`: render, tokenize, run the prompt through bankml's forward pass, then greedy tokens to stdout as
 /// they come, until the turn ends or `max` tokens.
-fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sampler::Params>) -> Result<(), String> {
+fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sampler::Params>, json: bool) -> Result<(), String> {
     use bankml::{chat, forward::Weights, serve::Json, tokenizer::Tokenizer};
     use std::io::Write;
     chat::check_template(model)?;
@@ -267,6 +268,25 @@ fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sample
         Some(v) if matches!(v, Json::Arr(_)) || v.get("messages").is_some() => chat::messages_from_json(v.get("messages").unwrap_or(&v))?,
         _ => vec![chat::Message::new("user", input.trim_end_matches('\n'))],
     };
+    if json {
+        // 0.3.3: JSON mode through the native engine — the grammar, its prefill and the redraw exactly as llama-server
+        // answers `response_format: {"type": "json_object"}` (greedy is its temperature 0); the content is printed
+        use bankml::grammar::{Constraint, ContentStream};
+        let eng = bankml::native::Native::open(model, 4096)?;
+        let params = sample.unwrap_or_else(|| bankml::sampler::Params { temp: 0.0, ..eng.defaults.clone() });
+        let prompt = eng.tok.encode(&chat::render(&msgs)?, true);
+        let mut cs = ContentStream::new(&Constraint::JsonObject);
+        let mut out = std::io::stdout();
+        let d = eng.complete(&prompt, params, Some(max), eng.grammar(&Constraint::JsonObject)?, |piece| {
+            let _ = out.write_all(cs.push(piece).as_bytes());
+            let _ = out.flush();
+            true
+        })?;
+        println!();
+        eprintln!("bankml generate --json: {} prompt tokens, {} generated ({}), {} redrawn under the grammar, {:.1} ms of grammar per token",
+                  d.prompt_tokens, d.completion_tokens, d.finish_reason, d.resampled, d.grammar_ns as f64 / 1e6 / d.tokens.len().max(1) as f64);
+        return Ok(());
+    }
     let tok = Tokenizer::from_gguf(model)?;
     let prompt = tok.encode(&chat::render(&msgs)?, true);
     let w = Weights::open(model)?;

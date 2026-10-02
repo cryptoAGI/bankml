@@ -13,7 +13,10 @@
 //!   engine's own refusal; `num_ctx` up to the served context is accepted; resource options (threads, batch, GPU,
 //!   mmap) do not change an answer bankML gives and are ignored; anything else is refused.
 //!
-//! Refused: `format` (JSON mode needs a grammar, O6), `tools` (O6), `images` (out of scope), `suffix`, `template`,
+//! 0.3.3: `format: "json"` (and the schemas `{}`, `{"type": "object"}`) is JSON mode, answered by the grammar llama-server
+//! uses for `response_format: json_object` (`grammar.rs`); any other schema is refused, as is `format` with `raw`.
+//!
+//! Refused: `tools` (O6), `images` (out of scope), `suffix`, `template`,
 //! `context`, and `think: true` (the template is rendered with thinking off, as llama-server `--reasoning off`).
 //! `/api/embed` (O7), `/api/create` (O5), `/api/pull`, `/api/delete`, `/api/copy`, `/api/push` answer why not.
 
@@ -196,8 +199,10 @@ pub fn refusals(req: &Json) -> Result<(), String> {
         Some(Json::Obj(o)) => !o.is_empty(),
         Some(_) => true,
     };
-    if present("format") {
-        return Err("format: JSON mode and schemas need a grammar-constrained sampler, which bankML does not have yet (O6 in docs/OLLAMA.md); ask for JSON in the prompt and parse the answer".into());
+    // 0.3.3: `format: "json"` is JSON mode (O6); a schema beyond "any object" is refused by `grammar::from_ollama`
+    let constraint = crate::grammar::from_ollama(req.get("format"))?;
+    if constraint != crate::grammar::Constraint::None && req.get("raw").and_then(Json::as_bool).unwrap_or(false) {
+        return Err("format with raw: JSON mode follows llama-server's chat path (the template's generation prompt is part of its grammar); a raw prompt has none — drop raw, or ask for JSON in the prompt".into());
     }
     if present("tools") {
         return Err("tools: tool calling needs the template's tool rendering and a grammar (O6 in docs/OLLAMA.md); not reproduced yet".into());
@@ -467,34 +472,44 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
         Err(m) => return err(c, 400, &m),
     };
     let mut stop = StopFilter::new(o.stops);
+    let constraint = match crate::grammar::from_ollama(req.get("format")) {
+        Ok(k) => k,
+        Err(m) => return err(c, 400, &m),
+    };
+    let grammar = match eng.grammar(&constraint) {
+        Ok(g) => g,
+        Err(m) => return err(c, 400, &m),
+    };
+    let mut content = crate::grammar::ContentStream::new(&constraint);
     if stream {
         write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
         let send = |c: &mut TcpStream, piece: &str| piece.is_empty() || c.write_all(piece_line(model, chat, piece).as_bytes()).and_then(|_| c.flush()).is_ok();
-        let done = eng.complete(&prompt, params, o.max, |piece| {
+        let done = eng.complete(&prompt, params, o.max, grammar, |piece| {
             if t.ttft.is_none() {
                 t.ttft = Some(t.t0.elapsed());
             }
             let (out, go) = stop.push(piece);
-            send(c, &out) && go
+            send(c, &content.push(&out)) && go
         });
-        send(c, &stop.finish());
+        let rest = stop.finish();
+        send(c, &content.push(&rest));
         let d = match done {
             Ok(d) => d,
             Err(m) => return writeln!(c, "{{\"error\": {}}}", jstr(&m)),
         };
-        t.text = stop.text().to_string();
+        t.text = content.content(stop.text());
         t.prompt = d.prompt_tokens as u64;
         t.completion = d.completion_tokens as u64;
         let line = final_line(model, chat, "", d.finish_reason, t.t0.elapsed().as_nanos() as u64, load_ns, Some(&d), Some(&t.receipt(&l.engine, &l.verified)));
         c.write_all(line.as_bytes())?;
         return c.flush();
     }
-    let d = match eng.complete(&prompt, params, o.max, |piece| stop.push(piece).1) {
+    let d = match eng.complete(&prompt, params, o.max, grammar, |piece| stop.push(piece).1) {
         Ok(d) => d,
         Err(m) => return err(c, 500, &m),
     };
     stop.finish();
-    t.text = stop.text().to_string();
+    t.text = content.content(stop.text());
     t.prompt = d.prompt_tokens as u64;
     t.completion = d.completion_tokens as u64;
     let line = final_line(model, chat, &t.text, d.finish_reason, t.t0.elapsed().as_nanos() as u64, load_ns, Some(&d), Some(&t.receipt(&l.engine, &l.verified)));
@@ -556,8 +571,11 @@ mod tests {
     #[test]
     fn refusals_say_why() {
         let r = |j: &str| refusals(&Json::parse(j).unwrap());
-        assert!(r(r#"{"format": "json"}"#).unwrap_err().starts_with("format:"));
-        assert!(r(r#"{"format": {"type": "object"}}"#).unwrap_err().contains("O6"));
+        // 0.3.3: JSON mode is answered; a real schema, and format with raw, are refused
+        assert!(r(r#"{"format": "json"}"#).is_ok());
+        assert!(r(r#"{"format": {"type": "object"}}"#).is_ok());
+        assert!(r(r#"{"format": {"type": "object", "required": ["a"]}}"#).unwrap_err().starts_with("format:"));
+        assert!(r(r#"{"format": "json", "raw": true}"#).unwrap_err().contains("raw"));
         assert!(r(r#"{"tools": [{"type": "function"}]}"#).unwrap_err().starts_with("tools:"));
         assert!(r(r#"{"images": ["aGk="]}"#).unwrap_err().starts_with("images:"));
         assert!(r(r#"{"suffix": "}"}"#).unwrap_err().starts_with("suffix:"));
@@ -581,7 +599,7 @@ mod tests {
         assert_eq!(v.get("done"), Some(&Json::Bool(false)));
         let g = Json::parse(piece_line("m", false, "x").trim_end()).unwrap();
         assert_eq!(g.get("response").and_then(Json::as_str), Some("x"));
-        let d = crate::native::Done { prompt_tokens: 12, cached_tokens: 3, completion_tokens: 5, finish_reason: "stop", text: "hi".into(), prompt_ns: 7, eval_ns: 9 };
+        let d = crate::native::Done { prompt_tokens: 12, cached_tokens: 3, completion_tokens: 5, finish_reason: "stop", text: "hi".into(), prompt_ns: 7, eval_ns: 9, tokens: vec![], grammar_ns: 0, resampled: 0 };
         let f = final_line("m", true, "", "stop", 100, 4, Some(&d), Some("{\"signed\": false}"));
         assert!(f.ends_with('\n') && f.matches('\n').count() == 1);
         let v = Json::parse(f.trim_end()).unwrap();
