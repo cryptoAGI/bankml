@@ -311,3 +311,78 @@ fn serve_refuses_an_unverified_model_or_a_different_upstream_file() {
     assert_eq!(c, 2, "{msg}");
     assert!(msg.contains("not the verified"), "{msg}");
 }
+
+/// O5: `bankml create` over a pinned (header-only) GGUF, by name and by path; the manifest; the refusals.
+#[test]
+fn create_writes_a_layer_over_a_pin() {
+    let d = dir("create");
+    let reg = d.join("forks");
+    std::fs::create_dir_all(&reg).unwrap();
+    let base = write(&reg, "base-F16.gguf", &gguf(&[("general.architecture", "llama"), ("tokenizer.chat_template", "{{ chatml }}")], &[]));
+    std::fs::write(reg.join("base-F16.gguf.FORK.json"), format!("{{\"files\": [{{\"path\": \"base-F16.gguf\", \"sha256\": \"{}\"}}]}}", sha(&base))).unwrap();
+    let mf = d.join("Modelfile");
+    std::fs::write(&mf, "FROM base-f16\nSYSTEM \"\"\"You are mindX.\"\"\"\nPARAMETER stop <|im_end|>\nPARAMETER num_ctx 2048\n").unwrap();
+    let r = reg.to_str().unwrap();
+    let o = bankml(&["create", "persona", "-f", mf.to_str().unwrap(), "--registry", r]);
+    assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out(&o).lines().last() == Some("success") && out(&o).contains(&format!("using existing layer sha256:{}", sha(&base))), "{}", out(&o));
+    let m = std::fs::read_to_string(reg.join("persona.MODEL.json")).unwrap();
+    assert!(m.contains("\"system\": \"You are mindX.\"") && m.contains("\"parameters\": {\"num_ctx\": 2048}") && m.contains("\"stop\": [\"<|im_end|>\"]"), "{m}");
+    // by path, relative to the Modelfile
+    std::fs::write(&mf, "FROM ./forks/base-F16.gguf\n").unwrap();
+    assert_eq!(code(&bankml(&["create", "by-path", "-f", mf.to_str().unwrap(), "--registry", r])), 0);
+    // refusals: exit 2 with the reason
+    for (text, why) in [("FROM base-f16\nADAPTER /x\n", "LoRA"), ("FROM base-f16\nPARAMETER mirostat 2\n", "not reproduced"), ("FROM nothing\n", "no such model"),
+                        ("SYSTEM x\n", "no FROM")] {
+        std::fs::write(&mf, text).unwrap();
+        let o = bankml(&["create", "x", "-f", mf.to_str().unwrap(), "--registry", r]);
+        let e = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(code(&o) == 2 && e.contains(why), "{text:?}: {e}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// O5: `bankml convert` refuses what it would not write as llama.cpp writes it (the byte-identity oracle on real
+/// weights is `convert::tests::oracle_convert_b11192`).
+#[test]
+fn convert_refuses_with_the_reason() {
+    let d = dir("convert");
+    let m = d.join("tiny-llama");
+    std::fs::create_dir_all(&m).unwrap();
+    let o = |args: &[&str]| {
+        let r = bankml(args);
+        (code(&r), String::from_utf8_lossy(&r.stderr).into_owned())
+    };
+    let out_gguf = d.join("out.gguf");
+    let (ms, og) = (m.to_str().unwrap(), out_gguf.to_str().unwrap());
+    std::fs::write(m.join("config.json"), r#"{"architectures": ["Qwen3ForCausalLM"]}"#).unwrap();
+    let (c, e) = o(&["convert", ms, "-o", og]);
+    assert!(c == 2 && e.contains("Llama architecture"), "{e}");
+    // a tiny Llama: one BF16 tensor per role, and a tokenizer no one has measured
+    std::fs::write(m.join("config.json"), r#"{"architectures": ["LlamaForCausalLM"], "hidden_size": 4, "num_attention_heads": 2, "num_key_value_heads": 1,
+        "num_hidden_layers": 1, "intermediate_size": 8, "vocab_size": 3, "tie_word_embeddings": true}"#).unwrap();
+    let ts = [("model.embed_tokens.weight", vec![3u64, 4]), ("model.layers.0.input_layernorm.weight", vec![4]), ("model.layers.0.self_attn.q_proj.weight", vec![4, 4]),
+              ("model.layers.0.self_attn.k_proj.weight", vec![2, 4]), ("model.norm.weight", vec![4])];
+    let (mut hdr, mut data, mut off) = (Vec::new(), Vec::new(), 0u64);
+    for (n, sh) in &ts {
+        let len = sh.iter().product::<u64>() * 2;
+        hdr.push(format!("\"{n}\": {{\"dtype\": \"BF16\", \"shape\": {sh:?}, \"data_offsets\": [{off}, {}]}}", off + len));
+        data.extend(std::iter::repeat_n(0x3fu8, len as usize));
+        off += len;
+    }
+    let h = format!("{{{}}}", hdr.join(", "));
+    let mut st = (h.len() as u64).to_le_bytes().to_vec();
+    st.extend(h.as_bytes());
+    st.extend(data);
+    std::fs::write(m.join("model.safetensors"), st).unwrap();
+    std::fs::write(m.join("tokenizer.json"), r#"{"model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2}, "merges": ["a b"]}, "added_tokens": [], "pre_tokenizer": null}"#).unwrap();
+    let (c, e) = o(&["convert", ms, "-o", og]);
+    assert!(c == 2 && e.contains("tokenizer not recognised"), "{e}");
+    assert!(!out_gguf.exists());
+    std::fs::write(m.join("README.md"), "---\nlicense: mit\n---\n").unwrap();
+    let (c, e) = o(&["convert", ms, "-o", og]);
+    assert!(c == 2 && e.contains("README.md"), "{e}");
+    let (c, e) = o(&["convert", ms, "-o", og, "--outtype", "q8_0"]);
+    assert!(c == 2 && e.contains("f16 only"), "{e}");
+    let _ = std::fs::remove_dir_all(&d);
+}

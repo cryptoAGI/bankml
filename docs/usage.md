@@ -283,11 +283,59 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
   - `images`;
   - `suffix`, `template`, `context`;
   - `think: true` (the template is rendered with thinking off; `think: false` is accepted);
-  - `/api/embed` (O7), `/api/create` (O5), `/api/pull`, `DELETE /api/delete`, `/api/copy`, `/api/push`.
+  - `/api/embed` (O7), `/api/pull`, `/api/push`, and `DELETE /api/delete` of a pinned file (derived models: below).
 - **`raw: true`** tokenizes `prompt` as given, with special tokens and no template. `system` is ignored then, as in
   Ollama.
 - **The loopback rules still apply.** POST bodies need `Content-Type: application/json` (`curl -d` alone sends a
   form type and gets 415), and `Host` must be a loopback name.
+
+### Derived models and conversion: `bankml create`, `bankml convert` (O5, Unreleased)
+
+`ollama create`, natively. A derived model is a layer (system prompt, parameters, stop strings, example messages,
+licence) over a **pinned** base, written as `<registry>/<name>.MODEL.json`. Weights are never copied. Loading it
+verifies the base exactly as a pinned model is verified. The details are in
+[OLLAMA.md](OLLAMA.md#what-o5s-first-cut-built-unreleased).
+
+```sh
+# mindX's flow, without Ollama: the merged safetensors directory → a pinned GGUF → the persona layer
+cat > Modelfile <<'MF'
+FROM /home/mindx/mindX/data/godel/ascend/gen39/out/runs/<recipe>/ollama_push/merged
+MF
+bankml create mindx-gen39 -f Modelfile            # converts (byte-identical to llama.cpp) → mindx-gen39-F16.gguf + its FORK.json
+cat > Modelfile.persona <<'MF'
+FROM mindx-gen39
+SYSTEM """You are mindX generation 39, …"""
+PARAMETER stop <|im_end|>
+PARAMETER num_ctx 2048
+MF
+bankml create mindx-gen39 -f Modelfile.persona    # re-created in place: the layer over the same pinned base
+# the same over HTTP (bankml serve … --native --registry)
+curl -s $B/api/create -H "$J" -d '{"model": "mindx-persona", "from": "mindx-gen39", "system": "You are mindX.", "parameters": {"temperature": 0.7}}'
+curl -s $B/api/show   -H "$J" -d '{"model": "mindx-persona"}'     # the Modelfile back, details.parent_model
+curl -s $B/api/copy   -H "$J" -d '{"source": "mindx-persona", "destination": "mindx-persona-b"}'
+curl -s -X DELETE $B/api/delete -d '{"model": "mindx-persona-b"}'
+# conversion alone, with the FORK.json that pins it
+bankml convert DIR -o mindx-gen39-F16.gguf --fork mindx-gen39-F16.gguf.FORK.json --source "PYTHAI/mindXascension@4bd31b9d weights/gen39"
+```
+
+- **Modelfile.** Ollama's grammar: `"""…"""` blocks, `#` comments, case-insensitive instructions.
+  - **Taken:** `FROM`, `SYSTEM`, `PARAMETER` (`temperature`, `top_k`, `top_p`, `min_p`, `seed`, `num_ctx`,
+    `num_predict`, `stop`), `MESSAGE`, `LICENSE`, `REQUIRES`.
+  - **`TEMPLATE`:** only when it is the base's own.
+  - **Refused, with the reason:** `ADAPTER` (merge the LoRA first), other parameters, `quantize`, uploaded `files`.
+  - A relative `FROM ./x` is relative to the Modelfile.
+- **Where.** `--registry DIR` (default `$BANKML_FORKS`, else `~/.local/share/bankml/forks`).
+  - `FROM` a name looks there, and in `--models DIR`.
+  - `FROM` a GGUF needs its FORK.json there.
+  - `serve --native --registry` lists the derived models and answers `/api/create`. Without `--registry` it refuses,
+    because it has nowhere to write.
+- **`bankml convert`.** The Llama architecture (SmolLM2, `mindx-genN`) to GGUF F16, byte-identical to llama.cpp b11192's
+  `convert_hf_to_gguf.py --outtype f16`: `e9aba089…` for SmolLM2-135M-Instruct, `6b64c748…` for gen39.
+  - llama.cpp names the model from the **directory's name**. A directory called `merged` gives `general.name`
+    `Merged`, as llama.cpp's would. `--model-name` sets it, as llama.cpp's flag does.
+  - A `README.md` is refused, because llama.cpp would copy the card's metadata in.
+  - A tokenizer that llama.cpp has not been seen to name is refused (`testing/convert_oracle.py --chkhsh DIR`
+    measures one).
 
 ## 6b. The C API
 
@@ -612,6 +660,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
 | `BANKML_GPU=off` · `BANKML_GPU_SHARE=0.3` | the GPU worker (0.2.14): a verified card takes a calibrated share of every 1-bit matrix's rows; `off` disables it, a number overrides the share |
 | `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N] [--registry [DIR]] [--keep-alive DUR]` | answers from bankML's own forward pass (0.3.0); since 0.3.1 also Ollama's API (§6a) and, with `--registry`, any pinned model by name, one resident at a time; token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. Savante's Models → Resources **engine** setting chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
+| `bankml create NAME -f Modelfile [--registry DIR] [--models DIR]` | O5 (Unreleased): a derived model, a layer (SYSTEM, PARAMETER, stop, MESSAGE, LICENSE) over a pinned base, `FROM` a name, a pinned GGUF or a safetensors directory (converted); written as `DIR/NAME.MODEL.json`, no weights copied (§6a) |
+| `bankml convert DIR -o OUT.gguf [--model-name N] [--fork F --source S] [--ignore-model-card]` | O5 (Unreleased): Llama safetensors → GGUF F16, byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`; `--fork` writes the pin with every input's sha256 |
 | `bankml gpu --verify` | runs the bit-exact kernel oracle on every usable card (0.2.13); a card that fails is named and never used |
 | `bankml gpu [--remote]` | every video card found (Vulkan, merged with `/sys/class/drm`) and which bankml will use; `--remote` adds the GPUs Hugging Face rents (22 NVIDIA flavors with card counts and prices; listed, never started); `BANKML_GPU=off` turns the component off, `BANKML_GPU=0,2` picks cards (0.2.12; the GPU kernels are the next steps) |
 | `bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json` (or plain text) | bankml's own forward pass, greedy, or with `--sample` llama-server's sampler chain (the model's defaults unless given; same seed, same tokens as llama-server, 0.2.11), streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts of any length and contexts of any length (all three of ggml's CPU attention kernels, since 0.2.10); `BANKML_LLAMA_THREADS` (default 3) must equal the `-t` of the llama.cpp being matched, because its long-context decode kernel chunks by thread; `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |

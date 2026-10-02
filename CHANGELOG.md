@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased — O5 first cut: `bankml create` and `bankml convert`
+
+**`ollama create`, natively.** A Modelfile becomes a layer over a pinned base, verified as the base is verified. A Rust
+safetensors → GGUF converter writes the same bytes as llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`.
+Written and unit-tested on branch `o5-create`; no version bump, and no gate run yet. See docs/OLLAMA.md (O5).
+
+### Measured
+- **The conversions are byte-identical.** The GGUF files' sha256, bankml against llama.cpp b11192 on the same
+  directory:
+  - SmolLM2-135M-Instruct (`HuggingFaceTB` @ `12fd25f7`): `e9aba089…a222` both;
+  - mindx-gen39 (`PYTHAI/mindXascension` `weights/gen39/ollama_push/merged` @ `4bd31b9d`): `6b64c748…8266` both.
+
+  Each has 272 tensors; they have 32 and 30 metadata keys. A conversion takes 2.6 s on the dev box.
+- **The name heuristics** (`gguf-py/metadata.py`) agree with gguf-py on 168 of 168 Hub-style ids.
+
+### Added
+- **`bankML/convert.rs` (`bankml convert`)**, for the Llama architecture as SmolLM2 uses it. It writes:
+  - llama.cpp's metadata order, with the defaults transformers' `LlamaConfig` adds;
+  - the name heuristics;
+  - the Q/K permutation, F16 by round-to-nearest-even, BF16 read exactly, and norms in F32;
+  - the gpt2 tokenizer path, with its special ids and chat template;
+  - with `--fork`, a FORK.json that pins the result with every input's sha256.
+
+  Anything that would make llama.cpp write something else is refused with the reason: other architectures,
+  SentencePiece vocabularies, rope scaling, biases, a model card, and an unmeasured tokenizer.
+- **`bankML/create.rs`** (`bankml create`, `/api/create`, `DELETE /api/delete`, `/api/copy`):
+  - Ollama's Modelfile parser, state for state, and its `quote`;
+  - derived models as `<forks>/<name>.MODEL.json`, with a content digest and the base's sha256 and FORK ref;
+  - the layer applied as Ollama applies it: `MESSAGE`s first, `SYSTEM` unless the request's first message is a
+    system message, parameters as defaults;
+  - `/api/tags` with `details.parent_model`, and `/api/show` with the reconstructed Modelfile.
+
+  Refused, with reasons: `ADAPTER`, a foreign `TEMPLATE`, unreproduced parameters, `quantize`, and deleting a pin.
+- **`testing/convert_oracle.py`**, with five modes:
+  - `--record`: runs llama.cpp's converter;
+  - `--bankml`: runs both converters and compares their sha256;
+  - `--compare`: a diff, key by key and tensor by tensor;
+  - `--chkhsh`: the evidence a tokenizer entry needs;
+  - `--names`: the heuristics corpus.
+- **`testing/pins/`**: the two conversions' FORK.json files.
+- **A release-gate stage** for `.models/convert/<dir>` beside `<dir>.oracle.gguf`. It is written, and not yet run.
+- **Tests.**
+  - Unit tests cover the parser (Ollama's quoting cases, and mindX's own Modelfiles), the manifest digest, the layer
+    rules, and create → tags → show → copy → delete through the HTTP router, in process.
+  - CLI tests cover `create`, and `convert`'s refusals.
+
+### Found
+- **gen39's `tokenizer.json` dropped SmolLM2's `Digits` pre-tokenizer** when transformers 5.8 re-saved it. llama.cpp's
+  `chkhsh` still names it `smollm` (`855059…`), because the vocabulary has no multi-digit tokens. bankML accepts both
+  shapes for that vocabulary, and records why.
+
+### Not yet known
+- **Whether a created `mindx-gen39` answers like Ollama's.** Deciding it needs O4's Llama forward pass. Then: create the
+  model with promote.py's persona, serve it, and run the token oracle against llama-server with the same system
+  message.
+
 ## Unreleased — O6b: JSON schemas (branch `o6b-json-schema`)
 
 **Any JSON schema now gets the grammar llama-server b11192 builds for it, byte for byte.** `bankML/schema.rs` ports

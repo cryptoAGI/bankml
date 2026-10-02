@@ -62,5 +62,21 @@ out=testing/results/$v.txt
   else
     echo "BANKML_GGML_LIB unset: oracles, A/B and budgets skipped"
   fi
+  # O5: bankml convert, byte for byte against llama.cpp b11192's convert_hf_to_gguf.py --outtype f16 — each safetensors
+  # directory under .models/convert/ beside llama.cpp's GGUF of it (.models/convert/<dir>.oracle.gguf; the directory's
+  # name is part of the input: llama.cpp names the model from it); and the name heuristics against b11192's gguf-py
+  for d in .models/convert/*/; do
+    d=${d%/}
+    [ -f "$d.oracle.gguf" ] || continue
+    echo "## oracle_convert_b11192 $(basename "$d")"
+    log=$(BANKML_CONVERT_DIR="$d" BANKML_CONVERT_ORACLE="$d.oracle.gguf" cargo test --release --locked -q --lib -- --ignored --exact convert::tests::oracle_convert_b11192 --nocapture 2>&1) || { echo "$log"; echo "FAILED: oracle_convert_b11192 $d"; exit 1; }
+    echo "$log" | grep -vE '^(running|$)|^test result: ok. 0' || true
+  done
+  if [ -n "${BANKML_LLAMA_SRC:-}" ]; then
+    echo "## oracle_name_heuristics"
+    python3 -B testing/convert_oracle.py --names target/names.jsonl >/dev/null
+    log=$(BANKML_NAMES_ORACLE=target/names.jsonl cargo test --release --locked -q --lib -- --ignored --exact convert::tests::oracle_name_heuristics --nocapture 2>&1) || { echo "$log"; echo "FAILED: oracle_name_heuristics"; exit 1; }
+    echo "$log" | grep -vE '^(running|$)|^test result: ok. 0' || true
+  fi
   echo "# gate done"
 } 2>&1 | tee "$out" | tee -a testing/live.log

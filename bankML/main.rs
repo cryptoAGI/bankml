@@ -21,6 +21,13 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml generate MODEL.gguf [--max N] [--json] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json|text
                                                               (bankml's own forward pass: greedy, or llama-server's sampler chain;
                                                               --json: JSON mode, llama-server's response_format json_object)
+       bankml create NAME -f Modelfile [--registry DIR] [--models DIR]
+                                                              (O5: a derived model — FROM a pinned model, a pinned GGUF or a safetensors
+                                                              directory, + SYSTEM, PARAMETER, stop, MESSAGE, LICENSE — written as
+                                                              DIR/NAME.MODEL.json over the base's pin; no weights copied)
+       bankml convert SAFETENSORS_DIR -o OUT.gguf [--outtype f16] [--model-name NAME] [--fork FORK.json --source SRC] [--ignore-model-card]
+                                                              (Llama → GGUF F16, byte-identical to llama.cpp b11192's convert_hf_to_gguf.py
+                                                              --outtype f16; --fork writes the FORK.json that pins the result)
        bankml gpu [--remote | --verify]                        (every video card found, and which bankml will use;
                                                               --remote adds the GPUs Hugging Face rents, listed only;
                                                               --verify runs the bit-exact kernel oracle on each card)
@@ -92,6 +99,56 @@ fn main() {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("bankml generate: {e}");
+                    2
+                }
+            }
+        }
+        (Some("create"), Some(name)) => {
+            // O5: `ollama create`, natively: a layer over a pinned base, verified as the base is verified
+            let Some(mf) = opt("-f").or(opt("--file")) else {
+                eprintln!("bankml create: -f Modelfile is required");
+                std::process::exit(1);
+            };
+            let dir = registry_dir(&a);
+            let models: Vec<std::path::PathBuf> = opt("--models").map(Into::into).into_iter().collect();
+            match bankml::create::cli(name, &mf, &dir, &models) {
+                Ok(d) => {
+                    eprintln!("bankml create: {} (digest sha256:{}) over {} (sha256 {})", d.name, d.digest, d.base.file, d.base.sha256);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("bankml create: refuse: {e}");
+                    2
+                }
+            }
+        }
+        (Some("convert"), Some(dir)) => {
+            // O5: safetensors → GGUF F16, byte-identical to llama.cpp b11192's convert_hf_to_gguf.py --outtype f16
+            let Some(out) = opt("-o").or(opt("--outfile")) else {
+                eprintln!("bankml convert: -o OUT.gguf is required");
+                std::process::exit(1);
+            };
+            if opt("--outtype").is_some_and(|t| t != "f16") {
+                eprintln!("bankml convert: refuse: --outtype f16 only (the one byte-identical to llama.cpp that bankml has proven)");
+                std::process::exit(2);
+            }
+            let o = bankml::convert::Options { model_name: opt("--model-name"), ignore_model_card: flag("--ignore-model-card") };
+            match bankml::convert::convert(Path::new(dir), Path::new(&out), &o) {
+                Ok(r) => {
+                    println!("{}  {}", r.sha256, r.out.display());
+                    eprintln!("bankml convert: {} — {} tensors, {} metadata keys, {} weights, {} bytes", r.name, r.tensors, r.kv, r.params, r.bytes);
+                    if let Some(f) = opt("--fork") {
+                        let src = opt("--source").unwrap_or_else(|| Path::new(dir).canonicalize().map(|p| p.display().to_string()).unwrap_or(dir.clone()));
+                        if let Err(e) = std::fs::write(&f, bankml::convert::fork_json(&r, &src)) {
+                            eprintln!("bankml convert: cannot write {f}: {e}");
+                            std::process::exit(1);
+                        }
+                        eprintln!("bankml convert: pinned in {f}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("bankml convert: refuse: {e}");
                     2
                 }
             }
@@ -234,11 +291,7 @@ fn main() {
                     slot_dir: opt("--slot-dir").map(Into::into),
                     native: flag("--native"),
                     // `--registry` alone means the importer's forks directory ($BANKML_FORKS, as sAGI/models.py)
-                    registry: a.iter().position(|x| x == "--registry").map(|i| match a.get(i + 1) {
-                        Some(d) if !d.starts_with("--") => d.into(),
-                        _ => std::env::var("BANKML_FORKS").map(std::path::PathBuf::from)
-                            .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share/bankml/forks")),
-                    }),
+                    registry: a.iter().any(|x| x == "--registry").then(|| registry_dir(&a)),
                     keep_alive: opt("--keep-alive"),
                 };
                 match bankml::serve::run(cfg) {
@@ -256,6 +309,15 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+
+/// `--registry DIR`, or the importer's forks directory ($BANKML_FORKS, else ~/.local/share/bankml/forks, as sAGI/models.py).
+fn registry_dir(a: &[String]) -> std::path::PathBuf {
+    match a.iter().position(|x| x == "--registry").and_then(|i| a.get(i + 1)) {
+        Some(d) if !d.starts_with("--") => d.into(),
+        _ => std::env::var("BANKML_FORKS").map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share/bankml/forks")),
+    }
 }
 
 /// `bankml generate`: render, tokenize, run the prompt through bankml's forward pass, then greedy tokens to stdout as

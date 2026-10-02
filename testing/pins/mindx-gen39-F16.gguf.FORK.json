@@ -1,0 +1,22 @@
+{
+ "kind": "bankml convert (safetensors → GGUF F16, made here, not downloaded)",
+ "source": "https://huggingface.co/datasets/PYTHAI/mindXascension/tree/4bd31b9db75e3c4c0159af631edc27b1e142ff11/weights/gen39/ollama_push/merged (Apache-2.0)",
+ "converter": "bankml 0.3.3 convert --outtype f16: byte-identical to llama.cpp b11192 convert_hf_to_gguf.py --outtype f16 on its oracle",
+ "converted_at_utc": "2026-10-02T19:30:24Z",
+ "oracle": "llama.cpp b11192 convert_hf_to_gguf.py SAME_DIR --outtype f16 wrote the same bytes (sha256 below), checked by convert::tests::oracle_convert_b11192 on 2026-10-02",
+ "inputs": [
+   {"path": "config.json", "bytes": 793, "sha256": "2fc758ce9d32a81dd300b4e8c95d88ee878c612382671a9e91a591dfb6c08e45"},
+   {"path": "model.safetensors", "bytes": 269060552, "sha256": "19b62829de298cc06925947976b33d34f9ffb24f5d0e05f349feabae4d83357c"},
+   {"path": "generation_config.json", "bytes": 110, "sha256": "c312d2e94d70903bbd60dd7bc1a2b5ea4e994abb02ccbe0705dbc93f70839fe7"},
+   {"path": "tokenizer_config.json", "bytes": 774, "sha256": "daf810672b1463826ee5b3b28356a1c8729faed5fcaaf2a35c33af60e31a0e82"},
+   {"path": "tokenizer.json", "bytes": 3522871, "sha256": "bf346d64f6f0fbcefb4c1b6928a98241467dff36c6fbae5fe1785c4ff90667f4"},
+   {"path": "chat_template.jinja", "bytes": 173, "sha256": "9fe579a2c222698c7ba22d46e26466362fbe951569a89096c366267f9b82ab92"}
+ ],
+ "files": [
+  {
+   "path": "mindx-gen39-F16.gguf",
+   "bytes": 270885600,
+   "sha256": "6b64c748d96ad26fd72402299bd27b2ae82f489bd0469498dd18eb6054058266"
+  }
+ ]
+}

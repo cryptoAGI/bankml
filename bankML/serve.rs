@@ -179,6 +179,10 @@ fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, up
     eprintln!("bankml serve --native: loading {} into bankML's forward pass", model.display());
     let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let rs = crate::native::Residency::start(reg, cfg.ctx, cfg.engine, verified, model.clone(), id)?;
+    // O5: the derived models beside the pins (each verified through its base when it loads)
+    for e in rs.derived.open(cfg.registry.as_deref(), &rs.reg) {
+        eprintln!("bankml serve --native: derived model skipped: {e}");
+    }
     let engine = rs.peek().map(|(l, _)| l.engine).unwrap_or_default();
     let names: Vec<String> = rs.reg.entries.iter().map(|e| e.name.clone()).collect();
     let rs = Arc::new(rs);
@@ -541,9 +545,14 @@ fn native_route(c: &mut TcpStream, st: &State, method: &str, path: &str, body: &
 /// model stays resident afterwards (the OpenAI API has no keep-alive; 0.3.0 kept its one model for good).
 fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return respond(c, 400, "text/plain", b"body is not JSON") };
-    let entry = match rs.reg.resolve(req.get("model").and_then(Json::as_str)) {
+    let (entry, layer) = match crate::create::resolve(rs, req.get("model").and_then(Json::as_str)) {
         Ok(e) => e,
         Err(e) => return respond(c, 404, "text/plain", e.as_bytes()),
+    };
+    // O5: a derived model's layer (its SYSTEM, MESSAGEs and parameters, as Ollama applies them)
+    let req = match &layer {
+        Some(d) => d.apply_openai(&req),
+        None => req,
     };
     // a malformed `stop` is refused before a model is loaded for it
     if let Err(e) = crate::ollama::stops(req.get("stop")) {
@@ -551,7 +560,7 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     }
     let stream = req.get("stream").and_then(Json::as_bool).unwrap_or(false);
     let run = rs.lock_run();
-    let l = match rs.acquire(&run, entry) {
+    let l = match rs.acquire(&run, &entry) {
         Ok((l, _)) => l,
         Err((code, e)) => return respond(c, code, "text/plain", e.as_bytes()),
     };

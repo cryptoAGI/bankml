@@ -18,7 +18,12 @@
 //!
 //! Refused: `tools` (O6), `images` (out of scope), `suffix`, `template`,
 //! `context`, and `think: true` (the template is rendered with thinking off, as llama-server `--reasoning off`).
-//! `/api/embed` (O7), `/api/create` (O5), `/api/pull`, `/api/delete`, `/api/copy`, `/api/push` answer why not.
+//! `/api/embed` (O7), `/api/pull` and `/api/push` answer why not.
+//!
+//! O5 (`create.rs`): `/api/create` (a Modelfile, or Ollama's structured form), `/api/delete` (derived models only) and
+//! `/api/copy` write and remove **derived models** — a layer (system, parameters, stop, messages) over a pinned base;
+//! `/api/tags` lists them with `details.parent_model`, `/api/show` reconstructs their Modelfile, and chat/generate
+//! apply their layer as Ollama does.
 
 use crate::gguf::jstr;
 use crate::native::{Entry, KeepAlive, Loaded, Residency};
@@ -291,27 +296,28 @@ fn err(c: &mut TcpStream, code: u16, msg: &str) -> std::io::Result<()> {
     respond(c, code, "application/json", format!("{{\"error\": {}}}", jstr(msg)).as_bytes())
 }
 
-fn tag(e: &Entry) -> String {
+pub(crate) fn tag(e: &Entry) -> String {
     format!("{}:latest", e.name)
 }
 
-fn details(e: &Entry) -> String {
+pub(crate) fn details(e: &Entry) -> String {
     let a = e.info.arch.as_deref().unwrap_or("");
     format!("{{\"parent_model\": \"\", \"format\": \"gguf\", \"family\": {}, \"families\": [{}], \"parameter_size\": {}, \"quantization_level\": {}}}",
             jstr(a), jstr(a), jstr(&e.info.params), jstr(&e.info.quant))
 }
 
-fn native_json(e: &Entry) -> String {
+pub(crate) fn native_json(e: &Entry) -> String {
     let reason = e.info.native.as_ref().err().map(|r| jstr(r)).unwrap_or("null".into());
     format!("{{\"native\": {}, \"reason\": {reason}, \"file\": {}, \"found\": {}}}", e.info.native.is_ok(), jstr(&e.file), e.path.is_some())
 }
 
 fn tags(rs: &Residency) -> String {
-    let models: Vec<String> = rs.reg.entries.iter().map(|e| {
+    let mut models: Vec<String> = rs.reg.entries.iter().map(|e| {
         let modified = e.path.as_ref().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok()).unwrap_or(UNIX_EPOCH);
         format!("{{\"name\": {t}, \"model\": {t}, \"modified_at\": \"{}\", \"size\": {}, \"digest\": {}, \"details\": {}, \"bankml\": {}}}",
                 rfc3339(modified), e.bytes, jstr(&e.sha256), details(e), native_json(e), t = jstr(&tag(e)))
     }).collect();
+    models.extend(crate::create::tag_objects(rs, details, native_json));
     format!("{{\"models\": [{}]}}", models.join(", "))
 }
 
@@ -365,7 +371,11 @@ pub fn route(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, method: &
         ("POST", "/api/show") => {
             let Some(v) = req() else { return err(c, 400, "body is not JSON") };
             let name = v.get("model").or(v.get("name")).and_then(Json::as_str);
-            match rs.reg.resolve(name).and_then(|e| show(rs, e)) {
+            let r = crate::create::resolve(rs, name).and_then(|(e, d)| show(rs, &e).map(|j| match d {
+                Some(d) => crate::create::show_json(&d, &j),
+                None => j,
+            }));
+            match r {
                 Ok(j) => respond(c, 200, "application/json", j.as_bytes()),
                 Err(e) => err(c, 404, &e),
             }
@@ -373,27 +383,34 @@ pub fn route(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, method: &
         ("POST", "/api/chat") => generate(c, rs, default_ka, body, true),
         ("POST", "/api/generate") => generate(c, rs, default_ka, body, false),
         ("POST", "/api/embed" | "/api/embeddings") => err(c, 400, "embeddings need an encoder graph (bge-m3 is XLM-R: LayerNorm, bidirectional attention, CLS pooling), which bankML does not have yet (O7 in docs/OLLAMA.md); keep Ollama for embeddings"),
-        ("POST", "/api/create") => err(c, 400, "bankml create is O5 (docs/OLLAMA.md): a Modelfile subset recorded in FORK.json; until then a model is added by pinning it (sAGI/models.py import)"),
+        ("POST", "/api/create") => crate::create::http_create(c, rs, body),
         ("POST", "/api/pull") => err(c, 400, "bankml does not pull: models are imported sha256-pinned with open licences only (sAGI/models.py import), then served by name"),
-        ("DELETE", "/api/delete") => err(c, 400, "bankml does not delete pinned files over HTTP; remove the file and its FORK.json pin by hand"),
-        ("POST", "/api/copy" | "/api/push") => err(c, 400, "not offered: a pinned model has one name, its file's"),
-        _ => err(c, 404, "bankml serve --native (Ollama API): GET /api/version /api/tags /api/ps, POST /api/show /api/chat /api/generate"),
+        ("DELETE", "/api/delete") => crate::create::http_delete(c, rs, body),
+        ("POST", "/api/copy") => crate::create::http_copy(c, rs, body),
+        ("POST", "/api/push") => err(c, 400, "not offered: bankml publishes nothing; a model is shared by its pinned file and FORK.json"),
+        _ => err(c, 404, "bankml serve --native (Ollama API): GET /api/version /api/tags /api/ps, POST /api/show /api/chat /api/generate /api/create /api/copy, DELETE /api/delete"),
     }
 }
 
 /// `/api/chat` (`chat`) and `/api/generate`.
 fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8], chat: bool) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return err(c, 400, "body is not JSON") };
-    let e = match rs.reg.resolve(req.get("model").and_then(Json::as_str)) {
-        Ok(e) => e,
+    let (e, layer) = match crate::create::resolve(rs, req.get("model").and_then(Json::as_str)) {
+        Ok(x) => x,
         Err(m) => return err(c, 404, &m),
+    };
+    let e = &e;
+    // O5: a derived model's layer — its SYSTEM, MESSAGEs and parameters, as Ollama applies them
+    let req = match &layer {
+        Some(d) => d.apply_ollama(&req, chat),
+        None => req,
     };
     let ka = match keep_alive(req.get("keep_alive"), default_ka) {
         Ok(k) => k,
         Err(m) => return err(c, 400, &m),
     };
     let stream = req.get("stream").and_then(Json::as_bool).unwrap_or(true);
-    let model = tag(e);
+    let model = layer.as_ref().map(|d| d.tag()).unwrap_or_else(|| tag(e));
     let t = Tally::new(body);
     // an empty prompt (no messages) only loads or unloads, as Ollama does
     let empty = if chat { !matches!(req.get("messages"), Some(Json::Arr(a)) if !a.is_empty()) } else { req.get("prompt").and_then(Json::as_str).unwrap_or("").is_empty() };
@@ -432,8 +449,8 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
             return err(c, 400, &m);
         }
     }
-    let msgs = if chat {
-        match chat_messages(req.get("messages").unwrap()) {
+    let msgs = if chat || (layer.is_some() && req.get("bankml_messages").is_some()) {
+        match chat_messages(req.get(if chat { "messages" } else { "bankml_messages" }).unwrap()) {
             Ok(m) => Some(m),
             Err(m) => return err(c, 400, &m),
         }

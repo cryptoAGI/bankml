@@ -452,6 +452,8 @@ pub struct Residency {
     pub cur: Mutex<Option<Resident>>,
     /// the most recent verification (what `/bankml` reports when nothing is resident)
     pub last: Mutex<Option<Loaded>>,
+    /// O5: the derived models of the registry directory (`create.rs`), layered on these pins
+    pub derived: crate::create::Store,
 }
 
 fn now_secs() -> u64 {
@@ -469,7 +471,7 @@ impl Residency {
         let loaded = Loaded { name: e.name.clone(), engine: engine_name(&native), native: Arc::new(native), sha256: verified.model_sha256.clone(),
                               verified: Arc::new(verified), model, ident: id, hashed_at: now_secs(), size: e.bytes };
         Ok(Residency { reg, n_ctx, engine, run: Mutex::new(()), last: Mutex::new(Some(loaded.clone())),
-                       cur: Mutex::new(Some(Resident { loaded, expires: None })) })
+                       cur: Mutex::new(Some(Resident { loaded, expires: None })), derived: Default::default() })
     }
 
     fn lock_cur(&self) -> MutexGuard<'_, Option<Resident>> {

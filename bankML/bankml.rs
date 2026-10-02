@@ -134,6 +134,10 @@
 //!     natively, token-identical to llama-server b11192 (greedy, seeded, `/v1`, `/api`, C API, JSON mode).
 //!   - [~] O6b (unreleased): JSON schemas (`schema.rs`) — `json_schema_to_grammar` and the chat wrapping ported,
 //!     byte-identical to llama.cpp b11192's own code on 173 of 173 schemas; answers under schemas await their oracle.
+//!   - [ ] Unreleased (O5 first cut, branch o5-create): `bankml create` / `/api/create` (`create.rs`) — a Modelfile subset as a
+//!     derived model, a layer over a pinned base, verified through the base — and `bankml convert` (`convert.rs`), Llama
+//!     safetensors → GGUF F16 **byte-identical to llama.cpp b11192** on SmolLM2-135M-Instruct (`e9aba089…`) and mindx-gen39
+//!     (`6b64c748…`). Open: serving a created mindx-gen39 needs O4; the token oracle with its persona SYSTEM decides it.
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's
@@ -143,6 +147,8 @@
 
 pub mod chat;
 pub mod f16;
+pub mod convert;
+pub mod create;
 pub mod forward;
 pub mod gguf;
 pub mod grammar;

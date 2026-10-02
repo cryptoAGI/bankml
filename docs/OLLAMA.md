@@ -40,9 +40,9 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 | `/api/tags` and `/api/ps` (the lineage models, which are resident, `expires_at`) | `agents/storage/hf_client.py:3728-3753` | **done (0.3.1)**: every pinned model, `digest` = the pinned sha256, plus `"bankml": {"native", "reason"}` | O1 |
 | load and unload by an empty `/api/generate` with `keep_alive` (`done_reason` `load` / `unload`) | `agents/storage/hf_client.py:3760-3777` | **done (0.3.1)**; each load runs the full guard + sha256 pin | O1 |
 | `ollama_predict`: `/api/chat` with `temperature 0`, **`repeat_penalty 1.3`**, `num_ctx 2048` | `agents/storage/hf_client.py:2423-2431` | `num_ctx` **done**; `repeat_penalty` **refused** until the penalty sampler has an oracle | O2 |
-| prune old generations with `DELETE /api/delete` | `agents/storage/hf_client.py:945`, `:974` | **refused by design**: pinned files are not deleted over HTTP | — |
+| prune old generations with `DELETE /api/delete` | `agents/storage/hf_client.py:945`, `:974` | **derived models deleted (O5, Unreleased)**; a pinned file is **refused by design** (not deleted over HTTP) | O5 |
 | `/api/embed` with `bge-m3` (XLM-R encoder, 1024 dimensions), `truncate: true` | `agents/memory_pgvector.py:937-958` | **refused** (400): no encoder graph yet | O7 |
-| `ollama create` from a Modelfile (`FROM` + `ADAPTER`), then a persona `SYSTEM` layer (`ollama show --modelfile`, re-create) | `mindx/godel/mindxtrain/promote.py:52-85`, `:181-323` | `/api/show` **done** (a read-only modelfile); `create` **refused** | O4 + O5 |
+| `ollama create` from a Modelfile (`FROM` + `ADAPTER`), then a persona `SYSTEM` layer (`ollama show --modelfile`, re-create) | `mindx/godel/mindxtrain/promote.py:52-85`, `:181-323` | **written (O5, Unreleased)**: `bankml create` and `/api/create` — `FROM` the merged safetensors directory (converted byte-identical to llama.cpp b11192), a pinned GGUF or a registry name, `SYSTEM`, `PARAMETER`, `stop`, `MESSAGE`; `/api/show` gives the Modelfile back, so promote.py's re-create-in-place works. `ADAPTER` **refused** (merge first) | O5 (serving: O4) |
 | `ollama show <tag>` to check a base's architecture | `mindx/godel/mindxtrain/promote.py:88-119`; `/api/show` at `llm/ollama_handler.py:479` | **done (0.3.1)**: `details`, `model_info` from the GGUF header, `parameters` from its sampling defaults | O1 |
 | the models themselves: SmolLM2-135M `mindx-genN` (Llama architecture, F16 safetensors merged to GGUF) | `mindx/godel/mindxtrain/promote.py` | **done (0.3.4)** for a pinned conversion: `mindx-gen39` (asked for as Ollama's tag `mindx-gen39`) token-identical to llama-server b11192, greedy, seeded, `/v1`, `/api`, C API, JSON mode. Converting a new generation is a manual, pinned step until O5 | O3 + O4 (O5 for `create`) |
 | the boardroom's `num_ctx 8192` | `daio/governance/boardroom.py:988-996` | accepted when `serve --ctx` is at least 8192; the f16 KV cache is what makes it costly | O8 (quantized KV) |
@@ -55,7 +55,7 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
   reproduce (O6b);
 - `images` (vision is out of scope);
 - `/api/pull`: import through the pinned importer instead;
-- `/api/copy` and `/api/push`;
+- `/api/push`;
 - `mirostat`, `tfs_z`, and any option bankML does not know.
 
 **Accepted and ignored**, because they change scheduling, not the answer bankML gives:
@@ -74,7 +74,7 @@ it.
 | O2 | The sampler chain, including repeat, presence and frequency penalties (`last_n`), each with a seeded oracle; behaviour at the context limit; more than one slot | 0.4.0 | the coach's `repeat_penalty: 1.3` |
 | O3 | `Q8_0`, **F16 (0.3.4, done)** and BF16 weight kernels, then `Q4_K`, each bit-exact against ggml | 0.3.4 → 0.6.0 | opens the standard-quant Qwen3 family |
 | **O4** | The Llama architecture, tied embeddings (which also opens Bonsai-1.7B), SmolLM2's tokenizer and templates (**0.3.4, done**) | 0.3.4 | **`mindx-genN` served natively** |
-| O5 | `bankml create`: a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded in FORK.json, and a Rust safetensors → GGUF converter for the merged SmolLM2; then `promote.py --to bankml` | 0.7.0 (beside mindXtrain in Rust) | `ollama create` |
+| O5 | `bankml create`: a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded beside the FORK.json pins, and a Rust safetensors → GGUF converter for the merged SmolLM2 (**first cut written, Unreleased: the converter is byte-identical to llama.cpp b11192 on SmolLM2-135M-Instruct and mindx-gen39**); then `promote.py --to bankml` | 0.7.0 (beside mindXtrain in Rust) | `ollama create` |
 | **O6** | A grammar engine: **JSON mode and GBNF (0.3.3, done)**; then JSON schemas (`json_schema_to_grammar`), then tool calls | 0.3.3 → 0.6.0 | **`format: "json"`, used across mindX** |
 | O7 | The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling), `/api/embed` and `/v1/embeddings`, with a bge-m3 oracle against llama.cpp's embedding output | 0.6.0 | step 2 of the embedding cascade |
 | O8 | Optimisation: continuous batching across slots, AVX-512 and VNNI, NEON, a quantized KV cache, and 1-bit decode at least at llama-server's speed | 0.4.0 / 0.5.0 | — |
@@ -177,6 +177,84 @@ it.
   `response_format`) is ignored; what it fails on (a non-object or `null` top-level `json_schema`) is refused.
 - **Not yet measured:** answers under schemas against llama-server (`testing/json_schema_oracle.py --record`, then
   `oracle_json_schema*` and the live oracle in the gate).
+
+### What O5's first cut built (Unreleased)
+
+- **`bankml convert DIR -o OUT.gguf` (`convert.rs`): llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`, byte
+  for byte, for the Llama architecture as SmolLM2 uses it.** Read from the tag's `conversion/{base,llama}.py` and
+  `gguf-py`, and written in its order of operations:
+  - the metadata in llama.cpp's order, with the defaults `AutoConfig(LlamaConfig).to_dict()` adds (`head_dim`, hence
+    `key_length`/`value_length`; `rope_theta` 10000; `rms_norm_eps` 1e-6);
+  - the name heuristics of `gguf-py/metadata.py` (`general.name`, `basename`, `finetune`, `size_label` from the
+    directory's name; the label from the weights counted otherwise); 168 of 168 Hub-style ids agree with gguf-py;
+  - the tensors in name order (the safetensors reader sorts), Q/K rows permuted back from HF's rotate-half layout,
+    norms in F32, matrices in F16 by round-to-nearest-even, BF16 read exactly; tied embeddings write no output matrix;
+  - the gpt2 tokenizer path: tokens and types, merges, the special ids from `tokenizer_config.json` then
+    `config.json`, the chat template (`chat_template.jinja` too), and Llama's `add_bos_token = false` at 49,152 tokens.
+
+  **Result (2026-10-02):**
+
+  | input | bankml convert | llama.cpp b11192 |
+  |---|---|---|
+  | HuggingFaceTB/SmolLM2-135M-Instruct @ `12fd25f7` (`model.safetensors` `5af571cb…`) | `e9aba089704487f72efa3c6cbb6d4c748d4c515428247f97679063137e45a222` | the same |
+  | PYTHAI/mindXascension `weights/gen39/ollama_push/merged` @ `4bd31b9d` (`19b62829…`) | `6b64c748d96ad26fd72402299bd27b2ae82f489bd0469498dd18eb6054058266` | the same |
+
+  The oracle files are O4's conversions with b11192's own script (`.models/*-F16.gguf`). The pins, with every input's
+  sha256, are `testing/pins/*.FORK.json`. A conversion takes 2.6 s and maps the safetensors read-only.
+  - **What is refused, with the reason, rather than approximated:** other architectures; SentencePiece and Llama-HF
+    vocabularies; rope scaling; biases; experts; a `README.md` model card (llama.cpp would write its licence, tags and
+    base models; `--ignore-model-card` converts anyway and says the result will differ); and any tokenizer bankML has
+    not seen named. llama.cpp names a BPE pre-tokenizer by hashing the token ids its *Python* tokenizer gives one fixed
+    text (`chkhsh`). bankML has no Python, so it keys a table on the sha256 of the vocabulary and merges, plus the
+    pre-tokenizer's shape, and records the `chkhsh` each entry gave (`testing/convert_oracle.py --chkhsh`).
+  - **A finding:** gen39's `tokenizer.json` was re-saved by transformers 5.8. It **lost SmolLM2's `Digits`
+    pre-tokenizer** (a bare `ByteLevel`), yet llama.cpp's hash still names it `smollm`. The vocabulary has no
+    multi-digit tokens, so the two configurations tokenize alike on the hash text. Both are accepted, and that is why.
+- **Derived models (`create.rs`).** A derived model is `<forks>/<name>.MODEL.json`: a layer over a pinned base, and
+  never a copy of weights. It holds:
+  - the base's name, file, sha256, FORK.json and path;
+  - the layer: `system`, `parameters`, `stop`, `template_sha256`, `license`, `messages`, `requires`;
+  - `digest`, the sha256 of that content. The name and time are not in it, so a copy has the same digest. A
+    hand-edited manifest is refused when it is read.
+
+  A load verifies the **base** exactly as a pinned model is verified (the guard, then its sha256 pin). A manifest whose
+  base pin has changed is refused. Residency is keyed by the base, so a derived model and its base share one load.
+- **The Modelfile subset.** The parser is Ollama's (`parser/parser.go`) state for state, with its quoting:
+  - a value runs to the end of the line;
+  - `"…"` and `"""…"""` may span lines, with no escapes;
+  - `#` opens a comment only at a line's start;
+  - instructions are case-insensitive.
+
+  Show writes values back with Ollama's `quote`, and they round-trip.
+  - **Taken:** `FROM` (a registry name, a pinned GGUF path, or a safetensors directory, which is converted, then pinned
+    with its inputs' sha256s); `SYSTEM`; `PARAMETER` `temperature`, `top_k`, `top_p`, `min_p`, `seed`, `num_ctx`,
+    `num_predict`, `stop`; `TEMPLATE` only when it is the base's own; `LICENSE`, `MESSAGE` and `REQUIRES` recorded.
+    `FROM` a derived model inherits its layer (Ollama's rule: new values win, `stop` as a list, licences add up).
+  - **Refused:** `ADAPTER` (LoRA merging is a later O-phase: merge, then `FROM` the merged directory); a `TEMPLATE`
+    other than the pinned one (Ollama's are Go templates, and bankML renders the GGUF's own Jinja byte-identically);
+    any other `PARAMETER` (penalties and mirostat are not reproduced; resource options are not part of a model); more
+    than one `FROM`; a name a pinned file already has.
+- **The layer is applied as Ollama applies it** (`server/routes.go`):
+  - **chat** (`/api/chat` and `/v1/chat/completions`): the model's `MESSAGE`s go before the request's, and its `SYSTEM`
+    goes first unless the request's first message is a system message;
+  - **generate:** the request's `system` if it has one, else the model's, then the `MESSAGE`s, then the prompt; `raw`
+    prompts get neither;
+  - the parameters are defaults the request's options override key by key (`stop` as a whole list).
+- **Endpoints and CLI.**
+  - `bankml create NAME -f Modelfile [--registry DIR]`;
+  - `POST /api/create`: `{model, modelfile}`, or Ollama's structured `{model, from, system, template, license,
+    parameters, messages}`, with status lines streamed as NDJSON. `files`, `adapters` and `quantize` are refused;
+  - `DELETE /api/delete`: derived models only; a pin is refused with the reason;
+  - `POST /api/copy`: the same digest under a new name;
+  - `/api/tags` lists derived models with `details.parent_model`;
+  - `/api/show` returns the reconstructed Modelfile, `system`, `parameters`, `license` and `messages`.
+- **What is not yet known, and what decides it:**
+  - Whether a created `mindx-gen39` answers as Ollama's does. That needs O4's Llama forward pass. Then: create
+    `mindx-gen39` from the merged directory with promote.py's persona `SYSTEM`, serve it, and run the token oracle
+    against llama-server given the same system message.
+  - A layer's `num_ctx` smaller than the server's context is accepted, but a prompt longer than it is not truncated as
+    Ollama would truncate it.
+  - `/api/ps` names the base, not the derived model.
 
 ## "Replacement for llama.cpp" means bankML's own 1.0.0
 
