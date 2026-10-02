@@ -1,7 +1,9 @@
 [package]
 name = "bankml"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+# 1.99: the C API (capi/) defines a C-variadic function (`bankml_log`), stabilized in 1.99; rust-toolchain.toml pins it
+rust-version = "1.99"
 authors = ["Professor Codephreak", "Gregory L. Magnusson"]
 repository = "https://github.com/cryptoAGI/bankml"
 readme = "README.md"
@@ -11,6 +13,12 @@ publish = false
 
 [lib]
 path = "bankML/bankml.rs"
+
+# 0.3.2: the C API is a second package in this workspace (capi/, bankml-capi → libbankml.so / libbankml.a). It depends
+# on this crate only, so the workspace still has no external crate. `cargo build` / `cargo test` here build this
+# package alone (the root is the default member); `cargo build --release -p bankml-capi` builds the library.
+[workspace]
+members = [".", "capi"]
 
 # Zero dependencies (2026-09-25): sha256, the GGUF parse, f16 and the kernels are in-crate. Each one added
 # later carries a comment saying why (design goal: succinct).

@@ -317,6 +317,30 @@ model present and requires identical JSON. Last result: **28/28 agree**.
 not), `request_sha256` equals the sha256 of the request body, and a model file changed after verification produces a
 503 and no receipt. In use, the UI recomputes every answer's sha256 and marks ✓ or `≠ received!`.
 
+## 5b. The C API (0.3.2): the library against libc, and against the server
+
+Two oracles hold the C API (`capi/`, [CAPI.md](CAPI.md)), both run from C programs compiled with the system `cc`.
+
+- **`bankml_log` against libc `snprintf`** (`testing/capi/printf_oracle.c`). `bankml_log` is a C-variadic function
+  defined in Rust, and its formatter is bankML's own, so the oracle is the C library's `snprintf`. Each case passes
+  the same format and arguments to both. The message delivered to the sink must equal snprintf's output byte for
+  byte, length included. The cases cover:
+  - integers at `INT_MIN`/`LLONG_MIN`/`SIZE_MAX`, in every length;
+  - `%f` ties (`%.0f` of 0.5, 1.5 and 2.5), `%.1100f` of the smallest subnormal, `DBL_MAX`, and `inf`/`nan` with
+    signs;
+  - strings, NULL, and an unterminated buffer bounded by a precision;
+  - `%c` of 0 and 255, `%p`, `%%`, widths, precisions and `*`.
+
+  Then the cases it does not support must give their exact markers. No argument may be read that cannot be typed,
+  and `%n` must not write. The same comparison runs in `cargo test -p bankml-capi`, from Rust.
+- **`bankml_chat` against `serve --native` and llama-server** (`testing/capi/capi_oracle.py --chat`). The
+  conversation oracle of §1d, carried across the C boundary:
+  - on Ternary-Bonsai-8B, the same request bytes go to a live `serve --native` and then to `bankml_chat` in a fresh
+    process. They must give the same text, the same streamed pieces, the same counts and cache reuse, and the same
+    receipt hashes;
+  - on Bonsai-8B Q1_0, `bankml_chat` must give llama-server b11192's recorded turns;
+  - Bonsai-1.7B and an unpinned file must be refused, with `serve`'s reasons.
+
 ## 6. Oracles planned
 
 - **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer

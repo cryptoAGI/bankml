@@ -35,6 +35,8 @@ memory floor and both whole-model decode budgets.
 | `test_connectors.py` | the PostgreSQL connector against a throwaway PostgreSQL 16 cluster with pgvector: publish, verified load, tamper refusal, injection as data, THOT generations |
 | `test_models.py` | the model importer against a loopback server and a synthetic GGUF: the sha256 pin (tampered downloads discarded), the open-source licence gate, resume, the guard, Ollama adoption by link, URL and search parsing; with `BANKML_TEST_CARRIER=1`, a real carrier switch and rollback on spare ports |
 | `test_ui.py` | the Savante UI's data layer, offline: CIDs, Merkle commitments, inclusion proofs (and their failures), RAGE search, metrics, `.memory`, and the view server's routes |
+| `capi/printf_oracle.c` | 0.3.2: the C API's `bankml_log` (a C-variadic function defined in Rust) against libc `snprintf`, byte for byte, on every supported conversion; every unsupported one must give its marker and read no argument it cannot type |
+| `capi/chat.c`, `capi/capi_oracle.py` | 0.3.2: a C program embedding `libbankml`; `--chat` compares `bankml_chat` with a live `serve --native` (ternary) and llama-server's record (1-bit), and checks the refusals; `--printf` builds and runs the printf oracle |
 | `guard_agree.py` | runs both guards on every synthetic case and any real file given; exit 0 only if the JSON is identical |
 | `results/<version>.txt` | each release's record |
 | `experiments/` | kernels that were measured and not adopted, with their numbers, for re-running elsewhere |
@@ -73,6 +75,9 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 | `oracle_train_script`, `oracle_train_imprint` | `bankML/train/` | mindXtrain's author and score stages, identical to mindXtrain's Python (84 of 84; 3,000 of 3,000) |
 | `oracle_native_serve` *(real)* | `bankML/native.rs` | 0.3.0: three Savante-style conversations through llama-server's own chat endpoint, replayed through bankML's native engine: text, counts and prompt-cache reuse identical on 9 of 9 turns |
 | `serve_oracle_ollama_shape` *(real, gate)* | `testing/serve_oracle.py --bankml` | 0.3.1: the same conversations through a live `serve --native`: `/api/chat` (NDJSON for the first), `/v1/chat/completions`, and `/v1` again after unload and reload, each equal to the others and to llama-server's record, turn by turn |
+| `printf::tests::*`, `bankml_log_equals_snprintf`, `null_safe_and_refusing` | `capi/src/` | 0.3.2: the formatter on a typed argument queue (a read of the wrong type fails), the Rust-defined variadic `bankml_log` against libc `snprintf` called from Rust, NULL safety and refusals |
+| `printf oracle` *(gate)* | `testing/capi/printf_oracle.c` | 0.3.2: from C, `bankml_log` == libc `snprintf` on every supported case (47 of 47), every unsupported case marked (17 of 17), `%n` never written |
+| `capi_chat_oracle` *(real, gate)* | `testing/capi/capi_oracle.py --chat` | 0.3.2: `bankml_chat` == `serve --native` turn by turn on Ternary-Bonsai-8B (text, streamed pieces, counts, cache reuse, receipt hashes) and == llama-server's record on Bonsai-8B Q1_0; Bonsai-1.7B and an unpinned file refused |
 | `oracle_forward_swiglu_sweep` | `forward.rs` | SwiGLU with ggml's vectorized expf on 24,600 values over ±120 and the edges, every output's bits |
 | `oracle_forward_qkv_rope` *(real)* | `forward.rs` | P3 step four: layer 0's `Qcur`/`Kcur`/`Vcur` (projections, head norms, YaRN RoPE) bit-exact against the shipped ggml, 140 of 140 rows, positions 0–27 and to 63,214 |
 | `oracle_forward_embed_norm` *(real)*, `rms_norm_of_a_constant_row` | `forward.rs` | P3 step three: `inp_embd` and `attn_norm-0` bit-exact against the shipped ggml on 300 of 300 tokens |
@@ -85,6 +90,8 @@ they are `#[ignore]`d and run through the gate (`cargo test --release -- --ignor
 
 | version | record | headline |
 |---|---|---|
+| 0.3.2 | `results/0.3.2.txt` | the C API (`libbankml`): `bankml_chat` identical to `serve --native` and llama-server's record; `bankml_log` identical to libc `snprintf`; Rust 1.99 passing every bit-exact oracle |
+| 0.3.1 | `results/0.3.1.txt` | Ollama's API on `serve --native`: `/api/chat` identical to `/v1` and llama-server's record, unload/reload unchanged |
 | 0.3.0 | `results/0.3.0.txt` | milestone: Savante answered by bankML's own forward pass; conversations identical to llama-server's (9 of 9 turns) |
 | 0.2.14 | `results/0.2.14.txt` | the GPU in the forward pass, every token oracle exact with it working; the exact FMA; the on-card oracle catches an unfused driver |
 | 0.2.13 | `results/0.2.13.txt` | GPU kernels bit-exact on the Vega 3; mindXtrain author and score stages identical |

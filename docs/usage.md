@@ -9,6 +9,8 @@ gate that verifies it, and Savante's page. New to Savante's page and her voice? 
 - [4. Talk to Savante](#4-talk-to-savante)
 - [5. Models](#5-models)
 - [6. By hand: build, verify, serve](#6-by-hand-build-verify-serve)
+- [6a. Ollama's API](#6a-ollamas-api)
+- [6b. The C API](#6b-the-c-api)
 - [7. Let others watch (view mode, on the LAN)](#7-let-others-watch-view-mode-on-the-lan)
 - [8. The files Savante keeps: `.history`, `.memory`, `.prompt`](#8-the-files-savante-keeps-history-memory-prompt)
 - [8a. Proof of data without the data](#8a-proof-of-data-without-the-data)
@@ -48,7 +50,7 @@ It runs these steps in order, and stops at the first one that fails, saying why:
 
 | step | what it does |
 |---|---|
-| `check` | Rust 1.95+, Python 3.10+, git, curl, tar, ss, sha256sum; reports AVX2, RAM and free disk |
+| `check` | Rust 1.99+ (pinned in `rust-toolchain.toml`), Python 3.10+, git, curl, tar, ss, sha256sum; reports AVX2, RAM and free disk |
 | `build` | `cargo build --release` and `cargo test --release` |
 | `engine` | downloads llama.cpp b11192 (17 MB) and refuses it unless its sha256 is the published one |
 | `python` | uses your Python if it has Gradio and numpy; otherwise makes a venv with Gradio 3 |
@@ -66,7 +68,7 @@ Nothing needs sudo. What the installer chose is kept in `~/.local/share/bankml/i
 | what | where it comes from |
 |---|---|
 | Linux on x86_64 (AVX2 for the fast kernels; without it bankml is correct, just slower) | — |
-| Rust 1.95 or newer | [rustup](https://rustup.rs) |
+| Rust 1.99 (pinned in `rust-toolchain.toml`; rustup fetches it) | [rustup](https://rustup.rs) |
 | Python 3.10+ | your system |
 | about 2 GB of free RAM and 3 GB of free disk | the 1-bit 8B model maps 1.16 GB |
 
@@ -230,6 +232,34 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
   Ollama.
 - **The loopback rules still apply.** POST bodies need `Content-Type: application/json` (`curl -d` alone sends a
   form type and gets 415), and `Host` must be a loopback name.
+
+## 6b. The C API
+
+Since 0.3.2 bankML is also a C library, for a program that embeds it rather than calling a server. The full
+reference, with the ownership and threading rules and the log formatter, is **[CAPI.md](CAPI.md)**.
+
+```sh
+cargo build --release -p bankml-capi       # target/release/libbankml.so, libbankml.a
+cc app.c -I capi/include -L target/release -lbankml -Wl,-rpath,$PWD/target/release -o app
+```
+
+```c
+#include <bankml.h>
+static int piece(const char *p, size_t n, void *u) { fwrite(p, 1, n, stdout); return 1; }
+int main(void) {
+  char *err = NULL, *result = NULL;
+  bankml_t *h = bankml_open(".models/Bonsai-8B-Q1_0.gguf", "Bonsai-8B-Q1_0.gguf.FORK.json", 2048, &err);
+  if (!h) { fprintf(stderr, "%s\n", err); bankml_free(err); return 2; }   /* refused: the reason, as serve gives it */
+  bankml_chat(h, "{\"messages\": [{\"role\": \"user\", \"content\": \"Say hello.\"}], \"max_tokens\": 32}", piece, NULL, &result);
+  puts(result);                         /* the /v1/chat/completions object, with usage and bankml_receipt */
+  bankml_free(result);
+  bankml_close(h);
+}
+```
+
+`bankml_open` runs the same verification as `bankml serve`, and `bankml_chat` gives the answer and receipt that
+`serve --native` gives (the gate's C API oracle compares them, turn by turn). `bankml_set_log` and the printf-style
+`bankml_log` send the library's messages to your own callback.
 
 ## 7. Let others watch (view mode, on the LAN)
 
@@ -489,10 +519,13 @@ The gate runs, in order:
 3. the licence headers (`testing/spdx_check.py`);
 4. the Python suites: the guard, the UI data layer, the PostgreSQL connector (a throwaway cluster), the iNFT path (a
    throwaway anvil devnet), the model importer (with a real carrier on spare ports);
-5. the Rust and Python guards agreeing on every case;
+5. the Rust and Python guards agreeing on every case; the C API's printf oracle (`bankml_log` against libc
+   `snprintf`, from C);
 6. every oracle: bankml's kernels must equal llama.cpp's compiled kernels, bit for bit, on every weight of the real
    models;
-7. the A/B speed tests, the prefill tile, the memory floor and the whole-token budgets.
+7. the A/B speed tests, the prefill tile, the memory floor and the whole-token budgets;
+8. the conversation oracles: `serve --native` through `/api/chat` and `/v1`, and the C API's `bankml_chat` against
+   `serve --native` (ternary) and llama-server's record (1-bit).
 
 A speed counts only if every oracle passed on the same code. See `testing/README.md`.
 

@@ -86,7 +86,7 @@ pub fn f32_to_f16(f: f32) -> u16 {
 pub fn dequantize_row(blocks: &[u8], out: &mut [f32]) {
     assert_eq!(blocks.len() % Q1_0_BYTES, 0);
     assert_eq!(out.len(), blocks.len() / Q1_0_BYTES * QK1_0);
-    for (b, o) in blocks.chunks_exact(Q1_0_BYTES).zip(out.chunks_exact_mut(QK1_0)) {
+    for (b, o) in blocks.as_chunks::<Q1_0_BYTES>().0.iter().zip(out.as_chunks_mut::<QK1_0>().0.iter_mut()) {
         let d = f16_to_f32(u16::from_le_bytes([b[0], b[1]]));
         for (j, y) in o.iter_mut().enumerate() {
             *y = if (b[2 + j / 8] >> (j % 8)) & 1 == 1 { d } else { -d };
@@ -99,7 +99,7 @@ pub fn dequantize_row(blocks: &[u8], out: &mut [f32]) {
 pub fn quantize_row_q8_0(x: &[f32], out: &mut [u8]) {
     assert_eq!(x.len() % QK8_0, 0);
     assert_eq!(out.len(), x.len() / QK8_0 * Q8_0_BYTES);
-    for (xb, yb) in x.chunks_exact(QK8_0).zip(out.chunks_exact_mut(Q8_0_BYTES)) {
+    for (xb, yb) in x.as_chunks::<QK8_0>().0.iter().zip(out.as_chunks_mut::<Q8_0_BYTES>().0.iter_mut()) {
         let amax = xb.iter().fold(0.0f32, |m, v| if v.abs() > m { v.abs() } else { m });
         yb[..2].copy_from_slice(&f32_to_f16(amax / 127.0).to_le_bytes());
         let id = if amax != 0.0 { 127.0 / amax } else { 0.0 };
@@ -273,11 +273,11 @@ impl Q8Act {
         assert_eq!(n % QK1_0, 0);
         let nb = n / QK8_0;
         let (mut qs, mut d) = (Vec::with_capacity(n), Vec::with_capacity(nb));
-        for b in q8[..nb * Q8_0_BYTES].chunks_exact(Q8_0_BYTES) {
+        for b in q8[..nb * Q8_0_BYTES].as_chunks::<Q8_0_BYTES>().0.iter() {
             d.push(f16_to_f32(u16::from_le_bytes([b[0], b[1]])));
             qs.extend(b[2..].iter().map(|&v| v as i8));
         }
-        let tot = qs.chunks_exact(4).map(|l| l.iter().map(|&v| v as i32).sum()).collect();
+        let tot = qs.as_chunks::<4>().0.iter().map(|l| l.iter().map(|&v| v as i32).sum()).collect();
         let has_min = qs.contains(&i8::MIN);
         Q8Act { n, qs, d, tot, has_min }
     }
@@ -309,7 +309,7 @@ pub fn vec_dot_act(x: &[u8], a: &Q8Act) -> f32 {
         return unsafe { if a.has_min { vec_dot_act_avx2(x, a) } else { vec_dot_act_sel_avx2(x, a) } };
     }
     let mut q8 = vec![0u8; a.n / QK8_0 * Q8_0_BYTES];
-    for (b, (q, d)) in q8.chunks_exact_mut(Q8_0_BYTES).zip(a.qs.chunks_exact(QK8_0).zip(&a.d)) {
+    for (b, (q, d)) in q8.as_chunks_mut::<Q8_0_BYTES>().0.iter_mut().zip(a.qs.as_chunks::<QK8_0>().0.iter().zip(&a.d)) {
         b[..2].copy_from_slice(&f32_to_f16(*d).to_le_bytes());
         b[2..].iter_mut().zip(q).for_each(|(o, v)| *o = *v as u8);
     }
@@ -668,7 +668,7 @@ pub(crate) mod tests {
 
     fn random_q1(r: &mut Rng, nb: usize) -> Vec<u8> {
         let mut x = vec![0u8; nb * Q1_0_BYTES];
-        for b in x.chunks_exact_mut(Q1_0_BYTES) {
+        for b in x.as_chunks_mut::<Q1_0_BYTES>().0.iter_mut() {
             b[..2].copy_from_slice(&f32_to_f16(r.f().abs() * 0.05 + 1e-4).to_le_bytes());
             for v in &mut b[2..] {
                 *v = r.next() as u8;
@@ -679,7 +679,7 @@ pub(crate) mod tests {
 
     fn random_q8(r: &mut Rng, nb: usize, full_range: bool) -> Vec<u8> {
         let mut y = vec![0u8; nb * 4 * Q8_0_BYTES];
-        for b in y.chunks_exact_mut(Q8_0_BYTES) {
+        for b in y.as_chunks_mut::<Q8_0_BYTES>().0.iter_mut() {
             b[..2].copy_from_slice(&f32_to_f16(r.f().abs() * 0.1 + 1e-5).to_le_bytes());
             for v in &mut b[2..] {
                 // quantizer output is −127..=127; full_range also feeds −128 (the wrap case)
@@ -849,7 +849,7 @@ pub(crate) mod tests {
             for c in raw.chunks(Q1_0_BYTES * (1 << 13)) {
                 let n = c.len() / Q1_0_BYTES * QK1_0;
                 dequantize_row(c, &mut buf[..n]);
-                for (b, v) in bytes.chunks_exact_mut(4).zip(&buf[..n]) {
+                for (b, v) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(&buf[..n]) {
                     b.copy_from_slice(&v.to_le_bytes());
                 }
                 sh.update(&bytes[..4 * n]);
@@ -870,7 +870,7 @@ pub(crate) mod tests {
             o += 4 + nl;
             let (row, n) = (u32at(o), u32at(o + 4));
             o += 8;
-            let x: Vec<f32> = vb[o..o + 4 * n].chunks_exact(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
+            let x: Vec<f32> = vb[o..o + 4 * n].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
             o += 4 * n;
             let q8_ggml = &vb[o..o + n / 32 * Q8_0_BYTES];
             o += n / 32 * Q8_0_BYTES;

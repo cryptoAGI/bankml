@@ -75,7 +75,7 @@ pub struct FileIdent {
     mtime_ns: i128,
 }
 
-pub(crate) fn ident(p: &Path) -> std::io::Result<FileIdent> {
+pub fn ident(p: &Path) -> std::io::Result<FileIdent> {
     use std::os::unix::fs::MetadataExt;
     let m = std::fs::metadata(p)?;
     Ok(FileIdent { dev: m.dev(), ino: m.ino(), len: m.len(), mtime_ns: m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128 })
@@ -541,10 +541,10 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
         Ok(e) => e,
         Err(e) => return respond(c, 404, "text/plain", e.as_bytes()),
     };
-    let stops = match crate::ollama::stops(req.get("stop")) {
-        Ok(s) => s,
-        Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
-    };
+    // a malformed `stop` is refused before a model is loaded for it
+    if let Err(e) = crate::ollama::stops(req.get("stop")) {
+        return respond(c, 400, "text/plain", e.as_bytes());
+    }
     let stream = req.get("stream").and_then(Json::as_bool).unwrap_or(false);
     let run = rs.lock_run();
     let l = match rs.acquire(&run, entry) {
@@ -552,19 +552,13 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
         Err((code, e)) => return respond(c, code, "text/plain", e.as_bytes()),
     };
     let eng = &l.native;
-    let prompt = match req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt(m)) {
-        Ok(p) => p,
+    let nc = match NativeChat::parse(eng, &req) {
+        Ok(nc) => nc,
         Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
     };
-    let params = match eng.params(&req) {
-        Ok(p) => p,
-        Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
-    };
-    let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
     let mut t = Tally::new(body);
     let model_id = l.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let mut stop = crate::ollama::StopFilter::new(stops);
     let r = if stream {
         write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
         let send = |c: &mut TcpStream, piece: &str| -> bool {
@@ -575,59 +569,97 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
                                 crate::gguf::jstr(piece), crate::gguf::jstr(&model_id));
             c.write_all(chunk.as_bytes()).and_then(|_| c.flush()).is_ok()
         };
-        let done = eng.complete(&prompt, params, max, |piece| {
-            if t.ttft.is_none() {
-                t.ttft = Some(t.t0.elapsed());
-            }
-            let (out, go) = stop.push(piece);
-            send(c, &out) && go
-        });
-        send(c, &stop.finish());
-        let d = match done {
+        let d = match nc.run(eng, &mut t, true, |piece| send(c, piece)) {
             Ok(d) => d,
             Err(e) => return write!(c, "data: {{\"error\": {}}}\n\n", crate::gguf::jstr(&e)),
         };
-        t.text = stop.text().to_string();
-        t.prompt = d.prompt_tokens as u64;
-        t.completion = d.completion_tokens as u64;
         write!(c, "data: {{\"choices\": [{{\"index\": 0, \"delta\": {{}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}}}\n\n",
                d.finish_reason, crate::gguf::jstr(&model_id), d.completion_tokens, d.prompt_tokens, d.completion_tokens + d.prompt_tokens, d.cached_tokens)?;
         write!(c, "data: {{\"bankml_receipt\": {}}}\n\ndata: [DONE]\n\n", t.receipt(&l.engine, &l.verified))?;
         c.flush()
     } else {
-        let d = match eng.complete(&prompt, params, max, |piece| stop.push(piece).1) {
+        let d = match nc.run(eng, &mut t, false, |_| true) {
             Ok(d) => d,
             Err(e) => return respond(c, 500, "text/plain", e.as_bytes()),
         };
-        stop.finish();
-        t.text = stop.text().to_string();
-        t.prompt = d.prompt_tokens as u64;
-        t.completion = d.completion_tokens as u64;
-        let j = format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}, \"bankml_receipt\": {}}}",
-                        crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(&model_id), d.completion_tokens, d.prompt_tokens,
-                        d.completion_tokens + d.prompt_tokens, d.cached_tokens, t.receipt(&l.engine, &l.verified));
-        respond(c, 200, "application/json", j.as_bytes())
+        respond(c, 200, "application/json", completion_json(created, &model_id, &d, &t, &l.engine, &l.verified).as_bytes())
     };
     rs.touch(&l.name, crate::native::KeepAlive::Forever);
     r
 }
 
-pub(crate) struct Tally {
-    pub(crate) request_sha256: String,
-    pub(crate) t0: Instant,
-    pub(crate) ttft: Option<Duration>,
-    pub(crate) text: String,
-    pub(crate) prompt: u64,
-    pub(crate) completion: u64,
+/// One native chat request, parsed (0.3.2: shared by `/v1/chat/completions` and the C API's `bankml_chat`, so both
+/// answer a request the same way): the prompt its messages become, the sampler over the model's defaults (refusing
+/// what is not reproduced), the token limit (`max_tokens`, or llama-server's `n_predict`) and the stop strings.
+pub struct NativeChat {
+    pub prompt: Vec<u32>,
+    pub params: crate::sampler::Params,
+    pub max: Option<usize>,
+    pub stops: Vec<String>,
+}
+
+impl NativeChat {
+    pub fn parse(eng: &crate::native::Native, req: &Json) -> Result<NativeChat, String> {
+        let stops = crate::ollama::stops(req.get("stop"))?;
+        let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt(m))?;
+        let params = eng.params(req)?;
+        let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
+        Ok(NativeChat { prompt, params, max, stops })
+    }
+
+    /// Run it: the answer through the stop filter, each passed-on piece to `emit` when `stream` (which also starts
+    /// the time to first token), and the text and counts into the tally the receipt is made from. `emit` returns
+    /// false to stop; it may receive empty pieces.
+    pub fn run(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(&str) -> bool) -> Result<crate::native::Done, String> {
+        let mut stop = crate::ollama::StopFilter::new(self.stops);
+        let done = eng.complete(&self.prompt, self.params, self.max, |piece| {
+            if !stream {
+                return stop.push(piece).1;
+            }
+            if t.ttft.is_none() {
+                t.ttft = Some(t.t0.elapsed());
+            }
+            let (out, go) = stop.push(piece);
+            emit(&out) && go
+        });
+        let rest = stop.finish();
+        if stream {
+            emit(&rest);
+        }
+        let d = done?;
+        t.text = stop.text().to_string();
+        t.prompt = d.prompt_tokens as u64;
+        t.completion = d.completion_tokens as u64;
+        Ok(d)
+    }
+}
+
+/// The non-streamed `/v1/chat/completions` answer from bankML's own engine: OpenAI's object, llama-server's
+/// `timings.cache_n`, and the receipt (also the C API's `result_json`).
+pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t: &Tally, engine: &str, v: &Verified) -> String {
+    format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}, \"bankml_receipt\": {}}}",
+            crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(model_id), d.completion_tokens, d.prompt_tokens,
+            d.completion_tokens + d.prompt_tokens, d.cached_tokens, t.receipt(engine, v))
+}
+
+/// What a receipt is made from: the request's sha256, the clock, and the answer's text and counts.
+pub struct Tally {
+    pub request_sha256: String,
+    pub t0: Instant,
+    pub ttft: Option<Duration>,
+    pub text: String,
+    pub prompt: u64,
+    pub completion: u64,
 }
 
 impl Tally {
-    pub(crate) fn new(body: &[u8]) -> Tally {
+    pub fn new(body: &[u8]) -> Tally {
         let mut hq = crate::sha256::Sha256::default();
         hq.update(body);
         Tally { request_sha256: crate::sha256::hex(&hq.finish()), t0: Instant::now(), ttft: None, text: String::new(), prompt: 0, completion: 0 }
     }
-    pub(crate) fn receipt(&self, engine: &str, v: &Verified) -> String {
+    /// The receipt, as every answer carries it (`bankml_receipt`).
+    pub fn receipt(&self, engine: &str, v: &Verified) -> String {
         let mut h = crate::sha256::Sha256::default();
         h.update(self.text.as_bytes());
         format!(

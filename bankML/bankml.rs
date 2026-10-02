@@ -121,6 +121,9 @@
 //!   usage; `/substrate/` and feedback show its row. Then the 8B migration can route to it.
 //!   - [x] 0.3.1: Ollama's API on `serve --native` (`ollama.rs`), a registry of pinned models, one resident, verified on
 //!     every load, `keep_alive`; native only (docs/OLLAMA.md: what mindX asks of Ollama, and the O1–O8 track).
+//!   - [x] 0.3.2: a C API (`capi/`, `libbankml.so`/`.a`, `capi/include/bankml.h`, docs/CAPI.md) — open (the same
+//!     verify), chat (the same answer and receipt as `serve --native`), and a printf-style `bankml_log` defined in
+//!     Rust as a C-variadic function (Rust 1.99); the llama.h-shaped seam for embedding bankML in another program.
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's
@@ -197,6 +200,32 @@ pub fn pin(gguf: &Path, fork_json: &str) -> Result<String, String> {
 
 /// The crate version (`Cargo.toml`), printed by `bankml version` and carried by every verification.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Log levels of [`log`] (the C API's `BANKML_LOG_ERROR` … `BANKML_LOG_DEBUG`).
+pub const LOG_ERROR: i32 = 0;
+pub const LOG_WARN: i32 = 1;
+pub const LOG_INFO: i32 = 2;
+pub const LOG_DEBUG: i32 = 3;
+
+/// A log sink: the level and the message.
+pub type LogSink = fn(i32, &str);
+
+static LOG_SINK: std::sync::RwLock<Option<LogSink>> = std::sync::RwLock::new(None);
+
+/// Where the library's own messages go (0.3.2): standard error, unless an embedder installs a sink — the C API's
+/// `bankml_set_log` does, so a program that embeds bankML hears from it through one callback. `None` restores stderr.
+pub fn set_log_sink(sink: Option<LogSink>) {
+    *LOG_SINK.write().unwrap_or_else(|e| e.into_inner()) = sink;
+}
+
+/// One message from the library, at `level`, to the sink (or to standard error, one line, as before 0.3.2).
+pub fn log(level: i32, msg: &str) {
+    let sink = *LOG_SINK.read().unwrap_or_else(|e| e.into_inner());
+    match sink {
+        Some(f) => f(level, msg),
+        None => eprintln!("{msg}"),
+    }
+}
 
 /// What a model file earned before it may answer: the guard said play and the pin matched.
 #[derive(Debug, PartialEq, Eq)]

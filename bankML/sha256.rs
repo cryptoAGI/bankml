@@ -42,7 +42,7 @@ impl Sha256 {
                 return;
             }
         }
-        for c in data.chunks_exact(64) {
+        for c in data.as_chunks::<64>().0.iter() {
             self.block(c);
         }
     }
@@ -141,7 +141,7 @@ mod shani {
         let mut st0 = _mm_alignr_epi8(tmp, st1, 8); // A B E F
         st1 = _mm_blend_epi16(st1, tmp, 0xF0); // C D G H
         let k = super::K.as_ptr() as *const __m128i;
-        for b in data.chunks_exact(64) {
+        for b in data.as_chunks::<64>().0.iter() {
             let (s0, s1) = (st0, st1);
             let p = b.as_ptr() as *const __m128i;
             let mut m = [
@@ -227,7 +227,7 @@ mod tests {
     fn portable(data: &[u8]) -> [u8; 32] {
         let mut h = Sha256 { len: data.len() as u64, ..Default::default() };
         let whole = data.len() / 64 * 64;
-        for c in data[..whole].chunks_exact(64) {
+        for c in data[..whole].as_chunks::<64>().0.iter() {
             h.block(c);
         }
         // finish without the dispatching update(): pad by hand through block()
@@ -237,7 +237,7 @@ mod tests {
             tail.push(0);
         }
         tail.extend((data.len() as u64 * 8).to_be_bytes());
-        for c in tail.chunks_exact(64) {
+        for c in tail.as_chunks::<64>().0.iter() {
             h.block(c);
         }
         let mut o = [0u8; 32];

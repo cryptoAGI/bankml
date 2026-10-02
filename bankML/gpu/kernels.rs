@@ -405,16 +405,16 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
 pub fn pack_q1_0(w: &[u8], rows: usize, n: usize) -> (Vec<f32>, Vec<u32>) {
     let nb = n / 128;
     let (mut d, mut bits) = (Vec::with_capacity(rows * nb), Vec::with_capacity(rows * nb * 4));
-    for b in w[..rows * nb * 18].chunks_exact(18) {
+    for b in w[..rows * nb * 18].as_chunks::<18>().0.iter() {
         d.push(crate::q1_0::f16_to_f32(u16::from_le_bytes([b[0], b[1]])));
-        bits.extend(b[2..18].chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])));
+        bits.extend(b[2..18].as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])));
     }
     (d, bits)
 }
 
 /// A q8_0 activation repacked for the kernel: its f32 scales and its quants four to a word.
 pub fn pack_act(a: &crate::q1_0::Q8Act) -> (Vec<f32>, Vec<i32>) {
-    let q: Vec<i32> = a.qs().chunks_exact(4).map(|c| i32::from_le_bytes([c[0] as u8, c[1] as u8, c[2] as u8, c[3] as u8])).collect();
+    let q: Vec<i32> = a.qs().as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes([c[0] as u8, c[1] as u8, c[2] as u8, c[3] as u8])).collect();
     (a.d().to_vec(), q)
 }
 

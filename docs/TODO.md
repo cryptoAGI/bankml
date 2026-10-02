@@ -107,6 +107,19 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 **The Ollama track (O2–O8)** is folded into the milestones below; each item is marked with its phase. The gap matrix
 of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
 
+## 0.3.2 — toolchain and the C API (done)
+
+- [x] **Rust 1.99, pinned** (`rust-toolchain.toml`, `rust-version = "1.99"`); the one new clippy lint
+  (`chunks_exact_to_as_chunks`, 29 sites) fixed by `as_chunks`, every bit-exact oracle passing on the new compiler.
+- [x] **The C API** (`capi/`, `libbankml.so`/`.a`, `capi/include/bankml.h`, [CAPI.md](CAPI.md)): `bankml_open` with
+  `serve`'s verification, `bankml_chat` with `serve --native`'s answer and receipt (one code path), and a printf-style
+  `bankml_log` defined in Rust as a C-variadic function (1.99), byte-identical to libc `snprintf`, marking what it
+  does not support. Oracles in the gate. **This is the llama.h-shaped seam for embedding**: what an application that
+  links llama.cpp would link instead, and the way into P5 (an NDK or iOS app embeds a C library).
+- [ ] The C API's next surface, each with an oracle: tokenize/detokenize (against `/tokenize`), logits and
+  `n_probs` (bit-exact), the slot's save/restore, more than one handle sharing one mapping, and a semver promise for
+  the ABI (1.0.0).
+
 ## The road from 0.3.0 to 1.0.0
 
 **What 1.0.0 means.** bankML is the engine, not a companion to one:

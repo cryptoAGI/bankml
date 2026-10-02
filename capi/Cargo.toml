@@ -1,0 +1,20 @@
+[package]
+name = "bankml-capi"
+version = "0.3.2"
+edition = "2021"
+rust-version = "1.99"
+authors = ["Professor Codephreak", "Gregory L. Magnusson"]
+repository = "https://github.com/cryptoAGI/bankml"
+description = "bankML's C API: open a verified low-bit GGUF, chat with a receipt, and a printf-style log — libbankml.so / libbankml.a and capi/include/bankml.h"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+# the C library is libbankml (-lbankml); inside Rust this crate is `bankml` too, and the engine it wraps is renamed
+name = "bankml"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib"]
+
+# One dependency, the engine itself (by path): the workspace still has no external crate.
+[dependencies]
+engine = { package = "bankml", path = ".." }

@@ -15,7 +15,9 @@ out=testing/results/$v.txt
   echo "# $(rustc --version) · $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //') · $(nproc) threads"
   cargo build --release --locked -q
   cargo test --release --locked 2>&1 | awk '/Running/{r=$2} /^test result/ && !/ 0 passed; 0 failed; 0 ignored/{print r": "$0}'
-  cargo clippy --release --all-targets --locked -q -- -D warnings && echo "clippy: clean"
+  # 0.3.2: the C API is a second workspace member (capi/, libbankml): its unit tests, and clippy over both packages
+  cargo test --release --locked -p bankml-capi 2>&1 | awk '/^test result/{print "capi (bankml-capi): "$0}'
+  cargo clippy --release --workspace --all-targets --locked -q -- -D warnings && echo "clippy: clean"
   python3 testing/spdx_check.py | tail -1
   python3 testing/test_gguf_guard.py | tail -1
   python3 -B testing/test_ui.py | tail -1 | sed 's/^/ui data layer: /'
@@ -23,6 +25,9 @@ out=testing/results/$v.txt
   python3 -B testing/test_chain.py | tail -1 | sed 's/^/iNFT mint and load (throwaway anvil devnet): /'
   BANKML_TEST_CARRIER=1 python3 -B testing/test_models.py | tail -1 | sed 's/^/model importer (loopback source; carrier on spare ports): /'
   python3 testing/guard_agree.py target/release/bankml $(ls .models/*.gguf 2>/dev/null) | tail -1
+  # 0.3.2: the C library, and bankml_log (a C-variadic function defined in Rust) against libc snprintf, from C
+  cargo build --release --locked -q -p bankml-capi
+  python3 -B testing/capi/capi_oracle.py --printf || { echo "FAILED: printf oracle"; exit 1; }
   if [ -n "${BANKML_GGML_LIB:-}" ]; then
     for t in oracle_tokenizer oracle_chat_template oracle_forward_embed_norm oracle_forward_qkv_rope oracle_forward_attention oracle_forward_attention_tiled oracle_forward_attention_split oracle_forward_swiglu_sweep oracle_forward_model oracle_forward_model_ternary oracle_greedy_llama_server oracle_greedy_llama_server_ternary oracle_greedy_llama_server_long oracle_greedy_llama_server_deep oracle_sample_llama_server oracle_native_serve gpu_q1_0_mat_vec_bit_exact oracle_train_script oracle_train_imprint oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
              ab_vs_ggml ab_vs_ggml_q2_0 bench_q1_0_prefill_act bench_memory_floor decode_budget_q1_0 decode_budget_q2_0; do
@@ -34,6 +39,9 @@ out=testing/results/$v.txt
     # 0.3.1: the Ollama shape — /api/chat == /v1/chat/completions == llama-server's record, and unload/reload unchanged
     echo "## serve_oracle_ollama_shape"
     python3 -B testing/serve_oracle.py --bankml || { echo "FAILED: serve_oracle_ollama_shape"; exit 1; }
+    # 0.3.2: the C API — bankml_chat == serve --native (ternary, live) == llama-server's record (1-bit); refusals
+    echo "## capi_chat_oracle"
+    python3 -B testing/capi/capi_oracle.py --chat || { echo "FAILED: capi_chat_oracle"; exit 1; }
   else
     echo "BANKML_GGML_LIB unset: oracles, A/B and budgets skipped"
   fi

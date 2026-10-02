@@ -416,7 +416,7 @@ impl Residency {
         if id != before {
             return Err((503, format!("{} changed while it was being hashed: refused", model.display())));
         }
-        eprintln!("bankml serve --native: {} verified (sha256 {}); loading it", e.name, verified.model_sha256);
+        crate::log(crate::LOG_INFO, &format!("bankml serve --native: {} verified (sha256 {}); loading it", e.name, verified.model_sha256));
         let native = Native::open(&model, self.n_ctx).map_err(|why| (500, why))?;
         let loaded = Loaded { name: e.name.clone(), engine: engine_name(&native), native: Arc::new(native), sha256: verified.model_sha256.clone(),
                               verified: Arc::new(verified), model, ident: id, hashed_at: now_secs(), size: e.bytes };
@@ -432,7 +432,7 @@ impl Residency {
             match ka {
                 KeepAlive::Unload => {
                     *cur = None;
-                    eprintln!("bankml serve --native: {name} unloaded (keep_alive 0)");
+                    crate::log(crate::LOG_INFO, &format!("bankml serve --native: {name} unloaded (keep_alive 0)"));
                 }
                 KeepAlive::For(d) => cur.as_mut().unwrap().expires = Some(SystemTime::now() + d),
                 KeepAlive::Forever => cur.as_mut().unwrap().expires = None,
@@ -457,7 +457,7 @@ impl Residency {
         let Ok(_run) = self.run.try_lock() else { return };
         let mut cur = self.lock_cur();
         if let Some(r) = cur.as_ref().filter(|r| r.expires.is_some_and(|t| t <= SystemTime::now())) {
-            eprintln!("bankml serve --native: {} unloaded (keep_alive expired)", r.loaded.name);
+            crate::log(crate::LOG_INFO, &format!("bankml serve --native: {} unloaded (keep_alive expired)", r.loaded.name));
             *cur = None;
         }
     }

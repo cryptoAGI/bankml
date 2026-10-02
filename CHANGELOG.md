@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.3.2 — 2026-10-01 — a C API, on Rust 1.99
+
+**bankML is now also a C library, `libbankml`, with one hand-written header. A program that embeds it gets the same
+verification as `bankml serve` and the same answers and receipts as `serve --native`. Its printf-style log is a
+C-variadic function defined in Rust, which Rust 1.99 stabilized.** The toolchain moves to Rust 1.99. The gate's
+bit-exact oracles are what show that the compiler upgrade changed no bits. Record: `testing/results/0.3.2.txt`.
+
+### Added
+- **`capi/` (package `bankml-capi`): `libbankml.so` and `libbankml.a`, declared in `capi/include/bankml.h`, documented in
+  [docs/CAPI.md](docs/CAPI.md).** It is a second workspace member, and its only dependency is the bankml crate, by
+  path. The workspace still has no external crate, and the licence is `MIT OR Apache-2.0`.
+  - `bankml_open(model, fork_json, n_ctx, &err)` runs `serve`'s verification: the guard, the sha256 pin, the
+    file-identity check across the hash, and the native check. A refusal returns NULL with `serve`'s reason, for
+    example Bonsai-1.7B's tied embeddings, or a file its FORK.json does not pin.
+  - `bankml_chat(h, request_json, cb, user, &result_json)` takes the OpenAI / llama-server chat request and refuses
+    what `serve --native` refuses. It streams whole UTF-8 pieces to `cb` (return 0 to stop), and returns the
+    `/v1/chat/completions` object with `usage`, `timings.cache_n` and the same `bankml_receipt`. The request also
+    hits the slot's prompt cache, as `-np 1` does.
+  - `bankml_close`, `bankml_free` and `bankml_version`.
+  - The rules: error codes, never an unwind into C, NULL-safe; one slot per handle, so calls serialize; returned
+    strings are freed with `bankml_free`.
+- **`bankml_set_log` and `bankml_log(level, fmt, ...)`, defined in Rust with `mut args: ...`.**
+  - The formatter (`capi/src/printf.rs`) reads each argument with `VaList::next_arg::<T>()` at the C type its
+    conversion names.
+  - It supports `%d %i %u %x %X` (with `hh h l ll z`), `%f %F %lf`, `%c`, `%s`, `%p` and `%%`, with the flags
+    `- + space # 0` and a width and a precision (numbers or `*`).
+  - Anything else is written as `%<unsupported:SPEC>` and never guessed. After an unknown conversion no argument is
+    read (`%<skipped:SPEC>`), and `%n` never writes.
+  - The library's own messages (a model verified, the GPU) go to the same sink, through a small hook in the core:
+    `bankml::log` and `bankml::set_log_sink`. It writes to stderr, as before, unless an embedder installs a sink.
+- **The C API's oracles, in the gate** (`testing/capi/`, compiled with the system `cc`):
+  - **printf oracle:** `bankml_log` against libc `snprintf`, byte for byte, 47 of 47 formats identical, 17 of 17 unsupported cases marked, `%n` never written;
+  - **capi chat oracle:** `bankml_chat` is identical to `serve --native` on 9 of 9 Ternary-Bonsai-8B turns (text, streamed pieces, counts, cache reuse, finish, and the receipt's response, request and model sha256), and to llama-server b11192's record on 9 of 9 Bonsai-8B Q1_0 turns. Bonsai-1.7B and an unpinned file are refused with `serve`'s reasons, and the library's own log reaches the installed sink;
+  - the formatter's Rust unit tests: a typed-queue model, and the variadic function called from Rust against
+    `snprintf`.
+
+### Changed
+- **Rust 1.99.0, pinned** in `rust-toolchain.toml`, with `rust-version = "1.99"` in both manifests. rustup fetches it;
+  the machine's default toolchain is untouched. `install.sh` checks for 1.99.
+  - 1.99's clippy adds one lint, `chunks_exact_to_as_chunks`, at 29 sites: the kernels' block loops, the quantizer,
+    the dequantizers, SHA-256 and the GPU packers. Each was rewritten to `as_chunks::<N>()`, which visits the same
+    elements in the same order.
+  - **Rust 1.99 passed every bit-exact oracle in the gate**: tokenizer 4,258 of 4,258; chat template 317 of 317; the forward-pass
+    steps (300/300, 140/140, 112/112, 150/150, 14/14 rows, SwiGLU 24,600/24,600 values); the whole model 1,064 of
+    1,064 rows for both the 1-bit and the ternary model; greedy 6/6, 6/6, 6/6 long and 3/3 deep; seeded sampling 40 of
+    40; native serve 9 of 9; the Ollama shape 9 of 9; the GPU kernels; and 8,188,239,872 weights with 762 of 762 dot
+    products bit-exact for each 8B model (788 of 788 for the 1.7B).
+- **`serve --native`'s chat path is factored, not changed.**
+  - `serve::NativeChat` (parse and run), `serve::completion_json` and a public `serve::Tally` are what both
+    `/v1/chat/completions` and `bankml_chat` call, so the receipt is made by one piece of code.
+  - The gate's `serve_oracle --bankml` passed on the refactored path.
+- `testing/spdx_check.py` now covers C sources and headers, with `upstream/` held to llama.cpp's `MIT`.
+
+### Measured (the 0.3.2 gate against 0.3.1's, same laptop, Ryzen 3 3200U)
+Every oracle passed on 1.99, so the bits did not move. The speed rows did move, and the cause is *not yet known*:
+this run shared the 4-thread laptop with other work. The load average was 2.2–3.0 at its end, another session's
+`cargo build` was running right after it, and swap was full. Under that load the multi-threaded rows moved for
+**ggml and bankml alike**, so the per-pass ratio is the number to read.
+
+| row | 0.3.1 (Rust 1.95) | 0.3.2 (Rust 1.99) | reading |
+|---|---|---|---|
+| Q1_0 decode budget, 3 threads, bankml median | 0.415 s/token, **0.98×** ggml | 0.787 s/token (min 0.522), **0.73×** ggml (0.571, min 0.473) | beyond noise in absolute terms, but ggml's own median moved 0.406 → 0.571; contention |
+| Q1_0 decode budget, 1 thread | 0.682 s, 1.02× | 0.677 s, 1.05× | unchanged |
+| Q2_0 decode budget, 3 threads | 0.274 s/token, **9.23×** | 0.394 s/token (min 0.327), **7.99×** | ggml 2.612 → 3.603 s as well; contention |
+| Q2_0 decode budget, 1 thread | 0.491 s, 9.63× | 0.477 s, 10.25× | unchanged or slightly better |
+| Q2_0 prefill 1×4 tile | **13.0×** | **13.25×** | unchanged |
+| Q1_0 GEMV `mat_vec` / prefill Q8Act tile | 1.008× / 1.233× | 1.104× / 1.308× | unchanged or slightly better |
+
+An interleaved A/B after the gate, with the same tests built by 1.95 and by 1.99 and run alternately (two rounds),
+ran at a load average of 4–5. ggml's own 1-thread token ranged from 0.73 s to 1.88 s across those runs. That is too
+noisy to separate the compilers, and it is recorded here as inconclusive. **The deciding experiment** is the same
+alternating A/B under `testing/pinned.sh` (pinned cores, a RAM cap) on a quiet machine. Until it runs, 0.3.2 claims
+no speed change in either direction.
+
 ## 0.3.1 — 2026-10-01 — Ollama's API, natively
 
 **`bankml serve --native` speaks Ollama's API over bankML's own forward pass, and can be asked for any pinned model

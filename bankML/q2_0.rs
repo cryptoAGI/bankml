@@ -27,7 +27,7 @@ pub const Q2_0_BYTES: usize = 18;
 pub fn dequantize_row(blocks: &[u8], out: &mut [f32]) {
     assert_eq!(blocks.len() % Q2_0_BYTES, 0);
     assert_eq!(out.len(), blocks.len() / Q2_0_BYTES * QK2_0);
-    for (b, o) in blocks.chunks_exact(Q2_0_BYTES).zip(out.chunks_exact_mut(QK2_0)) {
+    for (b, o) in blocks.as_chunks::<Q2_0_BYTES>().0.iter().zip(out.as_chunks_mut::<QK2_0>().0.iter_mut()) {
         let d = f16_to_f32(u16::from_le_bytes([b[0], b[1]]));
         for (j, y) in o.iter_mut().enumerate() {
             *y = (((b[2 + j / 4] >> (2 * (j % 4))) & 3) as i32 - 1) as f32 * d;
@@ -378,7 +378,7 @@ mod tests {
 
     fn random_q2(r: &mut Rng, nb: usize) -> Vec<u8> {
         let mut x = vec![0u8; nb * Q2_0_BYTES];
-        for b in x.chunks_exact_mut(Q2_0_BYTES) {
+        for b in x.as_chunks_mut::<Q2_0_BYTES>().0.iter_mut() {
             b[..2].copy_from_slice(&f32_to_f16(r.f().abs() * 0.05 + 1e-4).to_le_bytes());
             b[2..].iter_mut().for_each(|v| *v = r.next() as u8); // all four codes, +2 included
         }
@@ -387,7 +387,7 @@ mod tests {
 
     fn random_q8(r: &mut Rng, nb: usize, full_range: bool) -> Vec<u8> {
         let mut y = vec![0u8; nb * 2 * Q8_0_BYTES];
-        for b in y.chunks_exact_mut(Q8_0_BYTES) {
+        for b in y.as_chunks_mut::<Q8_0_BYTES>().0.iter_mut() {
             b[..2].copy_from_slice(&f32_to_f16(r.f().abs() * 0.1 + 1e-5).to_le_bytes());
             b[2..].iter_mut().for_each(|v| *v = if full_range { r.next() as u8 } else { ((r.next() % 255) as i32 - 127) as i8 as u8 });
         }
@@ -469,7 +469,7 @@ mod tests {
             for c in tensor(f[0]).chunks(Q2_0_BYTES * (1 << 14)) {
                 let n = c.len() / Q2_0_BYTES * QK2_0;
                 dequantize_row(c, &mut buf[..n]);
-                bytes.chunks_exact_mut(4).zip(&buf[..n]).for_each(|(b, v)| b.copy_from_slice(&v.to_le_bytes()));
+                bytes.as_chunks_mut::<4>().0.iter_mut().zip(&buf[..n]).for_each(|(b, v)| b.copy_from_slice(&v.to_le_bytes()));
                 sh.update(&bytes[..4 * n]);
             }
             assert_eq!(hex(&sh.finish()), f[2], "dequantize {}", f[0]);

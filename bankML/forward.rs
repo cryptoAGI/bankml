@@ -139,7 +139,7 @@ impl Rope {
 pub fn dot_f16(x: &[u16], y: &[u16]) -> f32 {
     assert!(x.len() == y.len() && x.len().is_multiple_of(32));
     let mut acc = [[0.0f32; 8]; 4];
-    for (xs, ys) in x.chunks_exact(32).zip(y.chunks_exact(32)) {
+    for (xs, ys) in x.as_chunks::<32>().0.iter().zip(y.as_chunks::<32>().0.iter()) {
         for (j, a) in acc.iter_mut().enumerate() {
             for (l, al) in a.iter_mut().enumerate() {
                 *al = f16_to_f32(xs[8 * j + l]).mul_add(f16_to_f32(ys[8 * j + l]), *al);
@@ -275,7 +275,7 @@ pub fn attend_head_tiled(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: u
         }
         max = new_max;
         let mut tsum = 0.0f64;
-        for g in kq.chunks_exact_mut(8) {
+        for g in kq.as_chunks_mut::<8>().0.iter_mut() {
             for x in g.iter_mut() {
                 *x = v_expf(*x - new_max);
             }
@@ -478,12 +478,12 @@ impl Weights {
         let gpu = if wtype == TYPE_Q1_0 {
             match crate::gpu::worker::Worker::open(&pool) {
                 Ok(Some(w)) => {
-                    eprintln!("bankml: GPU {} verified; it computes {:.0}% of each 1-bit matrix's rows", w.name, w.share * 100.0);
+                    crate::log(crate::LOG_INFO, &format!("bankml: GPU {} verified; it computes {:.0}% of each 1-bit matrix's rows", w.name, w.share * 100.0));
                     Some(std::sync::Mutex::new(w))
                 }
                 Ok(None) => None,
                 Err(e) => {
-                    eprintln!("bankml: GPU not used: {e}");
+                    crate::log(crate::LOG_WARN, &format!("bankml: GPU not used: {e}"));
                     None
                 }
             }
@@ -509,7 +509,7 @@ impl Weights {
         }
         let n = t.dims.iter().product::<u64>() as usize;
         let b = b.get(..n * 4).ok_or("tensor truncated")?;
-        Ok(b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect())
+        Ok(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
     }
 
     /// A weight matrix of the model's type, checked against the input width.

@@ -117,7 +117,7 @@ pub fn string_words(s: &str) -> Vec<u32> {
     while !b.len().is_multiple_of(4) {
         b.push(0);
     }
-    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
 }
 
 impl Module {

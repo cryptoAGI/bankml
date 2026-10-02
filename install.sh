@@ -27,7 +27,7 @@ LLAMA_SHA256="34cf6fa5de9da0db3932c78fe15fed2fbca17451e665dac0a4f6a3c8fc881ec7"
 CANON_URL="https://github.com/cryptoAGI/savante"
 PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
 PIPER_VOICE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high"
-RUST_MIN="1.95"
+RUST_MIN="1.99"   # rust-toolchain.toml pins 1.99.0 (the C API defines a C-variadic function); rustup fetches it
 PY_MIN="3.10"
 GRADIO_SPEC="gradio>=3.37,<4"   # the UI is written for Gradio 3 (its layout and scripts are Gradio 3 workarounds)
 
@@ -123,7 +123,7 @@ step_check() {
   local bad=0 v
   if have cargo; then
     v="$(cargo --version | awk '{print $2}')"
-    if version_ge "$v" "$RUST_MIN"; then bm_ok "Rust $v"; else bm_err "Rust $v is older than $RUST_MIN: rustup update"; bad=1; fi
+    if version_ge "$v" "$RUST_MIN"; then bm_ok "Rust $v"; else bm_err "Rust $v is older than $RUST_MIN: install rustup (it reads rust-toolchain.toml and fetches 1.99.0), or rustup toolchain install 1.99.0"; bad=1; fi
   else
     bm_err "Rust is missing: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh, then open a new shell"; bad=1
   fi

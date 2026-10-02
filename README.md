@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.4%E2%80%9310.0%C3%97-D9A23A?style=flat-square" alt="ternary 9.4–10.0x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
-  <img src="https://img.shields.io/badge/status-0.3.1%20%C2%B7%20Savante%20answered%20by%20bankML%27s%20own%20forward%20pass%2C%20Ollama%27s%20API-F59E0B?style=flat-square" alt="status">
+  <img src="https://img.shields.io/badge/status-0.3.2%20%C2%B7%20Savante%20answered%20by%20bankML%27s%20own%20forward%20pass%2C%20Ollama%27s%20API%2C%20a%20C%20API-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
 </p>
 
@@ -69,6 +69,7 @@ Start here, then go where your question is. The same documents read as a website
 | use meaning search (bge-m3, the embedding model mindX uses) | **[docs/embedding.md](docs/embedding.md)** |
 | see the GPUs Hugging Face rents (NVIDIA agreed to acquire Hugging Face, 2026-09-02) and how bankML treats them | **[docs/huggingface.md](docs/huggingface.md)** (addendum, 2026-09-29) |
 | use bankML as an Ollama (the `/api/*` endpoints, the model registry, `keep_alive`), and see what mindX asks of Ollama that bankML does not do yet | **[docs/OLLAMA.md](docs/OLLAMA.md)** (the gap matrix and the O1–O8 track) · [usage.md §6a](docs/usage.md#6a-ollamas-api) |
+| embed bankML in a C, C++, Python, Go or Swift program (`libbankml`, `bankml.h`: open with the gate, chat with the receipt, a printf-style log) | **[docs/CAPI.md](docs/CAPI.md)** (0.3.2) · [usage.md §6b](docs/usage.md#6b-the-c-api) |
 | see what comes next and what was rejected, and why | **[docs/TODO.md](docs/TODO.md)** |
 | check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
 | know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |
@@ -116,7 +117,7 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | P2 | `Q2_0_g64` kernel (ternary) | **done** — bit-exact on 8.19 B weights; 9.4–10.0× decode per matrix, 12.9× prefill; one whole token 9.46× on three threads (0.2.2 gate) |
 | P3 | Qwen3 forward pass (tokenizer, template, YaRN RoPE, GQA, f16 KV cache, flash attention, SwiGLU, sampling) | **done (0.2.1–0.2.11)**: token-identical to llama.cpp for the 1-bit and ternary models, including seeded sampling and every CPU attention kernel; the whole model bit-exact (1,064 of 1,064 rows each); about 8× llama-server on the ternary model |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)**: `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
-| P4 | OpenAI-compatible endpoint; bankML's own engine behind it; mindX provider | **0.3.0: `bankml serve --native`**, Savante answered by bankML's own forward pass, conversations identical to llama-server's (9 of 9 turns); **0.3.1: Ollama's API** (`/api/chat`, `/api/generate`, `/api/tags`, `/api/ps`, `/api/show`), a registry of pinned models with one resident and `keep_alive`, native only ([OLLAMA.md](docs/OLLAMA.md)); mindX provider next |
+| P4 | OpenAI-compatible endpoint; bankML's own engine behind it; mindX provider | **0.3.0: `bankml serve --native`**, Savante answered by bankML's own forward pass, conversations identical to llama-server's (9 of 9 turns); **0.3.1: Ollama's API** (`/api/chat`, `/api/generate`, `/api/tags`, `/api/ps`, `/api/show`), a registry of pinned models with one resident and `keep_alive`, native only ([OLLAMA.md](docs/OLLAMA.md)); **0.3.2: a C API** (`libbankml`, [CAPI.md](docs/CAPI.md)) giving `serve --native`'s answers and receipts to an embedding program; mindX provider next |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
 | models | import without friction: Bonsai-8B on first run; a pinned open-source catalogue, any Hugging Face GGUF, Ollama; open-source licences only; carrier switch with rollback | **0.1.5**, hardened 0.1.6 |
 | memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](docs/embedding.md)) |
@@ -141,6 +142,7 @@ before it was tagged; its record is `testing/results/<version>.txt`, and the det
 
 | version | what it brought |
 |---|---|
+| [0.3.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.2) | **a C API** (`capi/`, `libbankml.so`/`.a`, `capi/include/bankml.h`, [docs/CAPI.md](docs/CAPI.md)): `bankml_open` runs `serve`'s verification, `bankml_chat` gives `serve --native`'s answer and receipt (the same code), and `bankml_log` is a printf-style C-variadic function **defined in Rust** (byte-identical to libc `snprintf` on every supported conversion; the rest marked, never guessed); still zero external crates; **Rust 1.99**, pinned in `rust-toolchain.toml`, passing every bit-exact oracle |
 | [0.3.1](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.1) | Ollama's API on `bankml serve --native`, **native only** (what the forward pass cannot do is refused with a reason, never proxied): `/api/chat` and `/api/generate` (NDJSON, Ollama's counts and durations, the receipt), `/api/tags` listing every pin with whether bankML plays it, `/api/ps`, `/api/show`; `--registry` names every pinned model, one resident at a time, each load verified, `keep_alive`; `/api/chat` identical to `/v1/chat/completions` and llama-server's record turn by turn; [docs/OLLAMA.md](docs/OLLAMA.md), the gap matrix against what mindX asks of Ollama and the O1–O8 track; Savante's Interaction tab is only the conversation (settings on Admin) |
 | [**0.3.0**](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.0) | **milestone: Savante answered by bankML's own forward pass.** `bankml serve --native` gives llama-server's answers turn by turn (9 of 9 conversation turns identical: text, counts, prompt-cache reuse), about 8× faster on the ternary model; Savante's engine setting (`auto` uses it for the ternary files); the docs brought up to date |
 | [0.2.14](https://github.com/cryptoAGI/bankml/releases/tag/v0.2.14) | the GPU works inside the forward pass (a calibrated share of every 1-bit matrix's rows, beside the CPU threads) with every token oracle still exact; the Vega 3's driver does not fuse FMA, so bankml computes a correctly rounded FMA itself (Boldo–Melquiond); the on-card oracle now catches an unfused driver. Speed on this laptop: unchanged within noise (next: batched submissions) |
@@ -272,6 +274,7 @@ Savante's canon (`~/cryptoAGI/savante`) is only ever read. Before she speaks, th
 bankml/
 ├── install.sh   start here: installs, verifies and starts everything
 ├── bankML/      the Rust runtime (guard, pin, kernels, forward pass, bankml serve)
+├── capi/        the C API: libbankml.so / libbankml.a and include/bankml.h (0.3.2)
 ├── sAGI/        Savante's UI (interact and view) and the model importer
 ├── docs/        usage, playback, technical report, performance, oracles, research
 ├── testing/     the release gate, the oracles and their records
@@ -290,6 +293,8 @@ bankml/
 | `bankML/sha256.rs` | FIPS 180-4 SHA-256 and the `FORK.json` pin |
 | `bankML/par.rs` | the thread pool and row scheduler (0.0.3) |
 | `bankML/serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
+| `capi/` | the C API (0.3.2): `src/lib.rs` (open, chat, close, free, the log), `src/printf.rs` (the formatter behind the C-variadic `bankml_log`), `include/bankml.h` — see [CAPI.md](docs/CAPI.md) |
+| `rust-toolchain.toml` | the pinned toolchain, Rust 1.99.0 (C-variadic function definitions); rustup fetches it |
 | `sAGI/savante.py` | the Savante UI, interact mode (Gradio, loopback) |
 | `sAGI/view.py` | the read-only view page for the LAN (standard library) |
 | `sAGI/agents.py` | custom agents: derive, edit, ledger; keccak256 and the doctrine root |
