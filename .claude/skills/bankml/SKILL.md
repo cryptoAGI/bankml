@@ -137,7 +137,7 @@ Llama refused). Never copy KoboldCpp code (AGPL); take llama.cpp/ggml code (MIT)
 
 ## Status (keep current)
 
-Released through **0.3.1** (2026-10-01: Ollama's API natively, a registry of pinned models with one resident and `keep_alive`; docs/OLLAMA.md is the gap matrix against mindX and the O1–O8 track). Milestone **0.3.0** (2026-09-29): **Savante answered by bankML's own forward pass.** Docs reader:
+Released through **0.3.2** (2026-10-02: Rust 1.99 pinned in rust-toolchain.toml; a C API, `capi/` → libbankml.so/.a + `capi/include/bankml.h`, docs/CAPI.md: open (verify) · chat (stream + receipt) · close · free · set_log, and the variadic `bankml_log(level, fmt, ...)` defined in Rust over VaList, byte-identical to snprintf on 47/47 formats; the root is now a workspace (`.`, `capi`). 3-thread benches read slower in the 0.3.2 gate under load; a quiet-machine 1.95-vs-1.99 A/B is owed). **0.3.1** (2026-10-01: Ollama's API natively, a registry of pinned models with one resident and `keep_alive`; docs/OLLAMA.md is the gap matrix against mindX and the O1–O8 track). Milestone **0.3.0** (2026-09-29): **Savante answered by bankML's own forward pass.** Docs reader:
 **https://cryptoagi.github.io/bankml/** (GitHub Pages from `main` `/docs`; `docs/index.html` reads the repo at the
 latest release through the GitHub API, falling back to its `FALLBACK_TAG`. **Bump that tag and the masthead's gate-record
 line at each release.**)
