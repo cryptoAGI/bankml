@@ -556,7 +556,7 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
         Err((code, e)) => return respond(c, code, "text/plain", e.as_bytes()),
     };
     let eng = &l.native;
-    let nc = match NativeChat::parse(eng, &req) {
+    let nc = match NativeChat::parse(eng, &req, &String::from_utf8_lossy(body)) {
         Ok(nc) => nc,
         Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
     };
@@ -605,10 +605,20 @@ pub struct NativeChat {
 }
 
 impl NativeChat {
-    pub fn parse(eng: &crate::native::Native, req: &Json) -> Result<NativeChat, String> {
+    /// `text` is the request as it came (`req` is its reading): a JSON schema's numbers are read from it exactly.
+    pub fn parse(eng: &crate::native::Native, req: &Json, text: &str) -> Result<NativeChat, String> {
         let stops = crate::ollama::stops(req.get("stop"))?;
-        let constraint = crate::grammar::from_openai(req)?;
-        if let crate::grammar::Constraint::Gbnf(g) = &constraint {
+        let constraint = crate::grammar::from_openai_text(req, text)?;
+        let schema_text;
+        let g = match &constraint {
+            crate::grammar::Constraint::Gbnf(g) => Some(g),
+            crate::grammar::Constraint::Schema(s) => {
+                schema_text = crate::schema::chat_grammar(s, eng.template)?.0;
+                Some(&schema_text)
+            }
+            _ => None,
+        };
+        if let Some(g) = g {
             // a grammar llama.cpp would not parse is refused here, with its parser's reason (a 400, not a failed run)
             crate::grammar::Rules::parse(g, &|b: &[u8]| eng.tok.encode(&String::from_utf8_lossy(b), true))?;
         }

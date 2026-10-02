@@ -67,8 +67,8 @@ bankml_t *bankml_open(const char *model_path, const char *fork_json_path, uint32
  *    "temperature", "top_k", "top_p", "min_p", "min_keep", "seed", "max_tokens" (or "n_predict"), "stop",
  *    "response_format": {"type": "json_object"}, "json_schema", "grammar"}   (0.3.3: JSON mode and GBNF, as llama-server)
  * Unset sampling keys take the model's GGUF defaults; a sampler bankML does not reproduce (penalties, dry,
- * typical-p, xtc, top-n-sigma, dynamic temperature) is refused, never approximated, as is a JSON schema other than
- * {} / {"type": "object"} or a grammar llama.cpp would not parse. "model" and "stream" are ignored.
+ * typical-p, xtc, top-n-sigma, dynamic temperature) is refused, never approximated, as is a JSON schema llama.cpp
+ * b11192 refuses (O6b: any other schema is converted as llama-server converts it) or a grammar llama.cpp would not parse. "model" and "stream" are ignored.
  * The answer streams to `cb` (may be NULL); *result_json (if not NULL) receives the non-streamed
  * /v1/chat/completions object — choices, usage, timings.cache_n, bankml_receipt — or {"error": {"code", "message"}}.
  * The slot keeps its KV cache between calls and reuses the longest common prefix, as llama-server's -np 1 does.

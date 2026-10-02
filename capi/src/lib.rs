@@ -134,7 +134,7 @@ fn chat(h: &Bankml, body: &[u8], cb: Option<PieceCb>, user: *mut c_void) -> Resu
     }
     let text = std::str::from_utf8(body).map_err(|_| (BANKML_E_ARG, "request_json is not UTF-8".to_string()))?;
     let req = Json::parse(text).ok_or((BANKML_E_REQUEST, "request_json is not JSON".to_string()))?;
-    let nc = NativeChat::parse(&h.native, &req).map_err(|e| (BANKML_E_REQUEST, e))?;
+    let nc = NativeChat::parse(&h.native, &req, text).map_err(|e| (BANKML_E_REQUEST, e))?;
     let mut t = Tally::new(body);
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let mut buf = Vec::new();

@@ -1,0 +1,370 @@
+[
+ {
+  "name": "pydantic EntryLink",
+  "schema": "{\"properties\": {\"type\": {\"title\": \"Type\", \"type\": \"string\"}, \"target_urn\": {\"title\": \"Target Urn\", \"type\": \"string\"}}, \"required\": [\"type\", \"target_urn\"], \"title\": \"EntryLink\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic EntryDraft",
+  "schema": "{\"$defs\": {\"EntryLink\": {\"properties\": {\"type\": {\"title\": \"Type\", \"type\": \"string\"}, \"target_urn\": {\"title\": \"Target Urn\", \"type\": \"string\"}}, \"required\": [\"type\", \"target_urn\"], \"title\": \"EntryLink\", \"type\": \"object\"}}, \"properties\": {\"urn\": {\"title\": \"Urn\", \"type\": \"string\"}, \"kind\": {\"title\": \"Kind\", \"type\": \"string\"}, \"actor\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Actor\"}, \"ts\": {\"default\": 0.0, \"title\": \"Ts\", \"type\": \"number\"}, \"payload\": {\"default\": {}, \"title\": \"Payload\", \"type\": \"object\"}, \"tags\": {\"default\": [], \"items\": {\"type\": \"string\"}, \"title\": \"Tags\", \"type\": \"array\"}, \"links\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/EntryLink\"}, \"title\": \"Links\", \"type\": \"array\"}}, \"required\": [\"urn\", \"kind\"], \"title\": \"EntryDraft\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic ChallengeRequest",
+  "schema": "{\"properties\": {\"wallet_address\": {\"description\": \"0x-EOA\", \"maxLength\": 42, \"minLength\": 42, \"title\": \"Wallet Address\", \"type\": \"string\"}, \"title\": {\"minLength\": 1, \"title\": \"Title\", \"type\": \"string\"}, \"content_sha256\": {\"maxLength\": 66, \"minLength\": 66, \"title\": \"Content Sha256\", \"type\": \"string\"}}, \"required\": [\"wallet_address\", \"title\", \"content_sha256\"], \"title\": \"ChallengeRequest\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic AuthorizeResponse",
+  "schema": "{\"$defs\": {\"WordpressResult\": {\"properties\": {\"post_id\": {\"title\": \"Post Id\", \"type\": \"integer\"}, \"url\": {\"title\": \"Url\", \"type\": \"string\"}, \"status\": {\"title\": \"Status\", \"type\": \"string\"}, \"slug\": {\"title\": \"Slug\", \"type\": \"string\"}, \"date_gmt\": {\"title\": \"Date Gmt\", \"type\": \"string\"}}, \"required\": [\"post_id\", \"url\", \"status\", \"slug\", \"date_gmt\"], \"title\": \"WordpressResult\", \"type\": \"object\"}}, \"properties\": {\"status\": {\"title\": \"Status\", \"type\": \"string\"}, \"authorized_by\": {\"title\": \"Authorized By\", \"type\": \"string\"}, \"wordpress\": {\"$ref\": \"#/$defs/WordpressResult\"}}, \"required\": [\"status\", \"authorized_by\", \"wordpress\"], \"title\": \"AuthorizeResponse\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic SkillFrontmatter",
+  "schema": "{\"additionalProperties\": true, \"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"description\": {\"title\": \"Description\", \"type\": \"string\"}, \"version\": {\"default\": \"0.1.0\", \"title\": \"Version\", \"type\": \"string\"}, \"created_by\": {\"default\": \"agent\", \"enum\": [\"agent\", \"human\"], \"title\": \"Created By\", \"type\": \"string\"}, \"pinned\": {\"default\": false, \"title\": \"Pinned\", \"type\": \"boolean\"}, \"intention_template\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Intention Template\"}, \"preconditions\": {\"items\": {\"type\": \"string\"}, \"title\": \"Preconditions\", \"type\": \"array\"}, \"created_at\": {\"default\": 0.0, \"title\": \"Created At\", \"type\": \"number\"}}, \"required\": [\"name\", \"description\"], \"title\": \"SkillFrontmatter\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic PublishRequest",
+  "schema": "{\"properties\": {\"title\": {\"minLength\": 1, \"title\": \"Title\", \"type\": \"string\"}, \"content\": {\"minLength\": 1, \"title\": \"Content\", \"type\": \"string\"}, \"status\": {\"default\": \"publish\", \"title\": \"Status\", \"type\": \"string\"}, \"date\": {\"anyOf\": [{\"format\": \"date-time\", \"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Date\"}, \"categories\": {\"anyOf\": [{\"items\": {\"type\": \"integer\"}, \"type\": \"array\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Categories\"}}, \"required\": [\"title\", \"content\"], \"title\": \"PublishRequest\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic Step",
+  "schema": "{\"$defs\": {\"Action\": {\"enum\": [\"search\", \"write\", \"ask_user\", \"done\"], \"title\": \"Action\", \"type\": \"string\"}}, \"properties\": {\"action\": {\"$ref\": \"#/$defs/Action\"}, \"args\": {\"additionalProperties\": {\"type\": \"string\"}, \"default\": {}, \"title\": \"Args\", \"type\": \"object\"}, \"why\": {\"title\": \"Why\", \"type\": \"string\"}}, \"required\": [\"action\", \"why\"], \"title\": \"Step\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic Plan",
+  "schema": "{\"$defs\": {\"Action\": {\"enum\": [\"search\", \"write\", \"ask_user\", \"done\"], \"title\": \"Action\", \"type\": \"string\"}, \"Step\": {\"properties\": {\"action\": {\"$ref\": \"#/$defs/Action\"}, \"args\": {\"additionalProperties\": {\"type\": \"string\"}, \"default\": {}, \"title\": \"Args\", \"type\": \"object\"}, \"why\": {\"title\": \"Why\", \"type\": \"string\"}}, \"required\": [\"action\", \"why\"], \"title\": \"Step\", \"type\": \"object\"}}, \"additionalProperties\": false, \"properties\": {\"goal\": {\"title\": \"Goal\", \"type\": \"string\"}, \"steps\": {\"items\": {\"$ref\": \"#/$defs/Step\"}, \"maxItems\": 6, \"minItems\": 1, \"title\": \"Steps\", \"type\": \"array\"}, \"confidence\": {\"maximum\": 1.0, \"minimum\": 0.0, \"title\": \"Confidence\", \"type\": \"number\"}, \"priority\": {\"default\": 5, \"maximum\": 10, \"minimum\": 1, \"title\": \"Priority\", \"type\": \"integer\"}}, \"required\": [\"goal\", \"steps\", \"confidence\"], \"title\": \"Plan\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic Verdict",
+  "schema": "{\"additionalProperties\": false, \"properties\": {\"verdict\": {\"enum\": [\"verified\", \"unverified\", \"refuted\", \"unknown\"], \"title\": \"Verdict\", \"type\": \"string\"}, \"claim\": {\"title\": \"Claim\", \"type\": \"string\"}, \"sources\": {\"default\": [], \"items\": {\"pattern\": \"^https?://[a-z0-9.-]+(/[^ ]*)?$\", \"type\": \"string\"}, \"title\": \"Sources\", \"type\": \"array\"}, \"score\": {\"maximum\": 100, \"minimum\": 0, \"title\": \"Score\", \"type\": \"integer\"}, \"checked_at\": {\"format\": \"date\", \"title\": \"Checked At\", \"type\": \"string\"}, \"at\": {\"format\": \"time\", \"title\": \"At\", \"type\": \"string\"}, \"id\": {\"format\": \"uuid\", \"title\": \"Id\", \"type\": \"string\"}}, \"required\": [\"verdict\", \"claim\", \"score\", \"checked_at\", \"at\", \"id\"], \"title\": \"Verdict\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic Node",
+  "schema": "{\"$defs\": {\"Node\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"children\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/Node\"}, \"title\": \"Children\", \"type\": \"array\"}}, \"required\": [\"name\"], \"title\": \"Node\", \"type\": \"object\"}}, \"$ref\": \"#/$defs/Node\"}"
+ },
+ {
+  "name": "pydantic Mixed",
+  "schema": "{\"properties\": {\"pair\": {\"maxItems\": 2, \"minItems\": 2, \"prefixItems\": [{\"type\": \"integer\"}, {\"type\": \"string\"}], \"title\": \"Pair\", \"type\": \"array\"}, \"counts\": {\"additionalProperties\": {\"type\": \"integer\"}, \"title\": \"Counts\", \"type\": \"object\"}, \"either\": {\"anyOf\": [{\"type\": \"integer\"}, {\"type\": \"string\"}, {\"type\": \"null\"}], \"title\": \"Either\"}, \"big\": {\"exclusiveMaximum\": 1000000, \"exclusiveMinimum\": -1000, \"title\": \"Big\", \"type\": \"integer\"}, \"neg\": {\"maximum\": -5, \"title\": \"Neg\", \"type\": \"integer\"}, \"sym\": {\"pattern\": \"^[A-Z]{3,5}(-[0-9]{2})?$\", \"title\": \"Sym\", \"type\": \"string\"}}, \"required\": [\"pair\", \"counts\", \"either\", \"big\", \"neg\", \"sym\"], \"title\": \"Mixed\", \"type\": \"object\"}"
+ },
+ {
+  "name": "pydantic Strict",
+  "schema": "{\"additionalProperties\": false, \"properties\": {\"a\": {\"title\": \"A\", \"type\": \"string\"}, \"b\": {\"anyOf\": [{\"type\": \"integer\"}, {\"type\": \"null\"}], \"title\": \"B\"}, \"c\": {\"items\": {\"enum\": [1, 2, 3], \"type\": \"integer\"}, \"title\": \"C\", \"type\": \"array\"}}, \"required\": [\"a\", \"b\", \"c\"], \"title\": \"Strict\", \"type\": \"object\"}"
+ },
+ {
+  "name": "edge type array",
+  "schema": "{\"type\": [\"string\", \"null\"]}"
+ },
+ {
+  "name": "edge type array with props",
+  "schema": "{\"type\": [\"object\", \"null\"], \"properties\": {\"x\": {\"type\": \"integer\"}}}"
+ },
+ {
+  "name": "edge enum mixed",
+  "schema": "{\"enum\": [1, 1.0, \"a\", null, true, {\"x\": [1, 2.5]}, [], -0.0]}"
+ },
+ {
+  "name": "edge const float",
+  "schema": "{\"const\": 2.5e-07}"
+ },
+ {
+  "name": "edge const big",
+  "schema": "{\"enum\": [1e+21, 1000000000000000.0, 100000000000000.0, 123456.789, 0.1, 5e-324, 1.7976931348623157e+308, 18446744073709551615, -9223372036854775808]}"
+ },
+ {
+  "name": "edge array bounds",
+  "schema": "{\"type\": \"array\", \"items\": {\"type\": \"integer\"}, \"minItems\": 2, \"maxItems\": 5}"
+ },
+ {
+  "name": "edge array max 0",
+  "schema": "{\"type\": \"array\", \"items\": {\"type\": \"integer\"}, \"maxItems\": 0}"
+ },
+ {
+  "name": "edge array 0-1",
+  "schema": "{\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"maxItems\": 1}"
+ },
+ {
+  "name": "edge string lengths",
+  "schema": "{\"type\": \"string\", \"minLength\": 3, \"maxLength\": 3}"
+ },
+ {
+  "name": "edge int range neg",
+  "schema": "{\"type\": \"integer\", \"minimum\": -5, \"maximum\": 1234}"
+ },
+ {
+  "name": "edge int range both neg",
+  "schema": "{\"type\": \"integer\", \"minimum\": -300, \"maximum\": -7}"
+ },
+ {
+  "name": "edge int exclusive float",
+  "schema": "{\"type\": \"integer\", \"exclusiveMinimum\": 2.5, \"exclusiveMaximum\": 99.5}"
+ },
+ {
+  "name": "edge int min float",
+  "schema": "{\"type\": \"integer\", \"minimum\": 0.5}"
+ },
+ {
+  "name": "edge int max only",
+  "schema": "{\"type\": \"integer\", \"maximum\": 77}"
+ },
+ {
+  "name": "edge int max neg",
+  "schema": "{\"type\": \"integer\", \"maximum\": -77}"
+ },
+ {
+  "name": "edge int min big",
+  "schema": "{\"type\": \"integer\", \"minimum\": 123456}"
+ },
+ {
+  "name": "edge int min neg big",
+  "schema": "{\"type\": \"integer\", \"minimum\": -123456}"
+ },
+ {
+  "name": "edge odd property names",
+  "schema": "{\"type\": \"object\", \"properties\": {\"a b/c\": {}, \"éü\": {\"type\": \"string\"}, \"q\\\"uote\": {\"type\": \"boolean\"}, \"\": {\"type\": \"null\"}}, \"required\": [\"a b/c\", \"\"]}"
+ },
+ {
+  "name": "edge additional typed",
+  "schema": "{\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"integer\"}}, \"additionalProperties\": {\"type\": \"number\"}}"
+ },
+ {
+  "name": "edge additional true with props",
+  "schema": "{\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"integer\"}, \"idx\": {}}, \"required\": [\"id\"], \"additionalProperties\": true}"
+ },
+ {
+  "name": "edge props empty",
+  "schema": "{\"type\": \"object\", \"properties\": {}}"
+ },
+ {
+  "name": "edge props empty additional false",
+  "schema": "{\"type\": \"object\", \"additionalProperties\": false}"
+ },
+ {
+  "name": "edge required optional order",
+  "schema": "{\"type\": \"object\", \"properties\": {\"c\": {}, \"b\": {\"type\": \"string\"}, \"a\": {\"type\": \"integer\"}, \"d\": {\"type\": \"null\"}}, \"required\": [\"a\", \"c\"]}"
+ },
+ {
+  "name": "edge oneOf",
+  "schema": "{\"oneOf\": [{\"type\": \"string\"}, {\"type\": \"integer\"}, {\"$ref\": \"#/$defs/x\"}], \"$defs\": {\"x\": {\"type\": \"boolean\"}}}"
+ },
+ {
+  "name": "edge allOf enums",
+  "schema": "{\"allOf\": [{\"enum\": [\"a\", \"b\", \"c\"]}, {\"enum\": [\"c\", \"b\", \"z\"]}]}"
+ },
+ {
+  "name": "edge allOf objects",
+  "schema": "{\"allOf\": [{\"$ref\": \"#/definitions/A\"}, {\"type\": \"object\", \"properties\": {\"y\": {\"type\": \"string\"}}, \"required\": [\"y\"]}, {\"anyOf\": [{\"type\": \"object\", \"properties\": {\"z\": {\"type\": \"integer\"}}}]}], \"definitions\": {\"A\": {\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"number\"}}, \"required\": [\"x\"]}}}"
+ },
+ {
+  "name": "edge ref cycle",
+  "schema": "{\"$ref\": \"#/$defs/list\", \"$defs\": {\"list\": {\"type\": \"object\", \"properties\": {\"head\": {\"type\": \"integer\"}, \"tail\": {\"anyOf\": [{\"$ref\": \"#/$defs/list\"}, {\"type\": \"null\"}]}}, \"required\": [\"head\"]}}}"
+ },
+ {
+  "name": "edge ref array index",
+  "schema": "{\"type\": \"object\", \"properties\": {\"a\": {\"$ref\": \"#/$defs/xs/1\"}}, \"$defs\": {\"xs\": [{\"type\": \"string\"}, {\"type\": \"integer\"}]}}"
+ },
+ {
+  "name": "edge ref missing",
+  "schema": "{\"$ref\": \"#/$defs/nope\"}"
+ },
+ {
+  "name": "edge ref remote",
+  "schema": "{\"$ref\": \"https://example.com/schema.json\"}"
+ },
+ {
+  "name": "edge ref out of range",
+  "schema": "{\"$ref\": \"#/$defs/xs/9\", \"$defs\": {\"xs\": [{}]}}"
+ },
+ {
+  "name": "edge patterns",
+  "schema": "{\"type\": \"object\", \"properties\": {\"p1\": {\"type\": \"string\", \"pattern\": \"^(ab|c){2,3}d?[x-z]+\\\\.$\"}, \"p2\": {\"type\": \"string\", \"pattern\": \"^.{0,10}é+$\"}, \"p3\": {\"type\": \"string\", \"pattern\": \"^\\\\d+$\"}, \"p4\": {\"type\": \"string\", \"pattern\": \"^a(?:b|c)*$\"}, \"p5\": {\"type\": \"string\", \"pattern\": \"^\\\"q\\\"[\\\\]\\\\-a]{,4}$\"}}}"
+ },
+ {
+  "name": "edge pattern invalid",
+  "schema": "{\"type\": \"string\", \"pattern\": \"^a)$\"}"
+ },
+ {
+  "name": "edge pattern unanchored",
+  "schema": "{\"type\": \"string\", \"pattern\": \"abc\"}"
+ },
+ {
+  "name": "edge pattern lookahead",
+  "schema": "{\"type\": \"string\", \"pattern\": \"^(?=x)x$\"}"
+ },
+ {
+  "name": "edge format email ignored",
+  "schema": "{\"type\": \"string\", \"format\": \"email\"}"
+ },
+ {
+  "name": "edge formats",
+  "schema": "{\"type\": \"object\", \"properties\": {\"d\": {\"type\": \"string\", \"format\": \"date\"}, \"t\": {\"format\": \"time\"}, \"dt\": {\"type\": \"string\", \"format\": \"date-time\"}, \"u\": {\"type\": \"string\", \"format\": \"uuid4\"}, \"u6\": {\"type\": \"string\", \"format\": \"uuid6\"}}}"
+ },
+ {
+  "name": "edge format not string",
+  "schema": "{\"type\": \"string\", \"format\": 123}"
+ },
+ {
+  "name": "edge min items float",
+  "schema": "{\"type\": \"array\", \"minItems\": 2.0}"
+ },
+ {
+  "name": "edge min items negative",
+  "schema": "{\"type\": \"array\", \"minItems\": -1}"
+ },
+ {
+  "name": "edge unknown type",
+  "schema": "{\"type\": \"frob\"}"
+ },
+ {
+  "name": "edge type number",
+  "schema": "{\"type\": \"number\", \"minimum\": 1}"
+ },
+ {
+  "name": "edge type not string",
+  "schema": "{\"type\": 5}"
+ },
+ {
+  "name": "edge empty type array",
+  "schema": "{\"type\": []}"
+ },
+ {
+  "name": "edge enum empty",
+  "schema": "{\"enum\": []}"
+ },
+ {
+  "name": "edge anyOf empty",
+  "schema": "{\"anyOf\": []}"
+ },
+ {
+  "name": "edge anyOf not array",
+  "schema": "{\"anyOf\": {\"type\": \"string\"}}"
+ },
+ {
+  "name": "edge properties not object",
+  "schema": "{\"type\": \"object\", \"properties\": []}"
+ },
+ {
+  "name": "edge additional null",
+  "schema": "{\"type\": \"object\", \"additionalProperties\": null}"
+ },
+ {
+  "name": "edge items false",
+  "schema": "{\"type\": \"array\", \"items\": false}"
+ },
+ {
+  "name": "edge tuple empty",
+  "schema": "{\"type\": \"array\", \"items\": []}"
+ },
+ {
+  "name": "edge prefixItems",
+  "schema": "{\"type\": \"array\", \"prefixItems\": [{\"type\": \"integer\"}, {\"enum\": [\"x\"]}]}"
+ },
+ {
+  "name": "edge untyped string by length",
+  "schema": "{\"maxLength\": 4}"
+ },
+ {
+  "name": "edge untyped array",
+  "schema": "{\"items\": {\"type\": \"boolean\"}}"
+ },
+ {
+  "name": "edge untyped object",
+  "schema": "{\"additionalProperties\": {\"type\": \"string\"}}"
+ },
+ {
+  "name": "edge nested reserved names",
+  "schema": "{\"type\": \"object\", \"properties\": {\"string\": {\"type\": \"integer\"}, \"value\": {\"type\": \"string\"}, \"root\": {}, \"space\": {\"type\": \"boolean\"}}, \"required\": [\"string\", \"value\", \"root\", \"space\"]}"
+ },
+ {
+  "name": "edge boolean",
+  "schema": "{\"type\": \"boolean\"}"
+ },
+ {
+  "name": "edge null",
+  "schema": "{\"type\": \"null\"}"
+ },
+ {
+  "name": "edge string",
+  "schema": "{\"type\": \"string\"}"
+ },
+ {
+  "name": "edge integer",
+  "schema": "{\"type\": \"integer\"}"
+ },
+ {
+  "name": "edge array any",
+  "schema": "{\"type\": \"array\"}"
+ },
+ {
+  "name": "edge object any",
+  "schema": "{\"type\": \"object\"}"
+ },
+ {
+  "name": "edge object additional true",
+  "schema": "{\"type\": \"object\", \"additionalProperties\": true}"
+ },
+ {
+  "name": "edge empty",
+  "schema": "{}"
+ },
+ {
+  "name": "edge openai strict",
+  "schema": "{\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"age\": {\"type\": \"integer\"}, \"tags\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}, \"required\": [\"name\", \"age\", \"tags\"], \"additionalProperties\": false}"
+ },
+ {
+  "name": "dup keys",
+  "schema": "{\"type\": \"object\", \"properties\": {\"b\": {\"type\": \"string\"}, \"a\": {}, \"b\": {\"type\": \"integer\"}}, \"type\": \"array\"}"
+ },
+ {
+  "name": "float literal",
+  "schema": "{\"type\": \"object\", \"properties\": {\"n\": {\"enum\": [2.0, 2, 1e2, 100, -0.0]}, \"k\": {\"type\": \"array\", \"minItems\": 1.0}}}"
+ },
+ {
+  "name": "edge not an object string",
+  "schema": "\"abc\""
+ },
+ {
+  "name": "edge not an object array",
+  "schema": "[1]"
+ },
+ {
+  "name": "edge not an object number",
+  "schema": "5"
+ },
+ {
+  "name": "edge not an object true",
+  "schema": "true"
+ },
+ {
+  "name": "model oracle: cat",
+  "schema": "{\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\", \"maxLength\": 24}, \"age\": {\"type\": \"integer\", \"minimum\": 0, \"maximum\": 30}, \"colour\": {\"enum\": [\"black\", \"white\", \"ginger\", \"grey\", \"tabby\"]}, \"indoor\": {\"type\": \"boolean\"}}, \"required\": [\"name\", \"age\", \"colour\"], \"additionalProperties\": false}"
+ },
+ {
+  "name": "model oracle: verdict",
+  "schema": "{\"type\": \"object\", \"properties\": {\"verdict\": {\"enum\": [\"verified\", \"unverified\", \"refuted\", \"unknown\"]}, \"claim\": {\"type\": \"string\"}, \"score\": {\"type\": \"integer\", \"minimum\": 0, \"maximum\": 100}, \"sources\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"maxItems\": 2}}, \"required\": [\"verdict\", \"claim\", \"score\", \"sources\"], \"additionalProperties\": false}"
+ },
+ {
+  "name": "model oracle: library",
+  "schema": "{\"$defs\": {\"Book\": {\"type\": \"object\", \"properties\": {\"title\": {\"type\": \"string\"}, \"author\": {\"type\": \"string\"}, \"year\": {\"type\": \"integer\", \"minimum\": 1000, \"maximum\": 2100}}, \"required\": [\"title\", \"author\", \"year\"]}, \"Address\": {\"type\": \"object\", \"properties\": {\"street\": {\"type\": \"string\"}, \"city\": {\"type\": \"string\"}}, \"required\": [\"street\", \"city\"]}}, \"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"address\": {\"$ref\": \"#/$defs/Address\"}, \"books\": {\"type\": \"array\", \"items\": {\"$ref\": \"#/$defs/Book\"}, \"minItems\": 3, \"maxItems\": 3}}, \"required\": [\"name\", \"address\", \"books\"]}"
+ },
+ {
+  "name": "model oracle: plan",
+  "schema": "{\"title\": \"Plan\", \"type\": \"object\", \"properties\": {\"goal\": {\"title\": \"Goal\", \"type\": \"string\"}, \"steps\": {\"title\": \"Steps\", \"type\": \"array\", \"minItems\": 1, \"maxItems\": 4, \"items\": {\"type\": \"object\", \"properties\": {\"action\": {\"enum\": [\"search\", \"write\", \"ask_user\", \"done\"]}, \"why\": {\"type\": \"string\"}}, \"required\": [\"action\", \"why\"]}}, \"priority\": {\"title\": \"Priority\", \"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"default\": 5}, \"owner\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null}, \"kind\": {\"const\": \"plan\"}}, \"required\": [\"goal\", \"steps\", \"kind\"]}"
+ },
+ {
+  "name": "model oracle: planets",
+  "schema": "{\"type\": \"array\", \"minItems\": 3, \"maxItems\": 3, \"items\": {\"type\": \"object\", \"properties\": {\"planet\": {\"type\": \"string\"}, \"fact\": {\"type\": \"string\"}}, \"required\": [\"planet\", \"fact\"], \"additionalProperties\": false}}"
+ },
+ {
+  "name": "model oracle: yesno",
+  "schema": "{\"enum\": [\"yes\", \"no\"]}"
+ },
+ {
+  "name": "model oracle: apollo",
+  "schema": "{\"type\": \"object\", \"properties\": {\"date\": {\"type\": \"string\", \"format\": \"date\"}, \"code\": {\"type\": \"string\", \"pattern\": \"^[A-Z]{3}-[0-9]{2}$\"}, \"crew\": {\"type\": \"array\", \"items\": {\"type\": \"string\", \"minLength\": 2}, \"minItems\": 1, \"maxItems\": 3}}, \"required\": [\"date\", \"code\", \"crew\"]}"
+ },
+ {
+  "name": "model oracle: number",
+  "schema": "{\"type\": \"integer\", \"minimum\": 1, \"maximum\": 100}"
+ },
+ {
+  "name": "model oracle: haiku",
+  "schema": "{\"type\": \"object\", \"properties\": {\"lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\", \"maxLength\": 40}, \"minItems\": 3, \"maxItems\": 3}, \"score\": {\"enum\": [0.5, 1.0, 2]}}, \"required\": [\"lines\"]}"
+ }
+]

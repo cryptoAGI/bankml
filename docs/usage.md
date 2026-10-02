@@ -199,7 +199,13 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
 - **Every token is drawn as llama-server draws it under a grammar.** The usual sampler chain runs first. If its token
   breaks the grammar, the logits are masked and the chain runs again, which takes a second draw from the seeded
   generator. Greedy and seeded answers are token-identical to the server (the oracle is in [oracles.md](oracles.md)).
-- **Refused, with the reason:** any other JSON schema (llama.cpp's `json_schema_to_grammar` is not ported);
+- **Any other JSON schema** (O6b, unreleased): in `response_format` (`json_schema`, or `json_object` with a `schema`),
+  the top-level `json_schema`, or Ollama's `format: {…}`, it is converted into the grammar llama-server b11192 builds
+  for it on this template (`bankML/schema.rs`, byte-identical on 173 of 173 schemas against llama.cpp's own code),
+  and answered as JSON mode is: prefilled, fenced or bare, `content` the value alone (a top-level string, number or
+  literal included). A schema llama.cpp refuses is refused with its message.
+- **Refused, with the reason:** a schema llama.cpp b11192 refuses; a `pattern` llama.cpp would turn into a grammar
+  that is not UTF-8; a non-object or `null` top-level `json_schema` (llama-server fails those requests);
   `response_format` together with `grammar`; `json_schema` together with `grammar`; a `response_format` type other
   than `text`, `json_object` or `json_schema`.
 

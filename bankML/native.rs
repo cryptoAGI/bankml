@@ -91,12 +91,18 @@ impl Native {
         let tokenize = |b: &[u8]| self.tok.encode(&String::from_utf8_lossy(b), true);
         match c {
             Constraint::None => Ok(None),
-            Constraint::JsonObject => {
-                // the template's own JSON-mode grammar: its root opens with the template's generation prompt
-                let (text, prefill) = json_object_grammar(self.template);
-                let r = self.json_rules.get_or_init(|| Arc::new(Rules::parse(text, &tokenize).expect("the JSON-mode grammar parses")));
+            Constraint::JsonObject | Constraint::Schema(_) => {
+                // the template's own output-format grammar (JSON mode's, or the schema's through the template's chat
+                // parser): its root opens with the template's generation prompt, which is prefilled
+                let (r, prefill) = match c {
+                    Constraint::Schema(s) => (Arc::new(Rules::parse(&crate::schema::chat_grammar(s, self.template)?.0, &tokenize)?), self.template.generation_prompt()),
+                    _ => {
+                        let (text, prefill) = json_object_grammar(self.template);
+                        (self.json_rules.get_or_init(|| Arc::new(Rules::parse(text, &tokenize).expect("the JSON-mode grammar parses"))).clone(), prefill)
+                    }
+                };
                 let v = self.grammar_vocab();
-                let mut g = Grammar::new(r.clone());
+                let mut g = Grammar::new(r);
                 for id in self.tok.encode(prefill, true) {
                     g.accept(v, id)?;
                 }
@@ -575,7 +581,7 @@ mod tests {
     fn oracle_native_serve_o4() {
         for stem in ["Bonsai-1.7B-Q1_0", "SmolLM2-135M-Instruct-F16", "mindx-gen39-F16"] {
             native_serve(stem);
-            json_replay(stem);
+            json_replay(stem, "json");
         }
     }
 
@@ -612,11 +618,11 @@ mod tests {
     /// llama-server b11192's answers under JSON mode and user grammars (testing/json_oracle.py), each from an empty
     /// cache: the same tokens (end token included), raw text, message content, finish reason and counts; and the
     /// grammar and generation prompt the server reports are the ones bankML uses.
-    fn json_replay(stem: &str) {
+    fn json_replay(stem: &str, kind: &str) {
         use crate::grammar::{json_content, json_object_grammar, Constraint};
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
         let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
-        let rec = std::fs::read_to_string(dir.join(format!("oracle-json/json-{stem}.jsonl"))).unwrap();
+        let rec = std::fs::read_to_string(dir.join(format!("oracle-json/{kind}-{stem}.jsonl"))).unwrap();
         let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n as usize, _ => usize::MAX };
         let s = |v: &Json, k: &str| v.get(k).and_then(Json::as_str).unwrap_or("").to_string();
         let (mut n, mut ok, mut toks, mut redrawn, mut gns) = (0, 0, 0, 0, 0u64);
@@ -624,7 +630,11 @@ mod tests {
         for line in rec.lines() {
             let c = Json::parse(line).unwrap();
             let req = c.get("request").unwrap();
-            let constraint = crate::grammar::from_openai(req).unwrap();
+            // O6b: a schema record carries the request as it was sent, read exactly (a float literal stays one)
+            let constraint = match c.get("request_text").and_then(Json::as_str) {
+                Some(t) => crate::grammar::from_openai_text(req, t).unwrap(),
+                None => crate::grammar::from_openai(req).unwrap(),
+            };
             match &constraint {
                 Constraint::JsonObject => {
                     let (text, prefill) = json_object_grammar(eng.template);
@@ -632,6 +642,11 @@ mod tests {
                     assert_eq!(s(&c, "generation_prompt"), prefill);
                 }
                 Constraint::Gbnf(g) => assert_eq!(&s(&c, "grammar"), g),
+                Constraint::Schema(sc) => {
+                    let g = crate::schema::chat_grammar(sc, eng.template).unwrap().0;
+                    assert_eq!(s(&c, "grammar"), g, "{}: the server's schema grammar", s(&c, "name"));
+                    assert_eq!(s(&c, "generation_prompt"), eng.template.generation_prompt());
+                }
                 Constraint::None => panic!("an unconstrained record"),
             }
             assert_eq!(c.get("grammar_lazy"), Some(&Json::Bool(false)));
@@ -641,7 +656,7 @@ mod tests {
             eng.reset();
             let d = eng.complete(&prompt, params, max, eng.grammar(&constraint).unwrap(), |_| true).unwrap();
             let want: Vec<u32> = match c.get("tokens") { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!() };
-            let content = if constraint == Constraint::JsonObject { json_content(&d.text).to_string() } else { d.text.clone() };
+            let content = if matches!(constraint, Constraint::JsonObject | Constraint::Schema(_)) { json_content(&d.text).to_string() } else { d.text.clone() };
             let good = d.tokens == want && d.text == s(&c, "raw") && content == s(&c, "content") && d.finish_reason == s(&c, "finish_reason")
                 && d.prompt_tokens == num(&c, "prompt_tokens") && d.completion_tokens == num(&c, "completion_tokens");
             n += 1;
@@ -655,7 +670,7 @@ mod tests {
                           &content[..content.len().min(60)], &s(&c, "content")[..s(&c, "content").len().min(60)], d.finish_reason, s(&c, "finish_reason"));
             }
         }
-        eprintln!("json-mode oracle ({stem}): {ok} of {n} constrained answers token-identical to llama-server b11192 ({toks} tokens, {redrawn} redrawn \
+        eprintln!("{kind} oracle ({stem}): {ok} of {n} constrained answers token-identical to llama-server b11192 ({toks} tokens, {redrawn} redrawn \
                    under the mask; grammar {:.2} ms per token) — {:.0} s", gns as f64 / 1e6 / toks.max(1) as f64, t0.elapsed().as_secs_f64());
         assert_eq!(ok, n);
     }
@@ -663,13 +678,28 @@ mod tests {
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-json/json-*.jsonl (testing/json_oracle.py --record); --release"]
     fn oracle_json_mode() {
-        json_replay("Bonsai-8B-Q1_0");
+        json_replay("Bonsai-8B-Q1_0", "json");
     }
 
     #[test]
     #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + oracle-json/json-*.jsonl (testing/json_oracle.py --record); --release"]
     fn oracle_json_mode_ternary() {
-        json_replay("Ternary-Bonsai-8B-Q2_0_g64");
+        json_replay("Ternary-Bonsai-8B-Q2_0_g64", "json");
+    }
+
+    /// O6b: llama-server b11192's answers under JSON schemas (testing/json_schema_oracle.py --record): objects with
+    /// required and optional fields, enums, ranges, nested `$defs`, a pattern, a top-level array and string, through
+    /// `response_format: json_schema`, the top-level `json_schema` and `json_object` with a schema
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
+    fn oracle_json_schema() {
+        json_replay("Bonsai-8B-Q1_0", "schema");
+    }
+
+    #[test]
+    #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
+    fn oracle_json_schema_ternary() {
+        json_replay("Ternary-Bonsai-8B-Q2_0_g64", "schema");
     }
 
 }

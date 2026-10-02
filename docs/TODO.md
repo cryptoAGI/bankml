@@ -170,9 +170,12 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   masks) and llama-server's answers, greedy and seeded (Bonsai-8B Q1_0 23 of 23; ternary 13 of 13, 534 tokens). The surfaces:
   `format: "json"` on `/api/*`, `response_format`, `json_schema` and `grammar` on `/v1`, `bankml_chat` and
   `bankml generate --json`.
-- [ ] **JSON schemas** (O6, next): port `common/json-schema-to-grammar.cpp` and the chat-parser path that wraps a
-  schema, with llama-server's `generation_settings.grammar` as the text oracle and the answers as the token oracle;
-  then `format: {schema}` and `response_format.json_schema` with real schemas; then tool calls.
+- [x] **JSON schemas, the grammar** (O6b, branch `o6b-json-schema`): `common/json-schema.cpp` +
+  `json-schema-to-grammar.cpp` and the chat parser's wrapping ported (`bankML/schema.rs`); text oracle = llama.cpp's
+  own code in libllama-common (`testing/schema_oracle.py`): 173 of 173 schemas identical, bare and wrapped; wired to
+  `format: {schema}`, `response_format.json_schema`, `json_object` + `schema`, top-level `json_schema`, `bankml_chat`.
+- [ ] **JSON schemas, the answers**: `testing/json_schema_oracle.py --record` on both 8B models, then
+  `oracle_json_schema*` and `json_schema_oracle_live` in the gate; then tool calls.
 - [ ] A faster whole-vocabulary mask: a byte trie over the token pieces, so each grammar stack walks shared prefixes
   once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
   over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.

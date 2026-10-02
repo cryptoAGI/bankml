@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — O6b: JSON schemas (branch `o6b-json-schema`)
+
+**Any JSON schema now gets the grammar llama-server b11192 builds for it, byte for byte.** `bankML/schema.rs` ports
+llama.cpp's `common/json-schema.cpp` and `json-schema-to-grammar.cpp` (MIT, attributed; zero crates) and the chat
+parser's wrapping on the pinned template. The oracle is llama.cpp's own code: `testing/schema_oracle.cpp` calls
+`json_schema_to_grammar` and `common_chat_templates_apply` inside the b11192 release's `libllama-common.so` (no model).
+Over 173 schemas (llama.cpp's 81 test cases, Pydantic-shaped schemas like mindX's, edge cases) bankML's grammar is
+identical on both paths (148 grammars each), and every refusal (24 bare, 20 wrapped) carries llama.cpp's message.
+`{"type": "object"}` converts to 0.3.3's JSON-mode constant.
+- Wired: `response_format` `json_schema` and `json_object` + `schema`, the top-level `json_schema`, Ollama's
+  `format: <schema>`, `bankml_chat`; JSON mode's prefill, redraw, fence and content rule (a top-level string, number
+  or literal is its own content). The schema is read from the request's own text (`1.0` stays a float).
+- Refused, as b11192 refuses: what its schema reader or converter rejects; a non-object or `null` top-level
+  `json_schema`. Ignored, as b11192 ignores: a non-object schema inside `response_format`. bankML's own refusal: a
+  `pattern` with a non-ASCII character before a quantifier, which llama.cpp turns into a grammar that is not UTF-8.
+- Not yet measured: answers under schemas against llama-server (`testing/json_schema_oracle.py --record`,
+  `oracle_json_schema*`, `json_schema_oracle_live`; staged in the gate).
+
 ## 0.3.4 — 2026-10-02 — mindX's own model, natively: the Llama graph, F16, tied embeddings (O4)
 
 **mindX serves its own trained lineage, `mindx-genN`, through Ollama. Generation 39 (mindXtrain39, the last accepted

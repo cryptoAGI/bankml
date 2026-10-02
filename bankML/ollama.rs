@@ -199,7 +199,8 @@ pub fn refusals(req: &Json) -> Result<(), String> {
         Some(Json::Obj(o)) => !o.is_empty(),
         Some(_) => true,
     };
-    // 0.3.3: `format: "json"` is JSON mode (O6); a schema beyond "any object" is refused by `grammar::from_ollama`
+    // 0.3.3: `format: "json"` is JSON mode (O6); O6b: a schema object is converted as llama-server converts it, and
+    // what b11192 refuses in it is refused here (`grammar::from_ollama`)
     let constraint = crate::grammar::from_ollama(req.get("format"))?;
     if constraint != crate::grammar::Constraint::None && req.get("raw").and_then(Json::as_bool).unwrap_or(false) {
         return Err("format with raw: JSON mode follows llama-server's chat path (the template's generation prompt is part of its grammar); a raw prompt has none — drop raw, or ask for JSON in the prompt".into());
@@ -416,6 +417,11 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
     if let Err(m) = refusals(&req) {
         return err(c, 400, &m);
     }
+    // O6b: the schema's numbers read from the request's own text, as llama-server would read them
+    let constraint = match crate::grammar::from_ollama_text(&req, &String::from_utf8_lossy(body)) {
+        Ok(k) => k,
+        Err(m) => return err(c, 400, &m),
+    };
     let o = match options(req.get("options"), rs.n_ctx) {
         Ok(o) => o,
         Err(m) => return err(c, 400, &m),
@@ -439,13 +445,13 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
         Ok(x) => x,
         Err((code, m)) => return err(c, code, &m),
     };
-    let r = answer(c, &l, &req, msgs.as_ref(), o, chat, stream, load_ns, &model, t);
+    let r = answer(c, &l, &req, msgs.as_ref(), o, constraint, chat, stream, load_ns, &model, t);
     rs.touch(&e.name, ka);
     r
 }
 
 #[allow(clippy::too_many_arguments)]
-fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opts, chat: bool, stream: bool, load_ns: u64, model: &str, mut t: Tally) -> std::io::Result<()> {
+fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opts, constraint: crate::grammar::Constraint, chat: bool, stream: bool, load_ns: u64, model: &str, mut t: Tally) -> std::io::Result<()> {
     let eng = &l.native;
     let prompt = match msgs {
         Some(m) => eng.prompt(m),
@@ -472,10 +478,6 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
         Err(m) => return err(c, 400, &m),
     };
     let mut stop = StopFilter::new(o.stops);
-    let constraint = match crate::grammar::from_ollama(req.get("format")) {
-        Ok(k) => k,
-        Err(m) => return err(c, 400, &m),
-    };
     let grammar = match eng.grammar(&constraint) {
         Ok(g) => g,
         Err(m) => return err(c, 400, &m),
@@ -571,10 +573,11 @@ mod tests {
     #[test]
     fn refusals_say_why() {
         let r = |j: &str| refusals(&Json::parse(j).unwrap());
-        // 0.3.3: JSON mode is answered; a real schema, and format with raw, are refused
+        // 0.3.3: JSON mode is answered, and format with raw is refused; O6b: a schema is answered, a bad one refused
         assert!(r(r#"{"format": "json"}"#).is_ok());
         assert!(r(r#"{"format": {"type": "object"}}"#).is_ok());
-        assert!(r(r#"{"format": {"type": "object", "required": ["a"]}}"#).unwrap_err().starts_with("format:"));
+        assert!(r(r#"{"format": {"type": "object", "required": ["a"]}}"#).is_ok());
+        assert!(r(r#"{"format": {"type": "object", "properties": {"a": {"enum": []}}}}"#).unwrap_err().starts_with("format:"));
         assert!(r(r#"{"format": "json", "raw": true}"#).unwrap_err().contains("raw"));
         assert!(r(r#"{"tools": [{"type": "function"}]}"#).unwrap_err().starts_with("tools:"));
         assert!(r(r#"{"images": ["aGk="]}"#).unwrap_err().starts_with("images:"));

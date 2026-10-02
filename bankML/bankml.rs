@@ -132,6 +132,8 @@
 //!     llamafile's tinyBLAS, chosen by shape as ggml chooses them), the Llama graph (NORM RoPE, no Q/K norms), SmolLM2's
 //!     `smollm` pre-tokenizer and two ChatML templates: SmolLM2-135M-Instruct and mindX's own `mindx-gen39` served
 //!     natively, token-identical to llama-server b11192 (greedy, seeded, `/v1`, `/api`, C API, JSON mode).
+//!   - [~] O6b (unreleased): JSON schemas (`schema.rs`) — `json_schema_to_grammar` and the chat wrapping ported,
+//!     byte-identical to llama.cpp b11192's own code on 173 of 173 schemas; answers under schemas await their oracle.
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's
@@ -152,6 +154,7 @@ pub mod serve;
 pub mod q1_0;
 pub mod q2_0;
 pub mod sampler;
+pub mod schema;
 pub mod sha256;
 pub mod sys;
 pub mod train;

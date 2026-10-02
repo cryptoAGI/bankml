@@ -34,9 +34,9 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 | mindX asks for | where (mindX) | bankML | phase |
 |---|---|---|---|
 | `POST /api/generate`, non-streamed; reads `prompt_eval_count` and `eval_count` | `llm/ollama_handler.py:312` | **done (0.3.1)**: Ollama's counts and durations (ns), plus `bankml_receipt` | O1 |
-| `format: "json"` on generate | `llm/ollama_handler.py:121`, `:265` | **done (0.3.3)**: llama-server b11192's `json_object` grammar, its prefill and its redraw; token-identical, greedy and seeded. A schema beyond "any object" is **refused** (needs `json_schema_to_grammar`) | O6 |
+| `format: "json"` on generate | `llm/ollama_handler.py:121`, `:265` | **done (0.3.3)**: llama-server b11192's `json_object` grammar, its prefill and its redraw; token-identical, greedy and seeded. **O6b (unreleased, branch `o6b-json-schema`)**: any schema, `format: <schema object>`, converted to the grammar llama-server b11192 builds (byte-identical on 173 of 173 schemas against libllama-common); answers under schemas await their model oracle | O6 |
 | `/api/chat` and `/api/generate` with `keep_alive: "5m"`, `options.num_predict`, `options.temperature` | `api/ollama/ollama_url.py:219-243` | **done (0.3.1)** | O1 |
-| passthrough fields `format`, `system`, `template`, `raw`, `suffix`, `images`, `think` | `api/ollama/ollama_url.py:250-256` | `system`, `raw` and `format: "json"` **done**; `think: false` accepted; `format` with a real schema or with `raw`, `template`, `suffix`, `images` and `think: true` **refused** with the reason | O1 · O6 |
+| passthrough fields `format`, `system`, `template`, `raw`, `suffix`, `images`, `think` | `api/ollama/ollama_url.py:250-256` | `system`, `raw` and `format: "json"` **done**; `format: <schema>` (O6b, unreleased); `think: false` accepted; `format` with `raw`, `template`, `suffix`, `images` and `think: true` **refused** with the reason | O1 · O6 |
 | `/api/tags` and `/api/ps` (the lineage models, which are resident, `expires_at`) | `agents/storage/hf_client.py:3728-3753` | **done (0.3.1)**: every pinned model, `digest` = the pinned sha256, plus `"bankml": {"native", "reason"}` | O1 |
 | load and unload by an empty `/api/generate` with `keep_alive` (`done_reason` `load` / `unload`) | `agents/storage/hf_client.py:3760-3777` | **done (0.3.1)**; each load runs the full guard + sha256 pin | O1 |
 | `ollama_predict`: `/api/chat` with `temperature 0`, **`repeat_penalty 1.3`**, `num_ctx 2048` | `agents/storage/hf_client.py:2423-2431` | `num_ctx` **done**; `repeat_penalty` **refused** until the penalty sampler has an oracle | O2 |
@@ -49,7 +49,10 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 
 **Also refused, each with a reason:**
 - `tools` and message `tool_calls` (O6, after JSON schemas);
-- a `format` / `response_format` JSON schema other than `{}` or `{"type": "object"}` (O6: `json_schema_to_grammar`);
+- a JSON schema that llama.cpp b11192 itself refuses (an unknown type, an empty `enum`, a `$ref` outside the
+  document, a pattern no regex reads, …), with its message; and the one kind it converts into a grammar that is
+  not UTF-8 (a non-ASCII character right before a quantifier in a `pattern`), which bankML refuses rather than
+  reproduce (O6b);
 - `images` (vision is out of scope);
 - `/api/pull`: import through the pinned importer instead;
 - `/api/copy` and `/api/push`;
@@ -153,6 +156,27 @@ it.
 - **Still refused, with the reason:** Q8_0 (the Qwen3-0.6B pin: its own template differs from the Bonsai one on 4 of
   317 oracle conversations), BF16, Q4_K, other architectures, and any Llama variant outside what was proven (biases,
   fused QKV, rope factors or scaling, experts).
+### What O6b adds (unreleased, branch `o6b-json-schema`)
+
+- **`bankML/schema.rs`: `json_schema_to_grammar`, ported** (MIT, attributed; zero crates): the schema reader
+  (`json-schema.cpp`: which keywords decide a node, `$ref` into the same document, the errors), the converter
+  (rule naming and de-duplication, required / optional / additional properties, `_not_strings`, tuples, integer
+  ranges, the regex → GBNF translation, formats, the primitives), and nlohmann's JSON as the grammar text depends on
+  it (key order, duplicate keys, `1` vs `1.0`, its float printing).
+- **The chat path's wrapping.** On the pinned template with thinking off, the schema's rules share one converter
+  with the PEG parser's: the seven `json-*` rules, `response-format`, the `until-13` reasoning rules and `root`.
+  `{"type": "object"}` gives exactly JSON mode's 0.3.3 constant (a unit test).
+- **The oracle is llama.cpp's own code**: `testing/schema_oracle.cpp` calls `json_schema_to_grammar` and
+  `common_chat_templates_apply` inside the b11192 release's `libllama-common.so` (no model, no server). Over 173
+  schemas — llama.cpp's 81 test cases, Pydantic-shaped schemas like mindX's, the model oracle's nine, edge cases —
+  bankML's text is byte-identical on both paths, and every refusal carries llama.cpp's message.
+- **Surfaces.** `response_format` `json_schema` (OpenAI's `{"name", "strict", "schema"}`), `json_object` with a
+  `schema`, the top-level `json_schema`, Ollama's `format: <schema>`, and `bankml_chat`: all through JSON mode's
+  prefill, redraw, fence and content rule (a top-level string, number or literal is its own content). The schema is
+  read from the request's own text, so a float literal stays one. What b11192 ignores (a non-object schema inside
+  `response_format`) is ignored; what it fails on (a non-object or `null` top-level `json_schema`) is refused.
+- **Not yet measured:** answers under schemas against llama-server (`testing/json_schema_oracle.py --record`, then
+  `oracle_json_schema*` and the live oracle in the gate).
 
 ## "Replacement for llama.cpp" means bankML's own 1.0.0
 

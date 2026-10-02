@@ -31,10 +31,14 @@
 //! sampler then *accepts the generation prompt's tokens* into the grammar before the first draw
 //! (`common_grammar_needs_prefill`). `JSON_OBJECT_GRAMMAR` is that text, byte for byte as b11192 reports it in
 //! `generation_settings.grammar` (the oracle checks it on every recorded request); `JSON_OBJECT_PREFILL` is the
-//! generation prompt. A user's own `grammar` is a USER grammar: no prefill. Other JSON schemas would need
-//! `json_schema_to_grammar` ported; they are refused.
+//! generation prompt. A user's own `grammar` is a USER grammar: no prefill.
+//!
+//! O6b: every other JSON schema is converted as llama-server converts it (`schema.rs`: `json_schema_to_grammar` and
+//! the chat parser's wrapping, byte-identical over llama.cpp's own test cases and a mindX-shaped corpus) and answered
+//! through the same prefill, fence and content rule as JSON mode. A schema b11192 refuses is refused with its reason.
 
 use crate::sampler::Cand;
+use crate::schema::Value;
 use crate::serve::Json;
 
 /// The rules every JSON-mode grammar of llama-server b11192 shares (the schema `{"type": "object"}` turned into GBNF).
@@ -110,78 +114,118 @@ pub enum Constraint {
     None,
     /// `response_format` `json_object` (or the schemas `{}` / `{"type": "object"}`), Ollama's `format: "json"`
     JsonObject,
+    /// O6b: any other JSON schema — the grammar llama-server builds for it on the model's template
+    /// (`schema::chat_grammar`; converted once at parse so a refusal is a 400), prefilled as JSON mode is
+    Schema(Value),
     /// llama-server's raw `grammar` field: GBNF, root `root`, no prefill
     Gbnf(String),
 }
 
-fn schema_is_any_object(s: &Json) -> bool {
-    match s {
-        Json::Obj(o) if o.is_empty() => true,
-        Json::Obj(o) => o.len() == 1 && o[0].0 == "type" && o[0].1.as_str() == Some("object"),
-        _ => false,
+/// The constraint for a response-format schema: llama-server's chat-path grammar (JSON mode's own when the schema is
+/// "any object"), or llama.cpp's refusal.
+fn schema_constraint(schema: &Value) -> Result<Constraint, String> {
+    // the refusals and warnings do not depend on the template (llama.cpp b11192's own output on each, the oracle)
+    let (g, warnings) = crate::schema::chat_grammar(schema, crate::chat::Template::Qwen3)?;
+    for w in warnings {
+        eprintln!("bankml: JSON schema conversion was incomplete (as llama.cpp b11192's): {w}");
     }
+    Ok(if g == JSON_OBJECT_GRAMMAR { Constraint::JsonObject } else { Constraint::Schema(schema.clone()) })
 }
-
-const SCHEMA_REFUSED: &str = "a JSON schema other than {} or {\"type\": \"object\"} needs llama.cpp's json_schema_to_grammar, \
-    which bankML has not ported (O6 continues); ask for {\"type\": \"json_object\"} and check the fields yourself";
 
 /// The constraint of an OpenAI / llama-server chat request, resolved as `oaicompat_chat_params_parse` does: the
 /// top-level `json_schema` and `grammar` fields, then `response_format` (`text`, `json_object` with an optional
-/// `schema`, `json_schema` with `json_schema.schema`); an empty schema means any object.
+/// `schema`, `json_schema` with `json_schema.schema`); an empty schema means any object. The numbers of the schema
+/// are read as bankML's JSON reads them; `from_openai_text` reads them from the request's own text, exactly.
 pub fn from_openai(req: &Json) -> Result<Constraint, String> {
-    let mut schema = req.get("json_schema").filter(|v| !matches!(v, Json::Null)).cloned();
+    openai(&Value::from_json(req))
+}
+
+/// `from_openai` over the request's text (as llama-server parses it: `2.0` stays a float in an `enum`).
+pub fn from_openai_text(req: &Json, body: &str) -> Result<Constraint, String> {
+    openai(&Value::parse(body).unwrap_or_else(|| Value::from_json(req)))
+}
+
+fn openai(req: &Value) -> Result<Constraint, String> {
+    // json_value(body, key, default): a missing or null field is the default
+    let field = |v: &Value, k: &str| v.get(k).filter(|x| !x.is_null()).cloned();
+    let mut schema = field(req, "json_schema").unwrap_or(Value::Null);
     let grammar = match req.get("grammar") {
-        None | Some(Json::Null) => String::new(),
-        Some(Json::Str(s)) => s.clone(),
+        None | Some(Value::Null) => String::new(),
+        Some(Value::Str(s)) => s.clone(),
         Some(_) => return Err("grammar must be a string (GBNF)".into()),
     };
-    if schema.is_some() && !grammar.is_empty() {
+    if !schema.is_null() && !grammar.is_empty() {
         return Err("Cannot use both json_schema and grammar".into());
     }
-    if let Some(rf) = req.get("response_format").filter(|v| !matches!(v, Json::Null)) {
-        let ty = rf.get("type").and_then(Json::as_str).unwrap_or("");
-        let empty = |s: &Option<Json>| match s {
-            None => true,
-            Some(Json::Obj(o)) => o.is_empty(),
-            Some(Json::Arr(a)) => a.is_empty(),
-            _ => false,
-        };
+    if req.get("response_format").is_some() {
+        let rf = field(req, "response_format").unwrap_or(Value::Obj(vec![]));
+        let ty = rf.get("type").and_then(Value::as_str).unwrap_or("");
         match ty {
             "json_object" => {
-                if rf.get("schema").is_some() || empty(&schema) {
-                    schema = Some(rf.get("schema").cloned().unwrap_or(Json::Obj(vec![])));
+                if rf.get("schema").is_some() || schema.is_empty() {
+                    schema = field(&rf, "schema").unwrap_or(Value::Obj(vec![]));
                 }
             }
-            "json_schema" => schema = Some(rf.get("json_schema").and_then(|w| w.get("schema")).cloned().unwrap_or(Json::Obj(vec![]))),
+            "json_schema" => {
+                let w = field(&rf, "json_schema").unwrap_or(Value::Obj(vec![]));
+                schema = field(&w, "schema").unwrap_or(Value::Obj(vec![]));
+            }
             "" | "text" => {}
             t => return Err(format!("response_format type must be one of \"text\" or \"json_object\", but got: {t}")),
         }
     }
-    match schema {
-        None => Ok(if grammar.is_empty() { Constraint::None } else { Constraint::Gbnf(grammar) }),
-        Some(_) if !grammar.is_empty() => Err("response_format and grammar together: send one (llama-server keeps only the format's grammar)".into()),
-        Some(s) if schema_is_any_object(&s) => Ok(Constraint::JsonObject),
-        Some(_) => Err(SCHEMA_REFUSED.into()),
+    if schema == Value::Obj(vec![]) {
+        schema = Value::Obj(vec![("type".into(), Value::Str("object".into()))]);
+    }
+    match &schema {
+        // the chat path builds the grammar for a non-empty object schema, and llama-server uses it over any other
+        Value::Obj(_) if !grammar.is_empty() => Err("response_format and grammar together: send one (llama-server keeps only the format's grammar)".into()),
+        Value::Obj(_) => schema_constraint(&schema),
+        // otherwise the top-level `json_schema` field goes to the sampler's own reading, which fails on this path:
+        // a non-object is not a schema, and null becomes {"type": "object"} converted bare, which the generation
+        // prompt cannot be fed to (llama-server answers with an error in both cases)
+        _ if req.get("json_schema").is_some() && grammar.is_empty() => Err(match req.get("json_schema") {
+            Some(Value::Null) => "json_schema: null: llama-server b11192 converts it to a bare {\"type\": \"object\"} grammar that rejects the \
+                                  chat template's generation prompt and fails the request; send {} or {\"type\": \"object\"}".into(),
+            _ => "\"json_schema\": JSON schema conversion failed:\nJSON schema error at #: schema must be an object".into(),
+        }),
+        // a response_format schema that is not an object: llama-server builds no grammar and answers unconstrained
+        _ if grammar.is_empty() => Ok(Constraint::None),
+        _ => Ok(Constraint::Gbnf(grammar)),
     }
 }
 
-/// Ollama's `format`: `"json"` is JSON mode (mapped onto llama-server's `json_object`); a schema object is accepted
-/// only when it is `{}` or `{"type": "object"}`, which give the same grammar.
+/// Ollama's `format`: `"json"` is JSON mode (mapped onto llama-server's `json_object`); a schema object is mapped
+/// onto `response_format: {"type": "json_schema", …}` — the grammar llama-server would build for it.
 pub fn from_ollama(format: Option<&Json>) -> Result<Constraint, String> {
+    ollama(format.map(Value::from_json).as_ref())
+}
+
+/// `from_ollama` reading `format` from the request's own text (exact numbers).
+pub fn from_ollama_text(req: &Json, body: &str) -> Result<Constraint, String> {
+    match Value::parse(body) {
+        Some(v) => ollama(v.get("format")),
+        None => from_ollama(req.get("format")),
+    }
+}
+
+fn ollama(format: Option<&Value>) -> Result<Constraint, String> {
     match format {
-        None | Some(Json::Null) => Ok(Constraint::None),
-        Some(Json::Str(s)) if s.is_empty() => Ok(Constraint::None),
-        Some(Json::Str(s)) if s == "json" => Ok(Constraint::JsonObject),
-        Some(Json::Str(s)) => Err(format!("format {s:?}: only \"json\" or a JSON schema object")),
-        Some(s) if schema_is_any_object(s) => Ok(Constraint::JsonObject),
-        Some(_) => Err(format!("format: {SCHEMA_REFUSED}")),
+        None | Some(Value::Null) => Ok(Constraint::None),
+        Some(Value::Str(s)) if s.is_empty() => Ok(Constraint::None),
+        Some(Value::Str(s)) if s == "json" => Ok(Constraint::JsonObject),
+        Some(Value::Str(s)) => Err(format!("format {s:?}: only \"json\" or a JSON schema object")),
+        Some(Value::Obj(o)) if o.is_empty() => Ok(Constraint::JsonObject),
+        Some(s @ Value::Obj(_)) => schema_constraint(s).map_err(|e| format!("format: {e}")),
+        Some(_) => Err("format: only \"json\" or a JSON schema object".into()),
     }
 }
 
 /// The answer's `content` in JSON mode, as llama-server's chat parser gives it: the response-format rule is
 /// `space ("```json" space VALUE space "```" | space VALUE space)`, and the content is VALUE alone — the object once it
 /// is complete, everything after its first byte while it is still open (a length-limited answer). It only grows as
-/// the raw text grows, so a stream can send the difference.
+/// the raw text grows, so a stream can send the difference. O6b: a schema's value need not be an object — a string
+/// ends at its closing quote, a number or literal at the first space (or the fence).
 pub fn json_content(raw: &str) -> &str {
     let ws = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c');
     let mut s = raw.trim_start_matches(ws);
@@ -190,13 +234,22 @@ pub fn json_content(raw: &str) -> &str {
     } else if "```json".starts_with(s) {
         return "";
     }
+    match s.bytes().next() {
+        Some(b'{' | b'[' | b'"') | None => {}
+        Some(_) => return &s[..s.find(|c: char| c.is_ascii_whitespace() || c == '`').unwrap_or(s.len())],
+    }
     let (mut depth, mut in_str, mut esc) = (0usize, false, false);
     for (i, b) in s.bytes().enumerate() {
         if in_str {
             match b {
                 _ if esc => esc = false,
                 b'\\' => esc = true,
-                b'"' => in_str = false,
+                b'"' => {
+                    in_str = false;
+                    if depth == 0 {
+                        return &s[..=i];
+                    }
+                }
                 _ => {}
             }
             continue;
@@ -225,7 +278,7 @@ pub struct ContentStream {
 
 impl ContentStream {
     pub fn new(c: &Constraint) -> ContentStream {
-        ContentStream { json: *c == Constraint::JsonObject, raw: String::new(), sent: 0 }
+        ContentStream { json: matches!(c, Constraint::JsonObject | Constraint::Schema(_)), raw: String::new(), sent: 0 }
     }
     pub fn push(&mut self, piece: &str) -> String {
         if !self.json {
@@ -1285,7 +1338,26 @@ mod tests {
         assert_eq!(c(r#"{"response_format": {"type": "json_schema", "json_schema": {"schema": {}}}}"#), Ok(Constraint::JsonObject));
         assert_eq!(c(r#"{"json_schema": {}}"#), Ok(Constraint::JsonObject));
         assert_eq!(c(r#"{"grammar": "root ::= \"a\""}"#), Ok(Constraint::Gbnf("root ::= \"a\"".into())));
-        assert!(c(r#"{"response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "array"}}}}"#).unwrap_err().contains("json_schema_to_grammar"));
+        // O6b: any schema, converted as llama-server converts it; what b11192 refuses or ignores, the same way
+        let g = |c: &Constraint| match c {
+            Constraint::Schema(s) => crate::schema::chat_grammar(s, crate::chat::Template::Qwen3).unwrap().0,
+            _ => String::new(),
+        };
+        let arr = c(r#"{"response_format": {"type": "json_schema", "json_schema": {"name": "x", "strict": true, "schema": {"type": "array"}}}}"#).unwrap();
+        assert!(g(&arr).contains("response-format ::= array\n"), "{arr:?}");
+        assert_eq!(c(r#"{"json_schema": {"type": "array"}}"#), Ok(arr.clone()));
+        assert_eq!(c(r#"{"response_format": {"type": "json_object", "schema": {"type": "array"}}}"#), Ok(arr.clone()));
+        assert_eq!(c(r#"{"response_format": {"type": "json_object"}, "json_schema": {"type": "array"}}"#), Ok(arr));
+        assert!(c(r#"{"json_schema": {"type": "frob"}}"#).unwrap_err().ends_with("JSON schema error at #: unrecognized type frob"));
+        assert!(c(r#"{"json_schema": "x"}"#).unwrap_err().contains("schema must be an object"));
+        assert!(c(r#"{"json_schema": null}"#).unwrap_err().contains("generation prompt"));
+        assert_eq!(c(r#"{"json_schema": null, "grammar": "root ::= \"a\""}"#), Ok(Constraint::Gbnf("root ::= \"a\"".into())));
+        assert_eq!(c(r#"{"response_format": {"type": "json_schema", "json_schema": {"schema": [1]}}}"#), Ok(Constraint::None));
+        assert_eq!(c(r#"{"response_format": null}"#), Ok(Constraint::None));
+        // a float literal stays a float when the request's own text is read
+        let body = r#"{"json_schema": {"enum": [2.0, 3]}}"#;
+        let exact = from_openai_text(&Json::parse(body).unwrap(), body).unwrap();
+        assert!(g(&exact).contains("(\"2.0\" | \"3\")"), "{exact:?}");
         assert!(c(r#"{"response_format": {"type": "xml"}}"#).unwrap_err().contains("but got: xml"));
         assert!(c(r#"{"json_schema": {}, "grammar": "root ::= \"a\""}"#).unwrap_err().contains("both"));
         assert!(c(r#"{"response_format": {"type": "json_object"}, "grammar": "root ::= \"a\""}"#).is_err());
@@ -1293,7 +1365,10 @@ mod tests {
         assert_eq!(o("\"json\""), Ok(Constraint::JsonObject));
         assert_eq!(o(r#"{"type": "object"}"#), Ok(Constraint::JsonObject));
         assert_eq!(o("null"), Ok(Constraint::None));
-        assert!(o(r#"{"type": "object", "properties": {"a": {"type": "string"}}}"#).unwrap_err().contains("json_schema_to_grammar"));
+        assert!(matches!(o(r#"{"type": "object", "properties": {"a": {"type": "string"}}}"#), Ok(Constraint::Schema(_))));
+        assert_eq!(o("{}"), Ok(Constraint::JsonObject));
+        assert!(o(r#"{"type": "frob"}"#).unwrap_err().starts_with("format: "));
+        assert!(o("[1]").is_err());
         assert!(o("\"yaml\"").is_err());
     }
 
@@ -1305,6 +1380,13 @@ mod tests {
         assert_eq!(json_content("{\n "), "{\n ");
         assert_eq!(json_content("``"), "");
         assert_eq!(json_content("\n"), "");
+        // O6b: values that are not objects
+        assert_eq!(json_content(" \"yes\" "), "\"yes\"");
+        assert_eq!(json_content("```json\n\"a\\\"b\"\n```"), "\"a\\\"b\"");
+        assert_eq!(json_content("\"ope"), "\"ope");
+        assert_eq!(json_content("-12.5e3 \n"), "-12.5e3");
+        assert_eq!(json_content("```json\ntrue\n```"), "true");
+        assert_eq!(json_content("[1, 2] "), "[1, 2]");
         // growth only: every prefix's content is a prefix of the next one's
         let raw = "```json\n{\"k\": [\"x\", {\"y\": null}], \"z\": \"}\"}\n```";
         let mut prev = "";
