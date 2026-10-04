@@ -25,6 +25,13 @@
 //! text (`chkhsh`); bankML has no Python, so it recognises a tokenizer by the sha256 of its vocabulary and merges and
 //! the shape of its pre-tokenizer, and the table below records the `chkhsh` each entry was measured to give
 //! (`testing/convert_oracle.py --chkhsh`).
+//!
+//! **Why it exists:** mindXtrain (github.com/Professor-Codephreak/mindXtrain, continued at
+//! huggingface.co/PYTHAI/mindXtrain; Apache-2.0) merges each generation's LoRA into safetensors
+//! (`ollama_push/merged`) and serves it with `serve --to ollama`; mindX's `promote.py` then layers the persona. This
+//! converter and `bankml create` (`create.rs`) take that merged directory instead: one pinned GGUF, the persona a
+//! verified layer. llama.cpp's converter names the model from the directory (`general.name`), so the bytes — and the
+//! pin — depend on the directory's name, exactly as they do for llama.cpp.
 
 use crate::gguf::jstr;
 use crate::serve::Json;

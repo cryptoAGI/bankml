@@ -238,12 +238,22 @@ pub fn json_content(raw: &str) -> &str {
         Some(b'{' | b'[' | b'"') | None => {}
         Some(_) => return &s[..s.find(|c: char| c.is_ascii_whitespace() || c == '`').unwrap_or(s.len())],
     }
-    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    // 0.3.5: an escape the cut left unfinished (`\` alone, or `\u` with fewer than four hex digits) is not content:
+    // llama.cpp's JSON parser ends the string before it (the content oracle)
+    let (mut depth, mut in_str, mut esc, mut hex_left, mut esc_at) = (0usize, false, false, 0u8, 0usize);
     for (i, b) in s.bytes().enumerate() {
         if in_str {
             match b {
+                _ if hex_left > 0 => hex_left -= 1,
+                b'u' if esc => {
+                    esc = false;
+                    hex_left = 4;
+                }
                 _ if esc => esc = false,
-                b'\\' => esc = true,
+                b'\\' => {
+                    esc = true;
+                    esc_at = i;
+                }
                 b'"' => {
                     in_str = false;
                     if depth == 0 {
@@ -266,7 +276,21 @@ pub fn json_content(raw: &str) -> &str {
             _ => {}
         }
     }
+    if in_str && (esc || hex_left > 0) {
+        return &s[..esc_at];
+    }
     s
+}
+
+/// 0.3.5: the `content` llama-server b11192 answers a whole (non-streamed) constrained request with: the chat parser's
+/// content (`json_content`), or — when that parse gives an empty message, e.g. an answer cut inside or right after
+/// the opening fence — the raw text (`server_task_result_cmpl_final::to_json_oaicompat_chat`). A stream never sends
+/// that fallback (the server's final parse adds no difference), so `ContentStream` keeps `json_content`.
+pub fn json_message(raw: &str) -> &str {
+    match json_content(raw) {
+        "" => raw,
+        c => c,
+    }
 }
 
 /// JSON mode's content as a stream: raw pieces in, the growth of `json_content` out (the whole piece otherwise).
@@ -290,9 +314,14 @@ impl ContentStream {
         self.sent = self.sent.max(c.len());
         d
     }
-    /// The answer's content from its whole raw text.
-    pub fn content(&self, raw: &str) -> String {
-        if self.json { json_content(raw).to_string() } else { raw.to_string() }
+    /// The answer's content from its whole raw text: what the stream sent (`streamed`), or the whole answer's message
+    /// (`json_message`: the raw text when the parse is empty, as llama-server answers a non-streamed request).
+    pub fn content(&self, raw: &str, streamed: bool) -> String {
+        match (self.json, streamed) {
+            (false, _) => raw.to_string(),
+            (true, true) => json_content(raw).to_string(),
+            (true, false) => json_message(raw).to_string(),
+        }
     }
 }
 
@@ -1229,6 +1258,46 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    /// 0.3.5: llama.cpp b11192's own chat parser on every prefix of every recorded constrained answer, and edge cases
+    /// (testing/content_oracle.py): bankML's content is the parser's, and the answered message is the server's.
+    #[test]
+    #[ignore = "needs .models/oracle-content/content-*.jsonl (testing/content_oracle.py)"]
+    fn oracle_json_content() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".models/oracle-content");
+        for t in ["qwen3", "smollm2", "chatml"] {
+            let recs = std::fs::read_to_string(dir.join(format!("content-{t}.jsonl"))).unwrap();
+            let (mut n, mut same, mut refused, mut bad) = (0, 0, 0, Vec::new());
+            for line in recs.lines() {
+                let r = Json::parse(line).unwrap();
+                let raw = r.get("raw").and_then(Json::as_str).unwrap();
+                n += 1;
+                match r.get("content").and_then(Json::as_str) {
+                    Some(want) => {
+                        let server = if want.is_empty() { raw } else { want };
+                        if json_content(raw) == want && json_message(raw) == server {
+                            same += 1;
+                        } else {
+                            bad.push(format!("{:?} under {}: bankML {:?} / {:?}, llama.cpp {want:?} / {server:?}", raw,
+                                             r.get("schema").and_then(Json::as_str).unwrap_or(""), json_content(raw), json_message(raw)));
+                        }
+                    }
+                    None => {
+                        // the parser refuses only a reasoning block in the answer, which no JSON-mode or schema grammar
+                        // admits after its prefill (the answers bankML gives never contain one)
+                        assert!(raw.starts_with("<think>"), "llama.cpp refuses {raw:?}");
+                        refused += 1;
+                    }
+                }
+            }
+            eprintln!("json content oracle ({t}): {same} of {} raw texts give llama.cpp b11192's content and llama-server's message \
+                       ({refused} reasoning-block texts refused by its parser, unreachable under the grammar)", n - refused);
+            for b in bad.iter().take(12) {
+                eprintln!("  {b}");
+            }
+            assert!(bad.is_empty(), "{} differ", bad.len());
+        }
+    }
+
     fn no_tok(_: &[u8]) -> Vec<u32> {
         Vec::new()
     }
@@ -1387,6 +1456,13 @@ mod tests {
         assert_eq!(json_content("-12.5e3 \n"), "-12.5e3");
         assert_eq!(json_content("```json\ntrue\n```"), "true");
         assert_eq!(json_content("[1, 2] "), "[1, 2]");
+        // 0.3.5: a cut inside an escape (llama.cpp's parser ends the string before it)
+        assert_eq!(json_content("{\"k\": \"v\\"), "{\"k\": \"v");
+        assert_eq!(json_content("\"a\\u00e"), "\"a");
+        assert_eq!(json_content("\"a\\u00e9"), "\"a\\u00e9");
+        assert_eq!(json_content("{\"k\": \"v\\\\\\"), "{\"k\": \"v\\\\");
+        assert_eq!(json_content("\"\\ud83d\\ude"), "\"\\ud83d");
+        assert_eq!((json_message("```json\n\n"), json_message("```json\n1.5")), ("```json\n\n", "1.5"));
         // growth only: every prefix's content is a prefix of the next one's
         let raw = "```json\n{\"k\": [\"x\", {\"y\": null}], \"z\": \"}\"}\n```";
         let mut prev = "";

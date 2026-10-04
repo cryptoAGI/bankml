@@ -15,10 +15,12 @@ literal stays one), the tokens with the end token, the raw text, the content, th
 grammar and the generation prompt the server used.
     BANKML_GGML_LIB=<b11192 release dir> python3 testing/json_schema_oracle.py --record Bonsai-8B-Q1_0
     BANKML_GGML_LIB=<b11192 release dir> python3 testing/json_schema_oracle.py --record Ternary-Bonsai-8B-Q2_0_g64
-    → .models/oracle-json/schema-<model>.jsonl, replayed by `oracle_json_schema` / `oracle_json_schema_ternary`
-      (cargo test --release -- --ignored)
+    (0.3.5: and Bonsai-1.7B-Q1_0, SmolLM2-135M-Instruct-F16, mindx-gen39-F16 — every case and seed — and answers cut
+    by max_tokens inside an object, a top-level string and a top-level number)
+    → .models/oracle-json/schema-<model>.jsonl, replayed by `oracle_json_schema` / `oracle_json_schema_ternary` /
+      `oracle_json_schema_o4` (cargo test --release -- --ignored)
 
-Live (`--bankml`): bankml serve --native with the 1-bit model on spare ports; a subset of the records goes through
+Live (`--bankml [STEM [NAME]]`): bankml serve --native with the model (default the 1-bit 8B) on spare ports; a subset of the records goes through
 `/v1/chat/completions` (each request shape, one streamed) and through Ollama's `/api/chat` with `format: <schema>`,
 each from an empty slot; every answer must equal the record (content, finish, prompt and completion counts)."""
 import json, os, subprocess, sys, time, urllib.request
@@ -78,18 +80,28 @@ CASES = [
     ("apollo", u("When did Apollo 11 land on the Moon? Give the date, a mission code and the crew."), 80, openai_rf(APOLLO, "apollo")),
     ("number", u("Pick a number between 1 and 100."), 16, {"response_format": {"type": "json_object", "schema": NUMBER}}),
     ("haiku", u("Write a haiku about autumn leaves."), 64, {"json_schema": HAIKU}),
+    # 0.3.5: answers cut by max_tokens — inside an object, inside a top-level string, inside a top-level number — so
+    # the content rule is measured on open values, and a top-level string and number that end on their own
+    ("library_cut", u("Describe a small library as JSON: its name, its address (street and city), and a list of three books, each with a "
+                      "title, an author and a year."), 24, openai_rf(LIBRARY, "library")),
+    ("motto", u("Write a long motto for a library."), 10, {"json_schema": {"type": "string"}}),
+    ("motto_short", u("Give a three-word motto for a library."), 40, {"json_schema": {"type": "string", "maxLength": 30}}),
+    ("pi", u("Write the number pi to thirty decimal places."), 8, {"response_format": {"type": "json_object", "schema": {"type": "number"}}}),
+    ("count", u("How many legs does a spider have?"), 16, {"json_schema": {"type": "number"}}),
 ]
 
 
 def requests(stem):
     ternary = "Ternary" in stem
+    small = "8B" not in stem  # 0.3.5: the O4 models (Bonsai-1.7B, SmolLM2-135M-Instruct, mindx-gen39) are cheap: every case, every seed
     reqs = []
     for i, (name, msgs, n, how) in enumerate(CASES):
-        if ternary and name in ("library", "plan", "apollo", "haiku"):
+        if ternary and name in ("library", "plan", "apollo", "haiku", "motto_short"):
             continue
         reqs.append((f"{name}-greedy", {"messages": msgs, **how, "temperature": 0.0, "max_tokens": n}))
-        if name in (("cat", "yesno") if ternary else ("cat", "verdict", "planets", "yesno", "haiku")):
-            for v in (SEEDED[:1] if ternary else SEEDED[:2]):
+        seeded = ("cat", "yesno") if ternary else ("cat", "verdict", "planets", "yesno", "haiku", "motto", "count")
+        if small or name in seeded:
+            for v in (SEEDED[:1] if ternary else SEEDED if small else SEEDED[:2]):
                 reqs.append((f"{name}-t{v['temperature']}-s{v['seed']}", {"messages": msgs, **how, "max_tokens": n, **v}))
     return reqs
 
@@ -141,10 +153,10 @@ def schema_of(body):
     return rf["json_schema"]["schema"] if rf["type"] == "json_schema" else rf["schema"]
 
 
-def bankml():
-    stem = "Bonsai-8B-Q1_0"
+def bankml(stem="Bonsai-8B-Q1_0", name=None):
     model = root / ".models" / f"{stem}.gguf"
-    fork = Path(os.environ.get("BANKML_FORK", Path.home() / ".local/share/bankml/forks/Bonsai-8B-Q1_0.gguf.FORK.json"))
+    forks = Path(os.environ.get("BANKML_FORKS", Path.home() / ".local/share/bankml/forks"))
+    fork = Path(os.environ.get("BANKML_FORK", forks / f"{stem}.gguf.FORK.json")) if stem == "Bonsai-8B-Q1_0" else forks / f"{stem}.gguf.FORK.json"
     rec = out / f"schema-{stem}.jsonl"
     binary = root / "target" / "release" / "bankml"
     missing = [str(p) for p in (model, fork, rec, binary) if not p.exists()]
@@ -153,8 +165,9 @@ def bankml():
         return 0
     cases = {c["name"]: c for c in map(json.loads, rec.read_text().splitlines())}
     # one per request shape, a seeded one, the scalar contents; the first is also streamed and sent through /api/chat
-    pick = [cases[n] for n in ("cat-greedy", "verdict-t0.7-s11", "plan-greedy", "yesno-greedy", "number-greedy", "haiku-t1.0-s22")]
-    base, name = "http://127.0.0.1:18199", "bonsai-8b-q1_0"
+    pick = [cases[n] for n in ("cat-greedy", "verdict-t0.7-s11", "plan-greedy", "yesno-greedy", "number-greedy", "haiku-t1.0-s22",
+                               "motto-greedy", "pi-greedy", "library_cut-greedy") if n in cases]
+    base, name = "http://127.0.0.1:18199", name or stem.lower()
     proc = subprocess.Popen([str(binary), "serve", str(model), "--fork", str(fork), "--native", "--listen", "127.0.0.1:18199",
                              "--upstream", "127.0.0.1:18200", "--ctx", "2048"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     t0, n, ok = time.time(), 0, 0
@@ -207,6 +220,6 @@ if __name__ == "__main__":
     if "--record" in sys.argv:
         record(sys.argv[sys.argv.index("--record") + 1])
     elif "--bankml" in sys.argv:
-        sys.exit(bankml())
+        sys.exit(bankml(*sys.argv[sys.argv.index("--bankml") + 1:][:2]))
     else:
         sys.exit(__doc__)

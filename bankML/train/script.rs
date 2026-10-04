@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! The author stage: a persona and a few exchanges become a training *script* (OpenAI-chat JSONL), as
+//! mindXtrain's (github.com/Professor-Codephreak/mindXtrain, continued at huggingface.co/PYTHAI/mindXtrain; Apache-2.0)
 //! `mindxtrain/data/scripts.py` builds it — the same recognised keys read clean-room from any persona JSON, the same
 //! synthesised system prompt, the same voice-seed rows, and each line byte-identical to Python's
 //! `json.dumps(row, ensure_ascii=False)`.

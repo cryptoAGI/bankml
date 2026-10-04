@@ -1,6 +1,6 @@
 [package]
 name = "bankml"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 # 1.99: the C API (capi/) defines a C-variadic function (`bankml_log`), stabilized in 1.99; rust-toolchain.toml pins it
 rust-version = "1.99"

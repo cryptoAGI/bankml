@@ -1,78 +1,93 @@
 # Changelog
 
-## Unreleased — O5 first cut: `bankml create` and `bankml convert`
+## 0.3.5 — 2026-10-03 — JSON schemas, and `bankml create`: mindX's persona layer, natively (O6b, O5)
 
-**`ollama create`, natively.** A Modelfile becomes a layer over a pinned base, verified as the base is verified. A Rust
-safetensors → GGUF converter writes the same bytes as llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`.
-Written and unit-tested on branch `o5-create`; no version bump, and no gate run yet. See docs/OLLAMA.md (O5).
+**Any JSON schema now gets the grammar llama-server b11192 builds for it, on the model's own template, and the answers
+are token-identical to llama-server's. And mindX's own model can be made the way mindX makes it for Ollama:
+`bankml create` takes mindXtrain's merged safetensors and promote.py's persona Modelfile, and the created
+`mindx-gen39` answers the user's turns exactly as llama-server answers the same GGUF given that persona.** Phases O6b
+and O5 (first cut) of docs/OLLAMA.md; built on two branches and merged here. Record: `testing/results/0.3.5.txt`. The
+gate run was stopped by the development session's memory guard, not by a failure, as `json_schema_oracle_live` began
+(the Vega 3 worker's memory comes out of the laptop's RAM); the three stages left ran next from the same tree and build
+with `BANKML_GPU=off`, and the record marks where. The first run also found the ternary schema record had never been
+taken; it was recorded from llama-server b11192 and passes, 11 of 11.
 
 ### Measured
-- **The conversions are byte-identical.** The GGUF files' sha256, bankml against llama.cpp b11192 on the same
-  directory:
-  - SmolLM2-135M-Instruct (`HuggingFaceTB` @ `12fd25f7`): `e9aba089…a222` both;
-  - mindx-gen39 (`PYTHAI/mindXascension` `weights/gen39/ollama_push/merged` @ `4bd31b9d`): `6b64c748…8266` both.
-
-  Each has 272 tensors; they have 32 and 30 metadata keys. A conversion takes 2.6 s on the dev box.
-- **The name heuristics** (`gguf-py/metadata.py`) agree with gguf-py on 168 of 168 Hub-style ids.
+- **Schema grammars** (`oracle_schema_grammars`, llama.cpp's own `json_schema_to_grammar` and
+  `common_chat_templates_apply` in the release's `libllama-common.so`, no model): 173 schemas (llama.cpp's 81 test
+  cases, Pydantic-shaped schemas like mindX's, edge cases) on each of the three templates — 148 grammars byte-identical
+  bare and on the chat path, every refusal with llama.cpp's message (24 bare, 20 chat).
+- **Answers under schemas** (`oracle_json_schema`, `_ternary`, `_o4`; llama-server b11192 greedy and seeded, each
+  from an empty cache): Bonsai-8B **28 / 28**, Ternary-Bonsai-8B **11 / 11**, Bonsai-1.7B, SmolLM2-135M-Instruct and
+  mindx-gen39 **56 / 56** each — objects, enums, ranges, `$defs`, a pattern, a date format, top-level arrays, enums,
+  strings, integers and numbers, and answers cut by `max_tokens` inside an object, a top-level string and a number.
+  Live: `/v1` (one streamed) and Ollama's `/api/chat` with `format: <schema>`.
+- **The content rule** (`oracle_json_content`, llama.cpp's `common_chat_parse` itself): every prefix of every
+  recorded constrained answer and edge cases, **30,063 of 30,063** texts on each template.
+- **mindX's persona, end to end** (`oracle_persona_layer`, `testing/persona_oracle.py`): promote.py's
+  `persona_modelfile_layer` Modelfile (mindX's persona as `SYSTEM`, `stop <|im_end|>`, `num_ctx 2048`), created
+  `FROM` the merged safetensors directory and, unchanged, `FROM mindx-gen39` in place: **27 / 27** answers each
+  token-identical to llama-server given the persona as the system message; live through `/api/chat`,
+  `/api/generate` and `/v1`, and `/api/ps` names `mindx-gen39:latest`.
+- **The converter, run against llama.cpp's directly** (b11192's `convert_hf_to_gguf.py`, torch 2.14.1+cpu): the same
+  bytes as `bankml convert` on freshly downloaded mindx-gen39 (`6b64c748…`, the pin) and SmolLM2-135M-Instruct
+  (`ec30a679…`). Until now the identity rested on O4's conversions.
+- **The name heuristics** (`gguf-py/metadata.py`) agree with gguf-py on 168 of 168 Hub-style ids (`oracle_name_heuristics`).
 
 ### Added
-- **`bankML/convert.rs` (`bankml convert`)**, for the Llama architecture as SmolLM2 uses it. It writes:
-  - llama.cpp's metadata order, with the defaults transformers' `LlamaConfig` adds;
-  - the name heuristics;
-  - the Q/K permutation, F16 by round-to-nearest-even, BF16 read exactly, and norms in F32;
-  - the gpt2 tokenizer path, with its special ids and chat template;
-  - with `--fork`, a FORK.json that pins the result with every input's sha256.
+- **`bankML/schema.rs`**: llama.cpp b11192's `common/json-schema.cpp` and `json-schema-to-grammar.cpp` (MIT,
+  attributed; zero crates), nlohmann's JSON as the grammar text depends on it, and the chat parser's wrapping — the
+  Qwen3 template's (with the `until-13` reasoning rules) and the ChatML templates' (none), as llama.cpp writes each.
+  Wired: `response_format` `json_schema` and `json_object` + `schema`, the top-level `json_schema`, Ollama's
+  `format: <schema>`, `bankml_chat`. The schema is read from the request's own text (`1.0` stays a float). Refused as
+  b11192 refuses, with its message; and one deliberate divergence: a `pattern` with a non-ASCII character before a
+  quantifier, which llama.cpp turns into a grammar that is not UTF-8, is refused.
+- **`bankML/convert.rs`, `bankml convert`**: safetensors → GGUF F16 for the Llama architecture as SmolLM2 uses it,
+  byte-identical to `convert_hf_to_gguf.py --outtype f16`; what would make llama.cpp write something else is refused
+  with the reason.
+- **`bankML/create.rs`, `bankml create`, `POST /api/create`, `DELETE /api/delete` (derived models only),
+  `POST /api/copy`**: Ollama's Modelfile parser state for state; a derived model is `<registry>/<name>.MODEL.json`, a
+  layer (`SYSTEM`, `PARAMETER`, `stop`, `MESSAGE`, licence) over a pinned base, verified through the base on every
+  load; the layer applied as Ollama applies it; `/api/show` gives the Modelfile back. `FROM` a safetensors directory
+  converts and pins it.
+- **Oracles**: `testing/schema_oracle.{cpp,py}` (now all three templates), `testing/json_schema_oracle.py` (now every
+  native model, and length cuts), `testing/content_oracle.{cpp,py}`, `testing/persona_oracle.py`,
+  `testing/convert_oracle.py`; the gate runs them.
+- mindXtrain ([huggingface.co/PYTHAI/mindXtrain](https://huggingface.co/PYTHAI/mindXtrain), archived source
+  [github.com/Professor-Codephreak/mindXtrain](https://github.com/Professor-Codephreak/mindXtrain)) is linked from the
+  README, OLLAMA.md and the `train/` and `convert.rs` headers: `bankml convert` and `create` replace its
+  `serve --to ollama` path for mindX.
 
-  Anything that would make llama.cpp write something else is refused with the reason: other architectures,
-  SentencePiece vocabularies, rope scaling, biases, a model card, and an unmeasured tokenizer.
-- **`bankML/create.rs`** (`bankml create`, `/api/create`, `DELETE /api/delete`, `/api/copy`):
-  - Ollama's Modelfile parser, state for state, and its `quote`;
-  - derived models as `<forks>/<name>.MODEL.json`, with a content digest and the base's sha256 and FORK ref;
-  - the layer applied as Ollama applies it: `MESSAGE`s first, `SYSTEM` unless the request's first message is a
-    system message, parameters as defaults;
-  - `/api/tags` with `details.parent_model`, and `/api/show` with the reconstructed Modelfile.
+### Fixed (found by the new oracles)
+- **A schema on a ChatML template got the Qwen3 grammar.** The O6b branch wrapped every schema as the Qwen3 template
+  does; on SmolLM2's and mindx-genN's templates llama.cpp writes no reasoning rules and another root. bankML now
+  builds the grammar on the model's template (the schema oracle checks all three).
+- **The content of an answer cut inside an escape**: llama.cpp's parser ends the string before an unfinished `\` or
+  `\uXX`; bankML kept it (12 of 29,973 texts differed before the fix).
+- **A non-streamed answer whose parse is empty** (cut inside or right after the opening fence): llama-server answers
+  with the raw text; bankML answered `""` (`pi` seeded on Bonsai-1.7B: `"```json\n\n"`). `grammar::json_message`.
 
-  Refused, with reasons: `ADAPTER`, a foreign `TEMPLATE`, unreproduced parameters, `quantize`, and deleting a pin.
-- **`testing/convert_oracle.py`**, with five modes:
-  - `--record`: runs llama.cpp's converter;
-  - `--bankml`: runs both converters and compares their sha256;
-  - `--compare`: a diff, key by key and tensor by tensor;
-  - `--chkhsh`: the evidence a tokenizer entry needs;
-  - `--names`: the heuristics corpus.
-- **`testing/pins/`**: the two conversions' FORK.json files.
-- **A release-gate stage** for `.models/convert/<dir>` beside `<dir>.oracle.gguf`. It is written, and not yet run.
-- **Tests.**
-  - Unit tests cover the parser (Ollama's quoting cases, and mindX's own Modelfiles), the manifest digest, the layer
-    rules, and create → tags → show → copy → delete through the HTTP router, in process.
-  - CLI tests cover `create`, and `convert`'s refusals.
+### Changed (O5's two open gaps, closed)
+- **`num_ctx` as Ollama applies it** (read from Ollama v0.13.3's `server/prompt.go`): under a request's or a layer's
+  `num_ctx`, a conversation that does not fit loses its oldest messages first (`native::fit_messages`, Ollama's loop
+  step for step); what still does not fit is refused with the reason, since Ollama would cut tokens out of the middle
+  of the prompt. Tokens past `num_ctx` during an answer still differ: Ollama shifts its cache, bankML does not.
+- **`/api/ps` names the derived model** (its digest, `parent_model`, the request's context), as Ollama names a runner
+  after the model that loaded it.
+- A derived model's name wins over the registry's suffix-less alias, and `FROM` resolves that alias, so promote.py's
+  re-create in place (`FROM mindx-gen39` as `mindx-gen39`) works; a conversion never overwrites an existing pin.
 
 ### Found
-- **gen39's `tokenizer.json` dropped SmolLM2's `Digits` pre-tokenizer** when transformers 5.8 re-saved it. llama.cpp's
-  `chkhsh` still names it `smollm` (`855059…`), because the vocabulary has no multi-digit tokens. bankML accepts both
-  shapes for that vocabulary, and records why.
+- **The converter's bytes depend on the directory's name**, for llama.cpp and bankML alike: `general.name` comes from
+  it. gen39 converted from a directory named `merged` is `bb41f62d…`, from `mindx-gen39` the pin `6b64c748…`.
+- gen39's `tokenizer.json` lost SmolLM2's `Digits` pre-tokenizer when transformers 5.8 re-saved it; llama.cpp's
+  `chkhsh` still names it `smollm` (the vocabulary has no multi-digit tokens), and bankML accepts both shapes.
 
-### Not yet known
-- **Whether a created `mindx-gen39` answers like Ollama's.** Deciding it needs O4's Llama forward pass. Then: create the
-  model with promote.py's persona, serve it, and run the token oracle against llama-server with the same system
-  message.
-
-## Unreleased — O6b: JSON schemas (branch `o6b-json-schema`)
-
-**Any JSON schema now gets the grammar llama-server b11192 builds for it, byte for byte.** `bankML/schema.rs` ports
-llama.cpp's `common/json-schema.cpp` and `json-schema-to-grammar.cpp` (MIT, attributed; zero crates) and the chat
-parser's wrapping on the pinned template. The oracle is llama.cpp's own code: `testing/schema_oracle.cpp` calls
-`json_schema_to_grammar` and `common_chat_templates_apply` inside the b11192 release's `libllama-common.so` (no model).
-Over 173 schemas (llama.cpp's 81 test cases, Pydantic-shaped schemas like mindX's, edge cases) bankML's grammar is
-identical on both paths (148 grammars each), and every refusal (24 bare, 20 wrapped) carries llama.cpp's message.
-`{"type": "object"}` converts to 0.3.3's JSON-mode constant.
-- Wired: `response_format` `json_schema` and `json_object` + `schema`, the top-level `json_schema`, Ollama's
-  `format: <schema>`, `bankml_chat`; JSON mode's prefill, redraw, fence and content rule (a top-level string, number
-  or literal is its own content). The schema is read from the request's own text (`1.0` stays a float).
-- Refused, as b11192 refuses: what its schema reader or converter rejects; a non-object or `null` top-level
-  `json_schema`. Ignored, as b11192 ignores: a non-object schema inside `response_format`. bankML's own refusal: a
-  `pattern` with a non-ASCII character before a quantifier, which llama.cpp turns into a grammar that is not UTF-8.
-- Not yet measured: answers under schemas against llama-server (`testing/json_schema_oracle.py --record`,
-  `oracle_json_schema*`, `json_schema_oracle_live`; staged in the gate).
+### Not in this release
+- `ADAPTER` (LoRA) in a Modelfile: merge first, then `FROM` the merged directory. Tool calls (O6).
+- **Next: O2, the penalty samplers.** mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1)) found that `mindx-gen39`
+  degenerates into repetition (`,,,,`, `?||`) without a repetition penalty; its imprint gate decodes with
+  `repetition_penalty 1.3` and `no_repeat_ngram_size 3`, which bankML refuses until each has an oracle.
 
 ## 0.3.4 — 2026-10-02 — mindX's own model, natively: the Llama graph, F16, tied embeddings (O4)
 

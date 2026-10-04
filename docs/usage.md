@@ -199,11 +199,15 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
 - **Every token is drawn as llama-server draws it under a grammar.** The usual sampler chain runs first. If its token
   breaks the grammar, the logits are masked and the chain runs again, which takes a second draw from the seeded
   generator. Greedy and seeded answers are token-identical to the server (the oracle is in [oracles.md](oracles.md)).
-- **Any other JSON schema** (O6b, unreleased): in `response_format` (`json_schema`, or `json_object` with a `schema`),
-  the top-level `json_schema`, or Ollama's `format: {…}`, it is converted into the grammar llama-server b11192 builds
-  for it on this template (`bankML/schema.rs`, byte-identical on 173 of 173 schemas against llama.cpp's own code),
-  and answered as JSON mode is: prefilled, fenced or bare, `content` the value alone (a top-level string, number or
-  literal included). A schema llama.cpp refuses is refused with its message.
+- **Any other JSON schema** (0.3.5): in `response_format` (`json_schema`, or `json_object` with a `schema`), the
+  top-level `json_schema`, or Ollama's `format: {…}`, it is converted into the grammar llama-server b11192 builds for
+  it on the model's own template (`bankML/schema.rs`; byte-identical on 173 of 173 schemas on each template against
+  llama.cpp's own code), and answered as JSON mode is: prefilled, fenced or bare, `content` the value alone (a
+  top-level string, number or literal included). The answers are token-identical to llama-server's on every native
+  model, greedy and seeded. A schema llama.cpp refuses is refused with its message.
+- **An answer cut by `max_tokens`** gets llama-server's content: the value as far as it got (an unfinished escape
+  dropped), or, when nothing of the value came yet (`"```json\n"`), the raw text, as the server answers a whole
+  request. A stream sends only the value's growth.
 - **Refused, with the reason:** a schema llama.cpp b11192 refuses; a `pattern` llama.cpp would turn into a grammar
   that is not UTF-8; a non-object or `null` top-level `json_schema` (llama-server fails those requests);
   `response_format` together with `grammar`; `json_schema` together with `grammar`; a `response_format` type other
@@ -267,18 +271,20 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
   - `bankml_receipt`, as on `/v1/chat/completions`.
 - **Options.**
   - **Honoured:** `temperature`, `top_k`, `top_p`, `min_p`, `seed`, `num_predict` and `stop` (also on `/v1`).
-  - **`num_ctx`:** accepted up to the served `--ctx`, refused above it.
+  - **`num_ctx`:** accepted up to the served `--ctx`, refused above it. Under it (0.3.5) a conversation that does not
+    fit loses its oldest messages first, as Ollama's do (the last message and the system messages stay); a prompt that
+    still does not fit is refused with its size.
   - **Penalties:** a neutral value passes, anything else is refused, until the penalty sampler has its oracle.
   - **Ignored**, because they do not change the answer bankML gives: `num_thread`, `num_batch`, `num_gpu`, `use_mmap`
     and the other resource options.
   - **Refused:** any other option.
 - **`format: "json"` is JSON mode (0.3.3).** It is answered by the same grammar llama-server b11192 uses for
   `response_format: {"type": "json_object"}` (below), so `/api/chat` with `format: "json"` gives llama-server's tokens.
-  `format: {}` and `format: {"type": "object"}` are the same request. Any other schema is refused (llama.cpp's
-  `json_schema_to_grammar` is not ported), and so is `format` with `raw: true` (JSON mode's grammar begins with the
-  template's generation prompt, which a raw prompt does not have).
+  `format: {}` and `format: {"type": "object"}` are the same request. Since 0.3.5 any other schema object is
+  answered with the grammar llama-server builds for it (below). `format` with `raw: true` is refused (the grammar
+  begins with the template's generation prompt, which a raw prompt does not have).
 - **Refused, with the reason:**
-  - a `format` schema other than "any object";
+  - a `format` schema llama.cpp b11192 refuses (with its message);
   - `tools` and `tool_calls` (O6);
   - `images`;
   - `suffix`, `template`, `context`;
@@ -289,12 +295,13 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
 - **The loopback rules still apply.** POST bodies need `Content-Type: application/json` (`curl -d` alone sends a
   form type and gets 415), and `Host` must be a loopback name.
 
-### Derived models and conversion: `bankml create`, `bankml convert` (O5, Unreleased)
+### Derived models and conversion: `bankml create`, `bankml convert` (O5, 0.3.5)
 
 `ollama create`, natively. A derived model is a layer (system prompt, parameters, stop strings, example messages,
 licence) over a **pinned** base, written as `<registry>/<name>.MODEL.json`. Weights are never copied. Loading it
 verifies the base exactly as a pinned model is verified. The details are in
-[OLLAMA.md](OLLAMA.md#what-o5s-first-cut-built-unreleased).
+[OLLAMA.md](OLLAMA.md#what-o5s-first-cut-built-035). mindX's persona layer, made this way, answers token-identically
+to llama-server given the same persona (`testing/persona_oracle.py`).
 
 ```sh
 # mindX's flow, without Ollama: the merged safetensors directory → a pinned GGUF → the persona layer
@@ -329,6 +336,9 @@ bankml convert DIR -o mindx-gen39-F16.gguf --fork mindx-gen39-F16.gguf.FORK.json
   - `FROM` a GGUF needs its FORK.json there.
   - `serve --native --registry` lists the derived models and answers `/api/create`. Without `--registry` it refuses,
     because it has nowhere to write.
+- **A derived model's name** wins over the suffix-less alias of a pin (`mindx-gen39` is the layer, `mindx-gen39-f16`
+  the pin), and `/api/ps` names it, with its digest and parent, as Ollama names the model that loaded its runner.
+  A layer's `PARAMETER num_ctx` fits the conversation on `/api` and `/v1` as the request's option does.
 - **`bankml convert`.** The Llama architecture (SmolLM2, `mindx-genN`) to GGUF F16, byte-identical to llama.cpp b11192's
   `convert_hf_to_gguf.py --outtype f16`: `e9aba089…` for SmolLM2-135M-Instruct, `6b64c748…` for gen39.
   - llama.cpp names the model from the **directory's name**. A directory called `merged` gives `general.name`
@@ -660,8 +670,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
 | `BANKML_GPU=off` · `BANKML_GPU_SHARE=0.3` | the GPU worker (0.2.14): a verified card takes a calibrated share of every 1-bit matrix's rows; `off` disables it, a number overrides the share |
 | `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N] [--registry [DIR]] [--keep-alive DUR]` | answers from bankML's own forward pass (0.3.0); since 0.3.1 also Ollama's API (§6a) and, with `--registry`, any pinned model by name, one resident at a time; token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. Savante's Models → Resources **engine** setting chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
-| `bankml create NAME -f Modelfile [--registry DIR] [--models DIR]` | O5 (Unreleased): a derived model, a layer (SYSTEM, PARAMETER, stop, MESSAGE, LICENSE) over a pinned base, `FROM` a name, a pinned GGUF or a safetensors directory (converted); written as `DIR/NAME.MODEL.json`, no weights copied (§6a) |
-| `bankml convert DIR -o OUT.gguf [--model-name N] [--fork F --source S] [--ignore-model-card]` | O5 (Unreleased): Llama safetensors → GGUF F16, byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`; `--fork` writes the pin with every input's sha256 |
+| `bankml create NAME -f Modelfile [--registry DIR] [--models DIR]` | O5 (0.3.5): a derived model, a layer (SYSTEM, PARAMETER, stop, MESSAGE, LICENSE) over a pinned base, `FROM` a name, a pinned GGUF or a safetensors directory (converted); written as `DIR/NAME.MODEL.json`, no weights copied (§6a) |
+| `bankml convert DIR -o OUT.gguf [--model-name N] [--fork F --source S] [--ignore-model-card]` | O5 (0.3.5): Llama safetensors → GGUF F16, byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`; `--fork` writes the pin with every input's sha256 |
 | `bankml gpu --verify` | runs the bit-exact kernel oracle on every usable card (0.2.13); a card that fails is named and never used |
 | `bankml gpu [--remote]` | every video card found (Vulkan, merged with `/sys/class/drm`) and which bankml will use; `--remote` adds the GPUs Hugging Face rents (22 NVIDIA flavors with card counts and prices; listed, never started); `BANKML_GPU=off` turns the component off, `BANKML_GPU=0,2` picks cards (0.2.12; the GPU kernels are the next steps) |
 | `bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json` (or plain text) | bankml's own forward pass, greedy, or with `--sample` llama-server's sampler chain (the model's defaults unless given; same seed, same tokens as llama-server, 0.2.11), streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts of any length and contexts of any length (all three of ggml's CPU attention kernels, since 0.2.10); `BANKML_LLAMA_THREADS` (default 3) must equal the `-t` of the llama.cpp being matched, because its long-context decode kernel chunks by thread; `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |

@@ -123,8 +123,28 @@ impl Native {
 
     /// The prompt a conversation becomes, as token ids (llama-server: the template, then tokenization with specials).
     pub fn prompt(&self, messages: &Json) -> Result<Vec<u32>, String> {
+        self.prompt_fit(messages, None)
+    }
+
+    /// 0.3.5: the prompt under a `num_ctx` (a request's option or a derived model's `PARAMETER num_ctx`), fitted as
+    /// Ollama fits it (`server/prompt.go` `chatPrompt`, v0.13.3): walking back from the last message, each earlier
+    /// message is kept while the conversation from it — with the system messages before it — still fits; the last
+    /// message always stays, and so do the system messages before the first one kept (a system message that is itself
+    /// the first one cut is dropped, as Ollama drops it). The tokens counted are the prompt bankML answers (the GGUF's
+    /// template, as llama-server renders it). A prompt that still does not fit is refused: Ollama's runner would cut
+    /// tokens out of its middle (`num_keep`) and shift the cache during the answer, which bankML does not reproduce.
+    pub fn prompt_fit(&self, messages: &Json, num_ctx: Option<usize>) -> Result<Vec<u32>, String> {
         let msgs: Vec<Message> = chat::messages_from_json(messages)?;
-        Ok(self.tok.encode(&self.template.render(&msgs)?, true))
+        let enc = |m: &[Message]| -> Result<Vec<u32>, String> { Ok(self.tok.encode(&self.template.render(m)?, true)) };
+        let Some(nc) = num_ctx else { return enc(&msgs) };
+        let (kept, dropped) = fit_messages(&msgs, nc, |m| enc(m).map(|p| p.len()))?;
+        let p = enc(&kept)?;
+        if p.len() > nc {
+            return Err(format!("the prompt is {} tokens, more than num_ctx {nc}{}: Ollama would cut tokens out of its middle (num_keep), \
+                                which bankML does not reproduce; shorten the last message or raise num_ctx (up to this server's --ctx)",
+                               p.len(), if dropped > 0 { format!(" with the {dropped} oldest messages dropped") } else { String::new() }));
+        }
+        Ok(p)
     }
 
     /// One completion. `emit` receives the answer as whole UTF-8 pieces as they come, and returns false to stop.
@@ -454,6 +474,29 @@ pub struct Residency {
     pub last: Mutex<Option<Loaded>>,
     /// O5: the derived models of the registry directory (`create.rs`), layered on these pins
     pub derived: crate::create::Store,
+    /// 0.3.5: what `/api/ps` names and the context it reports — Ollama's runner keeps the name of the model whose
+    /// request loaded it, and reloads (under the new name) when a request's `num_ctx` differs; bankML keeps the
+    /// weights and records the same (`shown_as`)
+    pub shown: Mutex<Option<(String, usize)>>,
+}
+
+/// Ollama's `chatPrompt` truncation (`server/prompt.go`, v0.13.3), over any token count: the messages kept, and how
+/// many were cut. `count` is the length of a candidate conversation's prompt.
+pub fn fit_messages(msgs: &[Message], num_ctx: usize, count: impl Fn(&[Message]) -> Result<usize, String>) -> Result<(Vec<Message>, usize), String> {
+    let last = msgs.len().saturating_sub(1);
+    let (mut n, mut system) = (last, Vec::new());
+    // in reverse: the conversation from message i, with the system messages before i, while it fits (the last
+    // message is always kept; `system` stays what the last candidate had, as in Ollama's loop)
+    for i in (0..last).rev() {
+        system = msgs[..i].iter().filter(|m| m.role == "system").cloned().collect::<Vec<_>>();
+        let cand: Vec<Message> = system.iter().chain(&msgs[i..]).cloned().collect();
+        if count(&cand)? > num_ctx {
+            break;
+        }
+        n = i;
+    }
+    let dropped = n - system.len();
+    Ok((system.into_iter().chain(msgs[n..].iter().cloned()).collect(), dropped))
 }
 
 fn now_secs() -> u64 {
@@ -471,7 +514,22 @@ impl Residency {
         let loaded = Loaded { name: e.name.clone(), engine: engine_name(&native), native: Arc::new(native), sha256: verified.model_sha256.clone(),
                               verified: Arc::new(verified), model, ident: id, hashed_at: now_secs(), size: e.bytes };
         Ok(Residency { reg, n_ctx, engine, run: Mutex::new(()), last: Mutex::new(Some(loaded.clone())),
-                       cur: Mutex::new(Some(Resident { loaded, expires: None })), derived: Default::default() })
+                       cur: Mutex::new(Some(Resident { loaded, expires: None })), derived: Default::default(), shown: Mutex::new(None) })
+    }
+
+    /// Record the model a request named (`tag`, a pin's or a derived model's) and its context, as Ollama's runner
+    /// would be named: when the weights were (re)loaded for it (`loaded`), when nothing is recorded yet, or when its
+    /// context differs from the recorded one (Ollama reloads then).
+    pub fn shown_as(&self, tag: &str, num_ctx: usize, loaded: bool) {
+        let mut s = self.shown.lock().unwrap_or_else(|e| e.into_inner());
+        if loaded || s.as_ref().is_none_or(|(_, n)| *n != num_ctx) {
+            *s = Some((tag.to_string(), num_ctx));
+        }
+    }
+
+    /// What `/api/ps` names for the resident weights: the recorded request's model and context (see `shown_as`).
+    pub fn shown(&self) -> Option<(String, usize)> {
+        self.shown.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn lock_cur(&self) -> MutexGuard<'_, Option<Resident>> {
@@ -566,6 +624,26 @@ impl Residency {
 mod tests {
     use super::*;
 
+    /// Ollama's chatPrompt truncation (v0.13.3), on a count where each message costs its content's length
+    #[test]
+    fn fit_messages_as_ollama() {
+        let m = |r: &str, c: &str| Message::new(r, c);
+        let count = |ms: &[Message]| Ok::<usize, String>(ms.iter().map(|x| x.content.len()).sum());
+        let names = |ms: &[Message]| ms.iter().map(|x| x.content.clone()).collect::<Vec<_>>().join(",");
+        let conv = [m("system", "SS"), m("user", "u1u1"), m("assistant", "a1a1"), m("user", "u2u2"), m("assistant", "a2"), m("user", "q")];
+        // everything fits
+        assert_eq!(fit_messages(&conv, 100, count).map(|(k, d)| (names(&k), d)), Ok(("SS,u1u1,a1a1,u2u2,a2,q".into(), 0)));
+        // the oldest turns go, the system message stays
+        assert_eq!(fit_messages(&conv, 9, count).map(|(k, d)| (names(&k), d)), Ok(("SS,u2u2,a2,q".into(), 2)));
+        assert_eq!(fit_messages(&conv, 3, count).map(|(k, d)| (names(&k), d)), Ok(("SS,q".into(), 4)));
+        // the last message always stays, even when it alone does not fit (the caller refuses then)
+        assert_eq!(fit_messages(&conv, 1, count).map(|(k, d)| (names(&k), d)), Ok(("SS,q".into(), 4)));
+        // Ollama's quirk: a system message that is itself the first one cut is dropped
+        let c2 = [m("system", "SSSSSSSSSS"), m("user", "q")];
+        assert_eq!(fit_messages(&c2, 5, count).map(|(k, d)| (names(&k), d)), Ok(("q".into(), 1)));
+        assert_eq!(fit_messages(&[m("user", "long question")], 1, count).map(|(k, d)| (names(&k), d)), Ok(("long question".into(), 0)));
+    }
+
     /// Savante-style conversations, turn after turn in one engine, against llama-server b11192's own chat endpoint
     /// (testing/serve_oracle.py): the same answer text, the same prompt and completion counts, and the same number of
     /// prompt tokens taken from the cache, every turn.
@@ -621,7 +699,7 @@ mod tests {
     /// cache: the same tokens (end token included), raw text, message content, finish reason and counts; and the
     /// grammar and generation prompt the server reports are the ones bankML uses.
     fn json_replay(stem: &str, kind: &str) {
-        use crate::grammar::{json_content, json_object_grammar, Constraint};
+        use crate::grammar::{json_message, json_object_grammar, Constraint};
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
         let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
         let rec = std::fs::read_to_string(dir.join(format!("oracle-json/{kind}-{stem}.jsonl"))).unwrap();
@@ -658,7 +736,7 @@ mod tests {
             eng.reset();
             let d = eng.complete(&prompt, params, max, eng.grammar(&constraint).unwrap(), |_| true).unwrap();
             let want: Vec<u32> = match c.get("tokens") { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!() };
-            let content = if matches!(constraint, Constraint::JsonObject | Constraint::Schema(_)) { json_content(&d.text).to_string() } else { d.text.clone() };
+            let content = if matches!(constraint, Constraint::JsonObject | Constraint::Schema(_)) { json_message(&d.text).to_string() } else { d.text.clone() };
             let good = d.tokens == want && d.text == s(&c, "raw") && content == s(&c, "content") && d.finish_reason == s(&c, "finish_reason")
                 && d.prompt_tokens == num(&c, "prompt_tokens") && d.completion_tokens == num(&c, "completion_tokens");
             n += 1;
@@ -702,6 +780,16 @@ mod tests {
     #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
     fn oracle_json_schema_ternary() {
         json_replay("Ternary-Bonsai-8B-Q2_0_g64", "schema");
+    }
+
+    /// 0.3.5: the same on the O4 models — Bonsai-1.7B (the Qwen3 template) and the two ChatML templates, whose schema
+    /// grammar has no reasoning block (`schema::chat_grammar`)
+    #[test]
+    #[ignore = "needs .models/{Bonsai-1.7B-Q1_0,SmolLM2-135M-Instruct-F16,mindx-gen39-F16}.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
+    fn oracle_json_schema_o4() {
+        for stem in ["Bonsai-1.7B-Q1_0", "SmolLM2-135M-Instruct-F16", "mindx-gen39-F16"] {
+            json_replay(stem, "schema");
+        }
     }
 
 }

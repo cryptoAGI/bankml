@@ -729,6 +729,16 @@ impl Store {
 
 /// A request's `model` to the entry it loads and the layer over it: a pinned model (no layer) or a derived one.
 pub fn resolve(rs: &Residency, model: Option<&str>) -> Result<(Entry, Option<Arc<Derived>>), String> {
+    // 0.3.5: a pin's exact name first, then a derived model's, then the registry's suffix-less alias — so the derived
+    // `mindx-gen39` promote.py layers in place (FROM mindx-gen39, the alias of mindx-gen39-f16) answers as itself
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        let n = crate::native::model_name(m.strip_suffix(":latest").unwrap_or(m));
+        if !rs.reg.entries.iter().any(|e| e.name == n) {
+            if let Some((d, e)) = rs.derived.find(m) {
+                return Ok((e, Some(d)));
+            }
+        }
+    }
     match rs.reg.resolve(model) {
         Ok(e) => Ok((e.clone(), None)),
         Err(why) => match model.and_then(|m| rs.derived.find(m)) {
@@ -758,8 +768,10 @@ fn base_for(spec_from: &str, name: &str, dir: &Path, reg_entries: &[Entry], stor
         // a safetensors directory: converted to GGUF F16 beside the pins, and pinned by what was written
         let file = format!("{name}-F16.gguf");
         let out = dir.join(&file);
-        if out.exists() {
-            return Err(format!("FROM {spec_from}: {} already exists (a conversion is pinned once); FROM it by name, {}", out.display(), crate::native::model_name(&file)));
+        if out.exists() || dir.join(format!("{file}.FORK.json")).exists() {
+            // 0.3.5: an existing pin (its FORK.json, wherever the file is) is never overwritten either
+            return Err(format!("FROM {spec_from}: {file} is already pinned in {} (a conversion is pinned once); FROM it by name, {}",
+                               dir.display(), crate::native::model_name(&file)));
         }
         status.push(format!("converting {} to GGUF F16 (llama.cpp b11192's convert_hf_to_gguf.py --outtype f16, byte for byte)", p.display()));
         let r = crate::convert::convert(p, &out, &crate::convert::Options::default())?;
@@ -782,6 +794,15 @@ fn base_for(spec_from: &str, name: &str, dir: &Path, reg_entries: &[Entry], stor
     } else if let Some((d, e)) = store.find(spec_from) {
         let path = e.path.clone().ok_or(format!("FROM {spec_from}: its base {} is not on this machine", e.file))?;
         (path, d.base.fork.clone(), e.fork_json.clone(), Some(d))
+    } else if let Some(e) = {
+        // 0.3.5: the registry's suffix-less alias (`mindx-gen39` for the one pin mindx-gen39-f16), as requests resolve it
+        let n = crate::native::model_name(spec_from.strip_suffix(":latest").unwrap_or(spec_from));
+        let hits: Vec<&Entry> = reg_entries.iter().filter(|e| crate::native::base_name(&e.name) == n).collect();
+        if hits.len() == 1 { Some(hits[0]) } else { None }
+    } {
+        let path = e.path.clone().ok_or(format!("FROM {spec_from}: {} is pinned but not on this machine", e.file))?;
+        let (fork_name, text) = fork_for(dir, &e.file).unwrap_or((String::new(), e.fork_json.clone()));
+        (path, fork_name, text, None)
     } else {
         return Err(format!("FROM {spec_from}: no such model — a registry name, a pinned GGUF path or a safetensors directory"));
     };
@@ -1278,7 +1299,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let sha = pinned_fixture(&dir, "base-F16.gguf", "{{ chatml }}");
         let reg = Registry { entries: pinned_entries(&dir, &[]), default: 0 };
-        let rs = Residency { reg, n_ctx: 4096, engine: crate::gguf::Engine::Mainline, run: Mutex::new(()), cur: Mutex::new(None), last: Mutex::new(None), derived: Store::default() };
+        let rs = Residency { reg, n_ctx: 4096, engine: crate::gguf::Engine::Mainline, run: Mutex::new(()), cur: Mutex::new(None), last: Mutex::new(None), derived: Store::default(), shown: Mutex::new(None) };
         // without a registry directory there is nowhere to write
         let (code, body) = call(&rs, "POST", "/api/create", r#"{"model": "persona", "modelfile": "FROM base-f16"}"#);
         assert!(code == 400 && body.contains("--registry"), "{code} {body}");
@@ -1334,5 +1355,51 @@ mod tests {
         assert!(code == 400 && body.contains("does not play it"), "{code} {body}");
         assert_eq!(call(&rs, "POST", "/api/chat", r#"{"model": "nothing", "messages": [{"role": "user", "content": "hi"}]}"#).0, 404);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 0.3.5 (O5 end to end): mindx-gen39 created with promote.py's persona layer (testing/persona_oracle.py: FROM the
+    /// merged safetensors directory, and promote.py's own Modelfile FROM mindx-gen39 in place), asked the user's turns
+    /// alone, must give llama-server b11192's tokens for the same GGUF given the persona as the system message.
+    #[test]
+    #[ignore = "needs .models/oracle-persona (testing/persona_oracle.py --record); --release"]
+    fn oracle_persona_layer() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".models/oracle-persona");
+        let eng = crate::native::Native::open(&dir.join("registry-dir/mindx-gen39-F16.gguf"), 2048).unwrap();
+        let recs: Vec<Json> = std::fs::read_to_string(dir.join("persona-mindx-gen39.jsonl")).unwrap().lines().map(|l| Json::parse(l).unwrap()).collect();
+        let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n as usize, _ => usize::MAX };
+        for variant in ["dir", "alias"] {
+            let d = Derived::from_json(&std::fs::read_to_string(dir.join(format!("registry-{variant}/mindx-gen39.MODEL.json"))).unwrap()).unwrap();
+            let (mut n, mut ok) = (0, 0);
+            for c in &recs {
+                let Some(Json::Obj(fields)) = c.get("request") else { panic!() };
+                // the user's turns only: the persona and the stop come from the layer
+                let mut req: Vec<(String, Json)> = fields.iter().filter(|(k, _)| k != "messages" && k != "stop").cloned().collect();
+                req.push(("messages".into(), c.get("user_messages").unwrap().clone()));
+                let req = d.apply_openai(&Json::Obj(req));
+                let Some(Json::Arr(sent)) = c.get("request").and_then(|r| r.get("messages")) else { panic!() };
+                let Some(Json::Arr(layered)) = req.get("messages") else { panic!() };
+                assert_eq!(layered, sent, "{}: the layer gives the conversation llama-server was sent", c.get("name").and_then(Json::as_str).unwrap());
+                assert_eq!(req.get("stop"), c.get("request").and_then(|r| r.get("stop")));
+                let prompt = eng.prompt_fit(req.get("messages").unwrap(), d.num_ctx().map(|x| x as usize)).unwrap();
+                let params = eng.params(&req).unwrap();
+                let max = match req.get("max_tokens") { Some(Json::Num(x)) => Some(*x as usize), _ => None };
+                eng.reset();
+                let mut stop = crate::ollama::StopFilter::new(crate::ollama::stops(req.get("stop")).unwrap());
+                let done = eng.complete(&prompt, params, max, None, |p| stop.push(p).1).unwrap();
+                stop.finish();
+                let want: Vec<u32> = match c.get("tokens") { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!() };
+                let good = done.tokens == want && stop.text() == c.get("text").and_then(Json::as_str).unwrap() && done.finish_reason == c.get("finish_reason").and_then(Json::as_str).unwrap()
+                    && done.prompt_tokens == num(c, "prompt_tokens") && done.completion_tokens == num(c, "completion_tokens");
+                n += 1;
+                ok += good as usize;
+                if !good {
+                    eprintln!("  {variant} {}: {} tokens vs {} (prompt {} vs {}), {:?}", c.get("name").and_then(Json::as_str).unwrap(), done.tokens.len(), want.len(),
+                              done.prompt_tokens, num(c, "prompt_tokens"), &stop.text()[..stop.text().len().min(60)]);
+                }
+            }
+            eprintln!("persona oracle ({variant}: digest {}…): {ok} of {n} answers of the created mindx-gen39 to the user's turns alone token-identical to \
+                       llama-server b11192 given promote.py's persona as the system message", &d.digest[..16]);
+            assert_eq!(ok, n);
+        }
     }
 }

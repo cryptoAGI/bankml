@@ -411,6 +411,36 @@ oracle.
 - **Live and through the C API**: `serve_oracle.py --bankml STEM [NAME]` and `json_oracle.py --bankml STEM [NAME]` on
   each model (mindx-gen39 asked for as `mindx-gen39`), and `capi_oracle.py --chat` against each model's record.
 
+## 5e. JSON schemas and `bankml create` (0.3.5): llama.cpp's converter, parser and converter script, and the persona
+
+- **The schema grammar** (`testing/schema_oracle.{cpp,py}` → `oracle_schema_grammars`): llama.cpp b11192's own
+  `json_schema_to_grammar` and `common_chat_templates_apply`, called inside the release's `libllama-common.so` (no
+  model), on 173 schemas — llama.cpp's 81 test cases, Pydantic-shaped schemas like mindX's, edge cases and every
+  refusal path — with the template read from each model that carries it (Bonsai's Qwen3, SmolLM2-Instruct's ChatML,
+  mindx-gen39's ChatML). **148 grammars byte-identical bare and on the chat path, on each template**; every refusal
+  with llama.cpp's message (24, 20). The ChatML wrapping (no reasoning rules, another root) was read from this output.
+- **The answers** (`testing/json_schema_oracle.py --record STEM` → `oracle_json_schema`, `_ternary`, `_o4`):
+  llama-server b11192 asked under schemas through all three request shapes, greedy and seeded, each from an empty
+  cache, with answers cut by `max_tokens` inside an object, a top-level string and a number. Required: the same token
+  ids (end token included), raw text, content, finish and counts, and the server's grammar and generation prompt are
+  bankML's. **Bonsai-8B 28 of 28, Ternary-Bonsai-8B 11 of 11, Bonsai-1.7B, SmolLM2-135M-Instruct and mindx-gen39
+  56 of 56 each.** Live (`--bankml STEM [NAME]`, in the gate): `/v1` (one streamed) and `/api/chat` `format: <schema>`.
+- **The content rule** (`testing/content_oracle.{cpp,py}` → `oracle_json_content`): llama.cpp's `common_chat_parse`
+  itself, with the parser llama-server builds for each request, on every prefix of every recorded constrained answer
+  and on edge cases: **30,063 of 30,063 texts on each template** (36 texts with a reasoning block, which no grammar
+  admits after its prefill, are refused by llama.cpp's parser and listed). It found two differences the answer
+  oracles had not: unfinished escapes, and llama-server's raw-text answer for an empty parse; both fixed.
+- **The converter** (`testing/convert_oracle.py`, `oracle_convert_b11192`, `oracle_name_heuristics`): bankml convert
+  against llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16` on the same directory, sha256 for sha256 — gen39
+  `6b64c748…` and SmolLM2 `ec30a679…`, run directly in 0.3.5 (torch 2.14.1+cpu) — and gguf-py's name heuristics on
+  168 of 168 ids.
+- **mindX's persona, end to end** (`testing/persona_oracle.py` → `oracle_persona_layer`, and live): promote.py's
+  persona Modelfile created two ways (`FROM` the merged directory; `FROM mindx-gen39` in place), the user's turns
+  alone, against llama-server given the persona as the system message on the same GGUF: **27 of 27** token-identical
+  for each; live through `/api/chat`, `/api/generate` and `/v1` from an empty slot each, and `/api/ps` names the
+  derived model. (Without the empty slot, seeded answers moved: a cached prefix changes F16's product paths, so the
+  live check starts each answer as the record did.)
+
 ## 6. Oracles planned
 
 - **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer

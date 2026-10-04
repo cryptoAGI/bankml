@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The score stage: did the persona take? `mindxtrain/eval/imprint.py` poses the same inquiries to the model before
+//! The score stage: did the persona take? mindXtrain's (github.com/Professor-Codephreak/mindXtrain, continued at
+//! huggingface.co/PYTHAI/mindXtrain; Apache-2.0) `mindxtrain/eval/imprint.py` poses the same inquiries to the model before
 //! and after training and scores the utterances against the persona's voice examples. This is its dependency-free
 //! path, exactly: tokens are `[a-z0-9']+` of the Unicode-lowercased text; similarity is token Jaccard; the voice
 //! score is the mean over utterances of the best similarity to any voice example; the shift is the mean

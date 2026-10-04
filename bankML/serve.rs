@@ -558,14 +558,20 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     if let Err(e) = crate::ollama::stops(req.get("stop")) {
         return respond(c, 400, "text/plain", e.as_bytes());
     }
+    // 0.3.5: a layer's num_ctx fits the conversation as Ollama does; one larger than this server holds is refused
+    let num_ctx = layer.as_ref().and_then(|d| d.num_ctx()).map(|n| n.max(1) as usize);
+    if let Some(n) = num_ctx.filter(|n| *n > rs.n_ctx) {
+        return respond(c, 400, "text/plain", format!("num_ctx {n} (the model's PARAMETER) is larger than the context this server holds ({}); restart bankml serve with --ctx {n} if it fits in memory", rs.n_ctx).as_bytes());
+    }
     let stream = req.get("stream").and_then(Json::as_bool).unwrap_or(false);
     let run = rs.lock_run();
-    let l = match rs.acquire(&run, &entry) {
-        Ok((l, _)) => l,
+    let (l, load_ns) = match rs.acquire(&run, &entry) {
+        Ok(x) => x,
         Err((code, e)) => return respond(c, code, "text/plain", e.as_bytes()),
     };
+    rs.shown_as(&layer.as_ref().map(|d| d.tag()).unwrap_or_else(|| crate::ollama::tag(&entry)), num_ctx.unwrap_or(rs.n_ctx), load_ns > 0);
     let eng = &l.native;
-    let nc = match NativeChat::parse(eng, &req, &String::from_utf8_lossy(body)) {
+    let nc = match NativeChat::parse_ctx(eng, &req, &String::from_utf8_lossy(body), num_ctx) {
         Ok(nc) => nc,
         Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
     };
@@ -616,6 +622,12 @@ pub struct NativeChat {
 impl NativeChat {
     /// `text` is the request as it came (`req` is its reading): a JSON schema's numbers are read from it exactly.
     pub fn parse(eng: &crate::native::Native, req: &Json, text: &str) -> Result<NativeChat, String> {
+        Self::parse_ctx(eng, req, text, None)
+    }
+
+    /// 0.3.5: `parse` under a derived model's `num_ctx`: the conversation fitted as Ollama fits it
+    /// (`Native::prompt_fit`; its OpenAI endpoint goes through the same chat handler).
+    pub fn parse_ctx(eng: &crate::native::Native, req: &Json, text: &str, num_ctx: Option<usize>) -> Result<NativeChat, String> {
         let stops = crate::ollama::stops(req.get("stop"))?;
         let constraint = crate::grammar::from_openai_text(req, text)?;
         let schema_text;
@@ -631,7 +643,7 @@ impl NativeChat {
             // a grammar llama.cpp would not parse is refused here, with its parser's reason (a 400, not a failed run)
             crate::grammar::Rules::parse(g, &|b: &[u8]| eng.tok.encode(&String::from_utf8_lossy(b), true))?;
         }
-        let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt(m))?;
+        let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt_fit(m, num_ctx))?;
         let params = eng.params(req)?;
         let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
         Ok(NativeChat { prompt, params, max, stops, constraint })
@@ -659,7 +671,7 @@ impl NativeChat {
             emit(&content.push(&rest));
         }
         let d = done?;
-        t.text = content.content(stop.text());
+        t.text = content.content(stop.text(), stream);
         t.prompt = d.prompt_tokens as u64;
         t.completion = d.completion_tokens as u64;
         Ok(d)

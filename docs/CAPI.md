@@ -74,12 +74,15 @@ On a refusal it returns NULL, with the reason in `*err` in `serve`'s words. Two 
 - `max_tokens` (or llama-server's `n_predict`);
 - `stop`;
 - since 0.3.3, `response_format` (`{"type": "json_object"}`, or the schemas `{}` / `{"type": "object"}`), `json_schema`
-  and `grammar` (GBNF), exactly as `serve --native` takes them ([usage.md](usage.md), "JSON mode and grammars"). In
-  JSON mode the callback receives the content's growth, and `result_json`'s `content` is the JSON value.
+  and `grammar` (GBNF), exactly as `serve --native` takes them ([usage.md](usage.md), "JSON mode and grammars"); since
+  0.3.5 any JSON schema (`response_format` `json_schema`, `json_object` with a `schema`, the top-level `json_schema`),
+  converted into the grammar llama-server b11192 builds for it on the model's template, with the numbers read from the
+  request's own text. In JSON mode and under a schema the callback receives the content's growth, and `result_json`'s
+  `content` is the value as llama-server answers it (the raw text when nothing of the value came, as the server does).
 
 A sampler bankML does not reproduce is refused with a reason (`BANKML_E_REQUEST`), never approximated: the penalties,
-DRY, typical-p, XTC, top-n-σ and dynamic temperature. So is a JSON schema llama.cpp b11192 itself refuses (O6b, unreleased:
-every other schema is converted as llama-server converts it), or a grammar llama.cpp would not parse. `model` and `stream` are ignored: the handle names the model,
+DRY, typical-p, XTC, top-n-σ and dynamic temperature. So is a JSON schema llama.cpp b11192 itself refuses (with
+its message; 0.3.5: every other schema is converted as llama-server converts it), or a grammar llama.cpp would not parse. `model` and `stream` are ignored: the handle names the model,
 and the callback is the stream.
 
 The answer streams to `cb` as whole UTF-8 pieces, each `len` bytes long and NUL-terminated. To stop, return 0. A NULL

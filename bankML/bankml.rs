@@ -132,12 +132,10 @@
 //!     llamafile's tinyBLAS, chosen by shape as ggml chooses them), the Llama graph (NORM RoPE, no Q/K norms), SmolLM2's
 //!     `smollm` pre-tokenizer and two ChatML templates: SmolLM2-135M-Instruct and mindX's own `mindx-gen39` served
 //!     natively, token-identical to llama-server b11192 (greedy, seeded, `/v1`, `/api`, C API, JSON mode).
-//!   - [~] O6b (unreleased): JSON schemas (`schema.rs`) — `json_schema_to_grammar` and the chat wrapping ported,
-//!     byte-identical to llama.cpp b11192's own code on 173 of 173 schemas; answers under schemas await their oracle.
-//!   - [ ] Unreleased (O5 first cut, branch o5-create): `bankml create` / `/api/create` (`create.rs`) — a Modelfile subset as a
-//!     derived model, a layer over a pinned base, verified through the base — and `bankml convert` (`convert.rs`), Llama
-//!     safetensors → GGUF F16 **byte-identical to llama.cpp b11192** on SmolLM2-135M-Instruct (`e9aba089…`) and mindx-gen39
-//!     (`6b64c748…`). Open: serving a created mindx-gen39 needs O4; the token oracle with its persona SYSTEM decides it.
+//!   - [x] 0.3.5: O6b — JSON schemas (`schema.rs`: llama.cpp's `json_schema_to_grammar` and the chat parser's wrapping
+//!     per template), answers token-identical to llama-server b11192 on all five native models, the content rule
+//!     against llama.cpp's own parser; O5's first cut — `bankml convert` (byte-identical to b11192's converter) and
+//!     `bankml create` (derived models as verified layers), mindX's persona layer token-identical end to end.
 //! - [ ] **P5 — handheld.** Same crate → Android (NDK) / iOS as the minaiml BROBOT engine alternative.
 //!
 //! Out of scope until measured need: GPU backends, PrismML fork types (PQ2_0, PTQ1_0), Bonsai 2's

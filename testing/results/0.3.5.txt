@@ -1,0 +1,315 @@
+# bankml 0.3.5 release gate — 2026-10-03T22:25:50Z
+# rustc 1.99.0 (b940084d7 2026-09-28) · AMD Ryzen 3 3200U with Radeon Vega Mobile Gfx · 4 threads
+unittests: test result: ok. 95 passed; 0 failed; 51 ignored; 0 measured; 0 filtered out; finished in 0.84s
+testing/cli.rs: test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+capi (bankml-capi): test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+clippy: clean
+spdx: 86/86 files carry the licence of their layer
+ok   need_more
+ui data layer: all ok
+postgres connector (throwaway cluster): all ok
+iNFT mint and load (throwaway anvil devnet): all ok
+model importer (loopback source; carrier on spare ports): all ok
+32/32 agree
+printf oracle: 47 of 47 formats byte-identical to libc snprintf (ints at their limits, every length, %f precision and rounding, inf/nan, strings, %c with NUL, %p, %%, width/precision/*); 17 of 17 unsupported cases written as their marker, no argument guessed, %n never written
+## oracle_tokenizer
+tokenizer oracle (Bonsai-1.7B-Q1_0.gguf, Qwen2): 4346 of 4346 cases token-identical to llama.cpp b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.39s
+## oracle_chat_template
+chat-template oracle (Qwen3): 317 of 317 conversations byte-identical to llama.cpp b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.01s
+## oracle_forward_embed_norm
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: inp_embd 300 of 300 rows and attn_norm-0 300 of 300 rows bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.78s
+## oracle_forward_qkv_rope
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 33% of each 1-bit matrix's rows
+forward oracle: layer-0 Qcur/Kcur/Vcur 140 of 140 rows (28 tokens at positions 0–27 and 7–63214, YaRN attn_factor 1) bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.58s
+## oracle_forward_attention
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+forward oracle: layer-0 kqv_out/attn_out/ffn_inp/l_out 112 of 112 rows (28 tokens, causal, f16 K/V) bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.81s
+## oracle_forward_attention_tiled
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 27% of each 1-bit matrix's rows
+forward oracle: tiled flash attention 150 of 150 rows bit-exact against the shipped ggml b11192 (the reference kernel would match 1)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 1.07s
+## oracle_forward_attention_split
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: split-KV flash attention 14 of 14 decode rows (257–1,000 cells, 3 and 4 threads) bit-exact against the shipped ggml b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.76s
+## oracle_forward_swiglu_sweep
+forward oracle: swiglu 24600 of 24600 values bit-exact against the shipped ggml b11192 (±120 and the edges)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.01s
+## oracle_forward_model
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+forward oracle: Bonsai-8B-Q1_0: whole model 1064 of 1064 rows (36 layers' l_out, result_norm, logits × 28 tokens; greedy token 28 of 28) bit-exact against the shipped ggml b11192 — 12.5 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 13.04s
+## oracle_forward_model_ternary
+forward oracle: Ternary-Bonsai-8B-Q2_0_g64: whole model 1064 of 1064 rows (36 layers' l_out, result_norm, logits × 28 tokens; greedy token 28 of 28) bit-exact against the shipped ggml b11192 — 13.2 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 13.44s
+## oracle_greedy_llama_server
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 32% of each 1-bit matrix's rows
+greedy oracle: Bonsai-8B-Q1_0: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (164 tokens, ends of turn included) — 124 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 125.85s
+## oracle_greedy_llama_server_ternary
+greedy oracle: Ternary-Bonsai-8B-Q2_0_g64: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (140 tokens, ends of turn included) — 81 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 81.17s
+## oracle_greedy_llama_server_long
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 33% of each 1-bit matrix's rows
+greedy oracle: long-Bonsai-8B-Q1_0: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (117 tokens, ends of turn included) — 273 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 273.71s
+## oracle_greedy_llama_server_deep
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+greedy oracle: deep-Bonsai-8B-Q1_0: 3 of 3 chat prompts generate llama-server b11192's tokens exactly (600 tokens, ends of turn included) — 335 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 335.73s
+## oracle_sample_llama_server
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+sample oracle: Bonsai-8B-Q1_0: 40 of 40 seeded continuations identical to llama-server b11192's (1175 tokens; top-k, top-p, min-p, temperature, the mt19937 draw)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 468.08s
+## oracle_native_serve
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+native serve oracle: Bonsai-8B-Q1_0: 9 of 9 conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — 192 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 192.63s
+## oracle_grammar_masks
+grammar oracle: 151669 of 151669 token pieces and end flags identical to llama.cpp b11192 (end set [128247, 151643, 151645, 151662, 151663, 151664])
+grammar oracle: 196 of 196 runs identical to llama.cpp b11192 (1645 whole-vocabulary masks, 116 rejections); one mask over 151669 tokens: median 24.4 ms, p90 47.2 ms, max 183.3 ms
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 47.51s
+## oracle_json_mode
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+json oracle (Bonsai-8B-Q1_0): 23 of 23 constrained answers token-identical to llama-server b11192 (860 tokens, 152 redrawn under the mask; grammar 3.54 ms per token) — 542 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 543.40s
+## oracle_json_mode_ternary
+json oracle (Ternary-Bonsai-8B-Q2_0_g64): 13 of 13 constrained answers token-identical to llama-server b11192 (534 tokens, 49 redrawn under the mask; grammar 4.12 ms per token) — 261 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 261.52s
+## oracle_schema_grammars
+schema oracle (Qwen3): json_schema_to_grammar 173 of 173 as llama.cpp b11192 (24 refused by both, 24 with the same message; 1 grammar llama.cpp writes as non-UTF-8, refused by bankML); the chat grammar 173 of 173 (20 refused by both, 20 with the same message; 1 non-UTF-8 refused); the rest byte-identical, and all 296 grammars parse
+schema oracle (SmolLm2): json_schema_to_grammar 173 of 173 as llama.cpp b11192 (24 refused by both, 24 with the same message; 1 grammar llama.cpp writes as non-UTF-8, refused by bankML); the chat grammar 173 of 173 (20 refused by both, 20 with the same message; 1 non-UTF-8 refused); the rest byte-identical, and all 296 grammars parse
+schema oracle (ChatMl): json_schema_to_grammar 173 of 173 as llama.cpp b11192 (24 refused by both, 24 with the same message; 1 grammar llama.cpp writes as non-UTF-8, refused by bankML); the chat grammar 173 of 173 (20 refused by both, 20 with the same message; 1 non-UTF-8 refused); the rest byte-identical, and all 296 grammars parse
+schema oracle: 3 templates
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.07s
+## oracle_json_schema
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+schema oracle (Bonsai-8B-Q1_0): 28 of 28 constrained answers token-identical to llama-server b11192 (1104 tokens, 176 redrawn under the mask; grammar 3.29 ms per token) — 662 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 663.80s
+## oracle_json_schema_ternary
+schema oracle (Ternary-Bonsai-8B-Q2_0_g64): 11 of 11 constrained answers token-identical to llama-server b11192 (262 tokens, 37 redrawn under the mask; grammar 6.09 ms per token) — 137 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 137.69s
+## oracle_json_schema_o4
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+schema oracle (Bonsai-1.7B-Q1_0): 56 of 56 constrained answers token-identical to llama-server b11192 (2738 tokens, 457 redrawn under the mask; grammar 3.49 ms per token) — 437 s
+schema oracle (SmolLM2-135M-Instruct-F16): 56 of 56 constrained answers token-identical to llama-server b11192 (2603 tokens, 487 redrawn under the mask; grammar 1.09 ms per token) — 93 s
+schema oracle (mindx-gen39-F16): 56 of 56 constrained answers token-identical to llama-server b11192 (2515 tokens, 669 redrawn under the mask; grammar 2.04 ms per token) — 84 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 615.82s
+## oracle_json_content
+json content oracle (qwen3): 30063 of 30063 raw texts give llama.cpp b11192's content and llama-server's message (36 reasoning-block texts refused by its parser, unreachable under the grammar)
+json content oracle (smollm2): 30063 of 30063 raw texts give llama.cpp b11192's content and llama-server's message (36 reasoning-block texts refused by its parser, unreachable under the grammar)
+json content oracle (chatml): 30063 of 30063 raw texts give llama.cpp b11192's content and llama-server's message (36 reasoning-block texts refused by its parser, unreachable under the grammar)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.49s
+## oracle_persona_layer
+persona oracle (dir: digest 253081aad5ccf138…): 27 of 27 answers of the created mindx-gen39 to the user's turns alone token-identical to llama-server b11192 given promote.py's persona as the system message
+persona oracle (alias: digest 253081aad5ccf138…): 27 of 27 answers of the created mindx-gen39 to the user's turns alone token-identical to llama-server b11192 given promote.py's persona as the system message
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 282.47s
+## gpu_q1_0_mat_vec_bit_exact
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 64×128: 64 of 64 rows bit-exact against the CPU kernel (1.39 ms; CPU 1 thread 0.00 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 1000×512: 1000 of 1000 rows bit-exact against the CPU kernel (0.72 ms; CPU 1 thread 0.05 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 4096×4096: 4096 of 4096 rows bit-exact against the CPU kernel (3.58 ms; CPU 1 thread 3.24 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 1024×12288: 1024 of 1024 rows bit-exact against the CPU kernel (4.15 ms; CPU 1 thread 2.94 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec 12288×4096: 12288 of 12288 rows bit-exact against the CPU kernel (6.96 ms; CPU 1 thread 7.97 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 64×128: 64 of 64 rows bit-exact against the CPU kernel (0.44 ms; CPU 1 thread 0.00 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 1000×512: 1000 of 1000 rows bit-exact against the CPU kernel (0.49 ms; CPU 1 thread 0.11 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 4096×4096: 4096 of 4096 rows bit-exact against the CPU kernel (2.77 ms; CPU 1 thread 2.00 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 1024×12288: 1024 of 1024 rows bit-exact against the CPU kernel (2.03 ms; CPU 1 thread 2.38 ms)
+gpu AMD Radeon Vega 3 Graphics (RADV RAVEN2): q1_0_mat_vec8 12288×4096: 12288 of 12288 rows bit-exact against the CPU kernel (6.19 ms; CPU 1 thread 6.02 ms)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.79s
+## oracle_train_script
+train oracle: author stage 84 of 84 scripts byte-identical to mindXtrain's scripts.py
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.02s
+## oracle_train_imprint
+train oracle: score stage 3000 of 3000 imprint reports identical to mindXtrain's score_imprint (lexical path)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.16s
+## oracle_ggml_b11192_real_bonsai_1_7b
+oracle: 197 tensors / 1719904256 weights dequantized bit-exact; 788 q8_0 rows byte-exact; 788 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 788/788
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 9.22s
+## oracle_ggml_b11192_real_bonsai_8b_q1_0
+oracle: 254 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot and vec_dot_act bit-exact vs ggml AVX2; generic port == ggml generic in 762/762
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 43.37s
+## oracle_ggml_b11192_real_ternary_bonsai_8b
+oracle: 254 Q2_0 tensors / 8188239872 weights dequantized bit-exact; 762 q8_0 rows byte-exact; 762 vec_dot_ref, vec_dot_act (AVX2) and scalar bit-exact vs ggml haswell; no-FMA model == ggml x64 in 762/762
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 41.07s
+## oracle_ggml_b11192_f16
+f16 oracle: 211 of 211 F16 tensors widened bit-exact; 552268 of 552268 mul_mat elements bit-exact against the shipped ggml b11192 (87 products: 61 through llamafile_sgemm's tinyBLAS, 26 through ggml_vec_dot_f16)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 3.92s
+## oracle_tokenizer_smollm
+tokenizer oracle (SmolLM2-135M-Instruct-F16.gguf, Smollm): 4346 of 4346 cases token-identical to llama.cpp b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.25s
+## oracle_chat_template_chatml
+chat-template oracle (SmolLm2): 317 of 317 conversations byte-identical to llama.cpp b11192
+chat-template oracle (ChatMl): 317 of 317 conversations byte-identical to llama.cpp b11192
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.01s
+## oracle_forward_model_bonsai_1_7b
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 35% of each 1-bit matrix's rows
+forward oracle: Bonsai-1.7B-Q1_0: whole model 840 of 840 rows (28 layers' l_out, result_norm, logits × 28 tokens; greedy token 28 of 28) bit-exact against the shipped ggml b11192 — 3.9 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 4.98s
+## oracle_forward_model_llama_f16
+forward oracle: SmolLM2-135M-Instruct-F16: whole model 800 of 800 rows (30 layers' l_out, result_norm, logits × 25 tokens; greedy token 25 of 25) bit-exact against the shipped ggml b11192 — 0.3 s, 4 threads
+forward oracle: mindx-gen39-F16: whole model 800 of 800 rows (30 layers' l_out, result_norm, logits × 25 tokens; greedy token 25 of 25) bit-exact against the shipped ggml b11192 — 0.8 s, 4 threads
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 1.27s
+## oracle_llama_server_bonsai_1_7b
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 31% of each 1-bit matrix's rows
+greedy oracle: Bonsai-1.7B-Q1_0: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (170 tokens, ends of turn included) — 31 s, 4 threads
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+sample oracle: Bonsai-1.7B-Q1_0: 40 of 40 seeded continuations identical to llama-server b11192's (1148 tokens; top-k, top-p, min-p, temperature, the mt19937 draw)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 169.83s
+## oracle_llama_server_llama_f16
+greedy oracle: SmolLM2-135M-Instruct-F16: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (223 tokens, ends of turn included) — 7 s, 4 threads
+greedy oracle: long-SmolLM2-135M-Instruct-F16: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (162 tokens, ends of turn included) — 11 s, 4 threads
+greedy oracle: deep-SmolLM2-135M-Instruct-F16: 3 of 3 chat prompts generate llama-server b11192's tokens exactly (600 tokens, ends of turn included) — 20 s, 4 threads
+sample oracle: SmolLM2-135M-Instruct-F16: 40 of 40 seeded continuations identical to llama-server b11192's (1189 tokens; top-k, top-p, min-p, temperature, the mt19937 draw)
+greedy oracle: mindx-gen39-F16: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (288 tokens, ends of turn included) — 9 s, 4 threads
+greedy oracle: long-mindx-gen39-F16: 6 of 6 chat prompts generate llama-server b11192's tokens exactly (288 tokens, ends of turn included) — 13 s, 4 threads
+greedy oracle: deep-mindx-gen39-F16: 3 of 3 chat prompts generate llama-server b11192's tokens exactly (600 tokens, ends of turn included) — 19 s, 4 threads
+sample oracle: mindx-gen39-F16: 40 of 40 seeded continuations identical to llama-server b11192's (1234 tokens; top-k, top-p, min-p, temperature, the mt19937 draw)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 145.90s
+## oracle_native_serve_o4
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 30% of each 1-bit matrix's rows
+native serve oracle: Bonsai-1.7B-Q1_0: 9 of 9 conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — 69 s
+bankml: GPU AMD Radeon Vega 3 Graphics (RADV RAVEN2) verified; it computes 29% of each 1-bit matrix's rows
+json oracle (Bonsai-1.7B-Q1_0): 23 of 23 constrained answers token-identical to llama-server b11192 (692 tokens, 144 redrawn under the mask; grammar 6.48 ms per token) — 128 s
+native serve oracle: SmolLM2-135M-Instruct-F16: 9 of 9 conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — 14 s
+json oracle (SmolLM2-135M-Instruct-F16): 23 of 23 constrained answers token-identical to llama-server b11192 (978 tokens, 96 redrawn under the mask; grammar 0.91 ms per token) — 35 s
+native serve oracle: mindx-gen39-F16: 9 of 9 conversation turns identical to llama-server b11192's /v1/chat/completions (text, token counts, prompt-cache reuse) — 18 s
+json oracle (mindx-gen39-F16): 23 of 23 constrained answers token-identical to llama-server b11192 (900 tokens, 114 redrawn under the mask; grammar 1.50 ms per token) — 30 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 296.47s
+## ab_vs_ggml
+GEMV 12288x4096, ns/block min/median: bankml mat_vec 10.21/10.56 (1.017x ggml median)
+GEMV 12288x4096, ns/block min/median: ggml b11192 10.25/10.74 | bankml vec_dot 10.85/11.62 (0.924x) | bankml vec_dot_act 10.15/10.58 (1.015x)
+prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair 10.39/10.62 | bankml 1x4 tile 9.16/9.67 (1.098x) | bankml Q8Act tile 8.57/8.65 (1.227x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.96s
+## ab_vs_ggml_q2_0
+decode GEMV, 1 thread, ns/block (64 weights) min/median, ms/matmul = median:
+  blk.0.attn_q.weight          4096x4096  ggml  34.14/ 34.57 (    9.1 ms) | bankml  3.52/ 3.59 (   0.9 ms) |  9.63x
+  blk.0.attn_k.weight          1024x4096  ggml  34.25/ 34.61 (    2.3 ms) | bankml  3.45/ 3.52 (   0.2 ms) |  9.85x
+  blk.0.attn_output.weight     4096x4096  ggml  34.58/ 35.97 (    9.4 ms) | bankml  3.57/ 3.66 (   1.0 ms) |  9.82x
+  blk.0.ffn_gate.weight       12288x4096  ggml  34.31/ 34.77 (   27.3 ms) | bankml  3.57/ 3.61 (   2.8 ms) |  9.63x
+  blk.0.ffn_down.weight        4096x12288 ggml  34.49/ 34.72 (   27.3 ms) | bankml  3.57/ 3.60 (   2.8 ms) |  9.63x
+  output.weight              151669x4096  ggml  34.73/ 35.01 (  339.8 ms) | bankml  3.63/ 3.65 (  35.4 ms) |  9.60x
+activation n=4096: q8_0 quantize 27.2 µs + bankml layout 7.6 µs (median)
+activation n=12288: q8_0 quantize 95.7 µs + bankml layout 20.1 µs (median)
+prefill 1024x4096 x 32 cols, ns/(block·col) min/median: ggml per-pair 34.54/34.72 | bankml mat_vec per column 3.50/3.53 (9.83x) | bankml 1x4 tile 2.79/2.79 (12.42x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 4.63s
+## bench_q1_0_prefill_act
+prefill 1024x4096 x 32 ns/(block·col) min/median: 1x4 (q8 bytes) 9.20/9.27 | 1x4 sel (Q8Act) 8.19/8.35 (1.110x)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 0.17s
+## bench_memory_floor
+1 thread(s): 16.59 GB/s read → floor for one ternary token (2.13 GB) 0.128 s, one 1-bit token (1.06 GB) 0.064 s
+2 thread(s): 17.41 GB/s read → floor for one ternary token (2.13 GB) 0.122 s, one 1-bit token (1.06 GB) 0.061 s
+3 thread(s): 17.47 GB/s read → floor for one ternary token (2.13 GB) 0.122 s, one 1-bit token (1.06 GB) 0.061 s
+4 thread(s): 17.37 GB/s read → floor for one ternary token (2.13 GB) 0.123 s, one 1-bit token (1.06 GB) 0.061 s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 1.66s
+## decode_budget_q1_0
+decode budget: 253 Q1_0 matmuls, 7567003648 weights (1.06 GB of blocks) per token
+  1 thread(s): ggml b11192 0.626/0.629 s/token (min/median) | bankml 0.626/0.627 | 1.00x | matmul-only ceiling ggml 1.60, bankml 1.60 tok/s
+  2 thread(s): ggml b11192 0.433/0.475 s/token (min/median) | bankml 0.406/0.412 | 1.15x | matmul-only ceiling ggml 2.31, bankml 2.46 tok/s
+  3 thread(s): ggml b11192 0.381/0.416 s/token (min/median) | bankml 0.385/0.448 | 0.93x | matmul-only ceiling ggml 2.62, bankml 2.60 tok/s
+  4 thread(s): ggml b11192 0.370/0.378 s/token (min/median) | bankml 0.379/0.382 | 0.99x | matmul-only ceiling ggml 2.70, bankml 2.64 tok/s
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 15.56s
+## decode_budget_q2_0
+decode budget: 253 Q2_0 matmuls, 7567003648 weights (2.13 GB of blocks) per token
+  1 thread(s): ggml b11192 4.133/4.419 s/token (min/median) | bankml 0.431/0.438 s/token | 9.58x | matmul-only ceiling ggml 0.24, bankml 2.32 tok/s
+      attn_k       ggml  0.088 s  bankml  0.009 s  (mean of 3 passes)
+      attn_output  ggml  0.349 s  bankml  0.035 s  (mean of 3 passes)
+      attn_q       ggml  0.346 s  bankml  0.035 s  (mean of 3 passes)
+      attn_v       ggml  0.086 s  bankml  0.009 s  (mean of 3 passes)
+      ffn_down     ggml  1.028 s  bankml  0.105 s  (mean of 3 passes)
+      ffn_gate     ggml  1.035 s  bankml  0.105 s  (mean of 3 passes)
+      ffn_up       ggml  1.048 s  bankml  0.105 s  (mean of 3 passes)
+      output       ggml  0.415 s  bankml  0.035 s  (mean of 3 passes)
+  3 thread(s): ggml b11192 2.254/2.259 s/token (min/median) | bankml 0.243/0.271 s/token | 9.26x | matmul-only ceiling ggml 0.44, bankml 4.11 tok/s
+      attn_k       ggml  0.047 s  bankml  0.006 s  (mean of 3 passes)
+      attn_output  ggml  0.183 s  bankml  0.021 s  (mean of 3 passes)
+      attn_q       ggml  0.183 s  bankml  0.021 s  (mean of 3 passes)
+      attn_v       ggml  0.046 s  bankml  0.006 s  (mean of 3 passes)
+      ffn_down     ggml  0.548 s  bankml  0.062 s  (mean of 3 passes)
+      ffn_gate     ggml  0.557 s  bankml  0.064 s  (mean of 3 passes)
+      ffn_up       ggml  0.552 s  bankml  0.063 s  (mean of 3 passes)
+      output       ggml  0.208 s  bankml  0.019 s  (mean of 3 passes)
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 31.68s
+## serve_oracle_ollama_shape
+ollama-shape oracle (Bonsai-8B-Q1_0 as 'bonsai-8b-q1_0'): 9 of 9 turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions and llama-server b11192's record (text, prompt/completion counts, cache reuse); 3 turns unchanged after unload and reload — 498 s
+## o4_live (serve_oracle + json_oracle --bankml on Bonsai-1.7B, SmolLM2-135M-Instruct, mindx-gen39)
+ollama-shape oracle (Bonsai-1.7B-Q1_0 as 'bonsai-1.7b-q1_0'): 9 of 9 turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions and llama-server b11192's record (text, prompt/completion counts, cache reuse); 3 turns unchanged after unload and reload — 177 s
+json live oracle (Bonsai-1.7B-Q1_0): 8 of 8 answers through bankml serve --native (/v1 response_format and grammar, streamed once; /api/chat format "json") identical to llama-server b11192's record (content, finish, prompt/completion counts) — 50 s
+json schema live oracle: 19 of 19 answers through bankml serve --native (/v1 response_format json_schema, top-level json_schema and json_object with a schema, one streamed; /api/chat format <schema>) identical to llama-server b11192's record (content, finish, prompt/completion counts) — 165 s
+ollama-shape oracle (SmolLM2-135M-Instruct-F16 as 'smollm2-135m-instruct-f16'): 9 of 9 turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions and llama-server b11192's record (text, prompt/completion counts, cache reuse); 3 turns unchanged after unload and reload — 35 s
+json live oracle (SmolLM2-135M-Instruct-F16): 8 of 8 answers through bankml serve --native (/v1 response_format and grammar, streamed once; /api/chat format "json") identical to llama-server b11192's record (content, finish, prompt/completion counts) — 17 s
+json schema live oracle: 19 of 19 answers through bankml serve --native (/v1 response_format json_schema, top-level json_schema and json_object with a schema, one streamed; /api/chat format <schema>) identical to llama-server b11192's record (content, finish, prompt/completion counts) — 37 s
+ollama-shape oracle (mindx-gen39-F16 as 'mindx-gen39'): 9 of 9 turns identical through /api/chat (NDJSON for conversation 1), /v1/chat/completions and llama-server b11192's record (text, prompt/completion counts, cache reuse); 3 turns unchanged after unload and reload — 44 s
+json live oracle (mindx-gen39-F16): 8 of 8 answers through bankml serve --native (/v1 response_format and grammar, streamed once; /api/chat format "json") identical to llama-server b11192's record (content, finish, prompt/completion counts) — 16 s
+json schema live oracle: 19 of 19 answers through bankml serve --native (/v1 response_format json_schema, top-level json_schema and json_object with a schema, one streamed; /api/chat format <schema>) identical to llama-server b11192's record (content, finish, prompt/completion counts) — 36 s
+## persona_oracle_live
+persona live oracle: 144 of 144 answers from the created mindx-gen39 (FROM the merged directory, and promote.py's Modelfile FROM mindx-gen39 in place) through /api/chat, /api/generate and /v1 — the user's turns only, the persona from the layer — identical to llama-server b11192 given the persona as the system message (text, finish, prompt and completion counts); /api/ps names mindx-gen39:latest — 776 s
+## json_oracle_live
+json live oracle (Bonsai-8B-Q1_0): 8 of 8 answers through bankml serve --native (/v1 response_format and grammar, streamed once; /api/chat format "json") identical to llama-server b11192's record (content, finish, prompt/completion counts) — 154 s
+## json_schema_oracle_live
+# continuation — 2026-10-04T06:36:04Z: the run above was stopped by Claude Code's idle memory guard (not a failure) as json_schema_oracle_live began; the remaining stages ran next, from the same tree and build, in the foreground, with BANKML_GPU=off (the Vega 3 worker's memory, taken from system RAM, is what ran this laptop out; the GPU path is bit-exact to the CPU path by its own oracle, so the answers are the same)
+## json_schema_oracle_live
+json schema live oracle: 19 of 19 answers through bankml serve --native (/v1 response_format json_schema, top-level json_schema and json_object with a schema, one streamed; /api/chat format <schema>) identical to llama-server b11192's record (content, finish, prompt/completion counts) — 472 s
+## capi_chat_oracle
+capi refusal: Qwen3-0.6B-Q8_0 refused: refuse: Qwen3-0.6B-Q8_0.gguf: bankML's native forward pass does not play it: weights are Q8_0: the forward pass runs Q1_0, Q2_0_g64 and F16 (Q8_0, BF16 and Q4_K are O3)
+capi refusal: a file its FORK.json does not pin refused: refuse: Bonsai-8B-Q1_0.gguf has no sha256 record in FORK.json: unpinned, refused
+capi chat oracle: Ternary-Bonsai-8B-Q2_0_g64: 9 of 9 turns through bankml_chat identical to bankml serve --native's /v1/chat/completions (text, streamed pieces, prompt/completion counts, cache reuse, finish, receipt response/request/model sha256); library log via bankml_set_log: yes — serve 136 s, C 127 s
+capi chat oracle: Bonsai-8B-Q1_0: 9 of 9 turns through bankml_chat identical to llama-server b11192's record (text, streamed pieces, counts, cache reuse, finish; response_sha256 = sha256 of llama-server's text) — 208 s
+capi chat oracle: Bonsai-1.7B-Q1_0: 9 of 9 turns through bankml_chat identical to llama-server b11192's record (text, streamed pieces, counts, cache reuse, finish; response_sha256 = sha256 of llama-server's text) — 68 s
+capi chat oracle: SmolLM2-135M-Instruct-F16: 9 of 9 turns through bankml_chat identical to llama-server b11192's record (text, streamed pieces, counts, cache reuse, finish; response_sha256 = sha256 of llama-server's text) — 16 s
+capi chat oracle: mindx-gen39-F16: 9 of 9 turns through bankml_chat identical to llama-server b11192's record (text, streamed pieces, counts, cache reuse, finish; response_sha256 = sha256 of llama-server's text) — 21 s
+## oracle_convert_b11192 mindx-gen39
+bankml convert .models/convert/mindx-gen39: 272 tensors, 30 keys, 270885600 bytes, sha256 6b64c748d96ad26fd72402299bd27b2ae82f489bd0469498dd18eb6054058266; llama.cpp b11192: 6b64c748d96ad26fd72402299bd27b2ae82f489bd0469498dd18eb6054058266
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 145 filtered out; finished in 3.64s
+# gate done

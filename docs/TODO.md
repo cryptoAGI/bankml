@@ -137,8 +137,24 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
   from the Bonsai template on 4 of 317 conversations.
 - [ ] Decode on the F16 models at llama-server's speed: 38 vs 41 tok/s on SmolLM2 (the pool's condvar hand-off is the
   suspect; a spin was measured and rejected on this SMT laptop, PERFORMANCE.md).
-- [ ] mindX's seam for its lineage: convert-and-pin each new generation (O5's Rust converter and `bankml create`, with
-  the persona `SYSTEM` from the Modelfile recorded in FORK.json), then `promote.py --to bankml`.
+- [x] mindX's seam for its lineage: convert-and-pin each new generation (O5's Rust converter and `bankml create`, with
+  the persona `SYSTEM` as a derived model's layer) — **0.3.5**. Next, in mindX: `promote.py --to bankml`.
+
+## 0.3.5 — JSON schemas, and `bankml create` (O6b, O5, done)
+
+- [x] **JSON schemas** (`schema.rs`): the grammar on each template (173 schemas × 3 templates, llama.cpp's own code
+  as the oracle); answers token-identical on all five native models (28, 11, 56 × 3), length cuts included; the
+  content rule against llama.cpp's own parser (30,063 texts per template; two fixes: unfinished escapes, the raw-text
+  fallback for an empty parse).
+- [x] **`bankml convert`** (byte-identical to b11192's converter, run directly on gen39 and SmolLM2) and **`bankml
+  create`** (`/api/create`, `/api/delete`, `/api/copy`): promote.py's persona Modelfile end to end, 27 of 27 two ways.
+- [x] O5's gaps: `num_ctx` fitted as Ollama fits it (oldest messages first; the rest refused), `/api/ps` names the
+  derived model.
+- [ ] Tokens past `num_ctx` during an answer: Ollama's ContextShift (O2).
+- [ ] `ADAPTER` in a Modelfile (LoRA merge in Rust, against PEFT's merge) — today: merge first, `FROM` the directory.
+- [ ] mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1): `serve --to bankml`, `imprint-bankml`) needs **O2 first**:
+  `mindx-gen39` degenerates into repetition without a penalty, and the imprint gate uses `repetition_penalty 1.3` and
+  `no_repeat_ngram_size 3` (the latter's oracle is transformers' `generate`).
 
 ## The road from 0.3.0 to 1.0.0
 
@@ -170,12 +186,13 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   masks) and llama-server's answers, greedy and seeded (Bonsai-8B Q1_0 23 of 23; ternary 13 of 13, 534 tokens). The surfaces:
   `format: "json"` on `/api/*`, `response_format`, `json_schema` and `grammar` on `/v1`, `bankml_chat` and
   `bankml generate --json`.
-- [x] **JSON schemas, the grammar** (O6b, branch `o6b-json-schema`): `common/json-schema.cpp` +
+- [x] **JSON schemas, the grammar** (O6b, **0.3.5**): `common/json-schema.cpp` +
   `json-schema-to-grammar.cpp` and the chat parser's wrapping ported (`bankML/schema.rs`); text oracle = llama.cpp's
-  own code in libllama-common (`testing/schema_oracle.py`): 173 of 173 schemas identical, bare and wrapped; wired to
+  own code in libllama-common (`testing/schema_oracle.py`): 173 of 173 schemas identical, bare and wrapped, on each of
+  the three templates; wired to
   `format: {schema}`, `response_format.json_schema`, `json_object` + `schema`, top-level `json_schema`, `bankml_chat`.
-- [ ] **JSON schemas, the answers**: `testing/json_schema_oracle.py --record` on both 8B models, then
-  `oracle_json_schema*` and `json_schema_oracle_live` in the gate; then tool calls.
+- [x] **JSON schemas, the answers** (**0.3.5**): llama-server's answers token-identical on both 8B models and the
+  three O4 models (`oracle_json_schema*`, live in the gate). Next: tool calls.
 - [ ] A faster whole-vocabulary mask: a byte trie over the token pieces, so each grammar stack walks shared prefixes
   once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
   over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.
@@ -212,9 +229,9 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   `Q4_K_M`, so that catalogue models run natively (O3).
 - [ ] The encoder graph (XLM-R: LayerNorm, bidirectional attention, CLS pooling) with `/api/embed` and
   `/v1/embeddings`; the oracle is llama.cpp's bge-m3 embedding output (O7).
-- [ ] Grammar beyond JSON: a GBNF subset for JSON schemas, then tool calls through the template (O6).
-- [ ] A GGUF writer (merged models from mindXtrain; repacked forks); the safetensors → GGUF converter for the merged
-  SmolLM2 (O5).
+- [ ] Grammar beyond JSON: JSON schemas **done (0.3.5)**; tool calls through the template next (O6).
+- [ ] A GGUF writer for repacked forks; the safetensors → GGUF converter for the merged SmolLM2 is **done (0.3.5,
+  O5)**.
 - [ ] Each architecture and format gets the full oracle set (the whole model, greedy, sampling, conversations) in the
   gate.
 
@@ -225,8 +242,8 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   each identical to mindXtrain's Python.
 - [ ] **LoRA training on the CPU**: a backward pass and AdamW for the 135M–0.6B imprint recipe. Gradients are checked
   against PyTorch f32 within a stated bound, and the recall gate's verdict must agree.
-- [ ] `bankml create` (O5): a Modelfile subset (`FROM` a pinned GGUF, `SYSTEM`, `PARAMETER`, `stop`) recorded in
-  FORK.json; then mindXtrain's `promote.py --to bankml` replaces `ollama create`.
+- [x] `bankml create` (O5, **0.3.5**): a Modelfile subset as a derived model over a pinned base. Next, in mindX:
+  `promote.py --to bankml` replaces `ollama create`.
 - [ ] One generation end to end in Rust: author → imprint → probe → score → verdict → GGUF. Also use the exact
   pipeline to find out why the gate has refused every generation since 39.
 

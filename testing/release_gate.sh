@@ -31,7 +31,9 @@ out=testing/results/$v.txt
   if [ -n "${BANKML_GGML_LIB:-}" ]; then
     # O6b: the JSON-schema grammar text, from b11192's own libllama-common (no model): re-recorded when the source is here
     if [ -n "${LLAMA_SRC:-}" ]; then python3 -B testing/schema_oracle.py 2>/dev/null | tail -3; fi
-    for t in oracle_tokenizer oracle_chat_template oracle_forward_embed_norm oracle_forward_qkv_rope oracle_forward_attention oracle_forward_attention_tiled oracle_forward_attention_split oracle_forward_swiglu_sweep oracle_forward_model oracle_forward_model_ternary oracle_greedy_llama_server oracle_greedy_llama_server_ternary oracle_greedy_llama_server_long oracle_greedy_llama_server_deep oracle_sample_llama_server oracle_native_serve oracle_grammar_masks oracle_json_mode oracle_json_mode_ternary oracle_schema_grammars oracle_json_schema oracle_json_schema_ternary gpu_q1_0_mat_vec_bit_exact oracle_train_script oracle_train_imprint oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
+    # 0.3.5: the content rule from llama.cpp's own chat parser, over every prefix of every recorded constrained answer
+    if [ -n "${LLAMA_SRC:-}" ]; then python3 -B testing/content_oracle.py 2>/dev/null | tail -3; fi
+    for t in oracle_tokenizer oracle_chat_template oracle_forward_embed_norm oracle_forward_qkv_rope oracle_forward_attention oracle_forward_attention_tiled oracle_forward_attention_split oracle_forward_swiglu_sweep oracle_forward_model oracle_forward_model_ternary oracle_greedy_llama_server oracle_greedy_llama_server_ternary oracle_greedy_llama_server_long oracle_greedy_llama_server_deep oracle_sample_llama_server oracle_native_serve oracle_grammar_masks oracle_json_mode oracle_json_mode_ternary oracle_schema_grammars oracle_json_schema oracle_json_schema_ternary oracle_json_schema_o4 oracle_json_content oracle_persona_layer gpu_q1_0_mat_vec_bit_exact oracle_train_script oracle_train_imprint oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
              oracle_ggml_b11192_f16 oracle_tokenizer_smollm oracle_chat_template_chatml oracle_forward_model_bonsai_1_7b oracle_forward_model_llama_f16 \
              oracle_llama_server_bonsai_1_7b oracle_llama_server_llama_f16 oracle_native_serve_o4 \
              ab_vs_ggml ab_vs_ggml_q2_0 bench_q1_0_prefill_act bench_memory_floor decode_budget_q1_0 decode_budget_q2_0; do
@@ -48,7 +50,11 @@ out=testing/results/$v.txt
     for m in "Bonsai-1.7B-Q1_0" "SmolLM2-135M-Instruct-F16" "mindx-gen39-F16 mindx-gen39"; do
       python3 -B testing/serve_oracle.py --bankml $m || { echo "FAILED: serve_oracle --bankml $m"; exit 1; }
       python3 -B testing/json_oracle.py --bankml $m || { echo "FAILED: json_oracle --bankml $m"; exit 1; }
+      python3 -B testing/json_schema_oracle.py --bankml $m || { echo "FAILED: json_schema_oracle --bankml $m"; exit 1; }
     done
+    # 0.3.5 (O5): the created mindx-gen39 with promote.py's persona layer, live: /api/chat, /api/generate, /v1, /api/ps
+    echo "## persona_oracle_live"
+    python3 -B testing/persona_oracle.py --bankml || { echo "FAILED: persona_oracle_live"; exit 1; }
     # 0.3.3: JSON mode and grammars live — /v1 response_format (streamed once) and grammar, /api/chat format "json"
     echo "## json_oracle_live"
     python3 -B testing/json_oracle.py --bankml || { echo "FAILED: json_oracle_live"; exit 1; }

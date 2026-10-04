@@ -151,6 +151,9 @@ pub struct Opts {
     pub flat: Json,
     pub max: Option<usize>,
     pub stops: Vec<String>,
+    /// 0.3.5: `num_ctx`, when the request (or a derived model's layer) sets it: the prompt is fitted to it as Ollama
+    /// fits it (`Native::prompt_fit`)
+    pub num_ctx: Option<usize>,
 }
 
 /// Resource options: they change how the work is scheduled, not the answer bankML gives (its kernels' bits do not
@@ -161,7 +164,7 @@ const SAMPLING: [&str; 10] = ["temperature", "top_k", "top_p", "min_p", "seed", 
 
 pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
     let mut flat = Vec::new();
-    let (mut max, mut st) = (None, Vec::new());
+    let (mut max, mut st, mut nctx) = (None, Vec::new(), None);
     let fields: &[(String, Json)] = match o {
         None | Some(Json::Null) => &[],
         Some(Json::Obj(f)) => f,
@@ -183,6 +186,9 @@ pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
                 if n > n_ctx as f64 {
                     return Err(format!("num_ctx {n} is larger than the context this server holds ({n_ctx}); restart bankml serve with --ctx {n} if it fits in memory"));
                 }
+                if n >= 1.0 {
+                    nctx = Some(n as usize);
+                }
             }
             "stop" => st = stops(Some(v))?,
             "mirostat" if num(k, v)? != 0.0 => return Err("mirostat: not reproduced; bankML reproduces llama.cpp's top-k, top-p, min-p and temperature".into()),
@@ -192,7 +198,7 @@ pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
             k => return Err(format!("options.{k}: not an option bankML knows; it refuses rather than ignore what might change the answer")),
         }
     }
-    Ok(Opts { flat: Json::Obj(flat), max, stops: st })
+    Ok(Opts { flat: Json::Obj(flat), max, stops: st, num_ctx: nctx })
 }
 
 /// What the request asks for that the native forward pass does not do, refused before any model is loaded.
@@ -326,8 +332,19 @@ fn ps(rs: &Residency) -> String {
     let Some(e) = rs.reg.entries.iter().find(|e| e.name == l.name) else { return "{\"models\": []}".into() };
     // resident for good: Ollama writes now + the largest duration (≈ 292 years)
     let exp = expires.unwrap_or_else(|| SystemTime::now() + Duration::from_secs(292 * 365 * 86400));
-    format!("{{\"models\": [{{\"name\": {t}, \"model\": {t}, \"size\": {}, \"digest\": {}, \"details\": {}, \"expires_at\": \"{}\", \"size_vram\": 0, \"context_length\": {}}}]}}",
-            l.size, jstr(&l.sha256), details(e), rfc3339(exp), rs.n_ctx, t = jstr(&tag(e)))
+    // 0.3.5: named as Ollama names its runner — the model whose request loaded it (a derived model's own name, its
+    // manifest digest and parent), with that request's context
+    let (name, n_ctx) = rs.shown().unwrap_or_else(|| (tag(e), rs.n_ctx));
+    let derived = rs.derived.find(name.trim_end_matches(":latest")).filter(|(_, de)| de.name == e.name);
+    let (digest, det) = match &derived {
+        Some((d, _)) => (jstr(&format!("sha256:{}", d.digest)),
+                         details(e).replacen("\"parent_model\": \"\"", &format!("\"parent_model\": {}", jstr(&format!("{}:latest", d.base.name))), 1)),
+        None => (jstr(&l.sha256), details(e)),
+    };
+    // a record left by other weights (they were unloaded since) names nothing here
+    let (name, n_ctx) = if derived.is_some() || name == tag(e) { (name, n_ctx) } else { (tag(e), rs.n_ctx) };
+    format!("{{\"models\": [{{\"name\": {t}, \"model\": {t}, \"size\": {}, \"digest\": {digest}, \"details\": {det}, \"expires_at\": \"{}\", \"size_vram\": 0, \"context_length\": {n_ctx}}}]}}",
+            l.size, rfc3339(exp), t = jstr(&name))
 }
 
 fn show(rs: &Residency, e: &Entry) -> Result<String, String> {
@@ -423,6 +440,8 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
             match rs.acquire(&run, e) {
                 Ok((_, ns)) => {
                     rs.touch(&e.name, ka);
+                    let nctx = options(req.get("options"), rs.n_ctx).ok().and_then(|o| o.num_ctx).unwrap_or(rs.n_ctx);
+                    rs.shown_as(&model, nctx, ns > 0);
                     ("load", ns)
                 }
                 Err((code, m)) => return err(c, code, &m),
@@ -462,6 +481,7 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
         Ok(x) => x,
         Err((code, m)) => return err(c, code, &m),
     };
+    rs.shown_as(&model, o.num_ctx.unwrap_or(rs.n_ctx), load_ns > 0);
     let r = answer(c, &l, &req, msgs.as_ref(), o, constraint, chat, stream, load_ns, &model, t);
     rs.touch(&e.name, ka);
     r
@@ -470,19 +490,26 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
 #[allow(clippy::too_many_arguments)]
 fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opts, constraint: crate::grammar::Constraint, chat: bool, stream: bool, load_ns: u64, model: &str, mut t: Tally) -> std::io::Result<()> {
     let eng = &l.native;
+    // 0.3.5: under a num_ctx the conversation is fitted as Ollama's chatPrompt fits it (generate goes the same way)
     let prompt = match msgs {
-        Some(m) => eng.prompt(m),
+        Some(m) => eng.prompt_fit(m, o.num_ctx),
         None => {
             let p = req.get("prompt").and_then(Json::as_str).unwrap_or("");
             if req.get("raw").and_then(Json::as_bool).unwrap_or(false) {
-                Ok(eng.tok.encode(p, true))
+                let toks = eng.tok.encode(p, true);
+                match o.num_ctx.filter(|n| toks.len() > *n) {
+                    Some(n) => Err(format!("the raw prompt is {} tokens, more than num_ctx {n}: Ollama would cut tokens out of its middle (num_keep), \
+                                            which bankML does not reproduce; shorten it or raise num_ctx (up to this server's --ctx)", toks.len())),
+                    None => Ok(toks),
+                }
             } else {
+                let msg = |r: &str, c: &str| Json::Obj(vec![("role".into(), Json::Str(r.into())), ("content".into(), Json::Str(c.into()))]);
                 let mut m = Vec::new();
                 if let Some(s) = req.get("system").and_then(Json::as_str).filter(|s| !s.is_empty()) {
-                    m.push(crate::chat::Message::new("system", s));
+                    m.push(msg("system", s));
                 }
-                m.push(crate::chat::Message::new("user", p));
-                eng.template.render(&m).map(|text| eng.tok.encode(&text, true))
+                m.push(msg("user", p));
+                eng.prompt_fit(&Json::Arr(m), o.num_ctx)
             }
         }
     };
@@ -516,7 +543,7 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
             Ok(d) => d,
             Err(m) => return writeln!(c, "{{\"error\": {}}}", jstr(&m)),
         };
-        t.text = content.content(stop.text());
+        t.text = content.content(stop.text(), true);
         t.prompt = d.prompt_tokens as u64;
         t.completion = d.completion_tokens as u64;
         let line = final_line(model, chat, "", d.finish_reason, t.t0.elapsed().as_nanos() as u64, load_ns, Some(&d), Some(&t.receipt(&l.engine, &l.verified)));
@@ -528,7 +555,7 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
         Err(m) => return err(c, 500, &m),
     };
     stop.finish();
-    t.text = content.content(stop.text());
+    t.text = content.content(stop.text(), false);
     t.prompt = d.prompt_tokens as u64;
     t.completion = d.completion_tokens as u64;
     let line = final_line(model, chat, &t.text, d.finish_reason, t.t0.elapsed().as_nanos() as u64, load_ns, Some(&d), Some(&t.receipt(&l.engine, &l.verified)));
