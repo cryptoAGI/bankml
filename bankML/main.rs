@@ -354,6 +354,9 @@ fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sample
     let w = Weights::open(model)?;
     let ends = bankml::native::eog_from_gguf(model, &tok)?;
     let mut sampler = sample.map(bankml::sampler::Sampler::new).transpose()?;
+    if let Some(s) = sampler.as_mut() {
+        prompt.iter().for_each(|&t| s.accept(t)); // O2: the prompt fills the penalties' window, as llama-server's does
+    }
     let t0 = std::time::Instant::now();
     let mut caches = w.caches();
     let mut rn = w.prefill(&mut caches, &prompt, |_, _, _| {})?;
@@ -362,7 +365,11 @@ fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sample
     while n < max {
         let l = w.logits(&rn)?;
         let next = match sampler.as_mut() {
-            Some(s) => s.sample(&l),
+            Some(s) => {
+                let t = s.sample(&l);
+                s.accept(t);
+                t
+            }
             None => l.iter().enumerate().fold(0, |b, (i, &v)| if v > l[b] { i } else { b }) as u32,
         };
         if ends.contains(&next) {

@@ -158,6 +158,10 @@ impl Native {
             return Err(format!("the prompt has {} tokens; the context is {}", prompt.len(), self.n_ctx));
         }
         let mut sampler = Sampler::new(params)?;
+        // O2: llama-server accepts the whole prompt into the penalties' window before the first draw, cached or not
+        for &t in prompt {
+            sampler.accept(t);
+        }
         let mut slot = self.slot.lock().map_err(|_| "the slot is poisoned")?;
         let t0 = Instant::now();
         // llama-server's prompt cache: the longest common prefix, less one when the whole prompt is cached
@@ -194,6 +198,7 @@ impl Native {
                 }
             };
             out.push(next);
+            sampler.accept(next);
             if self.eog.contains(&next) {
                 n += 1; // llama-server counts the end-of-turn token it sampled among the completion tokens
                 finish = "stop";
@@ -259,7 +264,8 @@ pub fn eog_from_gguf(model: &Path, tok: &Tokenizer) -> Result<Vec<u32>, String> 
 }
 
 /// The request's sampling parameters over a model's defaults (llama-server's resolution); a sampler bankML does not
-/// reproduce (penalties, dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason.
+/// reproduce (dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason. O2: the repeat, frequency
+/// and presence penalties and `repeat_last_n` are reproduced (`Sampler::new` refuses what llama-server refuses).
 pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
     let num = |k: &str| match req.get(k) {
         Some(Json::Num(n)) => Some(*n),
@@ -272,11 +278,14 @@ pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
     if let Some(v) = num("min_p") { p.min_p = v as f32 }
     if let Some(v) = num("min_keep") { p.min_keep = v as usize }
     if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
-    for (k, neutral) in [("repeat_penalty", 1.0), ("presence_penalty", 0.0), ("frequency_penalty", 0.0), ("typical_p", 1.0),
-                         ("xtc_probability", 0.0), ("dry_multiplier", 0.0), ("dynatemp_range", 0.0)] {
+    if let Some(v) = num("repeat_last_n") { p.penalty_last_n = v as i64 as i32 }
+    if let Some(v) = num("repeat_penalty") { p.penalty_repeat = v as f32 }
+    if let Some(v) = num("frequency_penalty") { p.penalty_freq = v as f32 }
+    if let Some(v) = num("presence_penalty") { p.penalty_present = v as f32 }
+    for (k, neutral) in [("typical_p", 1.0), ("xtc_probability", 0.0), ("dry_multiplier", 0.0), ("dynatemp_range", 0.0)] {
         if let Some(v) = num(k) {
             if v != neutral {
-                return Err(format!("{k} = {v}: bankML's native engine reproduces llama.cpp's top-k, top-p, min-p and temperature; this sampler is not reproduced yet"));
+                return Err(format!("{k} = {v}: bankML's native engine reproduces llama.cpp's penalties, top-k, top-p, min-p and temperature; this sampler is not reproduced yet"));
             }
         }
     }
@@ -780,6 +789,76 @@ mod tests {
     #[ignore = "needs .models/Ternary-Bonsai-8B-Q2_0_g64.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
     fn oracle_json_schema_ternary() {
         json_replay("Ternary-Bonsai-8B-Q2_0_g64", "schema");
+    }
+
+    /// O2: llama-server b11192's penalties sampler, token for token (testing/penalty_oracle.py): repeat, frequency and
+    /// presence penalties over `repeat_last_n`, greedy and seeded, the prompt in the window. Each request resolves to
+    /// the parameters the server read back, its answer is the server's tokens, and what the server refused is refused
+    /// with its message.
+    fn penalty_replay(stem: &str) {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
+        let rec = std::fs::read_to_string(dir.join(format!("oracle-forward/penalty-{stem}.jsonl"))).unwrap();
+        let ids = |v: &Json, k: &str| -> Vec<u32> { match v.get(k) { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!("no {k}") } };
+        let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n, _ => panic!("no {k}") };
+        let (mut n, mut same, mut refused, mut toks, mut bad) = (0, 0, 0, 0, Vec::new());
+        for line in rec.lines() {
+            let c = Json::parse(line).unwrap();
+            let req = c.get("request").unwrap();
+            n += 1;
+            let resolved = eng.params(req).and_then(|p| crate::sampler::Sampler::new(p.clone()).map(|_| p));
+            if let Some(Json::Str(want)) = c.get("error").and_then(|e| e.get("message")) {
+                match resolved {
+                    Err(m) if m == *want => refused += 1,
+                    other => bad.push(format!("case {n}: llama-server refused ({want}); bankML {:?}", other.map(|_| "accepted"))),
+                }
+                continue;
+            }
+            let p = resolved.unwrap();
+            let g = c.get("params").unwrap();
+            let got_p = (p.temp, p.top_k, p.top_p, p.min_p, p.penalty_last_n, p.penalty_repeat, p.penalty_freq, p.penalty_present, p.seed);
+            let want_p = (num(g, "temperature") as f32, num(g, "top_k") as i32, num(g, "top_p") as f32, num(g, "min_p") as f32, num(g, "repeat_last_n") as i32,
+                          num(g, "repeat_penalty") as f32, num(g, "frequency_penalty") as f32, num(g, "presence_penalty") as f32, num(g, "seed") as u32);
+            assert_eq!(got_p, want_p, "case {n}: the request resolves to the server's parameters");
+            let want = ids(&c, "ids");
+            eng.reset();
+            let max = num(req, "n_predict") as usize;
+            let d = eng.complete(&ids(&c, "prompt_ids"), p, Some(max), None, |_| true).unwrap();
+            // /completion's `tokens` hold what was generated, the end token included when one ended the answer
+            toks += want.len();
+            if d.tokens == want {
+                same += 1;
+            } else {
+                let at = d.tokens.iter().zip(&want).position(|(a, b)| a != b);
+                bad.push(format!("case {n} {}: first difference at {at:?} (bankML {} tokens, llama-server {})", req_text(req), d.tokens.len(), want.len()));
+            }
+        }
+        eprintln!("penalty oracle ({stem}): {same} of {} answers token-identical to llama-server b11192 ({toks} tokens), {refused} refusals with its message",
+                  n - refused);
+        for b in bad.iter().take(12) {
+            eprintln!("  {b}");
+        }
+        assert!(bad.is_empty(), "{} differ", bad.len());
+    }
+
+    fn req_text(r: &Json) -> String {
+        let Json::Obj(f) = r else { return String::new() };
+        f.iter().filter(|(k, _)| !matches!(k.as_str(), "prompt" | "n_predict" | "cache_prompt" | "return_tokens"))
+            .map(|(k, v)| format!("{k}={}", match v { Json::Num(x) => x.to_string(), _ => "…".into() })).collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    #[ignore = "needs .models/{mindx-gen39-F16,Bonsai-1.7B-Q1_0}.gguf + oracle-forward/penalty-*.jsonl (testing/penalty_oracle.py); --release"]
+    fn oracle_penalties() {
+        for stem in std::env::var("BANKML_PENALTY_STEMS").unwrap_or("mindx-gen39-F16,Bonsai-1.7B-Q1_0".into()).split(',') {
+            penalty_replay(stem);
+        }
+    }
+
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-forward/penalty-Bonsai-8B-Q1_0.jsonl (testing/penalty_oracle.py); --release"]
+    fn oracle_penalties_8b() {
+        penalty_replay("Bonsai-8B-Q1_0");
     }
 
     /// 0.3.5: the same on the O4 models — Bonsai-1.7B (the Qwen3 template) and the two ChatML templates, whose schema

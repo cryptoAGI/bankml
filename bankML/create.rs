@@ -212,13 +212,15 @@ fn fmt_f(f: f64) -> String {
 }
 
 /// The parameters bankML reproduces, in the order a manifest keeps them, and whether each is an integer.
-pub const PARAMS: [(&str, bool); 7] = [("temperature", false), ("top_k", true), ("top_p", false), ("min_p", false), ("seed", true), ("num_ctx", true), ("num_predict", true)];
+/// O2 (0.3.6): the penalties join them.
+pub const PARAMS: [(&str, bool); 11] = [("temperature", false), ("top_k", true), ("top_p", false), ("min_p", false), ("seed", true), ("num_ctx", true), ("num_predict", true),
+                                        ("repeat_penalty", false), ("repeat_last_n", true), ("presence_penalty", false), ("frequency_penalty", false)];
 
 /// Why a parameter bankML does not reproduce is refused as a model default.
 fn param_refusal(k: &str) -> String {
     match k {
-        "repeat_penalty" | "presence_penalty" | "frequency_penalty" | "repeat_last_n" | "penalize_newline" | "typical_p" | "tfs_z" | "mirostat" | "mirostat_eta" | "mirostat_tau" | "min_keep" =>
-            format!("PARAMETER {k}: bankML reproduces llama.cpp's temperature, top-k, top-p, min-p and seed; this sampler is not reproduced, so it cannot become a default of the model"),
+        "penalize_newline" | "typical_p" | "tfs_z" | "mirostat" | "mirostat_eta" | "mirostat_tau" | "min_keep" =>
+            format!("PARAMETER {k}: bankML reproduces llama.cpp's penalties, temperature, top-k, top-p, min-p and seed; this sampler is not reproduced, so it cannot become a default of the model"),
         "num_thread" | "num_gpu" | "main_gpu" | "num_batch" | "use_mmap" | "use_mlock" | "low_vram" | "numa" | "f16_kv" | "vocab_only" | "logits_all" | "num_keep" | "num_gqa" | "rope_frequency_base" | "rope_frequency_scale" =>
             format!("PARAMETER {k}: a resource option; it does not change an answer bankML gives, so it is not part of a model (give it to bankml serve)"),
         _ => format!("PARAMETER {k}: not a parameter bankML reproduces (it reproduces {} and stop)", PARAMS.map(|p| p.0).join(", ")),
@@ -873,6 +875,9 @@ pub fn create(name: &str, spec: &Spec, dir: &Path, reg_entries: &[Entry], store:
             "num_ctx" => v.num() < 1.0,
             "num_predict" => v.num() < -2.0,
             "top_k" | "seed" => false,
+            // llama.cpp takes any finite frequency or presence penalty, negative ones too; a repeat penalty must be > 0
+            "frequency_penalty" | "presence_penalty" => !v.num().is_finite(),
+            "repeat_penalty" => v.num() <= 0.0,
             _ => v.num() < 0.0,
         };
         if bad {
@@ -1110,7 +1115,7 @@ mod tests {
         assert_eq!(sp.stop, Some(vec!["<|im_end|>".into(), "END".into()]));
         assert_eq!(sp.license, vec!["MIT".to_string()]);
         assert_eq!(sp.messages, Some(vec![("user".into(), "hi".into())]));
-        for (mf, why) in [("FROM b\nPARAMETER repeat_penalty 1.1", "not reproduced"), ("FROM b\nPARAMETER num_thread 4", "resource option"),
+        for (mf, why) in [("FROM b\nPARAMETER typical_p 0.9", "not reproduced"), ("FROM b\nPARAMETER num_thread 4", "resource option"),
                           ("FROM b\nPARAMETER warp 9", "not a parameter"), ("FROM b\nPARAMETER num_ctx 2048.0", "not an integer"),
                           ("FROM b\nPARAMETER temperature hot", "not a number"), ("FROM b\nADAPTER /x", "LoRA"), ("SYSTEM x", "no FROM"),
                           ("FROM a\nFROM b", "more than one FROM")] {
@@ -1337,7 +1342,7 @@ mod tests {
         assert_eq!(rs.derived.find("p3").unwrap().0.digest, p2.digest);
         // the refusals, with their reasons
         for (body, why) in [(r#"{"model": "x", "modelfile": "FROM base-f16\nADAPTER /lora"}"#, "LoRA"),
-                            (r#"{"model": "x", "modelfile": "FROM base-f16\nPARAMETER repeat_penalty 1.1"}"#, "not reproduced"),
+                            (r#"{"model": "x", "modelfile": "FROM base-f16\nPARAMETER typical_p 0.9"}"#, "not reproduced"),
                             (r#"{"model": "x", "modelfile": "FROM base-f16\nTEMPLATE {{ .Prompt }}"}"#, "TEMPLATE"),
                             (r#"{"model": "base-f16", "from": "base-f16"}"#, "pinned model's name"),
                             (r#"{"model": "x", "from": "base-f16", "quantize": "q4_K_M"}"#, "quantize")] {

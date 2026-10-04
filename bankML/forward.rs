@@ -1608,7 +1608,9 @@ mod tests {
                        (1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0));
             let mut smp = Sampler::new(Params { temp: num(pr, "temperature") as f32, top_k: num(pr, "top_k") as i32,
                                                 top_p: num(pr, "top_p") as f32, min_p: num(pr, "min_p") as f32,
-                                                min_keep: num(pr, "min_keep") as usize, seed: num(pr, "seed") as u32 }).unwrap();
+                                                min_keep: num(pr, "min_keep") as usize, seed: num(pr, "seed") as u32,
+                                                penalty_last_n: num(pr, "repeat_last_n") as i32, penalty_repeat: 1.0,
+                                                penalty_freq: 0.0, penalty_present: 0.0 }).unwrap();
             // the prompt's caches, computed once per prompt and cloned per case
             if prefilled.as_ref().map(|p| p.0 != prompt).unwrap_or(true) {
                 let mut caches = w.caches();

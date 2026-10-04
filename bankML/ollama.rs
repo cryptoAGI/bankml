@@ -158,9 +158,10 @@ pub struct Opts {
 
 /// Resource options: they change how the work is scheduled, not the answer bankML gives (its kernels' bits do not
 /// depend on threads or batch size), so they are accepted and ignored.
-const IGNORED: [&str; 13] = ["num_thread", "num_gpu", "main_gpu", "num_batch", "use_mmap", "use_mlock", "low_vram", "numa", "f16_kv",
-                             "vocab_only", "logits_all", "num_keep", "repeat_last_n"];
-const SAMPLING: [&str; 10] = ["temperature", "top_k", "top_p", "min_p", "seed", "repeat_penalty", "presence_penalty", "frequency_penalty", "typical_p", "min_keep"];
+const IGNORED: [&str; 12] = ["num_thread", "num_gpu", "main_gpu", "num_batch", "use_mmap", "use_mlock", "low_vram", "numa", "f16_kv",
+                             "vocab_only", "logits_all", "num_keep"];
+/// O2: `repeat_last_n` moved here from IGNORED — with the penalties reproduced, it changes the answer.
+const SAMPLING: [&str; 11] = ["temperature", "top_k", "top_p", "min_p", "seed", "repeat_penalty", "repeat_last_n", "presence_penalty", "frequency_penalty", "typical_p", "min_keep"];
 
 pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
     let mut flat = Vec::new();
@@ -595,17 +596,19 @@ mod tests {
         let o = options(Json::parse(r#"{"temperature": 0.3, "top_k": 20, "top_p": 0.9, "min_p": 0.1, "seed": 42, "num_predict": 64, "stop": ["\n\n", "END"], "num_ctx": 2048, "num_thread": 3, "repeat_last_n": 64}"#).as_ref(), 4096).unwrap();
         assert_eq!(o.max, Some(64));
         assert_eq!(o.stops, vec!["\n\n".to_string(), "END".to_string()]);
-        let base = crate::sampler::Params { temp: 0.8, top_k: 40, top_p: 0.95, min_p: 0.05, min_keep: 0, seed: crate::sampler::DEFAULT_SEED };
+        let base = crate::sampler::Params { temp: 0.8, top_k: 40, top_p: 0.95, min_p: 0.05, min_keep: 0, seed: crate::sampler::DEFAULT_SEED,
+                                            penalty_last_n: 64, penalty_repeat: 1.0, penalty_freq: 0.0, penalty_present: 0.0 };
         let p = crate::native::sampling(base.clone(), &o.flat).unwrap();
         assert_eq!((p.temp, p.top_k, p.top_p, p.min_p, p.seed), (0.3, 20, 0.9, 0.1, 42));
         // num_predict -1 (until the turn ends) and no options at all
         assert_eq!(options(Json::parse(r#"{"num_predict": -1}"#).as_ref(), 4096).unwrap().max, None);
         assert_eq!(options(None, 4096).unwrap().max, None);
-        // a neutral penalty passes; a real one is refused by the engine's own rule
-        let neutral = options(Json::parse(r#"{"repeat_penalty": 1.0, "presence_penalty": 0}"#).as_ref(), 4096).unwrap();
-        assert!(crate::native::sampling(base.clone(), &neutral.flat).is_ok());
-        let pen = options(Json::parse(r#"{"repeat_penalty": 1.3}"#).as_ref(), 4096).unwrap();
-        assert!(crate::native::sampling(base, &pen.flat).unwrap_err().contains("repeat_penalty = 1.3"));
+        // O2: the penalties map onto the engine (the coach's repeat_penalty 1.3 included); typical-p is still refused
+        let pen = options(Json::parse(r#"{"repeat_penalty": 1.3, "repeat_last_n": 32, "presence_penalty": 0.5, "frequency_penalty": -0.25}"#).as_ref(), 4096).unwrap();
+        let p = crate::native::sampling(base.clone(), &pen.flat).unwrap();
+        assert_eq!((p.penalty_repeat, p.penalty_last_n, p.penalty_present, p.penalty_freq), (1.3, 32, 0.5, -0.25));
+        let typ = options(Json::parse(r#"{"typical_p": 0.9}"#).as_ref(), 4096).unwrap();
+        assert!(crate::native::sampling(base, &typ.flat).unwrap_err().contains("typical_p = 0.9"));
         // num_ctx above the served context, unknown options, non-numbers, mirostat: refused
         assert!(options(Json::parse(r#"{"num_ctx": 8192}"#).as_ref(), 4096).unwrap_err().contains("8192"));
         assert!(options(Json::parse(r#"{"warp": 1}"#).as_ref(), 4096).unwrap_err().contains("options.warp"));

@@ -15,8 +15,13 @@
 //! - dist: `expf(logit − max)` per token summed in double, one `uniform_real_distribution<double>` draw from the
 //!   request's `std::mt19937` (libstdc++'s `generate_canonical`: two 32-bit outputs), a double running sum.
 //!
-//! Anything outside that — penalties, dry, typical-p, xtc, top-n-σ, dynamic temperature, top-k 0 or above 128 — is
-//! refused rather than approximated.
+//! - penalties (O2): `llama_sampler_penalties`, first in the chain — over the last `penalty_last_n` tokens of the slot
+//!   (llama-server accepts every prompt token into that window before the first draw, then each token drawn), a token
+//!   seen `count` times has its logit divided by the repeat penalty when positive and multiplied by it otherwise, then
+//!   `count · freq + present` taken off; applied again on a grammar's redraw, as the chain runs again there.
+//!
+//! Anything outside that — dry, typical-p, xtc, top-n-σ, dynamic temperature, top-k 0 or above 128 — is refused rather
+//! than approximated.
 
 /// `std::mt19937`, seeded as `std::mt19937(seed)`.
 pub struct Mt19937 {
@@ -153,6 +158,11 @@ pub struct Params {
     pub min_p: f32,
     pub min_keep: usize,
     pub seed: u32,
+    /// O2: `repeat_last_n` (0 turns the penalties off), `repeat_penalty`, `frequency_penalty`, `presence_penalty`
+    pub penalty_last_n: i32,
+    pub penalty_repeat: f32,
+    pub penalty_freq: f32,
+    pub penalty_present: f32,
 }
 
 impl Params {
@@ -167,8 +177,12 @@ impl Params {
             Some(crate::gguf::Val::I(v)) => *v as f64,
             _ => d,
         };
+        // llama.cpp's defaults (common.h): penalty_last_n 64, the penalties neutral; the GGUF may set the first two
+        // (`common_init_sampler_from_model`), as it may the others
         Ok(Params { temp: num("temp", 0.8) as f32, top_k: num("top_k", 40.0) as i32, top_p: num("top_p", 0.95) as f32,
-                    min_p: num("min_p", 0.05) as f32, min_keep: 0, seed: DEFAULT_SEED })
+                    min_p: num("min_p", 0.05) as f32, min_keep: 0, seed: DEFAULT_SEED,
+                    penalty_last_n: num("penalty_last_n", 64.0) as i32, penalty_repeat: num("penalty_repeat", 1.0) as f32,
+                    penalty_freq: 0.0, penalty_present: 0.0 })
     }
 }
 
@@ -178,6 +192,9 @@ pub const DEFAULT_SEED: u32 = 0xFFFF_FFFF;
 pub struct Sampler {
     p: Params,
     rng: Mt19937,
+    /// O2: the penalties' window (`prev`, a ring of `penalty_last_n`) and each token's count in it (`token_count`)
+    prev: std::collections::VecDeque<u32>,
+    counts: std::collections::HashMap<u32, i32>,
 }
 
 impl Sampler {
@@ -185,13 +202,68 @@ impl Sampler {
         if !(1..=128).contains(&p.top_k) {
             return Err(format!("top_k {}: only 1–128 is reproduced (llama.cpp sorts larger sets another way)", p.top_k));
         }
+        // llama-server's own refusals, word for word (server-schema.cpp's limit on the field, then common_sampler_init)
+        if p.penalty_last_n < 0 {
+            return Err(format!("Field 'repeat_last_n': Value must be between 0 <= value <= 2147483647, but got {}", p.penalty_last_n));
+        }
+        if !p.penalty_repeat.is_finite() || p.penalty_repeat <= 0.0 || !(1.0 / p.penalty_repeat).is_finite() {
+            return Err("Failed to initialize samplers: penalty_repeat must be finite and greater than 0".into());
+        }
+        if !p.penalty_freq.is_finite() {
+            return Err("Failed to initialize samplers: penalty_freq must be finite".into());
+        }
+        if !p.penalty_present.is_finite() {
+            return Err("Failed to initialize samplers: penalty_present must be finite".into());
+        }
         let seed = if p.seed == DEFAULT_SEED {
             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
             (t ^ (t >> 32)) as u32 ^ std::process::id()
         } else {
             p.seed
         };
-        Ok(Sampler { rng: Mt19937::new(seed), p })
+        Ok(Sampler { rng: Mt19937::new(seed), p, prev: Default::default(), counts: Default::default() })
+    }
+
+    /// One token into the penalties' window (`llama_sampler_penalties_accept`): llama-server accepts every prompt token
+    /// before the first draw, then each token drawn. The count rises first; when the window is full its oldest token
+    /// leaves (its count falls, and goes when it reaches 0).
+    pub fn accept(&mut self, t: u32) {
+        if self.p.penalty_last_n == 0 {
+            return;
+        }
+        *self.counts.entry(t).or_insert(0) += 1;
+        if self.prev.len() >= self.p.penalty_last_n as usize {
+            if let Some(old) = self.prev.pop_front() {
+                if let Some(c) = self.counts.get_mut(&old) {
+                    *c -= 1;
+                    if *c == 0 {
+                        self.counts.remove(&old);
+                    }
+                }
+            }
+        }
+        self.prev.push_back(t);
+    }
+
+    /// `llama_sampler_penalties::is_disabled`
+    fn penalties_off(&self) -> bool {
+        self.p.penalty_last_n == 0 || (self.p.penalty_repeat == 1.0 && self.p.penalty_freq == 0.0 && self.p.penalty_present == 0.0)
+    }
+
+    /// `llama_sampler_penalties_apply`, over the whole candidate list in vocabulary order.
+    fn penalties(&self, c: &mut [Cand]) {
+        if self.penalties_off() {
+            return;
+        }
+        for x in c.iter_mut() {
+            let Some(&count) = self.counts.get(&x.id) else { continue };
+            if x.logit <= 0.0 {
+                x.logit *= self.p.penalty_repeat;
+            } else {
+                x.logit /= self.p.penalty_repeat;
+            }
+            x.logit -= count as f32 * self.p.penalty_freq + (count > 0) as i32 as f32 * self.p.penalty_present;
+        }
     }
 
     /// One token from the logits, through the chain; the RNG advances once per token, as llama.cpp's does.
@@ -213,8 +285,9 @@ impl Sampler {
         (self.chain(c), true)
     }
 
-    /// The chain on a candidate list in vocabulary order: top-k, top-p, min-p, temperature, dist.
+    /// The chain on a candidate list in vocabulary order: penalties, top-k, top-p, min-p, temperature, dist.
     fn chain(&mut self, mut c: Vec<Cand>) -> u32 {
+        self.penalties(&mut c);
         // top-k (k ≤ 128: std::partial_sort in place; the set is sorted from here on)
         let k = (self.p.top_k as usize).min(c.len());
         partial_sort(&mut c, k);
