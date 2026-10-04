@@ -645,6 +645,9 @@ impl NativeChat {
         }
         let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt_fit(m, num_ctx))?;
         let params = eng.params(req)?;
+        // O2: what the sampler refuses (a negative repeat_last_n, a repeat penalty of 0 or below) is a 400 here, with
+        // llama-server's message, not a failed run (the live penalty oracle found it answered 500)
+        crate::sampler::Sampler::new(params.clone())?;
         let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
         Ok(NativeChat { prompt, params, max, stops, constraint })
     }

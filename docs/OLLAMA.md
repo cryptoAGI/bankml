@@ -41,7 +41,7 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 | passthrough fields `format`, `system`, `template`, `raw`, `suffix`, `images`, `think` | `api/ollama/ollama_url.py:250-256` | `system`, `raw`, `format: "json"` and `format: <schema>` (0.3.5) **done**; `think: false` accepted; `format` with `raw`, `template`, `suffix`, `images` and `think: true` **refused** with the reason | O1 · O6 |
 | `/api/tags` and `/api/ps` (the lineage models, which are resident, `expires_at`) | `agents/storage/hf_client.py:3728-3753` | **done (0.3.1)**: every pinned model, `digest` = the pinned sha256, plus `"bankml": {"native", "reason"}` | O1 |
 | load and unload by an empty `/api/generate` with `keep_alive` (`done_reason` `load` / `unload`) | `agents/storage/hf_client.py:3760-3777` | **done (0.3.1)**; each load runs the full guard + sha256 pin | O1 |
-| `ollama_predict`: `/api/chat` with `temperature 0`, **`repeat_penalty 1.3`**, `num_ctx 2048` | `agents/storage/hf_client.py:2423-2431` | `num_ctx` **done** (0.3.5: a conversation longer than it is cut as Ollama cuts it, oldest messages first); `repeat_penalty` **refused** until the penalty sampler has an oracle | O2 |
+| `ollama_predict`: `/api/chat` with `temperature 0`, **`repeat_penalty 1.3`**, `num_ctx 2048` | `agents/storage/hf_client.py:2423-2431` | `num_ctx` **done** (0.3.5: a conversation longer than it is cut as Ollama cuts it, oldest messages first); `repeat_penalty` **done (O2, unreleased)**: llama-server b11192's penalties sampler, token-identical on its oracle | O2 |
 | prune old generations with `DELETE /api/delete` | `agents/storage/hf_client.py:945`, `:974` | **derived models deleted (0.3.5)**; a pinned file is **refused by design** (not deleted over HTTP) | O5 |
 | `/api/embed` with `bge-m3` (XLM-R encoder, 1024 dimensions), `truncate: true` | `agents/memory_pgvector.py:937-958` | **refused** (400): no encoder graph yet | O7 |
 | `ollama create` from a Modelfile (`FROM` + `ADAPTER`), then a persona `SYSTEM` layer (`ollama show --modelfile`, re-create) | `mindx/godel/mindxtrain/promote.py:52-85`, `:181-323` | **done (0.3.5)**: `bankml create` and `/api/create` — `FROM` the merged safetensors directory (converted byte-identical to llama.cpp b11192), a pinned GGUF, a registry name or its suffix-less alias, `SYSTEM`, `PARAMETER`, `stop`, `MESSAGE`; `/api/show` gives the Modelfile back. promote.py's own persona Modelfile, re-created in place (`FROM mindx-gen39`), and the same layer `FROM` the merged directory both answer token-identically to llama-server given the persona (27 / 27 each). `ADAPTER` **refused** (merge first) | O5 |
@@ -62,8 +62,8 @@ The evidence is mindX's own code (file:line in the mindX repository, read 2026-1
 
 **Accepted and ignored**, because they change scheduling, not the answer bankML gives:
 `num_thread`, `num_gpu`, `main_gpu`, `num_batch`, `use_mmap`, `use_mlock`, `low_vram`, `numa`, `f16_kv`,
-`vocab_only`, `logits_all`, `num_keep`, `repeat_last_n`. The last two matter only with a context shift or a
-penalty, and bankML does neither.
+`vocab_only`, `logits_all`, `num_keep`. `num_keep` matters only with a context shift, which bankML does not do.
+(`repeat_last_n` left this list with O2: it sets the penalties' window, and is honoured.)
 
 ## The track: O1–O8, folded into the milestones
 
@@ -73,7 +73,7 @@ it.
 | phase | content | milestone | what it retires in mindX |
 |---|---|---|---|
 | **O1** | Ollama's native API, a model registry and residency (**0.3.1, done**) | 0.3.x | — |
-| **O2 (next)** | The sampler chain, including repeat, presence and frequency penalties (`last_n`), each with a seeded oracle; behaviour at the context limit; more than one slot. **Top item since 0.3.5**: mindXtrain's imprint gate needs `repetition_penalty 1.3` (and `no_repeat_ngram_size 3`), and `mindx-gen39` degenerates without one | 0.4.0 | the coach's `repeat_penalty: 1.3`; mindXtrain's imprint gate on bankML |
+| **O2 (in progress)** | The sampler chain, including repeat, presence and frequency penalties (`last_n`, **first cut done, unreleased**: token-identical to llama-server b11192 greedy and seeded, the prompt in the window), each with a seeded oracle; behaviour at the context limit; more than one slot. **Top item since 0.3.5**: mindXtrain's imprint gate needs `repetition_penalty 1.3` (and `no_repeat_ngram_size 3`), and `mindx-gen39` degenerates without one | 0.4.0 | the coach's `repeat_penalty: 1.3`; mindXtrain's imprint gate on bankML |
 | O3 | `Q8_0`, **F16 (0.3.4, done)** and BF16 weight kernels, then `Q4_K`, each bit-exact against ggml | 0.3.4 → 0.6.0 | opens the standard-quant Qwen3 family |
 | **O4** | The Llama architecture, tied embeddings (which also opens Bonsai-1.7B), SmolLM2's tokenizer and templates (**0.3.4, done**) | 0.3.4 | **`mindx-genN` served natively** |
 | **O5** | `bankml create`: a Modelfile subset (`FROM` a pinned GGUF or a safetensors directory, `SYSTEM`, `PARAMETER`, `stop`, `MESSAGE`) recorded beside the FORK.json pins, and a Rust safetensors → GGUF converter for the merged SmolLM2, byte-identical to llama.cpp b11192's (**0.3.5, first cut done**: mindX's persona layer token-identical end to end); then `promote.py --to bankml` in mindX, and a bankml backend for [mindXtrain](https://huggingface.co/PYTHAI/mindXtrain) ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1)) | 0.3.5 → 0.7.0 (beside mindXtrain in Rust) | `ollama create` |
@@ -266,7 +266,8 @@ oracle-exact against llama.cpp — is now the top item** for that gate to run on
     `FROM` a derived model inherits its layer (Ollama's rule: new values win, `stop` as a list, licences add up).
   - **Refused:** `ADAPTER` (LoRA merging is a later O-phase: merge, then `FROM` the merged directory); a `TEMPLATE`
     other than the pinned one (Ollama's are Go templates, and bankML renders the GGUF's own Jinja byte-identically);
-    any other `PARAMETER` (penalties and mirostat are not reproduced; resource options are not part of a model); more
+    any other `PARAMETER` (typical-p and mirostat are not reproduced; resource options are not part of a model; the
+    penalties `repeat_penalty`, `repeat_last_n`, `presence_penalty`, `frequency_penalty` are taken since O2); more
     than one `FROM`; a name a pinned file already has.
 - **The layer is applied as Ollama applies it** (`server/routes.go`):
   - **chat** (`/api/chat` and `/v1/chat/completions`): the model's `MESSAGE`s go before the request's, and its `SYSTEM`

@@ -274,7 +274,11 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
   - **`num_ctx`:** accepted up to the served `--ctx`, refused above it. Under it (0.3.5) a conversation that does not
     fit loses its oldest messages first, as Ollama's do (the last message and the system messages stay); a prompt that
     still does not fit is refused with its size.
-  - **Penalties:** a neutral value passes, anything else is refused, until the penalty sampler has its oracle.
+  - **Penalties (O2):** `repeat_penalty`, `repeat_last_n`, `presence_penalty` and `frequency_penalty` are honoured as
+    llama-server b11192 applies them, token for token on its oracle: the window holds the last `repeat_last_n` tokens
+    (default 64) **including the prompt's**, a repeated token's logit is divided by the repeat penalty (multiplied when
+    not positive), then `count × frequency + presence` is taken off. `repeat_last_n` below 0 and a repeat penalty of 0
+    or less are refused with llama-server's message. Also on `/v1` and as a Modelfile `PARAMETER`.
   - **Ignored**, because they do not change the answer bankML gives: `num_thread`, `num_batch`, `num_gpu`, `use_mmap`
     and the other resource options.
   - **Refused:** any other option.

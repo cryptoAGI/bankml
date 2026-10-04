@@ -152,7 +152,10 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
   derived model.
 - [ ] Tokens past `num_ctx` during an answer: Ollama's ContextShift (O2).
 - [ ] `ADAPTER` in a Modelfile (LoRA merge in Rust, against PEFT's merge) — today: merge first, `FROM` the directory.
-- [ ] mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1): `serve --to bankml`, `imprint-bankml`) needs **O2 first**:
+- [x] **O2's penalties (unreleased, branch `o2-penalties`)**: repeat, frequency and presence over `repeat_last_n`, the
+  prompt in the window, token-identical to llama-server b11192 (`oracle_penalties`: mindx-gen39 56/56, Bonsai-1.7B
+  56/56, 12/12 refusals each). `no_repeat_ngram_size` is still transformers', not llama.cpp's.
+- [ ] mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1): `serve --to bankml`, `imprint-bankml`) needed **O2 first** (now there):
   `mindx-gen39` degenerates into repetition without a penalty, and the imprint gate uses `repetition_penalty 1.3` and
   `no_repeat_ngram_size 3` (the latter's oracle is transformers' `generate`).
 
@@ -176,9 +179,9 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   tokens without one.
 - [ ] More than one slot (`-np N`) with llama-server's queueing, or a stated single-slot contract; the conversation
   oracle extended to interleaved sessions. (O2; then continuous batching across slots, O8.)
-- [ ] The rest of llama-server's sampler chain, each with a seeded oracle: repetition, presence and frequency
-  penalties (`last_n`), typical-p, DRY, XTC, top-n-σ, dynamic temperature. (O2: retires the refusal of the coach's
-  `repeat_penalty: 1.3`.)
+- [~] The rest of llama-server's sampler chain, each with a seeded oracle: **repetition, presence and frequency
+  penalties (`last_n`) — done (O2 first cut, `oracle_penalties`), retiring the refusal of the coach's
+  `repeat_penalty: 1.3`**; still to come: typical-p, DRY, XTC, top-n-σ, dynamic temperature.
 - [x] **JSON mode** (O6, first cut; **0.3.3**). It is not a JSON-only mask: the request turned out to need
   llama-server's own grammar. That grammar is generated from the chat template's parser, its root starts with the
   generation prompt, and it is prefilled. So llama.cpp's whole GBNF engine is ported (`grammar.rs`), with the

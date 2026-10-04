@@ -16,7 +16,13 @@ Record (once per model): launches llama-server from BANKML_GGML_LIB with Savante
 each case keeps the parameters the server read back (`generation_settings`).
     BANKML_GGML_LIB=<b11192 release dir> python3 testing/penalty_oracle.py Bonsai-1.7B-Q1_0
     → .models/oracle-forward/penalty-<model>.jsonl, replayed by `oracle_penalties*` (cargo test --release -- --ignored)
-usage: python3 testing/penalty_oracle.py STEM [N_PREDICT]"""
+
+Live (`--bankml STEM [NAME]`): bankml serve --native with the model on a spare port; every recorded case goes through
+`/v1/chat/completions` (the chat the prompt was made from, the case's parameters as top-level fields) and every fourth
+also through Ollama's `/api/chat` (as `options`), each from an empty slot. An answer must equal the record (the text,
+the finish, the completion count, the end token included as llama-server counts it); a refused case must be a 400
+carrying llama-server's message.
+usage: python3 testing/penalty_oracle.py STEM [N_PREDICT] | --bankml STEM [NAME]"""
 import json, os, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
 
@@ -67,9 +73,67 @@ def post(base, path, body):
             return e.code, {"raw": raw.decode("utf-8", "replace")}
 
 
+def live(stem, name):
+    binary = root / "target" / "release" / "bankml"
+    model = root / ".models" / f"{stem}.gguf"
+    forks = Path(os.environ.get("BANKML_FORKS", Path.home() / ".local/share/bankml/forks"))
+    fork = forks / f"{stem}.gguf.FORK.json"
+    rec = out / f"penalty-{stem}.jsonl"
+    for f in (binary, model, fork, rec):
+        if not f.exists():
+            sys.exit(f"needs {f}")
+    cases = [json.loads(line) for line in rec.read_text().splitlines()]
+    base, name = "http://127.0.0.1:18198", name or stem.lower()
+    proc = subprocess.Popen([str(binary), "serve", str(model), "--fork", str(fork), "--native", "--listen", "127.0.0.1:18198",
+                             "--upstream", "127.0.0.1:18201", "--ctx", "2048"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    t0, n, ok = time.time(), 0, 0
+    try:
+        wait(base, proc)
+
+        def fresh():
+            assert post(base, "/api/generate", {"model": name, "keep_alive": 0})[1]["done_reason"] == "unload"
+            assert post(base, "/api/generate", {"model": name, "keep_alive": -1, "stream": False})[1]["done_reason"] == "load"
+
+        for i, c in enumerate(cases):
+            q = QUESTIONS[i // len(VARIANTS)]
+            msgs = [{"role": "system", "content": SAVANTE}, {"role": "user", "content": q}]
+            params = {k: v for k, v in c["request"].items() if k not in ("prompt", "n_predict", "cache_prompt", "return_tokens")}
+            want_err = (c.get("error") or {}).get("message")
+            if not want_err:
+                want = (c["text"], "stop" if c["stop_type"] == "eos" else "length", len(c["ids"]))
+            for path in (("v1", "api") if i % 4 == 0 else ("v1",)):
+                fresh()
+                if path == "v1":
+                    code, r = post(base, "/v1/chat/completions", {"model": name, "messages": msgs, "max_tokens": c["request"]["n_predict"], **params})
+                    got = (r["choices"][0]["message"]["content"], r["choices"][0]["finish_reason"], r["usage"]["completion_tokens"]) if code == 200 else None
+                else:
+                    code, r = post(base, "/api/chat", {"model": name, "messages": msgs, "stream": False, "keep_alive": -1,
+                                                       "options": params | {"num_predict": c["request"]["n_predict"]}})
+                    got = (r["message"]["content"], r["done_reason"], r["eval_count"]) if code == 200 else None
+                n += 1
+                if want_err:
+                    err = json.dumps(r)
+                    good = code == 400 and want_err in err
+                    if not good:
+                        print(f"  case {i} via {path}: llama-server refused ({want_err}); bankML {code} {err[:160]}")
+                else:
+                    good = got == want
+                    if not good:
+                        print(f"  case {i} {params} via {path}: got {got!r:.160} want {want!r:.160}")
+                ok += good
+    finally:
+        proc.terminate()
+        proc.wait()
+    print(f"penalty live oracle ({stem}): {ok} of {n} answers through bankml serve --native (/v1 top-level penalties; /api/chat options) "
+          f"identical to llama-server b11192's record (text, finish, completion count; refusals with its message) — {time.time() - t0:.0f} s")
+    return ok == n
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
+    if sys.argv[1] == "--bankml":
+        sys.exit(0 if live(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
     stem = sys.argv[1]
     n_predict = int(sys.argv[2]) if len(sys.argv) > 2 else 48
     lib = Path(os.environ.get("BANKML_GGML_LIB", ""))

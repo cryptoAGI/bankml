@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased — O2's penalties: llama-server's repeat, frequency and presence penalties (branch `o2-penalties`)
+
+**`repeat_penalty`, `repeat_last_n`, `presence_penalty` and `frequency_penalty` are no longer refused: bankML applies
+them as llama.cpp b11192's `llama_sampler_penalties` does, and its answers are token-identical to llama-server's.** The
+coach's `ollama_predict` (`temperature 0`, `repeat_penalty 1.3`) and mindXtrain's imprint gate (`repetition_penalty 1.3`)
+can now run on bankML. Greedy at 1.3, `mindx-gen39` answers instead of degenerating into `,,,,`.
+
+### Measured
+- `oracle_penalties` (`testing/penalty_oracle.py`, llama-server b11192 from an empty cache, greedy and seeded; 17
+  variants × 4 prompts made to repeat): mindx-gen39 **56 / 56** answers token-identical (2,478 tokens), Bonsai-1.7B
+  **56 / 56** (1,895 tokens); each **12 / 12** refusals with llama-server's message (`repeat_last_n` −1, a repeat
+  penalty of 0 or below). Bonsai-8B: being recorded.
+
+### Added
+- `sampler.rs`: the penalties, first in the chain and again on a grammar's redraw; the window as llama-server fills it
+  — every prompt token, cached or not, before the first draw (`server-context.cpp`), then each token drawn
+  (`Sampler::accept`); the logit divided by the repeat penalty when positive, multiplied when not, then
+  `count × frequency + presence` taken off; disabled as llama.cpp disables it (`last_n` 0, or all neutral).
+  `general.sampling.penalty_last_n` and `penalty_repeat` read from the GGUF as llama.cpp reads them (none of the five
+  native models sets them).
+- The surfaces: `/v1` and `/api/*` (`repeat_last_n` moves from the ignored resource options to the honoured ones), a
+  Modelfile's `PARAMETER`, `bankml generate --sample`, the C API (through the same engine).
+- `testing/penalty_oracle.py` (record, and `--bankml` live); `oracle_penalties`, `oracle_penalties_8b` and
+  `penalty_oracle_live` in the gate. Live on mindx-gen39: **85 / 85** through `/v1` (top-level fields) and `/api/chat`
+  (`options`), refusals included.
+
+### Fixed (found by the live oracle)
+- **A sampler refusal on `/v1` answered 500.** A negative `repeat_last_n` or a repeat penalty of 0 or below reached
+  the engine before it was checked; the Ollama path already refused it up front. `/v1` now refuses it as llama-server
+  does: a 400 with its message.
+
 ## 0.3.5 — 2026-10-03 — JSON schemas, and `bankml create`: mindX's persona layer, natively (O6b, O5)
 
 **Any JSON schema now gets the grammar llama-server b11192 builds for it, on the model's own template, and the answers

@@ -55,6 +55,9 @@ out=testing/results/$v.txt
     # 0.3.5 (O5): the created mindx-gen39 with promote.py's persona layer, live: /api/chat, /api/generate, /v1, /api/ps
     echo "## persona_oracle_live"
     python3 -B testing/persona_oracle.py --bankml || { echo "FAILED: persona_oracle_live"; exit 1; }
+    # O2: the penalties live — /v1 top-level fields and /api/chat options, refusals as 400s with llama-server's message
+    echo "## penalty_oracle_live"
+    python3 -B testing/penalty_oracle.py --bankml mindx-gen39-F16 mindx-gen39 || { echo "FAILED: penalty_oracle_live"; exit 1; }
     # 0.3.3: JSON mode and grammars live — /v1 response_format (streamed once) and grammar, /api/chat format "json"
     echo "## json_oracle_live"
     python3 -B testing/json_oracle.py --bankml || { echo "FAILED: json_oracle_live"; exit 1; }
