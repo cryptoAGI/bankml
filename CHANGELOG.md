@@ -11,7 +11,7 @@ can now run on bankML. Greedy at 1.3, `mindx-gen39` answers instead of degenerat
 - `oracle_penalties` (`testing/penalty_oracle.py`, llama-server b11192 from an empty cache, greedy and seeded; 17
   variants × 4 prompts made to repeat): mindx-gen39 **56 / 56** answers token-identical (2,478 tokens), Bonsai-1.7B
   **56 / 56** (1,895 tokens); each **12 / 12** refusals with llama-server's message (`repeat_last_n` −1, a repeat
-  penalty of 0 or below). Bonsai-8B: being recorded.
+  penalty of 0 or below); Bonsai-8B **56 / 56** (1,568 tokens, `oracle_penalties_8b`), 12 / 12 refusals.
 
 ### Added
 - `sampler.rs`: the penalties, first in the chain and again on a grammar's redraw; the window as llama-server fills it

@@ -154,7 +154,7 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
 - [ ] `ADAPTER` in a Modelfile (LoRA merge in Rust, against PEFT's merge) — today: merge first, `FROM` the directory.
 - [x] **O2's penalties (unreleased, branch `o2-penalties`)**: repeat, frequency and presence over `repeat_last_n`, the
   prompt in the window, token-identical to llama-server b11192 (`oracle_penalties`: mindx-gen39 56/56, Bonsai-1.7B
-  56/56, 12/12 refusals each). `no_repeat_ngram_size` is still transformers', not llama.cpp's.
+  56/56, Bonsai-8B 56/56, 12/12 refusals each; live 85/85). `no_repeat_ngram_size` is still transformers', not llama.cpp's.
 - [ ] mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1): `serve --to bankml`, `imprint-bankml`) needed **O2 first** (now there):
   `mindx-gen39` degenerates into repetition without a penalty, and the imprint gate uses `repetition_penalty 1.3` and
   `no_repeat_ngram_size 3` (the latter's oracle is transformers' `generate`).
