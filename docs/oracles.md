@@ -95,7 +95,7 @@ and not, and records every answer. The corpus is:
 - a seeded fuzz set of 2,000 strings drawn from 17 Unicode ranges.
 
 `tokenizer::tests::oracle_tokenizer` re-derives every case with bankml's tokenizer (`tokenizer.rs`, no crates) and
-requires the same ids in the same order. Last result: **4,258 of 4,258 cases token-identical**.
+requires the same ids in the same order. Last result: **4,346 of 4,346 cases token-identical** (the corpus grew at 0.3.4; 4,258 at 0.2.1), on the Qwen2 and the SmolLM2 pre-tokenizer each.
 
 Two details the oracle settles:
 - **Which special tokens split the text.** Qwen3's `<think>` markers are USER_DEFINED and split the text even when

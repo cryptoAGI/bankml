@@ -9,12 +9,14 @@
 //!   Ollama's counts and durations (nanoseconds) and the `bankml_receipt`;
 //! - `keep_alive` as Ollama reads it (`"5m"`, `"1h"`, seconds, `0` unloads now, a negative value keeps it for good),
 //!   and an empty prompt with a `keep_alive` only loads or unloads (`done_reason` `load` / `unload`);
-//! - options: temperature, top_k, top_p, min_p, seed, num_predict and stop are honoured; the penalties go through the
-//!   engine's own refusal; `num_ctx` up to the served context is accepted; resource options (threads, batch, GPU,
-//!   mmap) do not change an answer bankML gives and are ignored; anything else is refused.
+//! - options: temperature, top_k, top_p, min_p, seed, num_predict, stop and (0.3.6) repeat_penalty, repeat_last_n,
+//!   presence_penalty, frequency_penalty are honoured; `num_ctx` up to the served context fits the conversation as
+//!   Ollama does (0.3.5); resource options (threads, batch, GPU, mmap) do not change an answer bankML gives and are
+//!   ignored; anything else is refused.
 //!
 //! 0.3.3: `format: "json"` (and the schemas `{}`, `{"type": "object"}`) is JSON mode, answered by the grammar llama-server
-//! uses for `response_format: json_object` (`grammar.rs`); any other schema is refused, as is `format` with `raw`.
+//! uses for `response_format: json_object` (`grammar.rs`); 0.3.5: any other schema gets llama-server's grammar for it
+//! (`schema.rs`). `format` with `raw` is refused.
 //!
 //! Refused: `tools` (O6), `images` (out of scope), `suffix`, `template`,
 //! `context`, and `think: true` (the template is rendered with thinking off, as llama-server `--reasoning off`).

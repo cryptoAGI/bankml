@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P0 — `bankml serve`: answers now, through the reference, behind the gate. A loopback HTTP gateway (std only)
-//! in front of llama.cpp b11192's `llama-server`:
+//! `bankml serve`: a loopback HTTP server (std only) that answers behind the gate, in one of two modes —
+//! `--native` (0.3.0), bankML's own forward pass (`native.rs`, Ollama's API in `ollama.rs`), or the gateway described
+//! here (P0, 0.0.6), in front of llama.cpp b11192's `llama-server`:
 //!
 //! - it does not start until the model file passes `verify` (guard, then the sha256 pin to FORK.json);
 //! - the upstream must be serving **that file**: either bankml launches it (`--spawn LLAMA_SERVER`, the model
@@ -13,8 +14,8 @@
 //!   Non-streamed: a top-level `bankml_receipt` object. Streamed: one extra `data: {"bankml_receipt": …}` event
 //!   before `data: [DONE]` (OpenAI clients ignore it).
 //!
-//! What it is not: bankml's own forward pass (P3). The tokens come from ggml's kernels in llama-server; bankml
-//! vouches for the file, the path and the transcript, not for the arithmetic. The file is hashed at start; before
+//! In gateway mode the tokens come from ggml's kernels in llama-server: bankml vouches for the file, the path and the
+//! transcript, not for the arithmetic (in `--native` mode the arithmetic is bankML's own, checked by its oracles). The file is hashed at start; before
 //! every answer its identity (device, inode, size, modification time) and the engine's model path are checked
 //! again, and an answer is refused rather than receipted if either changed.
 //!

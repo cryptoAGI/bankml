@@ -7,9 +7,9 @@
 //!   and its own prompt, less one token when the whole prompt is cached (llama-server evaluates at least one), then
 //!   truncates the cache there and computes the rest in micro-batches of 512 (`Weights::prefill`), as
 //!   `server-context.cpp` does — so the kernels each row takes are the ones llama-server's rows take;
-//! - the sampling parameters are the request's over the model's GGUF defaults, as llama-server resolves them; a
-//!   sampler bankML does not reproduce (penalties, dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused
-//!   with a reason, never approximated;
+//! - the sampling parameters are the request's over the model's GGUF defaults, as llama-server resolves them; the
+//!   penalties (0.3.6) see the whole prompt in their window, as llama-server's do; a sampler bankML does not
+//!   reproduce (dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason, never approximated;
 //! - the answer streams as whole UTF-8 characters; the end-of-turn token ends it, is not part of the text, and is
 //!   counted among the completion tokens as llama-server counts it.
 //!

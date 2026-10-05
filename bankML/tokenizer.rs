@@ -181,7 +181,7 @@ impl<'a> Rd<'a> {
 
 impl Tokenizer {
     /// The vocabulary of a GGUF file (`tokenizer.ggml.{model,pre,tokens,token_type,merges}`); refused unless it is
-    /// the `gpt2` model with the `qwen2` pre-tokenizer, the one this module reproduces.
+    /// the `gpt2` model with a pre-tokenizer this module reproduces: `qwen2` or (0.3.4) `smollm`.
     pub fn from_gguf(path: &Path) -> Result<Self, String> {
         let mm = Mmap::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut r = Rd { b: mm.bytes(), o: 0 };

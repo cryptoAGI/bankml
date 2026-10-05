@@ -6,8 +6,8 @@
 //! machine without the library simply has no devices from that backend.
 //!
 //! What bankml asks of a card, in order: it must be a real GPU (integrated or discrete; software renderers such as
-//! Mesa's llvmpipe run on the CPU and are refused), it must have a compute queue, and — when kernels land — its
-//! results must be the CPU kernels' bits, checked on the card before it is trusted (the oracle rule: same bits
+//! Mesa's llvmpipe run on the CPU and are refused), it must have a compute queue, and its Q1_0 kernel's results
+//! (0.2.13) must be the CPU kernels' bits, checked on the card before it is trusted (the oracle rule: same bits
 //! first, then speed). Several cards are used together by giving each a share of every matrix's rows, which keeps
 //! each output element one card's exact dot product.
 //!
@@ -199,7 +199,7 @@ pub fn report_json(remote: bool) -> String {
                 d.host_visible_device_local, d.compute_queues, d.count, d.usd_per_hour.map(|p| format!("{p:.2}")).unwrap_or_else(|| "null".into()),
                 d.usable(), sys)
     };
-    format!("{{\"devices\": [{}], \"selected\": [{}], \"notes\": [{}], \"kernels\": \"not yet: bankml's matmuls run on the CPU until the GPU kernels pass their bit-exact oracle\"}}",
+    format!("{{\"devices\": [{}], \"selected\": [{}], \"notes\": [{}], \"kernels\": \"Q1_0 on a verified card (a calibrated share of each 1-bit matrix's rows, `bankml gpu --verify`); Q2_0 and F16 on the CPU\"}}",
             devs.iter().map(one).collect::<Vec<_>>().join(", "),
             sel.iter().map(|d| format!("\"{}:{} {}\"", d.backend, d.index, esc(&d.name))).collect::<Vec<_>>().join(", "),
             notes.iter().map(|n| format!("\"{}\"", esc(n))).collect::<Vec<_>>().join(", "))

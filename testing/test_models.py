@@ -77,6 +77,26 @@ url = f"http://127.0.0.1:{srv.server_address[1]}/tiny.gguf"
 spec = lambda **k: {"file": "tiny.gguf", "bytes": len(BLOB), "sha256": SHA, "url": url, "repo": "test/tiny", "revision": "r1",
                     "licence": "apache-2.0", "pinned_from": "test", **k}
 
+
+# the engine is found as install.sh finds it (BANKML_LLAMA_SERVER, install.env, the download, the dev checkout)
+lt = tmp / "llama-resolve"
+data, home = lt / "data", lt / "home"
+dl = data / f"llama-{M.LLAMA_TAG}" / "llama-server"
+dev = home / "sAGI" / "bonsai" / f"llama-{M.LLAMA_TAG}" / "llama-server"
+check("llama_server(): nothing installed → the installer's download path (named in the refusal)", M.llama_server({}, data, home) == dl)
+dev.parent.mkdir(parents=True); dev.write_text("#!/bin/sh\n"); dev.chmod(0o755)
+check("llama_server(): the development checkout when it is the only build", M.llama_server({}, data, home) == dev)
+dl.parent.mkdir(parents=True); dl.write_text("#!/bin/sh\n")
+check("llama_server(): a download that is not executable is passed over", M.llama_server({}, data, home) == dev)
+dl.chmod(0o755)
+check("llama_server(): the installer's download before the development checkout", M.llama_server({}, data, home) == dl)
+spaced = lt / "my engines" / "llama-server"
+(data / "install.env").write_text(f"INSTALL_PYTHON=python3\nINSTALL_LLAMA_SERVER={spaced.as_posix().replace(' ', chr(92) + ' ')}\n")
+check("llama_server(): install.env's INSTALL_LLAMA_SERVER, shell-quoted as printf %q writes it", M.llama_server({}, data, home) == spaced)
+check("llama_server(): BANKML_LLAMA_SERVER over everything", M.llama_server({"BANKML_LLAMA_SERVER": "/opt/x/llama-server"}, data, home) == Path("/opt/x/llama-server"))
+(data / "install.env").write_text("INSTALL_LLAMA_SERVER='unterminated\n$(touch pwned)=1\n")
+check("llama_server(): a malformed install.env is ignored, never executed", M.llama_server({}, data, home) == dl and not (Path.cwd() / "pwned").exists())
+
 try:
     # parsers
     check("hf_parse: repo, blob URL, resolve URL, hf:// id", M.hf_parse("https://huggingface.co/Qwen/Qwen3-4B-GGUF") == ("Qwen/Qwen3-4B-GGUF", None, None)

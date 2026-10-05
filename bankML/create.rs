@@ -19,8 +19,9 @@
 //! - `FROM` a registry name (pinned or derived), a pinned GGUF path, or a safetensors directory — converted by
 //!   `convert.rs` (byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`) and pinned by a FORK.json
 //!   that records every input's sha256;
-//! - `SYSTEM`; `PARAMETER` temperature, top_k, top_p, min_p, seed, num_ctx, num_predict and stop (the parameters
-//!   bankML reproduces) — any other is refused with the reason; `TEMPLATE` only when it is the base's own pinned
+//! - `SYSTEM`; `PARAMETER` temperature, top_k, top_p, min_p, seed, num_ctx, num_predict, stop and (0.3.6)
+//!   repeat_penalty, repeat_last_n, presence_penalty, frequency_penalty (the parameters bankML reproduces) — any other
+//!   is refused with the reason; `TEMPLATE` only when it is the base's own pinned
 //!   template (bankML renders that template, byte-identical to llama.cpp; a different one would change every prompt);
 //!   `ADAPTER` refused (LoRA merging is a later O-phase: merge first, then `FROM` the merged directory); `LICENSE`,
 //!   `MESSAGE` and `REQUIRES` recorded (and `MESSAGE`s are applied, as Ollama applies them).

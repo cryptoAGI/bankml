@@ -17,14 +17,57 @@ and registry.ollama.ai.
 
 The carrier is `bankml serve MODEL --fork FORK.json --spawn llama-server`. `switch()` replaces it, and rolls back to
 the previous model if the new one does not come up."""
-import hashlib, json, os, re, shutil, signal, subprocess, threading, time, urllib.parse, urllib.request
+import hashlib, json, os, re, shlex, shutil, signal, subprocess, threading, time, urllib.parse, urllib.request
 from pathlib import Path
+from typing import Mapping, Optional
 
 HOME = Path.home()
 REPO = Path(os.environ.get("BANKML_REPO", Path(__file__).resolve().parents[1])).expanduser()
 MODELS = Path(os.environ.get("BANKML_MODELS", REPO / ".models")).expanduser()
 FORKS = Path(os.environ.get("BANKML_FORKS", HOME / ".local" / "share" / "bankml" / "forks")).expanduser()
-LLAMA = Path(os.environ.get("BANKML_LLAMA_SERVER", HOME / "sAGI" / "bonsai" / "llama-b11192" / "llama-server")).expanduser()
+DATA = Path(os.environ.get("BANKML_DATA", HOME / ".local" / "share" / "bankml")).expanduser()
+LLAMA_TAG = "b11192"  # the engine release bankML is checked against (install.sh LLAMA_TAG)
+
+
+def _install_env(data: Path) -> dict:
+    """KEY=value pairs install.sh recorded in <data>/install.env (written with printf %q). Read as data, never executed;
+    an unreadable or malformed file reads as empty."""
+    out = {}
+    try:
+        lines = (data / "install.env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        key, sep, raw = line.partition("=")
+        if not sep or not key.isidentifier():
+            continue
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            continue
+        if len(words) == 1:
+            out[key] = words[0]
+    return out
+
+
+def llama_server(env: Optional[Mapping[str, str]] = None, data: Optional[Path] = None, home: Optional[Path] = None) -> Path:
+    """The llama-server binary, found exactly as install.sh finds it: BANKML_LLAMA_SERVER; else the INSTALL_LLAMA_SERVER
+    the installer recorded; else the first executable of the installer's download and the development checkout. When
+    none is executable, the installer's download path, so a refusal names where `./install.sh engine` puts it."""
+    env = os.environ if env is None else env
+    data = DATA if data is None else data
+    home = HOME if home is None else home
+    explicit = env.get("BANKML_LLAMA_SERVER") or _install_env(data).get("INSTALL_LLAMA_SERVER")
+    if explicit:
+        return Path(explicit).expanduser()
+    download = data / f"llama-{LLAMA_TAG}" / "llama-server"
+    for c in (download, home / "sAGI" / "bonsai" / f"llama-{LLAMA_TAG}" / "llama-server"):
+        if c.is_file() and os.access(c, os.X_OK):
+            return c
+    return download
+
+
+LLAMA = llama_server()
 BANKML = Path(os.environ.get("BANKML_BIN", REPO / "target" / "release" / "bankml")).expanduser()
 OLLAMA_STORE = Path(os.environ.get("BANKML_OLLAMA_MODELS", "/usr/share/ollama/.ollama/models"))
 LISTEN = os.environ.get("BANKML_SERVE_LISTEN", "127.0.0.1:18093")
@@ -680,6 +723,8 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
             cmd = [str(BANKML), "serve", str(model), "--fork", str(fork), "--native", "--upstream", UPSTREAM, "--listen", LISTEN, "--ctx", n_ctx]
             env = {**os.environ, "BANKML_THREADS": n_threads}
         else:
+            if not (LLAMA.is_file() and os.access(LLAMA, os.X_OK)):
+                raise RuntimeError(f"no llama-server at {LLAMA}: run ./install.sh engine, or set BANKML_LLAMA_SERVER to a llama.cpp {LLAMA_TAG} build")
             cmd = ([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM, "--listen", LISTEN,
                     "--threads", n_threads, "--ctx", n_ctx] + (["--spec-ngram"] if resources().get("spec_ngram") else []) + ["--slot-dir", str(SLOTS)])
             env = None

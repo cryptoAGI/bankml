@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `bankml` — the binary. Today: the guard, the pin, and `verify` (both, as one gate) — P1.
-//! Later: `serve` (P0/P3/P4).
+//! `bankml` — the binary: the gate (`guard`, `pin`, `verify`), `serve` (gateway or `--native`), `generate`, `create`,
+//! `convert`, the text tools (`tokenize`, `chat-template`), `gpu`, `usage`, `version`. Usage: `bankml` with no arguments.
 //! Exit codes follow gguf_guard.py: 0 play · 2 refuse · 3 need_more · 1 usage/io.
 
 use bankml::{gguf, sha256, Verdict};

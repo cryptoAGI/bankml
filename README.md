@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.4%E2%80%9310.0%C3%97-D9A23A?style=flat-square" alt="ternary 9.4–10.0x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
-  <img src="https://img.shields.io/badge/status-0.3.4%20%C2%B7%20mindX%27s%20own%20model%20natively%3A%20Llama%2C%20F16%2C%20tied%20embeddings%2C%20Ollama%27s%20API%2C%20JSON%20mode-F59E0B?style=flat-square" alt="status">
+  <img src="https://img.shields.io/badge/status-0.3.6%20%C2%B7%20verified%20native%20engine%3A%20JSON%20schemas%2C%20penalties%2C%20Ollama%27s%20API%2C%20mindX%27s%20default-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
 </p>
 
@@ -30,6 +30,61 @@ bankml found why and fixed it at the kernel: **llama.cpp b11192 has no vectorise
 at all** — it runs scalar C with 64 integer multiplies per block. bankml's kernel computes the **same bits**, verified
 against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.4–10.0× faster** per matrix
 (the 0.2.2 gate record; every gate since 0.0.1 has measured 9.4–10.8×).
+
+## Install and use
+
+Six steps, from a fresh machine to verified answers. Each is detailed in [docs/usage.md](docs/usage.md).
+
+**1. Install.** One command: it checks the machine (Rust 1.99+, Python 3.10+, AVX2), builds and tests bankML,
+fetches llama.cpp b11192 (sha256-checked, used as the oracle and the fallback engine), imports Bonsai-8B and verifies
+it, and starts Savante's page. Nothing needs sudo.
+
+```sh
+git clone https://github.com/cryptoAGI/bankml && cd bankml
+./install.sh                     # or: bash install.sh
+```
+
+**2. Talk to Savante.** Open **http://127.0.0.1:7873** (this computer only). `./install.sh status` shows what runs and
+which model was verified; `./install.sh stop` stops it all; `./install.sh start --view` adds a read-only page for
+your network.
+
+**3. Serve a model yourself.** `bankml serve` refuses to start unless the file passes the guard and its sha256 equals
+its `FORK.json` pin. `--native` answers from bankML's own forward pass; `--registry` serves every pinned model by name,
+one resident at a time, each verified again when it loads.
+
+```sh
+target/release/bankml verify .models/Bonsai-8B-Q1_0.gguf --fork FORK.json        # the gate, on its own
+target/release/bankml serve  .models/Bonsai-8B-Q1_0.gguf --fork FORK.json --native --registry --ctx 2048
+```
+
+**4. Ask it, the OpenAI way or the Ollama way** (it listens on `127.0.0.1:18093`; POSTs need
+`Content-Type: application/json`). Every answer carries a `bankml_receipt`: the model's sha256, the request's and the
+answer's.
+
+```sh
+curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Say hello."}],"max_tokens":32,"repeat_penalty":1.3}'
+curl -s 127.0.0.1:18093/api/chat -H 'Content-Type: application/json' \
+  -d '{"model":"bonsai-8b-q1_0","messages":[{"role":"user","content":"Name a cat."}],"stream":false,
+       "format":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}'
+```
+
+**5. Make your own model.** `bankml convert` turns a merged safetensors directory into a GGUF byte-identical to
+llama.cpp's converter; `bankml create` lays a Modelfile's persona over a pinned model as a verified layer.
+
+```sh
+target/release/bankml create mymodel -f Modelfile     # FROM a pinned GGUF, a name, or a safetensors directory
+```
+
+**6. Check it, and build it by hand.**
+
+```sh
+cargo build --release && cargo test --release          # offline unit and end-to-end tests
+target/release/bankml version                          # the build; `bankml gpu` lists the video cards it may use
+```
+
+From another program: [docs/CAPI.md](docs/CAPI.md) (`libbankml`, `bankml.h`). As an Ollama for mindX:
+[docs/OLLAMA.md](docs/OLLAMA.md). What each source file does, and its limits: [docs/modules/](docs/modules/).
 
 ## 0.3.0 — bankML answers Savante itself
 
@@ -59,6 +114,9 @@ Start here, then go where your question is. The same documents read as a website
 |---|---|
 | install and start everything with one command | **`./install.sh`** ([usage.md §1](docs/usage.md#1-install)) |
 | install, run and use bankml and Savante (both modes, models, `.history`, receipts, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
+| install for production or a server: every `install.sh` option, every flag and environment variable, tuning, a systemd unit, security | **[docs/install.md](docs/install.md)** |
+| know what each source file does, how to use it, why it is fast, and its limits | **[docs/modules/](docs/modules/README.md)** (one page per module) |
+| see how bankML was built, phase by phase, with the evidence each step stood on | **[docs/BUILD_HISTORY.md](docs/BUILD_HISTORY.md)** |
 | meet Savante's page for the first time: asking, her card, listening to her | **[docs/playback.md](docs/playback.md)** |
 | understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
 | read the thesis: the design intent of bankml's authors, in their own words | **[the Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson)**, in TECHNICAL.md (Savante reads it aloud: `Savante-reading.opus`) |
