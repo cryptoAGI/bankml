@@ -175,9 +175,9 @@ pub fn usage_json(procs: &[(&str, u32)], interval: Duration) -> String {
     format!(
         "{{\"source\": \"bankml sys.rs (/proc)\", \"cores\": {}, \"mem_total_bytes\": {}, \"mem_available_bytes\": {}, \"swap_total_bytes\": {}, \
          \"swap_free_bytes\": {}, \"rss_bytes\": {rss_sum}, \"cpu_percent\": {cpu_sum:.1}, \"interval_ms\": {}, \"processes\": [{}], \
-         \"package_watts\": {watts}, \"gpus\": [{}]}}",
+         \"package_watts\": {watts}, \"gpus\": [{}], \"gpu_limiter\": {}}}",
         cores(), m.total, m.available, m.swap_total, m.swap_free, interval.as_millis(), rows.join(", "),
-        gpus().iter().map(gpu_json).collect::<Vec<_>>().join(", ")
+        gpus().iter().map(gpu_json).collect::<Vec<_>>().join(", "), crate::gpu::worker::status_json()
     )
 }
 

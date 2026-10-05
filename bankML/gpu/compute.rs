@@ -94,6 +94,9 @@ pub struct Gpu {
     queue: P,
     fns: Fns,
     mem_type: u32,
+    /// 0.3.7: the size of the heap bankml's buffers come from, and the bytes they hold now (the GPU limiter's budget)
+    pub heap_bytes: u64,
+    allocated: std::sync::atomic::AtomicU64,
     cpool: H,
     cb: P,
     fence: H,
@@ -105,6 +108,8 @@ pub struct Buffer {
     mem: H,
     ptr: *mut u8,
     pub bytes: usize,
+    /// the memory the driver allocated for it (≥ `bytes`)
+    alloc: u64,
 }
 
 /// A compute pipeline: its layout, descriptor set and push-constant size.
@@ -174,7 +179,8 @@ impl Gpu {
             check((fns.cbufs)(dev, &cbai, &mut cb), "vkAllocateCommandBuffers")?;
             let mut fence = 0;
             check((fns.fence)(dev, &FenceCreateInfo { s_type: 8, p_next: std::ptr::null(), flags: 0 }, std::ptr::null(), &mut fence), "vkCreateFence")?;
-            Ok(Gpu { name, dev, queue, fns, mem_type, cpool, cb, fence })
+            let heap_bytes = mp.heaps[mp.types[mem_type as usize].heap as usize].size;
+            Ok(Gpu { name, dev, queue, fns, mem_type, heap_bytes, allocated: Default::default(), cpool, cb, fence })
         }
     }
 
@@ -196,7 +202,8 @@ impl Gpu {
             check((self.fns.bind)(self.dev, buf, mem, 0), "vkBindBufferMemory")?;
             let mut ptr = std::ptr::null_mut();
             check((self.fns.map)(self.dev, mem, 0, u64::MAX, 0, &mut ptr), "vkMapMemory")?;
-            Ok(Buffer { buf, mem, ptr: ptr as *mut u8, bytes })
+            self.allocated.fetch_add(req.size, std::sync::atomic::Ordering::Relaxed);
+            Ok(Buffer { buf, mem, ptr: ptr as *mut u8, bytes, alloc: req.size })
         }
     }
 
@@ -224,7 +231,13 @@ impl Gpu {
         v
     }
 
+    /// The bytes bankml's buffers hold on this device now.
+    pub fn allocated(&self) -> u64 {
+        self.allocated.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn free(&self, b: Buffer) {
+        self.allocated.fetch_sub(b.alloc, std::sync::atomic::Ordering::Relaxed);
         unsafe {
             (self.fns.destroy_buffer)(self.dev, b.buf, std::ptr::null());
             (self.fns.free)(self.dev, b.mem, std::ptr::null());
