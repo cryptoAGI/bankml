@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased — O2's penalties: llama-server's repeat, frequency and presence penalties (branch `o2-penalties`)
+## 0.3.6 — 2026-10-04 — the penalties: llama-server's repeat, frequency and presence penalties (O2)
 
 **`repeat_penalty`, `repeat_last_n`, `presence_penalty` and `frequency_penalty` are no longer refused: bankML applies
 them as llama.cpp b11192's `llama_sampler_penalties` does, and its answers are token-identical to llama-server's.** The
 coach's `ollama_predict` (`temperature 0`, `repeat_penalty 1.3`) and mindXtrain's imprint gate (`repetition_penalty 1.3`)
-can now run on bankML. Greedy at 1.3, `mindx-gen39` answers instead of degenerating into `,,,,`.
+can now run on bankML. Greedy at 1.3, `mindx-gen39` answers instead of degenerating into `,,,,`. Record:
+`testing/results/0.3.6.txt`: one run to `json_schema_oracle_live`, where the Vega 3 worker's memory (taken from the
+laptop's RAM) stalled it; the three stages left ran next from the same tree and build with `BANKML_GPU=off`, marked in
+the record. 0.3.7 adds a GPU limiter for this (`BANKML_GPU_LIMIT`).
 
 ### Measured
 - `oracle_penalties` (`testing/penalty_oracle.py`, llama-server b11192 from an empty cache, greedy and seeded; 17
@@ -21,7 +24,8 @@ can now run on bankML. Greedy at 1.3, `mindx-gen39` answers instead of degenerat
   `general.sampling.penalty_last_n` and `penalty_repeat` read from the GGUF as llama.cpp reads them (none of the five
   native models sets them).
 - The surfaces: `/v1` and `/api/*` (`repeat_last_n` moves from the ignored resource options to the honoured ones), a
-  Modelfile's `PARAMETER`, `bankml generate --sample`, the C API (through the same engine).
+  Modelfile's `PARAMETER`, the C API (through the same engine). `bankml generate --sample` applies them too, but has
+  no flags for them: only a GGUF's own `general.sampling.penalty_*` defaults reach it (none of the five models sets one).
 - `testing/penalty_oracle.py` (record, and `--bankml` live); `oracle_penalties`, `oracle_penalties_8b` and
   `penalty_oracle_live` in the gate. Live on mindx-gen39: **85 / 85** through `/v1` (top-level fields) and `/api/chat`
   (`options`), refusals included.

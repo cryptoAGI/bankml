@@ -1609,7 +1609,10 @@ mod tests {
             let mut smp = Sampler::new(Params { temp: num(pr, "temperature") as f32, top_k: num(pr, "top_k") as i32,
                                                 top_p: num(pr, "top_p") as f32, min_p: num(pr, "min_p") as f32,
                                                 min_keep: num(pr, "min_keep") as usize, seed: num(pr, "seed") as u32,
-                                                penalty_last_n: num(pr, "repeat_last_n") as i32, penalty_repeat: 1.0,
+                                                // records from before O2 carry no repeat_last_n; their penalties are
+                                                // neutral (asserted above), so llama.cpp's default window changes nothing
+                                                penalty_last_n: match pr.get("repeat_last_n") { Some(Json::Num(n)) => *n as i32, _ => 64 },
+                                                penalty_repeat: 1.0,
                                                 penalty_freq: 0.0, penalty_present: 0.0 }).unwrap();
             // the prompt's caches, computed once per prompt and cloned per case
             if prefilled.as_ref().map(|p| p.0 != prompt).unwrap_or(true) {

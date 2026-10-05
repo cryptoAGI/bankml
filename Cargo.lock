@@ -4,11 +4,11 @@ version = 4
 
 [[package]]
 name = "bankml"
-version = "0.3.5"
+version = "0.3.6"
 
 [[package]]
 name = "bankml-capi"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "bankml",
 ]
