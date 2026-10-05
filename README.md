@@ -130,6 +130,7 @@ Start here, then go where your question is. The same documents read as a website
 | embed bankML in a C, C++, Python, Go or Swift program (`libbankml`, `bankml.h`: open with the gate, chat with the receipt, a printf-style log) | **[docs/CAPI.md](docs/CAPI.md)** (0.3.2) · [usage.md §6b](docs/usage.md#6b-the-c-api) |
 | see what comes next and what was rejected, and why | **[docs/TODO.md](docs/TODO.md)** |
 | check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
+| install and use bankML as a language model or agent (a tested, step-by-step method from a fresh clone) | **[llms.txt](llms.txt)** (also at [cryptoagi.github.io/bankml/llms.txt](https://cryptoagi.github.io/bankml/llms.txt)) |
 | know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |
 | run or read the tests and each release's gate record | **[testing/README.md](testing/README.md)**, [testing/results/](testing/results/) |
 | work on bankML with Claude Code (the file map, the oracles, the release routine, the pitfalls) | **[.claude/skills/bankml/SKILL.md](.claude/skills/bankml/SKILL.md)**, the project skill |

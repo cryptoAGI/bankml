@@ -1,0 +1,84 @@
+# bankML
+
+> Verified low-bit inference for the CPU you already have. A zero-dependency Rust runtime for 1-bit (Q1_0), ternary
+> (Q2_0_g64) and F16 GGUF models whose kernels, forward pass, tokenizer, templates, samplers and grammars are checked
+> against llama.cpp b11192's compiled code: bit-exact where ggml computes, token-identical where llama-server answers.
+> `bankml serve` refuses to start unless the model file passes a header guard and matches its sha256 pin, speaks
+> OpenAI's API and Ollama's, and puts a receipt (model, request and response sha256) on every answer.
+> Licence: MIT OR Apache-2.0. Authors: Professor Codephreak and Gregory L. Magnusson (cryptoAGI).
+
+This file is for language models and agents. The method below is the one the maintainers run on every release from a
+fresh `git clone` of the live repository; each command was run as written. Follow it in order. Stop at the first step
+that fails and report its output: bankML refuses with a reason rather than degrade.
+
+## Method: from a fresh clone to a verified answer
+
+Requirements: Linux x86_64 with AVX2 (the fast kernels are chosen at run time; scalar paths otherwise), git, curl,
+Rust 1.99 (pinned by `rust-toolchain.toml`; rustup installs it), Python 3.10+ for the model importer. No root.
+
+1. Clone and build.
+   ```sh
+   git clone https://github.com/cryptoagi/bankml bankML && cd bankML
+   cargo build --release --locked
+   ```
+2. Test (offline; expect `test result: ok` lines and no `FAILED`).
+   ```sh
+   cargo test --release --locked
+   target/release/bankml version
+   ```
+3. Get a model, verified and pinned. The importer downloads a catalogued model at a fixed revision, refuses it unless
+   its sha256 is the published one, and writes its pin (`~/.local/share/bankml/forks/<file>.FORK.json`).
+   ```sh
+   python3 sAGI/models.py catalog                 # what can be imported, and whether it fits this machine
+   python3 sAGI/models.py import bonsai-1.7b      # 248 MB, 1-bit; bonsai-8b (1.16 GB) and ternary-bonsai-8b (2.31 GB) also
+   ```
+4. Verify the file: the guard, then the sha256 pin, as one gate. Expect `"verdict": "play"` and exit code 0.
+   ```sh
+   target/release/bankml verify .models/Bonsai-1.7B-Q1_0.gguf \
+     --fork ~/.local/share/bankml/forks/Bonsai-1.7B-Q1_0.gguf.FORK.json --json
+   ```
+5. Serve it from bankML's own forward pass (loopback only; it hashes the model before it binds the port).
+   ```sh
+   target/release/bankml serve .models/Bonsai-1.7B-Q1_0.gguf \
+     --fork ~/.local/share/bankml/forks/Bonsai-1.7B-Q1_0.gguf.FORK.json --native --ctx 2048 &
+   curl -s 127.0.0.1:18093/bankml          # what was verified: "verified": {"verdict": "play", "model_sha256": …}
+   ```
+6. Ask it. Every POST needs `Content-Type: application/json` and a loopback `Host`.
+   ```sh
+   # OpenAI's API
+   curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' \
+     -d '{"messages":[{"role":"user","content":"Name three primary colours."}],"max_tokens":24,"temperature":0}'
+   # Ollama's API, with a JSON schema and a repetition penalty
+   curl -s 127.0.0.1:18093/api/chat -H 'Content-Type: application/json' \
+     -d '{"model":"bonsai-1.7b-q1_0","messages":[{"role":"user","content":"Name a cat."}],"stream":false,
+          "options":{"temperature":0,"num_predict":24,"repeat_penalty":1.3},
+          "format":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}'
+   ```
+   The first answers with text and a top-level `bankml_receipt`; the second with `{"name": …}` in `message.content`.
+7. Check an answer: `bankml_receipt.response_sha256` is the sha256 of the answer text exactly as the model produced it,
+   and `model_sha256` names the weights that answered. Recompute the first to confirm the text you hold is the text
+   the engine produced.
+
+## What bankML refuses, and why
+
+- A model file that fails the guard or whose sha256 differs from its pin: it never loads.
+- A sampler or option it does not reproduce exactly (e.g. mirostat, a custom sampler order, top-k above 128): a 400
+  with the reason, never an approximation. Everything in llama-server's default sampler chain is reproduced.
+- A non-loopback `Host`, a POST without a JSON `Content-Type`: 403 and 415.
+
+## Documentation
+
+- [README](https://github.com/cryptoAGI/bankml/blob/main/README.md): what bankML is, results, releases, install and use in six steps
+- [Install and configure](https://github.com/cryptoAGI/bankml/blob/main/docs/install.md): every option, flag and environment variable; a systemd unit
+- [Usage guide](https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md): serving, the Ollama API, the C API, receipts
+- [Modules](https://github.com/cryptoAGI/bankml/blob/main/docs/modules/README.md): each source module's usage, advantages and limits
+- [Oracles](https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md): what each claim is checked against
+- [Ollama gap matrix](https://github.com/cryptoAGI/bankml/blob/main/docs/OLLAMA.md): what Ollama clients ask, and what bankML does
+
+## Optional
+
+- [Performance](https://github.com/cryptoAGI/bankml/blob/main/docs/PERFORMANCE.md): every number, with the command that measured it
+- [C API](https://github.com/cryptoAGI/bankml/blob/main/docs/CAPI.md): libbankml and bankml.h
+- [Changelog](https://github.com/cryptoAGI/bankml/blob/main/CHANGELOG.md) and [releases](https://github.com/cryptoAGI/bankml/releases), each with its gate record
+- [Build history](https://github.com/cryptoAGI/bankml/blob/main/docs/BUILD_HISTORY.md): how each phase was reached, with its evidence
+- [Documentation reader](https://cryptoagi.github.io/bankml/)
