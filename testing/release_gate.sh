@@ -21,6 +21,7 @@ out=testing/results/$v.txt
   python3 testing/spdx_check.py | tail -1
   python3 testing/test_gguf_guard.py | tail -1
   python3 -B testing/test_ui.py | tail -1 | sed 's/^/ui data layer: /'
+  python3 -B testing/test_console.py | tail -1 | sed 's/^/console: /'
   python3 -B testing/test_connectors.py | tail -1 | sed 's/^/postgres connector (throwaway cluster): /'
   python3 -B testing/test_chain.py | tail -1 | sed 's/^/iNFT mint and load (throwaway anvil devnet): /'
   BANKML_TEST_CARRIER=1 python3 -B testing/test_models.py | tail -1 | sed 's/^/model importer (loopback source; carrier on spare ports): /'

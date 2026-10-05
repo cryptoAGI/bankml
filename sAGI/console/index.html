@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bankML console</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark">bankML</span> <span id="mantra" class="mantra"></span></div>
+  <nav role="tablist">
+    <button role="tab" data-tab="interaction" aria-selected="true">Interaction</button>
+    <button role="tab" data-tab="admin">Admin</button>
+    <button role="tab" data-tab="logging">Logging</button>
+    <button role="tab" data-tab="infotags">Infotags</button>
+  </nav>
+  <div id="status" class="status"></div>
+</header>
+
+<main>
+  <section id="interaction" class="tab active">
+    <div id="chat" class="chat" aria-live="polite"></div>
+    <form id="ask" class="ask">
+      <textarea id="q" rows="2" placeholder="Ask bankML — about anything, or about itself: its tokens, its speed, its load"></textarea>
+      <button type="submit" id="send">Send</button>
+    </form>
+  </section>
+
+  <section id="admin" class="tab">
+    <div class="grid">
+      <div class="card controls">
+        <h2>Resources</h2>
+        <label>CPU threads <output id="threads-v"></output><input type="range" id="threads" min="1" max="4" step="1"></label>
+        <label>RAM budget (weights + KV) <output id="ram-v"></output><input type="range" id="ram" min="0.5" max="6" step="0.1"></label>
+        <label>GPU limit (memory and time) <output id="gpu-v"></output><input type="range" id="gpu" min="0" max="100" step="5"></label>
+        <button id="apply">Apply — restart the engine, verified</button>
+        <p id="job" class="note"></p>
+      </div>
+      <div class="card"><h2>Now</h2><dl id="now" class="now"></dl></div>
+      <div class="card chart"><h2>Generation and prompt, tokens/s</h2><svg id="c-tps"></svg></div>
+      <div class="card chart"><h2>Time to first token, ms</h2><svg id="c-ttft"></svg></div>
+      <div class="card chart"><h2>CPU %</h2><svg id="c-cpu"></svg></div>
+      <div class="card chart"><h2>Memory, GB (RSS · available)</h2><svg id="c-mem"></svg></div>
+      <div class="card chart"><h2>GPU busy % · limiter</h2><svg id="c-gpu"></svg></div>
+      <div class="card chart"><h2>Power, W · energy per token, J</h2><svg id="c-pow"></svg><p id="pow-note" class="note"></p></div>
+    </div>
+  </section>
+
+  <section id="logging" class="tab">
+    <div class="card"><h2>Exchanges</h2>
+      <table id="log"><thead><tr><th>time</th><th>question</th><th>tokens</th><th>TTFT ms</th><th>tg tok/s</th><th>receipt</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card"><h2>Engine log</h2><pre id="englog"></pre></div>
+  </section>
+
+  <section id="infotags" class="tab">
+    <div class="grid">
+      <div class="card"><h2>iNFT metadata</h2><table id="attrs"><tbody></tbody></table>
+        <button id="download">Download metadata JSON</button>
+        <p class="note">The exchanges stay on this machine; what travels is their Merkle root (RFC 6962) and CID. A holder of the root can check any one exchange shown to them.</p>
+      </div>
+      <div class="card"><h2>JSON</h2><pre id="infojson"></pre></div>
+    </div>
+  </section>
+</main>
+<script src="/vendor/d3.v7.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
