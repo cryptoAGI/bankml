@@ -553,7 +553,12 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
         c.write_all(line.as_bytes())?;
         return c.flush();
     }
-    let d = match eng.complete(&prompt, params, o.max, grammar, |piece| stop.push(piece).1) {
+    let d = match eng.complete(&prompt, params, o.max, grammar, |piece| {
+        if t.ttft.is_none() {
+            t.ttft = Some(t.t0.elapsed());
+        }
+        stop.push(piece).1
+    }) {
         Ok(d) => d,
         Err(m) => return err(c, 500, &m),
     };
@@ -604,12 +609,12 @@ mod tests {
         // num_predict -1 (until the turn ends) and no options at all
         assert_eq!(options(Json::parse(r#"{"num_predict": -1}"#).as_ref(), 4096).unwrap().max, None);
         assert_eq!(options(None, 4096).unwrap().max, None);
-        // O2: the penalties map onto the engine (the coach's repeat_penalty 1.3 included); typical-p is still refused
+        // O2: the penalties map onto the engine (the coach's repeat_penalty 1.3 included); 0.3.7: typical-p too
         let pen = options(Json::parse(r#"{"repeat_penalty": 1.3, "repeat_last_n": 32, "presence_penalty": 0.5, "frequency_penalty": -0.25}"#).as_ref(), 4096).unwrap();
         let p = crate::native::sampling(base.clone(), &pen.flat).unwrap();
         assert_eq!((p.penalty_repeat, p.penalty_last_n, p.penalty_present, p.penalty_freq), (1.3, 32, 0.5, -0.25));
         let typ = options(Json::parse(r#"{"typical_p": 0.9}"#).as_ref(), 4096).unwrap();
-        assert!(crate::native::sampling(base, &typ.flat).unwrap_err().contains("typical_p = 0.9"));
+        assert_eq!(crate::native::sampling(base, &typ.flat).unwrap().typical_p, 0.9);
         // num_ctx above the served context, unknown options, non-numbers, mirostat: refused
         assert!(options(Json::parse(r#"{"num_ctx": 8192}"#).as_ref(), 4096).unwrap_err().contains("8192"));
         assert!(options(Json::parse(r#"{"warp": 1}"#).as_ref(), 4096).unwrap_err().contains("options.warp"));
@@ -650,7 +655,7 @@ mod tests {
         assert_eq!(v.get("done"), Some(&Json::Bool(false)));
         let g = Json::parse(piece_line("m", false, "x").trim_end()).unwrap();
         assert_eq!(g.get("response").and_then(Json::as_str), Some("x"));
-        let d = crate::native::Done { prompt_tokens: 12, cached_tokens: 3, completion_tokens: 5, finish_reason: "stop", text: "hi".into(), prompt_ns: 7, eval_ns: 9, tokens: vec![], grammar_ns: 0, resampled: 0 };
+        let d = crate::native::Done { prompt_tokens: 12, cached_tokens: 3, completion_tokens: 5, finish_reason: "stop", text: "hi".into(), prompt_ns: 7, eval_ns: 9, tokens: vec![], grammar_ns: 0, resampled: 0, ..Default::default() };
         let f = final_line("m", true, "", "stop", 100, 4, Some(&d), Some("{\"signed\": false}"));
         assert!(f.ends_with('\n') && f.matches('\n').count() == 1);
         let v = Json::parse(f.trim_end()).unwrap();

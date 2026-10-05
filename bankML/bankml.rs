@@ -53,6 +53,7 @@ pub mod sampler;
 pub mod schema;
 pub mod sha256;
 pub mod sys;
+pub mod metrics;
 pub mod train;
 pub mod tokenizer;
 pub mod unicode_letters;

@@ -459,6 +459,8 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             drop(last);
             respond(&mut c, 200, "application/json", body.as_bytes())
         }
+        // 0.3.7: the engine's own measurements of its last answers (metrics.rs): TTFT, pp and tg tokens/s, energy
+        ("GET", "/bankml/metrics") => respond(&mut c, 200, "application/json", crate::metrics::json().as_bytes()),
         _ if st.native.is_some() => native_route(&mut c, st, &method, &path, &body),
         ("GET", "/health" | "/v1/models" | "/props") => match request(&st.upstream, "GET", &path, b"") {
             Ok((code, _, b)) => respond(&mut c, code, "application/json", &b),
@@ -661,11 +663,12 @@ impl NativeChat {
         let grammar = eng.grammar(&self.constraint)?;
         let mut content = crate::grammar::ContentStream::new(&self.constraint);
         let done = eng.complete(&self.prompt, self.params, self.max, grammar, |piece| {
-            if !stream {
-                return stop.push(piece).1;
-            }
+            // the time to first token, streamed or not (0.3.7: non-streamed receipts carried null)
             if t.ttft.is_none() {
                 t.ttft = Some(t.t0.elapsed());
+            }
+            if !stream {
+                return stop.push(piece).1;
             }
             let (out, go) = stop.push(piece);
             emit(&content.push(&out)) && go
@@ -683,11 +686,23 @@ impl NativeChat {
 }
 
 /// The non-streamed `/v1/chat/completions` answer from bankML's own engine: OpenAI's object, llama-server's
-/// `timings.cache_n`, and the receipt (also the C API's `result_json`).
+/// `timings` (0.3.7: its prompt and generation fields, measured in the engine), and the receipt (also the C API's
+/// `result_json`).
 pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t: &Tally, engine: &str, v: &Verified) -> String {
-    format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}, \"bankml_receipt\": {}}}",
+    format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
             crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(model_id), d.completion_tokens, d.prompt_tokens,
-            d.completion_tokens + d.prompt_tokens, d.cached_tokens, t.receipt(engine, v))
+            d.completion_tokens + d.prompt_tokens, timings_json(d), t.receipt(engine, v))
+}
+
+/// llama-server's `timings` object for an answer: the prompt's uncached part and the generation, counts, milliseconds
+/// and tokens per second, as the engine measured them (`cache_n` is the reused prefix).
+pub fn timings_json(d: &crate::native::Done) -> String {
+    let prompt_n = d.prompt_tokens.saturating_sub(d.cached_tokens);
+    let (pms, ems) = (d.prompt_ns as f64 / 1e6, d.eval_ns as f64 / 1e6);
+    let rate = |n: usize, ms: f64| if n > 0 && ms > 0.0 { format!("{:.3}", n as f64 / (ms / 1e3)) } else { "null".into() };
+    format!("{{\"cache_n\": {}, \"prompt_n\": {prompt_n}, \"prompt_ms\": {pms:.3}, \"prompt_per_second\": {}, \"predicted_n\": {}, \
+             \"predicted_ms\": {ems:.3}, \"predicted_per_second\": {}}}",
+            d.cached_tokens, rate(prompt_n, pms), d.completion_tokens, rate(d.completion_tokens, ems))
 }
 
 /// What a receipt is made from: the request's sha256, the clock, and the answer's text and counts.

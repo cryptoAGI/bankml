@@ -52,7 +52,7 @@ pub struct Native {
 }
 
 /// How a completion ended, and its counts (llama-server's `usage` and `timings.cache_n`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Done {
     pub prompt_tokens: usize,
     pub cached_tokens: usize,
@@ -67,6 +67,10 @@ pub struct Done {
     /// under a grammar: the time spent in it (the checks, the masks, the accepts) and how many tokens were redrawn
     pub grammar_ns: u64,
     pub resampled: usize,
+    /// 0.3.7: from the start of the completion to its first piece (the time to first token the engine measures), and
+    /// the CPU package's energy over the completion when RAPL is readable
+    pub ttft_ns: Option<u64>,
+    pub energy_j: Option<f64>,
 }
 
 impl Native {
@@ -182,6 +186,8 @@ impl Native {
         }
         let mut slot = self.slot.lock().map_err(|_| "the slot is poisoned")?;
         let t0 = Instant::now();
+        let e0 = crate::sys::energy_uj();
+        let mut ttft_ns = None;
         // llama-server's prompt cache: the longest common prefix, less one when the whole prompt is cached
         let mut n_past = slot.tokens.iter().zip(prompt).take_while(|(a, b)| a == b).count();
         if n_past == prompt.len() {
@@ -231,6 +237,7 @@ impl Native {
             if valid > 0 {
                 let piece: String = String::from_utf8(pending.drain(..valid).collect()).unwrap();
                 text.push_str(&piece);
+                ttft_ns.get_or_insert(t0.elapsed().as_nanos() as u64);
                 if !emit(&piece) {
                     finish = "stop";
                     break;
@@ -247,8 +254,16 @@ impl Native {
             text.push_str(&piece);
             emit(&piece);
         }
+        let eval_ns = t1.elapsed().as_nanos() as u64;
+        let energy_j = e0.zip(crate::sys::energy_uj()).map(|(a, b)| crate::sys::joules(a, b));
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        crate::metrics::push(crate::metrics::Record {
+            at, model: self.model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), prompt_tokens: prompt.len(),
+            cached_tokens: n_past, completion_tokens: n, prompt_ms: prompt_ns as f64 / 1e6, ttft_ms: ttft_ns.map(|t| t as f64 / 1e6),
+            eval_ms: eval_ns as f64 / 1e6, finish: finish.to_string(), grammar_ms: grammar_ns as f64 / 1e6, resampled, energy_j,
+        });
         Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text, prompt_ns,
-                  eval_ns: t1.elapsed().as_nanos() as u64, tokens: out, grammar_ns, resampled })
+                  eval_ns, tokens: out, grammar_ns, resampled, ttft_ns, energy_j })
     }
 
     /// Empty the slot (the next request computes its whole prompt, as a fresh llama-server or `cache_prompt: false`).
