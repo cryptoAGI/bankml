@@ -890,6 +890,11 @@ pub struct Vocab {
 }
 
 impl Vocab {
+    /// Every token's `token_to_piece(special = true)` bytes, by id (DRY's breakers read them too).
+    pub fn pieces(&self) -> &[Vec<u8>] {
+        &self.pieces
+    }
+
     pub fn new(pieces: Vec<Vec<u8>>, eog_ids: &[u32]) -> Vocab {
         let decoded = pieces.iter().map(|p| decode(p, Partial::default())).collect();
         let mut eog = vec![false; pieces.len()];

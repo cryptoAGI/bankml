@@ -47,6 +47,8 @@ pub struct Native {
     gvocab: std::sync::OnceLock<crate::grammar::Vocab>,
     /// the JSON-mode grammar, parsed once
     json_rules: std::sync::OnceLock<Arc<crate::grammar::Rules>>,
+    /// DRY's processed breakers for the last breaker list asked for (a scan of the whole vocabulary per list)
+    dry_cache: Mutex<Option<(Vec<String>, Arc<crate::sampler::DryBreakers>)>>,
 }
 
 /// How a completion ended, and its counts (llama-server's `usage` and `timings.cache_n`).
@@ -76,10 +78,23 @@ impl Native {
         let eog = eog_from_gguf(model, &tok)?;
         let caches = w.caches();
         Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }),
-                    gvocab: Default::default(), json_rules: Default::default() })
+                    gvocab: Default::default(), json_rules: Default::default(), dry_cache: Default::default() })
     }
 
     /// The vocabulary as the grammar reads it (built once, ~10 MB, on the first constrained request).
+    /// DRY's breakers for this vocabulary (`sampler::dry_breakers`), built once per breaker list and kept.
+    fn dry_breakers(&self, breakers: &[String]) -> Result<Arc<crate::sampler::DryBreakers>, String> {
+        let mut cache = self.dry_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((k, b)) = cache.as_ref() {
+            if k == breakers {
+                return Ok(b.clone());
+            }
+        }
+        let b = Arc::new(crate::sampler::dry_breakers(breakers, self.grammar_vocab().pieces(), |s| self.tok.encode(s, false))?);
+        *cache = Some((breakers.to_vec(), b.clone()));
+        Ok(b)
+    }
+
     pub fn grammar_vocab(&self) -> &crate::grammar::Vocab {
         self.gvocab.get_or_init(|| crate::grammar::Vocab::new((0..self.tok.n_tokens() as u32).map(|i| self.tok.piece(i)).collect(), &self.eog))
     }
@@ -158,7 +173,10 @@ impl Native {
             return Err(format!("the prompt has {} tokens; the context is {}", prompt.len(), self.n_ctx));
         }
         let mut sampler = Sampler::new(params)?;
-        // O2: llama-server accepts the whole prompt into the penalties' window before the first draw, cached or not
+        if sampler.wants_dry_breakers() {
+            sampler.set_dry_breakers(self.dry_breakers(sampler.dry_sequence_breakers())?);
+        }
+        // llama-server accepts the whole prompt into the samplers' windows before the first draw, cached or not
         for &t in prompt {
             sampler.accept(t);
         }
@@ -263,36 +281,52 @@ pub fn eog_from_gguf(model: &Path, tok: &Tokenizer) -> Result<Vec<u32>, String> 
     Ok(tok.eog_ids(&ids))
 }
 
-/// The request's sampling parameters over a model's defaults (llama-server's resolution); a sampler bankML does not
-/// reproduce (dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason. O2: the repeat, frequency
-/// and presence penalties and `repeat_last_n` are reproduced (`Sampler::new` refuses what llama-server refuses).
+/// The request's sampling parameters over a model's defaults, as llama-server resolves them: its soft limits clamp,
+/// its hard limits and its sampler errors refuse (`Sampler::new`). Every sampler of its default chain is reproduced
+/// (0.3.7); mirostat and a custom `samplers` order are refused.
 pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
     let num = |k: &str| match req.get(k) {
         Some(Json::Num(n)) => Some(*n),
         _ => None,
     };
     let mut p = defaults;
-    if let Some(v) = num("temperature") { p.temp = v as f32 }
+    // llama-server's soft limits clamp (`set_limits`); its hard limits refuse, in `Sampler::new`
+    let unit = |v: f64| v.clamp(0.0, 1.0) as f32;
+    if let Some(v) = num("temperature") { p.temp = v.max(0.0) as f32 }
     if let Some(v) = num("top_k") { p.top_k = v as i32 }
-    if let Some(v) = num("top_p") { p.top_p = v as f32 }
-    if let Some(v) = num("min_p") { p.min_p = v as f32 }
+    if let Some(v) = num("top_p") { p.top_p = unit(v) }
+    if let Some(v) = num("min_p") { p.min_p = unit(v) }
     if let Some(v) = num("min_keep") { p.min_keep = v as usize }
     if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
     if let Some(v) = num("repeat_last_n") { p.penalty_last_n = v as i64 as i32 }
     if let Some(v) = num("repeat_penalty") { p.penalty_repeat = v as f32 }
     if let Some(v) = num("frequency_penalty") { p.penalty_freq = v as f32 }
     if let Some(v) = num("presence_penalty") { p.penalty_present = v as f32 }
-    for (k, neutral) in [("typical_p", 1.0), ("xtc_probability", 0.0), ("dry_multiplier", 0.0), ("dynatemp_range", 0.0)] {
-        if let Some(v) = num(k) {
-            if v != neutral {
-                return Err(format!("{k} = {v}: bankML's native engine reproduces llama.cpp's penalties, top-k, top-p, min-p and temperature; this sampler is not reproduced yet"));
-            }
+    // 0.3.7: the rest of the chain
+    if let Some(v) = num("typical_p") { p.typical_p = v as f32 }
+    if let Some(v) = num("top_n_sigma") { p.top_n_sigma = v as f32 }
+    if let Some(v) = num("xtc_probability") { p.xtc_probability = unit(v) }
+    if let Some(v) = num("xtc_threshold") { p.xtc_threshold = unit(v) }
+    if let Some(v) = num("dynatemp_range") { p.dynatemp_range = v as f32 }
+    if let Some(v) = num("dynatemp_exponent") { p.dynatemp_exponent = v as f32 }
+    if let Some(v) = num("dry_multiplier") { p.dry_multiplier = v as f32 }
+    if let Some(v) = num("dry_base") { if v >= 1.0 { p.dry_base = v as f32 } else { p.dry_base = 1.75 } }
+    if let Some(v) = num("dry_allowed_length") { p.dry_allowed_length = v as i64 as i32 }
+    if let Some(v) = num("dry_penalty_last_n") { p.dry_penalty_last_n = v as i64 as i32 }
+    match req.get("dry_sequence_breakers") {
+        None | Some(Json::Null) => {}
+        // anything but an array of strings reads as empty, as nlohmann's json_value falls back, and is refused
+        Some(Json::Arr(a)) if a.iter().all(|x| matches!(x, Json::Str(_))) => {
+            p.dry_sequence_breakers = a.iter().filter_map(|x| x.as_str().map(String::from)).collect()
         }
+        Some(_) => p.dry_sequence_breakers = Vec::new(),
     }
-    if let Some(v) = num("top_n_sigma") {
-        if v > 0.0 {
-            return Err("top_n_sigma: not reproduced yet".into());
-        }
+    // what changes the answer and is not reproduced is refused, never ignored
+    if num("mirostat").is_some_and(|v| v != 0.0) {
+        return Err("mirostat: not reproduced; bankML reproduces llama-server's default sampler chain".into());
+    }
+    if req.get("samplers").is_some_and(|v| *v != Json::Null) {
+        return Err("samplers: a custom sampler order is not reproduced; bankML runs llama-server's default order (penalties, dry, top-n-σ, top-k, typical-p, top-p, min-p, xtc, temperature)".into());
     }
     Ok(p)
 }
@@ -796,9 +830,15 @@ mod tests {
     /// the parameters the server read back, its answer is the server's tokens, and what the server refused is refused
     /// with its message.
     fn penalty_replay(stem: &str) {
+        sampler_replay("penalty", stem)
+    }
+
+    /// The same for any record kind of testing/penalty_oracle.py (`penalty`, `sampler`): every sampler parameter the
+    /// record carries must be what the request resolves to, then the tokens.
+    fn sampler_replay(kind: &str, stem: &str) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
         let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
-        let rec = std::fs::read_to_string(dir.join(format!("oracle-forward/penalty-{stem}.jsonl"))).unwrap();
+        let rec = std::fs::read_to_string(dir.join(format!("oracle-forward/{kind}-{stem}.jsonl"))).unwrap();
         let ids = |v: &Json, k: &str| -> Vec<u32> { match v.get(k) { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!("no {k}") } };
         let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n, _ => panic!("no {k}") };
         let (mut n, mut same, mut refused, mut toks, mut bad) = (0, 0, 0, 0, Vec::new());
@@ -816,10 +856,28 @@ mod tests {
             }
             let p = resolved.unwrap();
             let g = c.get("params").unwrap();
-            let got_p = (p.temp, p.top_k, p.top_p, p.min_p, p.penalty_last_n, p.penalty_repeat, p.penalty_freq, p.penalty_present, p.seed);
-            let want_p = (num(g, "temperature") as f32, num(g, "top_k") as i32, num(g, "top_p") as f32, num(g, "min_p") as f32, num(g, "repeat_last_n") as i32,
-                          num(g, "repeat_penalty") as f32, num(g, "frequency_penalty") as f32, num(g, "presence_penalty") as f32, num(g, "seed") as u32);
-            assert_eq!(got_p, want_p, "case {n}: the request resolves to the server's parameters");
+            // every parameter the server reported (a record carries the keys its recorder knew)
+            let floats: [(&str, f32); 15] = [("temperature", p.temp), ("top_p", p.top_p), ("min_p", p.min_p), ("repeat_penalty", p.penalty_repeat),
+                ("frequency_penalty", p.penalty_freq), ("presence_penalty", p.penalty_present), ("typical_p", p.typical_p),
+                ("top_n_sigma", p.top_n_sigma), ("xtc_probability", p.xtc_probability), ("xtc_threshold", p.xtc_threshold),
+                ("dynatemp_range", p.dynatemp_range), ("dynatemp_exponent", p.dynatemp_exponent), ("dry_multiplier", p.dry_multiplier),
+                ("dry_base", p.dry_base), ("min_keep", p.min_keep as f32)];
+            for (k, v) in floats {
+                if let Some(Json::Num(w)) = g.get(k) {
+                    assert_eq!(v, *w as f32, "case {n}: {k} resolves to the server's");
+                }
+            }
+            let ints: [(&str, i64); 5] = [("top_k", p.top_k as i64), ("repeat_last_n", p.penalty_last_n as i64), ("seed", p.seed as i64),
+                ("dry_allowed_length", p.dry_allowed_length as i64), ("dry_penalty_last_n", p.dry_penalty_last_n as i64)];
+            for (k, v) in ints {
+                if let Some(Json::Num(w)) = g.get(k) {
+                    assert_eq!(v, *w as i64, "case {n}: {k} resolves to the server's");
+                }
+            }
+            if let Some(Json::Arr(b)) = g.get("dry_sequence_breakers") {
+                let want: Vec<&str> = b.iter().filter_map(Json::as_str).collect();
+                assert_eq!(p.dry_sequence_breakers, want, "case {n}: dry_sequence_breakers resolve to the server's");
+            }
             let want = ids(&c, "ids");
             eng.reset();
             let max = num(req, "n_predict") as usize;
@@ -833,7 +891,7 @@ mod tests {
                 bad.push(format!("case {n} {}: first difference at {at:?} (bankML {} tokens, llama-server {})", req_text(req), d.tokens.len(), want.len()));
             }
         }
-        eprintln!("penalty oracle ({stem}): {same} of {} answers token-identical to llama-server b11192 ({toks} tokens), {refused} refusals with its message",
+        eprintln!("{kind} oracle ({stem}): {same} of {} answers token-identical to llama-server b11192 ({toks} tokens), {refused} refusals with its message",
                   n - refused);
         for b in bad.iter().take(12) {
             eprintln!("  {b}");
@@ -859,6 +917,21 @@ mod tests {
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-forward/penalty-Bonsai-8B-Q1_0.jsonl (testing/penalty_oracle.py); --release"]
     fn oracle_penalties_8b() {
         penalty_replay("Bonsai-8B-Q1_0");
+    }
+
+    /// 0.3.7: typical-p, top-n-σ, XTC, dynamic temperature and DRY, token for token (`--kind sampler` records).
+    #[test]
+    #[ignore = "needs .models/{mindx-gen39-F16,Bonsai-1.7B-Q1_0}.gguf + oracle-forward/sampler-*.jsonl (testing/penalty_oracle.py --kind sampler); --release"]
+    fn oracle_samplers() {
+        for stem in std::env::var("BANKML_SAMPLER_STEMS").unwrap_or("mindx-gen39-F16,Bonsai-1.7B-Q1_0".into()).split(',') {
+            sampler_replay("sampler", stem);
+        }
+    }
+
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-forward/sampler-Bonsai-8B-Q1_0.jsonl (testing/penalty_oracle.py --kind sampler); --release"]
+    fn oracle_samplers_8b() {
+        sampler_replay("sampler", "Bonsai-8B-Q1_0");
     }
 
     /// 0.3.5: the same on the O4 models — Bonsai-1.7B (the Qwen3 template) and the two ChatML templates, whose schema

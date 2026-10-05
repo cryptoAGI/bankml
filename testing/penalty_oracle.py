@@ -22,7 +22,9 @@ Live (`--bankml STEM [NAME]`): bankml serve --native with the model on a spare p
 also through Ollama's `/api/chat` (as `options`), each from an empty slot. An answer must equal the record (the text,
 the finish, the completion count, the end token included as llama-server counts it); a refused case must be a 400
 carrying llama-server's message.
-usage: python3 testing/penalty_oracle.py STEM [N_PREDICT] | --bankml STEM [NAME]"""
+0.3.7: `--kind sampler` records and replays the rest of the default chain (typical-p, top-n-σ, XTC, dynamic temperature,
+DRY) the same way → .models/oracle-forward/sampler-<model>.jsonl, replayed by `oracle_samplers*`.
+usage: python3 testing/penalty_oracle.py [--kind penalty|sampler] STEM [N_PREDICT] | [--kind …] --bankml STEM [NAME]"""
 import json, os, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
 
@@ -35,7 +37,7 @@ PORT = 18304
 
 QUESTIONS = ["Repeat the word moon forty times.", "List the days of the week, then list them again, three times.",
              "Tell me a fact about the moon.", "Write a haiku about rain."]
-VARIANTS = [
+PENALTY_VARIANTS = [
     # the coach's ollama_predict (temperature 0, repeat_penalty 1.3), and mindXtrain's imprint penalty
     {"temperature": 0.0, "repeat_penalty": 1.3},
     {"temperature": 0.0, "repeat_penalty": 1.1},
@@ -56,8 +58,41 @@ VARIANTS = [
     {"temperature": 0.0, "repeat_penalty": 0.0},
     {"temperature": 0.0, "repeat_penalty": -1.0},
 ]
+# 0.3.7: the rest of llama-server's default chain — typical-p, top-n-σ, XTC, dynamic temperature and DRY — alone and
+# where they change each other's path (typical-p leaves the set unsorted for top-p and min-p; XTC draws from its own
+# generator; DRY's breakers cap a repeat), seeded where the draw decides, and llama-server's refusals and clamps
+SAMPLER_VARIANTS = [
+    {"temperature": 0.8, "typical_p": 0.9},
+    {"temperature": 1.0, "typical_p": 0.5, "top_p": 0.9},
+    {"temperature": 1.0, "typical_p": 0.95, "top_p": 1.0, "min_p": 0.1},
+    {"temperature": 0.0, "typical_p": 0.7},
+    {"temperature": 1.0, "top_n_sigma": 1.0},
+    {"temperature": 1.2, "top_n_sigma": 2.0, "top_k": 80},
+    {"temperature": 0.0, "top_n_sigma": 0.5},
+    {"temperature": 1.0, "xtc_probability": 0.5, "xtc_threshold": 0.1},
+    {"temperature": 0.9, "xtc_probability": 1.0, "xtc_threshold": 0.05, "min_keep": 2},
+    {"temperature": 1.0, "xtc_probability": 0.3, "xtc_threshold": 0.6},
+    {"temperature": 1.0, "xtc_probability": 2.0, "xtc_threshold": 0.2},
+    {"temperature": 0.8, "dynatemp_range": 0.5},
+    {"temperature": 1.0, "dynatemp_range": 1.0, "dynatemp_exponent": 2.0},
+    {"temperature": 0.0, "dynatemp_range": 0.3},
+    {"temperature": 0.0, "dry_multiplier": 0.8},
+    {"temperature": 0.0, "dry_multiplier": 1.0, "dry_base": 1.5, "dry_allowed_length": 1, "dry_penalty_last_n": 32},
+    {"temperature": 0.7, "dry_multiplier": 0.8, "dry_sequence_breakers": ["\n", ".", " moon"]},
+    {"temperature": 0.0, "dry_multiplier": 0.5, "dry_base": 0.5, "repeat_penalty": 1.1},
+    {"temperature": 1.0, "typical_p": 0.9, "top_n_sigma": 1.5, "xtc_probability": 0.5, "dynatemp_range": 0.4, "dry_multiplier": 0.6},
+    # limits: what the server does with them is the oracle
+    {"temperature": 0.0, "dry_multiplier": 0.8, "dry_penalty_last_n": -1},
+    {"temperature": 0.0, "dry_multiplier": 0.8, "dry_allowed_length": -1},
+    {"temperature": 0.0, "dry_multiplier": 0.8, "dry_sequence_breakers": []},
+    {"temperature": 0.0, "dry_multiplier": 0.8, "dry_sequence_breakers": "\n"},
+]
+SETS = {"penalty": PENALTY_VARIANTS, "sampler": SAMPLER_VARIANTS}
+OLLAMA_OPTIONS = {"temperature", "top_k", "top_p", "min_p", "min_keep", "seed", "repeat_penalty", "repeat_last_n", "presence_penalty",
+                  "frequency_penalty", "typical_p"}
 KEYS = ("temperature", "top_k", "top_p", "min_p", "min_keep", "seed", "repeat_last_n", "repeat_penalty", "presence_penalty",
-        "frequency_penalty", "dry_multiplier", "typical_p", "xtc_probability", "dynatemp_range", "top_n_sigma", "samplers")
+        "frequency_penalty", "dry_multiplier", "dry_base", "dry_allowed_length", "dry_penalty_last_n", "dry_sequence_breakers",
+        "typical_p", "xtc_probability", "xtc_threshold", "dynatemp_range", "dynatemp_exponent", "top_n_sigma", "samplers")
 
 
 def post(base, path, body):
@@ -73,12 +108,13 @@ def post(base, path, body):
             return e.code, {"raw": raw.decode("utf-8", "replace")}
 
 
-def live(stem, name):
+def live(stem, name, kind="penalty"):
     binary = root / "target" / "release" / "bankml"
     model = root / ".models" / f"{stem}.gguf"
     forks = Path(os.environ.get("BANKML_FORKS", Path.home() / ".local/share/bankml/forks"))
     fork = forks / f"{stem}.gguf.FORK.json"
-    rec = out / f"penalty-{stem}.jsonl"
+    rec = out / f"{kind}-{stem}.jsonl"
+    variants = SETS[kind]
     for f in (binary, model, fork, rec):
         if not f.exists():
             sys.exit(f"needs {f}")
@@ -95,13 +131,15 @@ def live(stem, name):
             assert post(base, "/api/generate", {"model": name, "keep_alive": -1, "stream": False})[1]["done_reason"] == "load"
 
         for i, c in enumerate(cases):
-            q = QUESTIONS[i // len(VARIANTS)]
+            q = QUESTIONS[i // len(variants)]
             msgs = [{"role": "system", "content": SAVANTE}, {"role": "user", "content": q}]
             params = {k: v for k, v in c["request"].items() if k not in ("prompt", "n_predict", "cache_prompt", "return_tokens")}
             want_err = (c.get("error") or {}).get("message")
             if not want_err:
                 want = (c["text"], "stop" if c["stop_type"] == "eos" else "length", len(c["ids"]))
-            for path in (("v1", "api") if i % 4 == 0 else ("v1",)):
+            # Ollama's options carry only some samplers; a case with others goes through /v1 alone
+            api_ok = set(params) <= OLLAMA_OPTIONS
+            for path in (("v1", "api") if i % 4 == 0 and api_ok else ("v1",)):
                 fresh()
                 if path == "v1":
                     code, r = post(base, "/v1/chat/completions", {"model": name, "messages": msgs, "max_tokens": c["request"]["n_predict"], **params})
@@ -124,7 +162,7 @@ def live(stem, name):
     finally:
         proc.terminate()
         proc.wait()
-    print(f"penalty live oracle ({stem}): {ok} of {n} answers through bankml serve --native (/v1 top-level penalties; /api/chat options) "
+    print(f"{kind} live oracle ({stem}): {ok} of {n} answers through bankml serve --native (/v1 top-level fields; /api/chat options) "
           f"identical to llama-server b11192's record (text, finish, completion count; refusals with its message) — {time.time() - t0:.0f} s")
     return ok == n
 
@@ -132,10 +170,18 @@ def live(stem, name):
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    if sys.argv[1] == "--bankml":
-        sys.exit(0 if live(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
-    stem = sys.argv[1]
-    n_predict = int(sys.argv[2]) if len(sys.argv) > 2 else 48
+    args = sys.argv[1:]
+    kind = "penalty"
+    if "--kind" in args:
+        i = args.index("--kind")
+        kind = args[i + 1]
+        del args[i:i + 2]
+    if kind not in SETS:
+        sys.exit(f"--kind {kind}: one of {', '.join(SETS)}")
+    if args[0] == "--bankml":
+        sys.exit(0 if live(args[1], args[2] if len(args) > 2 else None, kind) else 1)
+    stem = args[0]
+    n_predict = int(args[1]) if len(args) > 1 else 48
     lib = Path(os.environ.get("BANKML_GGML_LIB", ""))
     model = root / ".models" / f"{stem}.gguf"
     if not (lib / "llama-server").exists() or not model.exists():
@@ -152,7 +198,7 @@ def main():
             _, t = post(base, "/apply-template", {"messages": msgs})
             _, tk = post(base, "/tokenize", {"content": t["prompt"], "add_special": False, "parse_special": True})
             ids = tk["tokens"]
-            for vi, v in enumerate(VARIANTS):
+            for vi, v in enumerate(SETS[kind]):
                 body = {"prompt": ids, "n_predict": n_predict, "cache_prompt": False, "return_tokens": True,
                         "seed": 2000 + 19 * qi + vi, **v}
                 t0 = time.time()
@@ -166,9 +212,9 @@ def main():
                               "text": r["content"], "stop_type": r.get("stop_type")})
                 print(f"q{qi} {v} seed {g['seed']}: {len(r['tokens'])} tokens, {time.time() - t0:.0f} s: {r['content'][:50]!r}", flush=True)
         out.mkdir(parents=True, exist_ok=True)
-        dest = out / f"penalty-{stem}.jsonl"
+        dest = out / f"{kind}-{stem}.jsonl"
         dest.write_text("".join(json.dumps(c) + "\n" for c in cases))
-        print(f"{len(cases)} penalty cases from llama-server b11192 ({stem}) → {dest}")
+        print(f"{len(cases)} {kind} cases from llama-server b11192 ({stem}) → {dest}")
     finally:
         proc.terminate()
         proc.wait(timeout=60)

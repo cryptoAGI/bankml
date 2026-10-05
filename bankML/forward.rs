@@ -1612,8 +1612,7 @@ mod tests {
                                                 // records from before O2 carry no repeat_last_n; their penalties are
                                                 // neutral (asserted above), so llama.cpp's default window changes nothing
                                                 penalty_last_n: match pr.get("repeat_last_n") { Some(Json::Num(n)) => *n as i32, _ => 64 },
-                                                penalty_repeat: 1.0,
-                                                penalty_freq: 0.0, penalty_present: 0.0 }).unwrap();
+                                                ..Params::default() }).unwrap();
             // the prompt's caches, computed once per prompt and cloned per case
             if prefilled.as_ref().map(|p| p.0 != prompt).unwrap_or(true) {
                 let mut caches = w.caches();

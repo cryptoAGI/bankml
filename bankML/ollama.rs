@@ -598,8 +598,7 @@ mod tests {
         let o = options(Json::parse(r#"{"temperature": 0.3, "top_k": 20, "top_p": 0.9, "min_p": 0.1, "seed": 42, "num_predict": 64, "stop": ["\n\n", "END"], "num_ctx": 2048, "num_thread": 3, "repeat_last_n": 64}"#).as_ref(), 4096).unwrap();
         assert_eq!(o.max, Some(64));
         assert_eq!(o.stops, vec!["\n\n".to_string(), "END".to_string()]);
-        let base = crate::sampler::Params { temp: 0.8, top_k: 40, top_p: 0.95, min_p: 0.05, min_keep: 0, seed: crate::sampler::DEFAULT_SEED,
-                                            penalty_last_n: 64, penalty_repeat: 1.0, penalty_freq: 0.0, penalty_present: 0.0 };
+        let base = crate::sampler::Params::default();
         let p = crate::native::sampling(base.clone(), &o.flat).unwrap();
         assert_eq!((p.temp, p.top_k, p.top_p, p.min_p, p.seed), (0.3, 20, 0.9, 0.1, 42));
         // num_predict -1 (until the turn ends) and no options at all
