@@ -11,9 +11,11 @@
 #   --no-start     install everything, start nothing
 #   --view         also start view mode for the LAN (0.0.0.0:7874)
 #   --voice        also install Savante's Piper voice (step `voice`)
+#   power [--remove]  opt-in, sudo: let your user read the CPU package energy counter (RAPL), so bankML can measure
+#                  watts and joules per token; it asks first (PLATYPUS, CVE-2020-8694), and --remove undoes it
 #   -h, --help     this text
 #
-# Nothing here needs sudo. Every download is checked before it is used: llama.cpp b11192 against its published
+# Nothing here needs sudo except the opt-in `power` step. Every download is checked before it is used: llama.cpp b11192 against its published
 # sha256, and the model by the importer (the publisher's sha256, bankml guard, a FORK.json pin), as bankml serve
 # refuses anything else. Environment: BANKML_DIR, BANKML_DATA (~/.local/share/bankml), BANKML_LLAMA_SERVER,
 # SAVANTE_CANON (~/cryptoAGI/savante, beside jaimla and luvai; an older ~/savante is still used if it is the only one), BANKML_PYTHON, and every BANKML_* variable docs/usage.md §13 lists.
@@ -70,7 +72,7 @@ else CANON="$HOME/cryptoAGI/savante"; fi
 LOGS="$DATA/logs"
 
 # ── options ──────────────────────────────────────────────────────────────────────────────────────────────────
-SKIP_TESTS=0 NO_START=0 WITH_VIEW=0 WITH_VOICE=0
+SKIP_TESTS=0 NO_START=0 WITH_VIEW=0 WITH_VOICE=0 POWER_REMOVE=0
 STEPS=()
 for a in "$@"; do
   case "$a" in
@@ -78,8 +80,9 @@ for a in "$@"; do
     --no-start)   NO_START=1;;
     --view)       WITH_VIEW=1;;
     --voice)      WITH_VOICE=1;;
+    --remove)     POWER_REMOVE=1;;
     -h|--help)    sed -n '3,19p' "$HERE/install.sh" | sed 's/^# \{0,1\}//'; exit 0;;
-    check|build|engine|python|canon|model|voice|start|stop|status) STEPS+=("$a");;
+    check|build|engine|python|canon|model|voice|start|stop|status|power) STEPS+=("$a");;
     *) bm_die "unknown argument: $a (see ./install.sh --help)" 2;;
   esac
 done
@@ -311,6 +314,41 @@ PY
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────────────────────────────────────
+# power: the CPU package energy counter (RAPL) is root-only since 2020 because fine-grained energy readings are a
+# side channel (PLATYPUS, CVE-2020-8694). This opens it to one group, `rapl`, that your user joins — never to every
+# user — so bankML (never root) can report watts and joules per token. Opt-in, asked first, undone by --remove.
+RAPL_RULE=/etc/udev/rules.d/60-bankml-rapl.rules
+step_power() {
+  local f
+  if [ "$POWER_REMOVE" = 1 ]; then
+    sudo rm -f "$RAPL_RULE"
+    for f in /sys/class/powercap/intel-rapl:*/energy_uj; do [ -e "$f" ] && sudo chgrp root "$f" && sudo chmod g-r "$f"; done
+    sudo udevadm control --reload
+    bm_ok "removed: the energy counter is root-only again (the rapl group is left in place; delete it with: sudo groupdel rapl)"
+    return
+  fi
+  if [ -z "$(ls /sys/class/powercap/intel-rapl:*/energy_uj 2>/dev/null)" ]; then
+    bm_warn "no RAPL counter on this machine (/sys/class/powercap/intel-rapl:*): power stays 'not measured'"; return
+  fi
+  if [ -r /sys/class/powercap/intel-rapl:0/energy_uj ]; then bm_ok "the energy counter is already readable by $USER"; return; fi
+  bm_info "This lets the group 'rapl' (and $USER in it) read the CPU package energy counter."
+  bm_info "Energy readings are a known side channel (PLATYPUS, CVE-2020-8694): only do this on a machine whose users you trust."
+  if [ "${BANKML_POWER_YES:-}" != 1 ]; then
+    [ -t 0 ] || bm_die "not a terminal: set BANKML_POWER_YES=1 to agree non-interactively" 2
+    local ans; read -r -p "  Allow it? [y/N] " ans
+    case "$ans" in y|Y|yes) ;; *) bm_info "left as it is: power stays 'not measured'"; return;; esac
+  fi
+  getent group rapl >/dev/null || sudo groupadd --system rapl
+  sudo usermod -aG rapl "$USER"
+  printf '%s\n' "# bankML (./install.sh power): the rapl group may read the CPU package energy counter. Undo: ./install.sh power --remove" \
+    'ACTION=="add", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", RUN+="/bin/chgrp rapl /sys%p/energy_uj", RUN+="/bin/chmod g+r /sys%p/energy_uj"' \
+    | sudo tee "$RAPL_RULE" >/dev/null
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=powercap --action=add
+  bm_ok "rule installed: $RAPL_RULE"
+  bm_info "log out and back in (or run: newgrp rapl) for the group to apply; then GET /bankml/usage shows package_watts"
+}
+
 title() {
   case "$1" in
     check)  echo "checking this machine";;
@@ -323,6 +361,7 @@ title() {
     start)  echo "starting Savante";;
     stop)   echo "stopping bankml and Savante";;
     status) echo "status";;
+    power)  echo "power measurement (RAPL), opt-in";;
   esac
 }
 
