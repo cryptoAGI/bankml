@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased (0.3.7) — llama-server's whole default sampler chain: typical-p, top-n-σ, XTC, dynamic temperature, DRY
+
+**Every sampler in llama-server b11192's default chain is now reproduced, token for token: after 0.3.6's penalties,
+typical-p, top-n-σ, XTC, dynamic temperature and DRY.** A request that sets any of them gets llama-server's answer
+instead of a refusal; what llama-server clamps is clamped, what it refuses is refused with its message.
+
+### Measured
+- `oracle_samplers` (`testing/penalty_oracle.py --kind sampler`, llama-server b11192 from an empty cache; 23 variants
+  × 4 prompts: each sampler alone, typical-p before top-p and min-p's unsorted path, XTC with a clamped probability and
+  a disabling threshold, dynamic temperature at 0, DRY with defaults, custom breakers and with the repeat penalty, all
+  five at once): mindx-gen39 **76 / 76** answers token-identical (3,576 tokens), Bonsai-1.7B **76 / 76** (2,587
+  tokens); **16 / 16** refusals each with llama-server's message. Bonsai-8B: to be recorded.
+- `oracle_std_sort` (`testing/sort_oracle.cpp`, libstdc++'s own `std::sort`): **876 / 876** orders identical — sizes 0
+  to 1,000, heavy ties, sorted, reversed and equal keys — the order typical-p's unstable sort leaves equal scores in.
+
+### Added
+- `sampler.rs`: each sampler as `src/llama-sampler.cpp` writes it, in the default order (penalties, DRY, top-n-σ,
+  top-k, typical-p, top-p, min-p, XTC, temperature, dist), with llama.cpp's `sorted` state tracked through the chain
+  (typical-p leaves the set unsorted, so top-p sorts after its softmax and min-p takes its unsorted path); XTC's own
+  `mt19937` and its float draw (`generate_canonical<float, 24>`: one 32-bit output); top-n-σ's squares in double
+  (C++'s `pow(float, 2)`); dynamic temperature's float entropy; DRY's restart sequences, reverse Z-algorithm and libm
+  `pow`; libstdc++'s `std::sort` (introsort) and generic heaps; `Params::default` = `common.h`.
+- `native.rs`: the request fields `typical_p`, `top_n_sigma`, `xtc_probability`, `xtc_threshold`, `dynatemp_range`,
+  `dynatemp_exponent`, `dry_multiplier`, `dry_base`, `dry_allowed_length`, `dry_penalty_last_n`,
+  `dry_sequence_breakers`; llama-server's soft limits clamp (`top_p`, `min_p`, the XTC fields to [0, 1], temperature
+  to ≥ 0), a `dry_base` below 1 falls back to 1.75; DRY's breakers are built from the vocabulary's pieces once per
+  breaker list and cached on the engine.
+- On Ollama's API `typical_p` is honoured; DRY, XTC, top-n-σ and dynamic temperature are not Ollama options, so they
+  come through `/v1` (and the C API).
+
+### Changed
+- **Refused instead of ignored:** `mirostat` on `/v1` (the Ollama path already refused it) and a custom `samplers`
+  order — llama-server would act on either, so answering without them would not be its answer.
+
 ## 0.3.6 — 2026-10-04 — the penalties: llama-server's repeat, frequency and presence penalties (O2)
 
 **`repeat_penalty`, `repeat_last_n`, `presence_penalty` and `frequency_penalty` are no longer refused: bankML applies

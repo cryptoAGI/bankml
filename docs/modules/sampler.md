@@ -4,9 +4,9 @@
 
 `sampler.rs` picks the next token from the logits as llama.cpp b11192's sampler chain does when llama-server builds
 it for a chat request (`common/sampling.cpp`). The full chain is penalties → dry → top-n-σ → top-k → typical-p →
-top-p → min-p → xtc → temperature → dist. bankml reproduces the part that is active with neutral dry, top-n-σ,
-typical-p and xtc: **penalties, top-k, top-p, min-p, temperature and the draw**, each from `src/llama-sampler.cpp` in
-its float order. With the same seed it draws the same tokens as llama-server.
+top-p → min-p → xtc → temperature → dist. bankml reproduces **all of it** (0.3.7), each step from
+`src/llama-sampler.cpp` in its float order, with llama.cpp's `sorted` state tracked through the chain. With the same
+seed it draws the same tokens as llama-server.
 
 The penalties are new in 0.3.6 (O2): the repeat, frequency and presence penalties over the last `repeat_last_n`
 tokens. They let the coach's `ollama_predict` (`repeat_penalty 1.3`) and mindXtrain's imprint gate run on bankml;
@@ -57,10 +57,14 @@ The chain, step by step:
 | step | what it does |
 |---|---|
 | penalties | for a token seen `count` times in the window: logit divided by the repeat penalty if positive, multiplied if not; then `count · freq + present` taken off. Skipped when `last_n` is 0 or all three are neutral |
+| DRY (0.3.7) | over the last `dry_penalty_last_n` tokens: the nearest restart sequence (a breaker) caps the repeat length; a reverse Z-algorithm finds each suffix's repeat; a token that would extend a repeat of at least `dry_allowed_length` loses `multiplier · base^(len − allowed)` (libm `pow`, the exponent clamped); single-token breakers are never penalised. Breakers are built from the vocabulary's pieces once per list and cached by the engine |
+| top-n-σ (0.3.7) | over the finite logits: those below `max − n·σ` become −∞ (the squares in double, as C++'s `pow(float, 2)`) |
 | top-k | libstdc++'s `std::partial_sort` (heap select, then heap sort), ported exactly, because tied logits are common on a 1-bit model and the order it leaves them in decides the draw |
-| top-p | a float softmax over the kept tokens, a float running sum cut where it reaches p (respecting `min_keep`) |
-| min-p | a cut at `max + logf(p)` on the sorted logits |
-| temperature | `logit / temp`; at temp ≤ 0 every logit but the first maximum becomes −∞ |
+| typical-p (0.3.7) | the softmax's entropy, each token's distance from it, the tokens sorted by that distance with libstdc++'s `std::sort` (ported: introsort leaves ties in its own order), kept while the running probability ≤ p; leaves the set unsorted |
+| top-p | a float softmax over the kept tokens (in their current order), sorted afterwards if typical-p left them unsorted, a float running sum cut where it reaches p (respecting `min_keep`) |
+| min-p | a cut at `max + logf(p)`: on an unsorted set the filter keeps order (and falls back to the sorted cut if fewer than `min_keep` pass) |
+| XTC (0.3.7) | its own `mt19937` draws a float (`generate_canonical<float, 24>`); when it falls within the probability, the most probable tokens above the threshold are dropped, all but the last of them |
+| temperature | `logit / temp`; at temp ≤ 0 every logit but the first maximum becomes −∞. Dynamic (0.3.7) when `dynatemp_range` > 0: the temperature follows the softmax's normalised entropy, `min + (max − min)·entropy^exponent` |
 | dist | `expf(logit − max)` summed in double; one `uniform_real_distribution<double>` draw from `std::mt19937` (two 32-bit outputs, libstdc++'s `generate_canonical`) |
 
 Request fields that reach `Params` (native engine, `native::sampling`): `temperature`, `top_k`, `top_p`, `min_p`,
@@ -83,6 +87,9 @@ s.accept(next);
   sample 40 continuations with fixed seeds over temperature 0–1.5, top-k 5–128, top-p and min-p, and keeps the
   parameters the server reports. Replayed through bankml's forward pass and sampler: **40 of 40, 1,175 tokens**.
   `oracle_llama_server_bonsai_1_7b` and `oracle_llama_server_llama_f16` do the same on the O4 models (40 of 40 each).
+- `oracle_samplers` (`native.rs`, 0.3.7): `testing/penalty_oracle.py --kind sampler`, 23 variants × 4 prompts:
+  mindx-gen39 **76 / 76** (3,576 tokens) and Bonsai-1.7B **76 / 76** (2,587 tokens), **16 / 16** refusals each with
+  llama-server's message. `oracle_std_sort`: libstdc++'s own `std::sort` on 876 key arrays, **876 / 876** identical.
 - `oracle_penalties`, `oracle_penalties_8b` (`native.rs`): `testing/penalty_oracle.py`, llama-server b11192 from an
   empty cache, greedy and seeded, 17 variants × 4 prompts made to repeat, `repeat_last_n` smaller than, equal to and
   larger than the prompt. mindx-gen39 **56 / 56** (2,478 tokens), Bonsai-1.7B **56 / 56** (1,895 tokens), Bonsai-8B
@@ -104,12 +111,15 @@ s.accept(next);
   the grammar (see [grammar.md](grammar.md) for its cost).
 - **Rust practice.** No crates: mt19937 and libstdc++'s heap algorithms are written out. No `unsafe`. Refusals are
   `Err`s carrying llama-server's own text.
-- **Next** (docs/TODO.md 0.4.0, O2): typical-p, DRY, XTC, top-n-σ and dynamic temperature, each with a seeded oracle;
-  `n_probs` and logprobs with bit-exact probabilities.
+- **DRY's breakers cost once.** Building them scans every token's piece (151,669 on the Qwen3 models); the engine
+  keeps the result per breaker list, so a conversation pays it once.
+- **Next** (docs/TODO.md 0.4.0): `n_probs` and logprobs with bit-exact probabilities.
 
 ## Limitations
 
-- Not reproduced, refused when not neutral: DRY, typical-p, XTC, top-n-σ, dynamic temperature (`native::sampling`).
+- Not reproduced, refused: mirostat, and a custom `samplers` order (`native::sampling`). DRY, XTC, top-n-σ and
+  dynamic temperature are not Ollama options, so they come through `/v1` and the C API only.
+- A DRY breaker whose split point falls inside a multi-byte character is refused (bankML tokenizes whole characters).
 - Top-k 0 or above 128 is refused (llama.cpp sorts larger sets another way).
 - mindXtrain's `no_repeat_ngram_size` is a transformers rule, not a llama.cpp sampler; it is not here (docs/OLLAMA.md).
 - `DEFAULT_SEED` seeds from the clock and process id, so such a run is not reproducible, as in llama.cpp.

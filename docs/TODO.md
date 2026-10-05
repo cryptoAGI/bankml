@@ -179,9 +179,10 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   tokens without one.
 - [ ] More than one slot (`-np N`) with llama-server's queueing, or a stated single-slot contract; the conversation
   oracle extended to interleaved sessions. (O2; then continuous batching across slots, O8.)
-- [~] The rest of llama-server's sampler chain, each with a seeded oracle: **repetition, presence and frequency
+- [x] The rest of llama-server's sampler chain, each with a seeded oracle: **repetition, presence and frequency
   penalties (`last_n`) — done (O2 first cut, `oracle_penalties`), retiring the refusal of the coach's
-  `repeat_penalty: 1.3`**; still to come: typical-p, DRY, XTC, top-n-σ, dynamic temperature.
+  `repeat_penalty: 1.3`**; **typical-p, DRY, XTC, top-n-σ and dynamic temperature — done (0.3.7, `oracle_samplers`,
+  76 / 76 on two models)**. Not reproduced: mirostat, a custom sampler order, top-k above 128.
 - [x] **JSON mode** (O6, first cut; **0.3.3**). It is not a JSON-only mask: the request turned out to need
   llama-server's own grammar. That grammar is generated from the chat template's parser, its root starts with the
   generation prompt, and it is prefilled. So llama.cpp's whole GBNF engine is ported (`grammar.rs`), with the
@@ -210,6 +211,19 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files.
 
 ### 0.5.0 — hardware
+
+**Direction (operator, 2026-10-05): bankML must be GPU-ready across vendors — AMD and NVIDIA, Hugging Face's rented
+NVIDIA cards included — because the models it is heading for (Qwen3.8, then IBM Granite and GLM) run on GPUs.** The
+backend is already vendor-neutral (Vulkan through `dlopen`, bankML's own SPIR-V, no SDK); what it lacks is kernels
+beyond Q1_0 and a verified run on anything but the integrated Vega 3. A vendor counts as supported only when its card
+passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a driver may not fuse `Fma`).
+
+- [ ] **The vendor matrix, each proven by `--verify` and recorded in PERFORMANCE.md**: AMD integrated (Vega 3, done),
+  AMD discrete (RDNA), NVIDIA (the first rented T4 or L4 through Hugging Face, **only on the owner's go-ahead and
+  budget**), Intel. Per-vendor float behaviour (fused or unfused `Fma`, denormals) is detected by the verify step, as
+  `spirv.rs fma_exact` already does for RADV.
+- [ ] The F16 and Q2_0 (ternary) GPU kernels, bit-exact on the card, in `--verify`: the formats Qwen3.8 imprints and
+  the ternary line need.
 - [ ] Batched GPU submissions: Q/K/V and gate/up in one command buffer, one wait per group, persistent descriptor
   sets. Goal: a measured gain on the Vega 3.
 - [ ] The Q2_0 (ternary) GPU kernel, bit-exact on the card, in `--verify`.
@@ -224,6 +238,18 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] CI builds and unit-tests across the x86 variants and aarch64.
 
 ### 0.6.0 — more models
+
+**Direction (operator, 2026-10-05): SmolLM2 and `mindx-genN` stay as the *example* of the imprint (they prove the
+dream → weights → proof-of-recall loop and that bankML serves it token-identically); their language is not the goal.
+The imprint work moves to **Qwen3.8** and the **ternary** line, and from successful runs graduates to **IBM Granite**
+and **GLM** models, on GPU.**
+
+- [ ] **Qwen3.8** (`qwen3_5`, mindX `docs/QWEN38_IMPRINT_AGENDA.md`): Gated DeltaNet layers interleaved with gated
+  attention, multi-token prediction; a new graph, oracle-exact against llama.cpp's own support for it before any
+  imprint is served.
+- [ ] The ternary line beyond Bonsai-8B: each new ternary model gets the full oracle set; imprints in ternary.
+- [ ] **IBM Granite** (Granite 4.x; mindX already serves `granite4.1:3b` through Ollama) and **GLM**, on GPU, once
+  the vendor matrix above stands.
 - [x] The **Llama architecture** for SmolLM2 (O4, **0.3.4**): tied embeddings (Bonsai-1.7B too), SmolLM2's tokenizer
   and templates, `mindx-genN` served natively. Still open: Llama 3.x (rope factors, the `llama3` pre-tokenizer, its
   template), which are refused today.

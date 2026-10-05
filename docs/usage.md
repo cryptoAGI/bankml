@@ -279,6 +279,12 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
     (default 64) **including the prompt's**, a repeated token's logit is divided by the repeat penalty (multiplied when
     not positive), then `count × frequency + presence` is taken off. `repeat_last_n` below 0 and a repeat penalty of 0
     or less are refused with llama-server's message. Also on `/v1` and as a Modelfile `PARAMETER`.
+  - **The rest of the chain (0.3.7):** `typical_p` on `/api/*` and `/v1`; on `/v1` (not Ollama options) also
+    `top_n_sigma`, `xtc_probability`, `xtc_threshold`, `dynatemp_range`, `dynatemp_exponent`, `dry_multiplier`,
+    `dry_base`, `dry_allowed_length`, `dry_penalty_last_n` and `dry_sequence_breakers` — each as llama-server b11192
+    applies it, token for token on its oracle, in its default order. Clamped as it clamps (`top_p`, `min_p`, the XTC
+    fields to [0, 1]); refused as it refuses (a negative DRY window or allowed length, empty breakers). `mirostat` and a
+    custom `samplers` order are refused: they are not reproduced.
   - **Ignored**, because they do not change the answer bankML gives: `num_thread`, `num_batch`, `num_gpu`, `use_mmap`
     and the other resource options.
   - **Refused:** any other option.
