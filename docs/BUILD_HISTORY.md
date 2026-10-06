@@ -107,7 +107,7 @@ then memory traffic per token, with strategies from llama.cpp, vLLM, Ollama and 
    dependency justified in `Cargo.toml` comments. A single static binary.
 3. **Verified response** — every answer carries its evidence, and a model that cannot be
    verified does not answer:
-   - before load: the GGUF guard (port of minaiml `gguf_guard.py`) → `play | refuse | need_more`;
+   - before load: the GGUF guard (port of [minaiml](https://github.com/minaiml) `gguf_guard.py`) → `play | refuse | need_more`;
      refuse is shown with its reason, never a silent fallback (Bonsai 2 Q2_0 loads on mainline
      and answers in gibberish — the worst failure);
    - the file's sha256 must match a pinned record (`FORK.json` of the PYTHAI fork);

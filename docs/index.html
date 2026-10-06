@@ -113,6 +113,9 @@ article p[align="center"] { text-align: center; }
   .picker select { width: 100%; font: 15px var(--f-body); padding: 8px; border-radius: 6px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); }
   article h1 { font-size: 1.65rem; }
 }
+.masthead .links { margin: 6px 0 0; font: 500 12.5px/1.4 var(--f-mono); }
+.masthead .links a { color: inherit; text-decoration: underline; text-underline-offset: 2px; opacity: .85; }
+.masthead .links a:hover { opacity: 1; }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 </style>
 
@@ -120,6 +123,7 @@ article p[align="center"] { text-align: center; }
   <div class="masthead-inner">
     <p class="brand"><span class="trits" aria-hidden="true"><i></i><i></i><i></i></span>bankml<span class="ver" id="ver">0.2.7</span></p>
     <span class="tag">Verified low-bit inference for the CPU you already have — the documentation, as of <span id="asof">0.2.7</span>.</span>
+    <p class="links"><a href="https://github.com/cryptoAGI/bankml">GitHub</a> · <a href="https://huggingface.co/spaces/PYTHAI/bankml">Hugging Face</a> · <a href="https://deltaverse.pythai.net/bankml">why bankML</a> · <a href="#thesis">the thesis</a> · <a href="https://github.com/minaiml">minaiml</a> (<a href="https://huggingface.co/spaces/PYTHAI/minaiml">Space</a>)</p>
     <div class="proof">gate record 0.3.6: the penalties — repeat, frequency and presence, token-identical to llama-server on <b>56 / 56</b> answers on each of three models, live <b>85 / 85</b> · gate record 0.3.5: JSON schemas — llama-server’s grammar on each template (<b>173 / 173</b> schemas × 3 templates against llama.cpp’s own code) and its answers token-identical on all five native models (<b>28 / 28</b>, <b>11 / 11</b>, <b>56 / 56</b> × 3), the content rule matched on <b>30,063 / 30,063</b> texts per template · <code>bankml create</code>: mindX’s persona layer, made from mindXtrain’s merged output, token-identical end to end (<b>27 / 27</b>, two ways) · gate record 0.3.4: mindX’s own model natively — <code>mindx-gen39</code> and SmolLM2-135M-Instruct (the Llama graph in F16) and Bonsai-1.7B (tied embeddings) token-identical to llama-server b11192: whole model <b>800 / 800</b> and <b>840 / 840</b> rows bit-exact, F16 products <b>552,268 / 552,268</b> elements bit-exact against ggml, seeded sampling <b>40 / 40</b> on each, conversations <b>9 / 9</b>, JSON mode <b>23 / 23</b> · JSON mode — answers under llama-server’s own <code>json_object</code> grammar token-identical, greedy and seeded (<b>23 / 23</b> answers on the 1-bit model, <b>13 / 13</b> on the ternary), and llama.cpp’s grammar sampler matched on <b>1,645 / 1,645</b> whole-vocabulary masks · a C API, <code>libbankml</code>, identical to <code>serve --native</code> · Savante answered by bankML’s own forward pass — whole conversations identical to llama-server on <b>9 / 9</b> turns (text, token counts, prompt-cache reuse) · own forward pass <b>1,064 / 1,064</b> rows bit-exact for the 1-bit and the ternary model · seeded sampling identical on <b>40 / 40</b> continuations · <b>8,188,239,872</b> ternary weights and <b>762 / 762</b> dot products bit-exact against llama.cpp b11192’s compiled library · one ternary token <b>0.222 s vs 2.139 s</b></div>
   </div>
 </header>

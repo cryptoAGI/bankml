@@ -132,7 +132,76 @@ bankML's discipline is to establish exactly that, against an independent referen
 integrity, not proof: they bind the answer's text to a pinned file and to the request, between a client and its own
 gateway ([research.md §3](research.md#3-verifiable-and-attested-inference)).
 
-### II.5 What bankML inherits, extends and breaks
+### II.5 The contemporary field (survey of 6 October 2026)
+
+This section maps the work bankML sits among, as found on 6 October 2026: every paper below was checked against its
+arXiv abstract, and every repository's existence and last activity against GitHub on that date. Projects' own speed
+figures are theirs, not reproduced here. A wider survey with the verifiable-inference field is in
+[research.md](research.md).
+
+#### II.5.1 Ternary and 1-bit models
+
+Two programmes now train language models through the ternary constraint rather than quantizing after training. The
+BitNet line (Microsoft Research) moved from the 1.58-bit recipe (Ma et al. 2024) to an openly released 2-billion-
+parameter ternary model trained on 4 trillion tokens (Ma et al. 2025), then to 4-bit activations beside the 1-bit
+weights (Wang, Ma and Wei 2024; 2025, the latter by a Hadamard transformation of the activations), and to distilling
+full-precision models into 1.58 bits (Wu et al. 2025). Spectra (Kaushal et al. 2024) trained a suite of 54 models from
+99 M to 3.9 B parameters to compare ternary "TriLMs" with float and post-training-quantized peers at equal size, and
+Spectra 1.1 (Vaidhya et al. 2025) scaled TriLMs to 1.2 T tokens with scaling laws and its own inference kernel.
+Alongside these, TernaryLLM (Chen et al. 2024) and OneBit (Xu et al. 2024) push quantization-aware training of
+existing models to ternary and 1-bit weights, PTQ1.61 (Zhao et al. 2025) reaches below two bits after training,
+ParetoQ (Liu et al. 2025) maps scaling laws across extreme bit widths, and MatMul-free language modelling (Zhu et al.
+2024) removes matrix multiplication by ternary weights altogether.
+
+The Bonsai models bankML serves come from PrismML and are dense Qwen3 networks trained to one bit (`Q1_0`) and to
+ternary values (`Q2_0`, group 64, 2.25 bits per weight). PrismML's own format table
+([docs.prismml.com](https://docs.prismml.com/download/formats)) records that group-64 `Q2_0` is in mainline llama.cpp,
+that a group-128 legacy `Q2_0` is deprecated, and that its newer Ternary Bonsai 2 formats (`PQ2_0`, `PTQ1_0`) use a
+rotated weight basis that needs an activation-side Walsh–Hadamard transform at run time — the file a stock engine
+loads and answers in fluent nonsense, which is why bankML's guard refuses it (§III.2), and the same family of
+rotation bankML reproduced for llama.cpp's quantized cache (§III.4).
+
+#### II.5.2 Kernels and engines for ternary and 1-bit weights
+
+| work | what it is | relation to bankML |
+|---|---|---|
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) upstream | `Q1_0` ([#21273](https://github.com/ggml-org/llama.cpp/pull/21273); x86 AVX2+FMA in [#21636](https://github.com/ggml-org/llama.cpp/pull/21636)); `Q2_0` ([#24448](https://github.com/ggml-org/llama.cpp/pull/24448), NEON and scalar); an x86 `Q2_0` kernel needing AVX-VNNI ([#26348](https://github.com/ggml-org/llama.cpp/pull/26348), open); the older `TQ1_0`/`TQ2_0` ([#10010](https://github.com/ggml-org/llama.cpp/pull/10010)) | the reference: bankML reproduces b11192's compiled code bit for bit and adds the plain-AVX2 `Q2_0` kernel it lacks |
+| [PrismML's fork](https://github.com/PrismML-Eng/llama.cpp) | kernels for the Bonsai 2 formats, e.g. `PQ2_0` AVX2/AVX-VNNI ([#206](https://github.com/PrismML-Eng/llama.cpp/pull/206)) | different formats; refused by bankML's guard until a kernel and an oracle exist |
+| [bitnet.cpp](https://github.com/microsoft/BitNet) (Wang, Zhou, Song et al. 2024; 2025) | lookup-table and I2_S kernels for BitNet b1.58 on CPU; reports 2.37–6.17× on x86 | a different weight format (BitNet's), and a different exactness claim (lossless to its own model, not to an external reference) |
+| [T-MAC](https://github.com/microsoft/T-MAC) (Wei et al. 2025) | lookup-table mixed-precision GEMM on CPU and NPU | the table-lookup alternative to bankML's `maddubs` arithmetic |
+| Vec-LUT (Li et al. 2025) | vector table lookup for parallel ultra-low-bit inference on edge devices | the same direction as T-MAC, parallelised |
+| Spectra 1.1's TriRun (Vaidhya et al. 2025) | a GPU kernel for packed ternary weights | GPU, not CPU |
+
+#### II.5.3 Inference engines written in Rust
+
+| engine | what it is | state on 2026-10-06 | exactness claim |
+|---|---|---|---|
+| [candle](https://github.com/huggingface/candle) (Hugging Face) | a minimalist ML framework; GGUF K-quants on CPU (AVX2/NEON), CUDA, Metal, WASM | active, the base most Rust LLM projects build on | none against llama.cpp found |
+| [mistral.rs](https://github.com/EricLBuehler/mistral.rs) | an LLM server on candle: many architectures, ISQ, GPTQ/AWQ/HQQ/FP8 | active | none found |
+| [burn](https://github.com/tracel-ai/burn) | a general tensor and deep-learning framework | active | not a GGUF engine |
+| [Crane](https://github.com/lucasjinreal/Crane), [kalosm](https://github.com/floneum/kalosm), [cake](https://github.com/evilsocket/cake) | LLM/VLM engines and libraries on candle; cake distributes inference across devices | active | none found |
+| [OxiLLaMa](https://github.com/cool-japan/oxillama) | a pure-Rust GGUF engine with its own AVX2/AVX-512/NEON kernels, including `TQ1_0`/`TQ2_0` and `Q1_0_G128` | active (alpha) | top-1 logit parity within a tolerance |
+| [Frink](https://github.com/antonellof/frink) | a pure-Rust GGUF engine with quantized CPU, Metal and CUDA kernels and MoE | active | quantizer bytes identical on two formats |
+| [Cera](https://github.com/hyeons-lab/cera) | a Rust-native GGUF engine (AVX2/AVX-512, NEON dotprod/i8mm, optional wgpu) | crate 0.6.3, 2026-09-25 | none stated |
+| [llama-gguf](https://github.com/Lexmata/llama-gguf), [lm.rs](https://github.com/samuel-vitorino/lm.rs) | small engines, correctness-first / minimal | llama-gguf 2026-04; lm.rs inactive since 2024-10 | none stated |
+| [bitnet-rs](https://github.com/lilyco-42/bitnet-rs), [bitnet-toy](https://github.com/tidynest/bitnet-toy) | BitNet b1.58 in Rust (a port of bitnet.cpp; a from-scratch teaching engine) | 2026-09 | unit tests against its own C++ baseline |
+| [alice-aegis](https://github.com/Aefinity-AI/alice-aegis) | a `no_std` UEFI ternary engine with frozen integer semantics and SHA-256 receipts chaining the logits | 2026-10 | bit-identical across its own ISAs, not against an external reference |
+| [ratchet](https://github.com/huggingface/ratchet), [tract](https://github.com/sonos/tract), [rten](https://github.com/robertknight/rten) | browser/WebGPU and ONNX inference | active | not GGUF engines |
+| [rustformers/llm](https://github.com/rustformers/llm), [llama-cpp-rs](https://github.com/utilityai/llama-cpp-rs) | the first, archived (2024); the second, bindings to llama.cpp's C++ | — | inherit llama.cpp's arithmetic by calling it |
+
+#### II.5.4 Where bankML stands among them
+
+Three things in this survey are bankML's alone. It is the only engine found that reproduces the reference's
+*compiled* library bit for bit — every weight, every dot product, every token of whole conversations — rather than
+within a tolerance or against itself; alice-aegis shares the receipt idea and the exact integer discipline but checks
+against its own builds. It is the only Rust engine found with ggml's group-64 ternary `Q2_0`, and its plain-AVX2 kernel
+fills the x86 gap that upstream's open VNNI kernel leaves on CPUs without VNNI. And it is one zero-dependency binary
+whose every answer carries a receipt. It is behind the field in breadth: candle and mistral.rs run far more
+architectures and formats and run on GPUs, OxiLLaMa and upstream llama.cpp have NEON kernels for these formats, and
+the BitNet and T-MAC kernels serve a different ternary format at speeds bankML has not been compared with. The
+research programmes above produce the models; bankML's contribution is to run the ones in ggml's formats exactly.
+
+### II.6 What bankML inherits, extends and breaks
 
 It **inherits** ggml's formats, its kernels' semantics and llama-server's protocol. It **extends** them with an x86
 ternary kernel the reference lacks, a gate in front of every answer, and receipts. It **breaks** with the convention
@@ -164,7 +233,8 @@ already shown identical.
    result and not shipped ([`testing/experiments/`](../testing/experiments/)).
 2. **The compiled reference is the specification, not its source.** Where the shipped library and its C source
    disagree, the library wins (§II.3).
-3. **A model that cannot be verified does not answer.** The guard ([`bankML/gguf.rs`](../bankML/gguf.rs)) refuses,
+3. **A model that cannot be verified does not answer.** The guard ([`bankML/gguf.rs`](../bankML/gguf.rs), a port of
+   the GGUF guard of [minaiml](https://github.com/minaiml), the authors' delivery layer for models on laptops and phones) refuses,
    from the header alone and with a reason, the three low-bit traps, including a file mainline loads and answers in
    fluent nonsense. The pin ([`bankML/sha256.rs`](../bankML/sha256.rs)) refuses a file whose hash differs from its
    provenance record.
@@ -313,6 +383,8 @@ Ashkboos, S., Mohtashami, A., Croci, M. L., Li, B., Cameron, P., Jaggi, M., Alis
 
 Cankaya, E. (2026). "Bit-Exact AI Inference Verification Without Performance Tradeoffs." [arXiv:2606.00279](https://arxiv.org/abs/2606.00279).
 
+Chen, T., Li, Z., Xu, W. et al. (2024). "TernaryLLM: Ternarized Large Language Model." [arXiv:2406.07177](https://arxiv.org/abs/2406.07177).
+
 Codephreak, Professor and Magnusson, G. L. (2026). Design directives for bankML and the mindX runtime, recorded in the
 project (project record, 2026-07-04 to 2026-09-28); quoted in [TECHNICAL.md](TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson).
 
@@ -335,6 +407,9 @@ Surveys* 23(1): 5–48. [doi:10.1145/103162.103163](https://doi.org/10.1145/1031
 Hubara, I., Courbariaux, M., Soudry, D., El-Yaniv, R. and Bengio, Y. (2016). "Binarized Neural Networks." *Advances in
 Neural Information Processing Systems 29*. [Proceedings](https://papers.nips.cc/paper_files/paper/2016/hash/d8330f857a17c53d217014ee776bfd50-Abstract.html); preprint [arXiv:1602.02830](https://arxiv.org/abs/1602.02830).
 
+Kaushal, A., Vaidhya, T., Mondal, A. K. et al. (2024). "Spectra: Surprising Effectiveness of Pretraining Ternary
+Language Models at Scale." [arXiv:2407.12327](https://arxiv.org/abs/2407.12327).
+
 Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J. E., Zhang, H. and Stoica, I. (2023).
 "Efficient Memory Management for Large Language Model Serving with PagedAttention." *Proceedings of the 29th Symposium
 on Operating Systems Principles (SOSP 2023)*. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180).
@@ -344,8 +419,20 @@ Software* 39(2). [doi:10.1109/MS.2021.3073045](https://doi.org/10.1109/MS.2021.3
 
 Li, F., Zhang, B. and Liu, B. (2016). "Ternary Weight Networks." [arXiv:1605.04711](https://arxiv.org/abs/1605.04711).
 
+Li, X., Yin, C., Wang, W. et al. (2025). "Vec-LUT: Vector Table Lookup for Parallel Ultra-Low-Bit LLM Inference on Edge
+Devices." [arXiv:2512.06443](https://arxiv.org/abs/2512.06443).
+
+Liu, Z., Zhao, C., Huang, H. et al. (2025). "ParetoQ: Improving Scaling Laws in Extremely Low-bit LLM Quantization."
+[arXiv:2502.02631](https://arxiv.org/abs/2502.02631).
+
+Ma, S., Wang, H., Huang, S. et al. (2025). "BitNet b1.58 2B4T Technical Report." [arXiv:2504.12285](https://arxiv.org/abs/2504.12285).
+
 Ma, S., Wang, H., Ma, L., Wang, L., Wang, W., Huang, S., Dong, L., Wang, R., Xue, J. and Wei, F. (2024). "The Era of
 1-bit LLMs: All Large Language Models are in 1.58 Bits." [arXiv:2402.17764](https://arxiv.org/abs/2402.17764).
+
+minaiml (software). "min ai ml — language models in miniature": delivery software for models on laptops and
+phones, the origin of bankML's GGUF guard. [github.com/minaiml](https://github.com/minaiml) · [Hugging Face Space
+PYTHAI/minaiml](https://huggingface.co/spaces/PYTHAI/minaiml).
 
 Qwen Team (2025). "Qwen3 Technical Report." [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 
@@ -360,6 +447,14 @@ Thompson, K. (1984). "Reflections on Trusting Trust." *Communications of the ACM
 Tseng, A., Chee, J., Sun, Q., Kuleshov, V. and De Sa, C. (2024). "QuIP#: Even Better LLM Quantization with Hadamard
 Incoherence and Lattice Codebooks." *International Conference on Machine Learning (ICML 2024)*. [arXiv:2402.04396](https://arxiv.org/abs/2402.04396).
 
+Vaidhya, T., Kaushal, A., Jain, V. et al. (2025). "Spectra 1.1: Scaling Laws and Efficient Inference for Ternary Language
+Models." [arXiv:2506.23025](https://arxiv.org/abs/2506.23025).
+
+Wang, H., Ma, S. and Wei, F. (2024). "BitNet a4.8: 4-bit Activations for 1-bit LLMs." [arXiv:2411.04965](https://arxiv.org/abs/2411.04965).
+
+Wang, H., Ma, S. and Wei, F. (2025). "BitNet v2: Native 4-bit Activations with Hadamard Transformation for 1-bit LLMs."
+[arXiv:2504.18415](https://arxiv.org/abs/2504.18415).
+
 Wang, H., Ma, S., Dong, L., Huang, S., Wang, H., Ma, L., Yang, F., Wang, R., Wu, Y. and Wei, F. (2023). "BitNet:
 Scaling 1-bit Transformers for Large Language Models." [arXiv:2310.11453](https://arxiv.org/abs/2310.11453).
 
@@ -372,8 +467,17 @@ Wang, J., Zhou, H., Song, T. et al. (2025). "Bitnet.cpp: Efficient Edge Inferenc
 Wei, J. et al. (2025). "T-MAC: CPU Renaissance via Table Lookup for Low-Bit LLM Deployment on Edge." *Proceedings of
 EuroSys 2025*. [arXiv:2407.00088](https://arxiv.org/abs/2407.00088).
 
+Wu, X., Huang, S., Wang, W. et al. (2025). "BitNet Distillation." [arXiv:2510.13998](https://arxiv.org/abs/2510.13998).
+
+Xu, Y., Han, X., Yang, Z. et al. (2024). "OneBit: Towards Extremely Low-bit Large Language Models." [arXiv:2402.11295](https://arxiv.org/abs/2402.11295).
+
+Zhao, J., Zhang, M., Wang, M. et al. (2025). "PTQ1.61: Push the Real Limit of Extremely Low-Bit Post-Training
+Quantization Methods for Large Language Models." [arXiv:2502.13179](https://arxiv.org/abs/2502.13179).
+
 Zhu, C., Han, S., Mao, H. and Dally, W. J. (2017). "Trained Ternary Quantization." *International Conference on
 Learning Representations (ICLR 2017)*. [arXiv:1612.01064](https://arxiv.org/abs/1612.01064).
+
+Zhu, R.-J., Zhang, Y., Abreu, S. et al. (2024). "Scalable MatMul-free Language Modeling." [arXiv:2406.02528](https://arxiv.org/abs/2406.02528).
 
 *Notes on the references.* Author lists for the 2024–2026 preprints follow [research.md](research.md), which records
 which details were re-fetched and which are as commonly cited. QuaRot and QuIP# are cited for the technique of

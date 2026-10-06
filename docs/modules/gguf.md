@@ -3,7 +3,7 @@
 ## Summary
 
 `gguf.rs` reads the header of a GGUF v3 file and decides whether bankml may play it. The decision is the
-**guard**: `play`, `refuse` with reasons, or `need_more` header bytes. It is a port of minaiml's Python
+**guard**: `play`, `refuse` with reasons, or `need_more` header bytes. It is a port of [minaiml](https://github.com/minaiml)'s Python
 `gguf_guard.py` (same verdicts, same reasons, same JSON keys). The guard never reads tensor data.
 
 The module also holds what the rest of bankml needs to reach tensor data safely: type names, block layouts,
