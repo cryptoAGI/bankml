@@ -48,7 +48,8 @@ measurements.
   × 4 prompts: each sampler alone, typical-p before top-p and min-p's unsorted path, XTC with a clamped probability and
   a disabling threshold, dynamic temperature at 0, DRY with defaults, custom breakers and with the repeat penalty, all
   five at once): mindx-gen39 **76 / 76** answers token-identical (3,576 tokens), Bonsai-1.7B **76 / 76** (2,587
-  tokens); **16 / 16** refusals each with llama-server's message. Bonsai-8B: to be recorded.
+  tokens), Bonsai-8B **76 / 76** (2,361 tokens, `oracle_samplers_8b`); **16 / 16** refusals on each, with
+  llama-server's message.
 - `oracle_std_sort` (`testing/sort_oracle.cpp`, libstdc++'s own `std::sort`): **876 / 876** orders identical — sizes 0
   to 1,000, heavy ties, sorted, reversed and equal keys — the order typical-p's unstable sort leaves equal scores in.
 
