@@ -1,23 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The formatter behind `bankml_log`: a small printf over a C `va_list`, byte-identical to glibc's `snprintf` for the
-//! conversions it supports, and explicit about the rest.
+//! The printf formatter behind `bankml_log`, reading its arguments from a C `va_list`.
 //!
-//! Supported: `%d %i` (with `hh h l ll z`), `%u %x %X` (with `hh h l ll z`), `%f %F` (and `%lf`), `%c`, `%s`, `%p`,
-//! `%%`; the flags `- + space # 0`, a width and a precision, each a number or `*` (an `int` argument, as C reads it).
-//!
-//! Everything else is written literally as a marker, never guessed:
-//! - an unknown conversion or length (`%e`, `%g`, `%o`, `%n`, `%Lf`, `%ls`, `%jd`, …) is written `%<unsupported:SPEC>`
-//!   and **no argument is read for it** — and since the formatter cannot know what that argument was, it reads no
-//!   argument after it either: every later conversion is written `%<skipped:SPEC>` (`%%` still prints `%`);
-//! - a known conversion with a flag combination it does not vouch for (`%+s`, `%05c`, `%#p`, `%#d`, a width or
-//!   precision above 65,536) is written `%<unsupported:SPEC>`, but its argument has a known type, so it is read and
-//!   dropped and the rest of the format goes on.
-//!
-//! `%n` is never honoured: the formatter never writes through an argument.
+//! Supported conversions (`%d %i %u %x %X` with `hh h l ll z`, `%f %F %lf`, `%c %s %p %%`; flags `- + space # 0`;
+//! width and precision as a number or `*`) are byte-identical to glibc's `snprintf`. Anything else is written as
+//! `%<unsupported:SPEC>`, never guessed: after an unknown conversion or length no further argument is read (later
+//! conversions become `%<skipped:SPEC>`); a known conversion with flags it does not vouch for, or a width or
+//! precision above 65,536, has its argument read and dropped. `%n` never writes through its argument.
+//! Details: docs/modules/capi.md.
 
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, VaList};
 
-/// The typed reads the formatter needs. `VaList` is the real source; the unit tests use a typed queue.
+/// The typed argument reads the formatter needs; implemented by `VaList` and, in the tests, a typed queue.
 pub trait Args {
     /// # Safety
     /// The next argument must have been passed with this C type (after the default promotions).
@@ -84,8 +77,10 @@ impl Args for VaList<'_> {
     }
 }
 
-/// Above this a width or precision is not honoured (a marker, the argument read and dropped): a log line, not a
-/// way to make the library allocate gigabytes.
+/// The largest width or precision honoured.
+///
+/// A larger one is marked unsupported and its argument read and dropped, so a log call cannot make the library
+/// allocate gigabytes.
 const LIMIT: usize = 1 << 16;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -96,7 +91,7 @@ enum Len {
     L,
     Ll,
     Z,
-    /// a length modifier the formatter does not read (`j t L q`)
+    /// A length modifier the formatter does not read (`j t L q`).
     Other,
 }
 
@@ -154,8 +149,7 @@ fn put(out: &mut Vec<u8>, prefix: &[u8], body: &[u8], width: usize, left: bool, 
     }
 }
 
-/// The digits of `v` in `base`, then C's integer precision: at least `prec` digits, and none at all for a zero
-/// with precision 0.
+/// The digits of `v` in `base` with C's integer precision: at least `prec` digits, none for zero at precision 0.
 fn digits(v: u128, base: u32, upper: bool, prec: Option<usize>) -> Vec<u8> {
     let set: &[u8; 16] = if upper { b"0123456789ABCDEF" } else { b"0123456789abcdef" };
     let mut d = Vec::new();
@@ -174,7 +168,7 @@ fn digits(v: u128, base: u32, upper: bool, prec: Option<usize>) -> Vec<u8> {
     d
 }
 
-/// Format `fmt` with arguments from `a`, as glibc's `snprintf` would for every supported conversion.
+/// Format `fmt` with arguments from `a`, byte-identical to glibc's `snprintf` for every supported conversion.
 ///
 /// # Safety
 /// Each argument `a` yields must have the C type its conversion names (as for `printf`), and a `%s` argument must be
@@ -271,7 +265,7 @@ pub unsafe fn format(fmt: &[u8], a: &mut impl Args) -> Vec<u8> {
             _ => None,
         };
         if kind == Some(Kind::Percent) {
-            // `%%` prints `%`; anything between the two (`%5%`) is not vouched for, but reads no argument
+            // `%%` prints `%`; anything between the two (`%5%`) is marked but reads no argument.
             if spec == b"%" { out.push(b'%') } else { marker(&mut out, "unsupported", spec) }
             continue;
         }
@@ -280,12 +274,12 @@ pub unsafe fn format(fmt: &[u8], a: &mut impl Args) -> Vec<u8> {
             continue;
         }
         let Some(kind) = kind else {
-            // what this conversion's argument is cannot be known: none is read, here or after
+            // The argument's type is unknown: read none, here or after.
             marker(&mut out, "unsupported", spec);
             lost = true;
             continue;
         };
-        // the `*` arguments come first, width then precision, each an int
+        // `*` arguments come first, width then precision, each an `int`.
         let width = match width {
             Num::Star => {
                 let w = unsafe { a.int() };
@@ -350,7 +344,7 @@ pub unsafe fn format(fmt: &[u8], a: &mut impl Args) -> Vec<u8> {
                     marker(&mut out, "unsupported", spec);
                     continue;
                 }
-                // C ignores `+` and space for unsigned conversions; `#` puts 0x/0X before a non-zero hex value
+                // C ignores `+` and space for unsigned conversions; `#` prefixes 0x/0X to a non-zero hex value.
                 let (base, upper) = match conv {
                     b'x' => (16, false),
                     b'X' => (16, true),
@@ -365,6 +359,10 @@ pub unsafe fn format(fmt: &[u8], a: &mut impl Args) -> Vec<u8> {
             }
             Kind::Float => {
                 let v = unsafe { a.double() };
+                if !vouched {
+                    marker(&mut out, "unsupported", spec);
+                    continue;
+                }
                 let sign: &[u8] = if v.is_sign_negative() { b"-" } else if fl.plus { b"+" } else if fl.space { b" " } else { b"" };
                 if !v.is_finite() {
                     let body: &[u8] = match (v.is_nan(), conv == b'F') {
@@ -377,8 +375,8 @@ pub unsafe fn format(fmt: &[u8], a: &mut impl Args) -> Vec<u8> {
                     continue;
                 }
                 let p = prec.unwrap_or(6);
-                // Rust prints the exact decimal expansion of the double, rounded to nearest with ties to even — as
-                // glibc does in the default rounding mode
+                // Rust rounds the exact decimal expansion to nearest, ties to even, as glibc does in the default
+                // rounding mode.
                 let mut body = format!("{:.*}", p, v.abs()).into_bytes();
                 if fl.alt && p == 0 {
                     body.push(b'.');
@@ -400,10 +398,10 @@ pub unsafe fn format(fmt: &[u8], a: &mut impl Args) -> Vec<u8> {
                     continue;
                 }
                 let body: Vec<u8> = if p.is_null() {
-                    // glibc prints "(null)" when it fits the precision, else nothing
+                    // glibc prints "(null)" when it fits the precision, else nothing.
                     if prec.is_none_or(|p| p >= 6) { b"(null)".to_vec() } else { Vec::new() }
                 } else {
-                    // at most `prec` bytes, and never past the NUL: an unterminated buffer with a precision is legal C
+                    // At most `prec` bytes and never past the NUL: an unterminated buffer with a precision is legal C.
                     let mut b = Vec::new();
                     let max = prec.unwrap_or(usize::MAX);
                     while b.len() < max {
@@ -519,7 +517,7 @@ mod tests {
     #[test]
     fn what_is_not_supported_is_marked_never_guessed() {
         use A::*;
-        // an unknown conversion reads nothing, and nothing after it is read: its argument's type is unknown
+        // An unknown conversion reads nothing, and nothing after it is read.
         let (got, left) = f("a %d %w %d %s %% end", &[I(1), I(2), P(std::ptr::null())]);
         assert_eq!(got, "a 1 %<unsupported:w> %<skipped:d> %<skipped:s> % end");
         assert_eq!(left, 2);
@@ -528,10 +526,12 @@ mod tests {
             assert_eq!(got, format!("%<unsupported:{spec}>"));
             assert_eq!(left, 1, "{spec}: nothing read");
         }
-        // a known conversion with flags not vouched for: marked, and its argument (of known type) read and dropped
+        // A known conversion with unvouched flags is marked; its argument (of known type) is read and dropped.
         eq("%+s|%05c|%#p|%#d|%.3p|%d", &[P(c"x".as_ptr().cast()), I(65), P(std::ptr::null()), I(1), P(std::ptr::null()), I(9)],
            "%<unsupported:+s>|%<unsupported:05c>|%<unsupported:#p>|%<unsupported:#d>|%<unsupported:.3p>|9");
         eq("%70000d|%d", &[I(1), I(2)], "%<unsupported:70000d>|2");
+        // floats too: a width or precision past LIMIT is marked, not formatted (and not allocated)
+        eq("%.100000000f|%70000f|%.1f", &[D(1.0), D(2.0), D(0.25)], "%<unsupported:.100000000f>|%<unsupported:70000f>|0.2");
         eq("%5%|tail %", &[], "%<unsupported:5%>|tail %<incomplete:>");
     }
 }

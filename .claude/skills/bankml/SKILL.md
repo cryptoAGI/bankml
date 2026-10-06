@@ -1,6 +1,6 @@
 ---
 name: bankml
-description: bankml (github.com/cryptoAGI/bankml, local ~/cryptoAGI/bankml) — the zero-dependency Rust runtime for 1-bit (Q1_0) and ternary (Q2_0_g64) GGUF models, bit-exact against llama.cpp b11192, with `bankml serve` (a verifying loopback gateway that pins the model by sha256 and puts a receipt on every answer) and the Savante UI (interact on 127.0.0.1:7873, view on the LAN at :7874). Use when working on bankml's kernels, oracles, release gate, serve/receipts, the model importer, the Savante UI (chat, .history/.memory, Merkle commitments, agents, THOT, PostgreSQL, iNFT, voice, embeddings), cutting a release, or measuring speed. Triggers "bankml", "bankml serve", "Q1_0", "Q2_0", "Bonsai", "release gate", "oracle", "receipt", "Savante UI", "savante.py", "view.py", "models.py", "speak.py".
+description: bankml (github.com/cryptoAGI/bankml, local ~/cryptoAGI/bankml) — the zero-dependency Rust runtime for 1-bit (Q1_0) and ternary (Q2_0_g64) GGUF models, bit-exact against llama.cpp b11192, with `bankml serve` (a verifying loopback gateway that pins the model by sha256 and puts a receipt on every answer) and the Savante UI (interact on 127.0.0.1:7873, view on the LAN at :7874). Use when working on bankml's kernels, oracles, release gate, serve/receipts, the model importer, the Savante UI (chat, .history/.memory, Merkle commitments, agents, THOT, PostgreSQL, iNFT, voice, embeddings), cutting a release, or measuring speed. Triggers "bankml", "bankml serve", "Q1_0", "Q2_0", "Bonsai", "release gate", "oracle", "receipt", "Savante UI", "savante.py", "view.py", "models.py", "speak.py", "console.py", "serve --native", "Ollama API", "JSON schema", "logprobs", "slot".
 allowed-tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch
 ---
 
@@ -8,7 +8,7 @@ allowed-tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch
 
 **Verified low-bit inference for the CPU you already have.** A Rust runtime with no crates: its own GGUF guard, sha256
 pin, AVX2 kernels for ggml's `Q1_0` (1.125 bits per weight) and `Q2_0_g64` (ternary, 2.25 bpw) that are **bit-exact
-against the compiled llama.cpp b11192 libraries**, a thread pool, its own Qwen3 forward pass (token-identical to
+against the compiled llama.cpp b11192 libraries**, a thread pool, its own forward pass (Qwen3 and Llama graphs; Q1_0, Q2_0_g64 and F16 weights; token-identical to
 llama.cpp), and `bankml serve`, which answers behind that gate — through llama-server, or with `--native` from bankML's
 own forward pass. Authors: Professor Codephreak and Gregory L. Magnusson (cryptoAGI). Licence: `MIT OR Apache-2.0`
 (key handling `GPL-3.0-only`; AGPL only walled off — see *Licensing*). This file is published in the repo at
@@ -23,27 +23,34 @@ run-to-run noise. Rejected experiments are kept with their numbers (`testing/exp
 | path | what |
 |---|---|
 | `bankML/bankml.rs` | `verify` (guard → pin), `Verified` (sha256, arch, name, types); the module list |
-| `bankML/tokenizer.rs`, `chat.rs` | the tokenizer and the chat template, identical to llama.cpp's (4,258/4,258; 317/317) |
-| `bankML/forward.rs` | the Qwen3 forward pass: `Weights`, `KvCache`, the three ggml attention kernels, `prefill` (micro-batches), `decode`, `logits` |
-| `bankML/sampler.rs` | llama-server's sampler chain (libstdc++ `partial_sort` port, mt19937) |
-| `bankML/native.rs` | the engine behind `serve --native`: one slot with llama-server's prompt-cache rule |
-| `bankML/ollama.rs` | Ollama's API on `serve --native` (0.3.1): `/api/chat` `/api/generate` (NDJSON) `/api/tags` `/api/ps` `/api/show`, option mapping, refusals, `keep_alive`, stop strings; the registry and residency (`Registry`, `Residency`, one resident model, verify on every load) are in `native.rs`; native only, never proxied; roadmap `docs/OLLAMA.md` |
-| `bankML/gpu/` | the video-card component: `mod.rs` registry, `vulkan.rs`, `hf.rs` (rented, listed only), `spirv.rs`, `kernels.rs`, `compute.rs`, `worker.rs` |
-| `bankML/train/` | mindXtrain in Rust: `script.rs` (author), `imprint.rs` (score) |
 | `bankML/gguf.rs` | header parser, the guard (`judge`: the three low-bit traps, hostile headers), `type_name` for every ggml type, `Mmap` |
-| `bankML/q1_0.rs`, `q2_0.rs` | kernels: scalar models of ggml (`vec_dot_ref`), AVX2 paths, `*_par`; oracle and A/B tests (`#[ignore]`d, real models) |
-| `bankML/par.rs` | the zero-dependency thread pool (0.0.3) |
 | `bankML/sha256.rs` | FIPS 180-4, the FORK.json pin scanner, SHA-NI path (0.1.8, 5.5×) |
-| `bankML/serve.rs` | the gateway: `/bankml`, `/bankml/usage`, `/health` `/props` `/v1/models`, `/v1/chat/completions` with receipts; `--native` also answers `/tokenize`, `/apply-template` and serves the engine address |
-| `bankML/main.rs` | CLI: `guard`, `sha256`, `pin`, `verify`, `serve [--native]`, `generate [--sample]`, `tokenize`, `chat-template`, `gpu [--remote\|--verify]`, `usage`, `version` |
+| `bankML/q1_0.rs`, `q2_0.rs`, `f16.rs` | kernels: scalar models of ggml (`vec_dot_ref`), AVX2 paths, `*_par`; F16 = ggml's two products chosen by shape (`vec_dot_f16` for 1 column, tinyBLAS for ≥ 2) |
+| `bankML/par.rs`, `sys.rs` | the zero-dependency thread pool (0.0.3); `/proc` memory, rss, CPU |
+| `bankML/tokenizer.rs`, `chat.rs`, `unicode_letters.rs` | tokenizer (`qwen2`, `smollm` pre-tokenizers) and chat templates (per model by sha, `chat::TEMPLATES`), identical to llama.cpp's (4,346/4,346; 317/317 per template) |
+| `bankML/forward.rs` | the forward pass: `forward::plan` (arch/type/tied from the header, refuses the rest), `Weights`, `KvCache` (f16, or q8_0 with the Hadamard rotation, 0.3.9), the three ggml attention kernels, `prefill`, `decode`, `logits` |
+| `bankML/sampler.rs` | llama-server's whole default chain: penalties, DRY, top-n-σ, top-k, typical-p, top-p, min-p, XTC, temperature, dist (libstdc++ `std::sort`/`partial_sort` ports, mt19937) |
+| `bankML/grammar.rs`, `schema.rs` | llama.cpp's GBNF engine, JSON mode's grammar, the content rule; `json_schema_to_grammar` + the chat parser's wrapping, per template |
+| `bankML/native.rs` | the engine behind `serve --native`: one slot, llama-server's prompt-cache rule, slots save/restore, logprobs, the context limit; `Registry`, `Residency` (one resident model, verify on every load) |
+| `bankML/prompt_cache.rs` | llama-server's host prompt cache (`--cache-ram`; `BANKML_CACHE_RAM`), 0.3.8 |
+| `bankML/metrics.rs` | per-answer TTFT, pp/tg tokens/s, grammar time, RAPL joules per token (or `null`); `GET /bankml/metrics`, 0.3.7 |
+| `bankML/ollama.rs` | Ollama's API on `serve --native`: `/api/chat` `/api/generate` (NDJSON) `/api/tags` `/api/ps` `/api/show`, options, refusals, `keep_alive`; native only, never proxied; roadmap `docs/OLLAMA.md` |
+| `bankML/create.rs`, `convert.rs` | `bankml create` (Modelfile layer over a pinned base; `/api/create` `/api/delete` `/api/copy`); `bankml convert` (safetensors → GGUF F16, byte-identical to llama.cpp's converter) |
+| `bankML/serve.rs` | the gateway: `/bankml`, `/bankml/usage`, `/bankml/metrics`, `/health` `/props` `/v1/models`, `/v1/chat/completions` with receipts; `--native` also answers `/tokenize`, `/apply-template`, `/slots` |
+| `bankML/gpu/` | the video-card component: `mod.rs` registry, `vulkan.rs`, `hf.rs` (rented, listed only), `spirv.rs`, `kernels.rs`, `compute.rs`, `worker.rs` (`BANKML_GPU_LIMIT`, per-shape calibration) |
+| `bankML/train/` | mindXtrain in Rust: `script.rs` (author), `imprint.rs` (score) |
+| `bankML/main.rs` | CLI: `guard`, `sha256`, `pin`, `verify`, `serve [--native]`, `generate [--sample] [--json]`, `tokenize`, `chat-template`, `create`, `convert`, `gpu [--remote\|--verify]`, `usage`, `version` |
+| `capi/` | the C API (`libbankml.so/.a`, `capi/include/bankml.h`; a second workspace member, `bankml-capi`) |
 | `sAGI/savante.py` | interact UI (Gradio 3.37, **loopback only**, refuses `--host 0.0.0.0`, trusted-Host middleware) |
 | `sAGI/view.py` | the LAN page (stdlib, fixed routes only, CSP, cached state) |
-| `sAGI/models.py` | importer: catalogue / Hugging Face / Ollama; sha256-pinned; OSS licences only; carrier switch with rollback |
+| `sAGI/console.py` | the bankML console (0.3.7, loopback :7875): Interaction, Admin, Logging, Infotags; persona `sAGI/personas/bankml.persona` |
+| `sAGI/models.py` | importer: catalogue / Hugging Face / Ollama; sha256-pinned; OSS licences only; carrier switch with rollback; `native_for` picks the engine |
 | `sAGI/embed.py` | bge-m3 via local Ollama (the model mindX uses); BM25 + RRF search; memory-guarded |
 | `sAGI/speak.py` | Savante's voice (Piper Cori → Jaimla's 182 Hz), introduction + reading, `Savante.opus` exports |
 | `sAGI/agents.py`, `thot.py`, `connectors.py`, `chain.py` | custom agents (keccak doctrine root), THOT manifests, PostgreSQL, iNFT (devnet only) |
-| `testing/` | `release_gate.sh`, `cli.rs`, `ggml_oracle.py`, `guard_agree.py`, the Python suites, `results/<version>.txt` |
-| docs | root: `README.md` (the front door: a Documentation router and the Releases table), `CHANGELOG.md`, `LICENSING.md`, `LICENSE-MIT`, `LICENSE-APACHE`; `docs/`: `usage.md`, `TECHNICAL.md`, `PERFORMANCE.md`, `oracles.md`, `research.md`, `embedding.md`, `TODO.md`, `cards/` |
+| `testing/` | `release_gate.sh`, `cli.rs`, the oracles (`*_oracle.py`, `*.cpp`), the Python suites, `decode_ab.py`, `pinned.sh`, `results/<version>.txt`; every file and gate stage in `testing/README.md` |
+| `tools/` | `cards.py` (README speed cards from a gate record), `makecards.py` + `seo.py` (share cards and their audit), `bashmoji.sh` |
+| docs | root: `README.md` (the front door: a Documentation router and the Releases table), `CHANGELOG.md` (the source of truth), `LICENSING.md`; `docs/`: `why-bankml.md`, `thesis.md`, `usage.md`, `install.md` (every option and variable), `playback.md`, `TECHNICAL.md`, `oracles.md`, `PERFORMANCE.md`, `research.md`, `OLLAMA.md`, `CAPI.md`, `embedding.md`, `huggingface.md`, `BUILD_HISTORY.md`, `TODO.md`, `modules/` (one page per module), `llms.txt` (the method for agents), `index.html` (the docs reader), `cards/` |
 
 Models: `.models` → `~/mindX/bankml/.models` (Bonsai-1.7B/8B Q1_0, Ternary-Bonsai-8B, imports). Pins:
 `~/.local/share/bankml/forks/*.FORK.json`. Engine: `~/sAGI/bonsai/llama-b11192/llama-server`. UI state:
@@ -65,43 +72,57 @@ the committed voice manifest), and the DreamKnob bundle banner.
 
 ## Ports and processes
 
-18092 llama-server (spawned by serve) · 18093 `bankml serve` · 7873 interact (loopback) · 7874 view (your network).
+18092 llama-server (spawned by serve) or the native engine address · 18093 `bankml serve` · 7873 interact (loopback) ·
+7874 view (your network) · 7875 the bankML console (loopback). The gate's live stages use their own spare ports.
 Start the carrier through the importer (`python3 sAGI/models.py use FILE`, or `_stop_carrier` + `_start_carrier`), which
 spawns `bankml serve MODEL --fork FORK --spawn llama-server --ctx 2048 --threads 3`. Relaunch the UIs with
 `setsid nohup python3 -B sAGI/savante.py --mode interact --port 7873 &` and `sAGI/view.py --host 0.0.0.0 --port 7874`.
 
-## Oracles (see oracles.md)
+## Oracles (see docs/oracles.md; every script and stage in testing/README.md)
 
-- **ggml oracle**: `testing/ggml_oracle.py` records llama.cpp b11192's own answers (via ctypes on the shipped
-  `libggml-base.so` / `libggml-cpu-haswell.so` / `-x64.so`); `oracle_ggml_b11192_real_*` re-derive every dequantized
-  tensor (sha256 of f32), every q8_0 row (bytes) and every dot product (`to_bits`). 1.7B: 197 tensors, 788 cases;
-  8B Q1_0 and ternary: 254 tensors, 8,188,239,872 weights, 762 cases. Match the **binary**, not the source: the
-  shipped kernels use fused multiply-adds; haswell (FMA) and x64 (no FMA) builds differ on 19/762 ternary dots.
-- **Forward-pass oracles** (P3): `testing/forward_oracle.py` drives the shipped ggml op by op (embed, norms,
-  Q/K/V with YaRN RoPE, the three attention kernels, SwiGLU sweep); `testing/model_oracle.py` covers the whole
-  model per layer; `greedy_oracle.py` (`--long`, `--deep`) and `sample_oracle.py` record llama-server's own tokens;
-  `serve_oracle.py` records whole conversations through `/v1/chat/completions` from a FRESH server (so its cache
-  starts empty). Every one found something: FMA contractions read from the disassembly; a reduction fused only
-  when the maximum is not in the first chunk; libm `expf` vs ggml's `v_expf`.
-- **GPU oracle**: `gpu_q1_0_mat_vec_bit_exact` and `bankml gpu --verify`. **mindXtrain**: `testing/train_oracle.py`,
-  run with `~/mindxtrain/.venv/bin/python`.
-- Scalar models vs AVX2 (3,500 / 3,300 cases), f16 all 65,536 values vs F16C, guard Rust == Python (28/28), FIPS
+Each oracle records llama.cpp b11192's own answers once (a script, usually `--record`), and a Rust test or a live
+`--bankml` run replays them. Records live in `.models/oracle-*/`, outside git.
+- **Kernels**: `testing/ggml_oracle.py` (ctypes on the shipped `libggml-base.so` / `libggml-cpu-haswell.so` / `-x64.so`);
+  `oracle_ggml_b11192_real_*` re-derive every dequantized tensor, q8_0 row and dot product (8B: 8,188,239,872
+  weights, 762 dots). Match the **binary**, not the source: haswell (FMA) and x64 builds differ on 19/762 ternary
+  dots. `f16_oracle.py` (F16 products), `oracle_ggml_b11192_q8_0_kv_kernels` (the q8_0 KV kernels, dlopen).
+- **Forward pass** (P3): `forward_oracle.py` (op by op), `model_oracle.py` (whole model per layer),
+  `greedy_oracle.py` (`--long`, `--deep`), `sample_oracle.py`, `tokenizer_oracle.py`, `template_oracle.py`.
+- **Serving**: `serve_oracle.py` (conversations from a FRESH llama-server), `json_oracle.py`, `json_schema_oracle.py`,
+  `grammar_oracle.{cpp,py}`, `schema_oracle.{cpp,py}` and `content_oracle.{cpp,py}` (llama.cpp's own code in
+  libllama/libllama-common, no model), `penalty_oracle.py` (`--kind sampler` for the rest of the chain),
+  `sort_oracle.cpp` (libstdc++'s `std::sort`), `context_oracle.py`, `slot_oracle.py` (the engine is its own oracle),
+  `session_oracle.py`, `kv_oracle.py`, `logprobs_oracle.py` (plain and streamed), `capi/capi_oracle.py`.
+- **Models**: `convert_oracle.py` (llama.cpp's converter, byte for byte; name heuristics), `persona_oracle.py`
+  (promote.py's persona layer end to end), `train_oracle.py` (mindXtrain's Python; run with
+  `~/mindxtrain/.venv/bin/python`). **GPU**: `gpu_q1_0_mat_vec_bit_exact` and `bankml gpu --verify`.
+- **Speed**: `ab_vs_ggml*`, `decode_budget_*`, `bench_*` in the gate; `decode_ab.py` (pairs against llama-server,
+  identical answers or the round is refused) under `pinned.sh`, outside the gate.
+- Also: scalar models vs AVX2 (3,500 / 3,300 cases), f16 all 65,536 values vs F16C, guard Rust == Python, FIPS
   vectors, RFC 6962 CT roots, Savante's doctrine root `0x92fe83eb…`, THOT spec vectors, the iNFT contract on anvil.
+- Every oracle found something: FMA contractions read from the disassembly; a reduction fused only when the maximum
+  is not in the first chunk; libm `expf` vs ggml's `v_expf`; `</s>` as CONTROL; b11192's Hadamard rotation around a
+  quantized KV cache.
 
 ## The release routine
 
-1. Do the work; tests: `cargo test --release`, `cargo clippy --release --all-targets -- -D warnings`,
-   `python3 -B testing/test_ui.py`, `test_models.py` (`BANKML_TEST_CARRIER=1`), `test_connectors.py`, `test_chain.py`.
-2. Bump `Cargo.toml` version, build (updates `Cargo.lock`), write the CHANGELOG entry, **update the README Releases
-   table and status rows**, update docs the change touches.
+1. Do the work; tests: `cargo test --release` (and `-p bankml-capi`), `cargo clippy --release --workspace
+   --all-targets -- -D warnings`, `python3 -B testing/test_ui.py`, `test_console.py`, `test_models.py`
+   (`BANKML_TEST_CARRIER=1`), `test_connectors.py`, `test_chain.py`. A new behaviour gets an oracle and a gate stage.
+2. Bump `Cargo.toml` version, build (updates `Cargo.lock`), turn the CHANGELOG's `Unreleased` heading into the
+   version and date, **update the README Releases table and status rows**, `testing/README.md`, and the docs the
+   change touches.
 3. **Stage the release (`git add -A`) before running the gate**, then keep the next release's edits out of anything
    the gate compiles: the oracle stage runs `cargo test` again and **recompiles from the working tree** — park `.rs`
    edits for the next version outside the tree until the gate finishes.
-4. `BANKML_GGML_LIB=~/sAGI/bonsai/llama-b11192 testing/release_gate.sh` (~20–30 min; oracles ~10 min, benchmarks
-   last; don't run CPU-heavy work meanwhile — it skews the decode budgets). Record: `testing/results/<v>.txt`.
+4. `./install.sh stop`, then `BANKML_GGML_LIB=~/sAGI/bonsai/llama-b11192 testing/release_gate.sh` (add `LLAMA_SRC`
+   and `BANKML_LLAMA_SRC` to re-record the schema/content grammars and the name heuristics). It runs every oracle in
+   turn, so leave the laptop to it; don't run CPU- or memory-heavy work meanwhile (it skews the budgets and can stall the live stages).
+   Record: `testing/results/<v>.txt`. Then `python3 tools/cards.py` redraws the README's speed cards from it.
 5. `git add testing/results/<v>.txt`, commit (attribution: `Co-Authored-By: Professor Codephreak
    <codephreak@pythai.net>`), `git tag -a v<v>`, push with tags, `gh release create` with the changelog section and
-   the record attached; release notes / PR bodies end with `made with luv.pythai.net`.
+   the record attached; release notes / PR bodies end with `made with luv.pythai.net`. In `docs/index.html` bump
+   `FALLBACK_TAG` and the masthead's gate-record line.
 6. Deploy: restart UIs only when llama-server is idle (`top -b -n 2 -d 1 -p <pid>`), as separate calls.
 
 ## Pitfalls learned the hard way
@@ -125,7 +146,17 @@ spawns `bankml serve MODEL --fork FORK --spawn llama-server --ctx 2048 --threads
 - Speculative decoding (draft Bonsai-1.7B for 8B) stayed token-identical at temperature 0 but showed no gain beyond
   noise (0.39–0.53 vs 0.47 tok/s, 2026-09-29); prompt caching works (70 → 28/31 prompt tokens on repeat turns).
 - The chat window slides one exchange per turn once past 12, which changes the prompt right after the system
-  prompt and defeats prefix caching — trim with slack (let it reach ~16, drop 4 at once) and try `--cache-reuse`.
+  prompt and defeats prefix caching — trim with slack (let it reach ~16, drop 4 at once).
+- **The gate's live stages and the Vega 3**: the GPU worker's buffers come out of system RAM, which stalled the 0.3.5
+  and 0.3.6 gates at `json_schema_oracle_live`; the remaining stages ran with `BANKML_GPU=off` and the record marks
+  it. On a short-memory machine set `BANKML_GPU=off` (no token changes) or rely on `BANKML_GPU_LIMIT` (0.3.7).
+- **Live oracles start each answer from an empty slot**: a cached prefix changes F16 product paths (column counts)
+  and moves seeded answers. Interleaved sessions are the exception, and need the host prompt cache (0.3.8).
+- `BANKML_LLAMA_THREADS` (default 3) must equal the reference run's `-t`: split-KV decode chunks by it, so the bits do.
+- `bankml convert`'s bytes depend on the source **directory's name** (`general.name`): gen39 must sit in
+  `mindx-gen39/` to give the pin.
+- Refuse, never approximate: what bankML does not reproduce (`mirostat`, a custom `samplers` order, top-k 0 or above
+  128) is refused with the reason; what llama-server itself refuses gets its 400 and its message, word for word.
 
 ## Licensing
 
@@ -135,39 +166,52 @@ never imports, so no black-box modification of key handling can ship. AGPL-deriv
 licence file and per-file SPDX (the bankon-vault pattern). Imported **models** must carry OSI licences (Gemma,
 Llama refused). Never copy KoboldCpp code (AGPL); take llama.cpp/ggml code (MIT) from upstream; vLLM is Apache-2.0.
 
-## Status (keep current)
+## Status (keep current; CHANGELOG.md is the source of truth)
 
-Released through **0.3.6** (2026-10-04: O2 — `sampler.rs` ports `llama_sampler_penalties` (repeat/freq/present over `repeat_last_n`, first in the chain and again on the grammar redraw; the WHOLE prompt fills the window, cached or not — llama-server `common_sampler_accept(..,false)`; `Sampler::accept`); refusals word for word ("Field 'repeat_last_n': …", "Failed to initialize samplers: penalty_repeat must be finite and greater than 0"); `repeat_last_n` moved from Ollama's ignored options to sampling; Modelfile PARAMETERs taken; oracles `oracle_penalties{,_8b}` + `testing/penalty_oracle.py` (`--bankml` live): 56/56 ×3 models, live 85/85; `/v1` sampler refusals now 400 not 500. Deployed to the mindX VPS as its default engine 2026-10-04 (0.3.5 native, registry Bonsai-8B/ternary/mindx-gen39 — see the mindx skill). **0.3.5** (2026-10-03: O6b + O5 — `bankML/schema.rs` = llama.cpp's json_schema_to_grammar + the chat parser's wrapping, **per template** (Qwen3 has `until-13` reasoning rules; ChatML has none and root `"<|im_start|>assistant\n" space space (fence | value)`), `Constraint::Schema(Value)` → grammar built on the engine's template; content rule checked against llama.cpp's own `common_chat_parse` (testing/content_oracle.{cpp,py}, `oracle_json_content`): an unfinished escape ends the string, and a non-streamed answer whose parse is empty is the raw text (`grammar::json_message`); `bankML/convert.rs` (`bankml convert`, byte-identical to convert_hf_to_gguf.py; `general.name` comes from the DIRECTORY NAME — the pin depends on it) and `bankML/create.rs` (`bankml create`, /api/create /api/delete /api/copy; derived = `<registry>/<name>.MODEL.json` layer over a verified pin; derived names beat the suffix-less alias; FROM resolves the alias); `num_ctx` = Ollama's chatPrompt (`native::fit_messages`; over-long remainder refused), `/api/ps` names the derived model (`Residency::shown_as`); oracles `oracle_json_schema{,_ternary,_o4}`, `oracle_persona_layer` + `testing/persona_oracle.py` (promote.py's persona Modelfile end to end; live checks must start each answer from an empty slot — a cached prefix changes F16 product paths and moves seeded answers). **0.3.4** (2026-10-02: O4 — mindX's own `mindx-gen39` (SmolLM2-135M + LoRA, merged, F16), SmolLM2-135M-Instruct and Bonsai-1.7B served natively, token-identical to llama-server b11192 on every oracle family; `bankML/f16.rs` = ggml's two F16 products chosen by shape (`vec_dot_f16` for 1 column, llamafile tinyBLAS for ≥2 when rows%4==0 && k%8==0), oracle `oracle_ggml_b11192_f16` (testing/f16_oracle.py); `forward::plan` decides arch/type/tied from the header and refuses the rest; Llama graph = NORM RoPE, no QK-norm; only output rows leave the last layer (inp_out_ids — decides F16 bits); `smollm` pre-tokenizer (digits split, then GPT-2 regex per piece; bytes without tokens dropped); templates per model by sha (`chat::TEMPLATES`), JSON grammar per template; llama-vocab's type overrides by name (`</s>` is CONTROL — a real bug found by the grown tokenizer corpus); converted models pinned via `sAGI/models.py` CONVERTED/pin_converted; registry alias drops the type suffix (`mindx-gen39`); Q8_0 deferred: Qwen3-0.6B's own template differs on 4/317). **0.3.3** (2026-10-02: JSON mode, O6's first cut — `bankML/grammar.rs` ports llama.cpp's GBNF engine; llama-server's `json_object` grammar (generated from the template's PEG parser, root starts with the generation prompt, prefilled) is a constant checked against the server; `sampler.rs` draws, checks, and redraws under the mask as `common_sampler_sample`; end set = llama-vocab's 6 tokens; `/v1` response_format/json_schema/grammar, Ollama `format:"json"`, `bankml_chat`, `generate --json`; oracles `oracle_grammar_masks` (testing/grammar_oracle.{cpp,py}, libllama's public grammar sampler) and `oracle_json_mode{,_ternary}` + `json_oracle.py --bankml`; real JSON schemas refused until `json_schema_to_grammar` is ported). **0.3.2** (2026-10-02: Rust 1.99 pinned in rust-toolchain.toml; a C API, `capi/` → libbankml.so/.a + `capi/include/bankml.h`, docs/CAPI.md: open (verify) · chat (stream + receipt) · close · free · set_log, and the variadic `bankml_log(level, fmt, ...)` defined in Rust over VaList, byte-identical to snprintf on 47/47 formats; the root is now a workspace (`.`, `capi`). 3-thread benches read slower in the 0.3.2 gate under load; a quiet-machine 1.95-vs-1.99 A/B is owed). **0.3.1** (2026-10-01: Ollama's API natively, a registry of pinned models with one resident and `keep_alive`; docs/OLLAMA.md is the gap matrix against mindX and the O1–O8 track). Milestone **0.3.0** (2026-09-29): **Savante answered by bankML's own forward pass.** Docs reader:
-**https://cryptoagi.github.io/bankml/** (GitHub Pages from `main` `/docs`; `docs/index.html` reads the repo at the
-latest release through the GitHub API, falling back to its `FALLBACK_TAG`. **Bump that tag and the masthead's gate-record
-line at each release.**)
+**Released: 0.3.6** (2026-10-04). Since the milestone 0.3.0 (2026-09-29, Savante answered by bankML's own forward
+pass), each release added one llama-server behaviour, token-identical, with its oracle in the gate:
+- **0.3.1** (10-01) Ollama's API natively, a registry of pinned models, one resident, `keep_alive`.
+- **0.3.2** (10-01) the C API (`libbankml`, `bankml_log` == `snprintf` on 47/47 formats); Rust 1.99 pinned; workspace.
+- **0.3.3** (10-02) JSON mode: llama.cpp's GBNF engine ported; llama-server's `json_object` grammar, prefilled; redraw.
+- **0.3.4** (10-02) O4: the Llama graph, F16 (`f16.rs`), tied embeddings — `mindx-gen39`, SmolLM2-135M-Instruct,
+  Bonsai-1.7B; `</s>` is CONTROL (found by the grown tokenizer corpus).
+- **0.3.5** (10-03) O6b + O5: JSON schemas per template (`schema.rs`), the content rule (`common_chat_parse`),
+  `bankml convert` and `bankml create` (promote.py's persona layer end to end), `num_ctx` as Ollama applies it.
+- **0.3.6** (10-04) O2: repeat, frequency and presence penalties; the whole prompt fills the window; `/v1` sampler
+  refusals 400, not 500. mindX's default engine on its VPS since 2026-10-04 (see the mindx skill).
+
+**Unreleased on the branch** (`Cargo.toml` still says 0.3.6; 0.3.7 and 0.3.8 built, 0.3.9 in progress):
+- **0.3.7** the rest of the default chain (typical-p, top-n-σ, XTC, dynamic temperature, DRY; 76/76 on two models),
+  libstdc++'s `std::sort` (876/876); `metrics.rs` (TTFT, pp/tg, RAPL joules per token, or `null`); `BANKML_GPU_LIMIT`
+  and per-shape GPU calibration; `./install.sh power`; the console (`sAGI/console.py`, :7875) and `bankml.persona`;
+  `mirostat` and a custom `samplers` order refused on `/v1`.
+- **0.3.8** the context limit (8/8), slots save/restore/erase with `--slot-dir` (19/19), the single-slot contract and
+  the host prompt cache (`prompt_cache.rs`, 14/14), `/v1` logprobs plain and streamed (14/14); `why-bankml.md`,
+  `tools/makecards.py`, `tools/seo.py`.
+- **0.3.9** the q8_0 KV cache with b11192's Hadamard rotation (`BANKML_CACHE_TYPE=q8_0`, 6/6; kernels 4,000/4,000),
+  the grammar mask through a trie (median 2.94 ms against 38.8 ms, 13×); next, 1-bit decode measured with
+  `decode_ab.py` on an idle machine.
+
+Docs reader: **https://cryptoagi.github.io/bankml/** (GitHub Pages from `main` `/docs`; `docs/index.html` reads the
+repo at the latest release through the GitHub API, falls back to its `FALLBACK_TAG`, and reads a document newer than
+the release from `main`). **Bump that tag and the masthead's gate-record line at each release.**
 
 What exists, each proven against llama.cpp b11192:
-- **P3 forward pass** (`bankML/forward.rs`, `sampler.rs`): token-identical for the Q1_0 and Q2_0_g64 Qwen3 files,
-  and (0.3.4, O4) the Llama graph in F16 (`f16.rs`) and tied embeddings: SmolLM2-135M-Instruct, `mindx-gen39`,
-  Bonsai-1.7B. Converted models need torch only for b11192's converter; bankML never runs it.
-  - Every ggml CPU attention kernel: the reference, the tiled one (micro-batches of ≥ 64 rows) and split-KV
-    (decode over ≥ 512 padded cells; it depends on llama.cpp's `-t`, `BANKML_LLAMA_THREADS`, default 3).
-  - Batched prefill; seeded sampling (a libstdc++ `partial_sort` port for tie order, mt19937).
-  - `bankml generate [--sample]`.
-- **`bankml serve --native`** (`native.rs`): llama-server's prompt-cache rule (the common prefix, less one when it
-  is all cached; the rest in micro-batches of 512). It also answers llama-server's endpoints on the engine address,
-  so Savante works unchanged. The importer's `engine` setting: `auto` = native for Q2_0 files. It counts the EOG
-  token in `completion_tokens`, as llama-server does.
-- **GPU** (`bankML/gpu/`):
-  - Vulkan through dlopen, bankML's own SPIR-V assembler, Q1_0 kernels.
-  - `bankml gpu [--remote|--verify]`; `worker.rs` gives a verified card a calibrated share of the rows.
-  - ⚠ RADV on the Vega 3 does **not fuse** `Fma` (NoContraction does not help), so `spirv.rs fma_exact` computes
-    it exactly (Boldo–Melquiond). `--verify` must include layer-shaped data, or it misses this.
-  - Speed-neutral on the APU; per-call submit and wait is the bottleneck.
+- **The forward pass** (`forward.rs`, `sampler.rs`): token-identical for the Q1_0 and Q2_0_g64 Qwen3 files and the
+  Llama graph in F16 with tied embeddings; every ggml CPU attention kernel (reference, tiled for micro-batches of
+  ≥ 64 rows, split-KV for decode over ≥ 512 padded cells, which depends on `BANKML_LLAMA_THREADS`); batched prefill;
+  the whole sampler chain; `bankml generate [--sample]`. Converted models need torch only for b11192's converter.
+- **`bankml serve --native`** (`native.rs`): llama-server's prompt-cache rule (the common prefix, less one when it is
+  all cached; the rest in micro-batches of 512), its endpoints on the engine address so Savante works unchanged; the
+  importer's `engine` setting `auto` = native for Q2_0 files only (`native_for`). It counts the EOG token in
+  `completion_tokens`, as llama-server does.
+- **GPU** (`bankML/gpu/`): Vulkan through dlopen, bankML's own SPIR-V assembler, Q1_0 kernels; `bankml gpu
+  [--remote|--verify]`. ⚠ RADV on the Vega 3 does **not fuse** `Fma`, so `spirv.rs fma_exact` computes it exactly
+  (Boldo–Melquiond); `--verify` must include layer-shaped data. Speed-neutral on the APU.
 - **mindXtrain in Rust** (`bankML/train/`): the author and score stages, identical to mindXtrain's Python.
-- **Layout** since ef65eb4: Rust in `bankML/`, UI in `sAGI/`. Savante's canon is `~/cryptoAGI/savante`
-  (`~/savante` is a link).
 
-**The road to 1.0.0** is in docs/TODO.md: what 1.0.0 means (llama.cpp only as the gate's oracle; full oracles per
-model × format; parity or better everywhere; stable interfaces; signed receipts; Savante and mindX on bankML by
-default), and the milestones 0.4.0 (native serve complete) → 0.5.0 (hardware) → 0.6.0 (models) → 0.7.0 (mindXtrain
-end to end) → 0.8.0 (trust) → 0.9.0 (release candidate). Next (docs/TODO.md): slot save and restore in native serve; batched GPU submissions (Q/K/V and gate/up); the Q2_0
-GPU kernel, then several cards; mindXtrain probe (Llama architecture, PEFT adapters), the verdicts, LoRA on the CPU;
-signed receipts in `crypto/` (GPL-3.0-only); NEON. The `upstream/` Q2_0 kernel awaits the authors' decision to open
-a llama.cpp PR.
+**The road to 1.0.0** is in docs/TODO.md (and docs/thesis.md §VII). 0.4.0 (native serve complete) needs three more
+items: 1-bit decode at least at llama-server's speed, measured; `auto` choosing native for 1-bit files too; the
+milestone gate. Then 0.5.0 (hardware: NEON, AVX-512, more cards) → 0.6.0 (models) → 0.7.0 (mindXtrain end to end) →
+0.8.0 (trust: signed receipts in `crypto/`, GPL-3.0-only) → 0.9.0 (release candidate) → 1.0.0 (llama.cpp only as
+the gate's oracle). The `upstream/` Q2_0 kernel awaits the authors' decision to open a llama.cpp PR.

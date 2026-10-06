@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `bankml` — the binary: the gate (`guard`, `pin`, `verify`), `serve` (gateway or `--native`), `generate`, `create`,
-//! `convert`, the text tools (`tokenize`, `chat-template`), `gpu`, `usage`, `version`. Usage: `bankml` with no arguments.
-//! Exit codes follow gguf_guard.py: 0 play · 2 refuse · 3 need_more · 1 usage/io.
+//! The `bankml` command line: argument parsing and exit codes over the library. `tokenize`, `chat-template`,
+//! `generate` and `convert` reproduce llama.cpp b11192's `/tokenize`, `/apply-template`, llama-server and
+//! `convert_hf_to_gguf.py`. Exit codes follow `gguf_guard.py`: 0 play, 2 refuse, 3 need_more, 1 usage or I/O.
+//! Details: docs/modules/main.md.
 
 use bankml::{gguf, sha256, Verdict};
 use std::path::Path;
@@ -12,7 +13,7 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
-       bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR]
+       bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR] [--slot-dir DIR]
                                                               (answers from bankML's own forward pass; also serves the engine address;
                                                               OpenAI /v1 and Ollama /api; --registry: every model pinned in DIR,
                                                               default ~/.local/share/bankml/forks, by name, one resident at a time)
@@ -38,7 +39,7 @@ fn main() {
     let flag = |f: &str| a.iter().any(|x| x == f);
     let opt = |f: &str| a.iter().position(|x| x == f).and_then(|i| a.get(i + 1)).cloned();
     let engine = if opt("--engine").as_deref() == Some("prism") { gguf::Engine::Prism } else { gguf::Engine::Mainline };
-    // an unreadable FORK.json is an io error (1), not "unpinned" (2): 0.0.1 conflated the two
+    // An unreadable FORK.json is an I/O error (1), not "unpinned" (2).
     let fork = || -> Result<String, i32> {
         let p = opt("--fork").ok_or_else(|| {
             eprintln!("{USAGE}");
@@ -51,7 +52,7 @@ fn main() {
     };
     let code = match (a.first().map(String::as_str), a.get(1)) {
         (Some("chat-template"), Some(file)) => {
-            // P3 step two: the prompt a conversation becomes, byte-identical to llama.cpp's /apply-template
+            // Byte-identical to llama.cpp's /apply-template.
             let mut text = String::new();
             let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
             let r = bankml::chat::template_of(Path::new(file)).and_then(|t| {
@@ -71,8 +72,7 @@ fn main() {
             }
         }
         (Some("generate"), Some(file)) => {
-            // P3: bankml's own forward pass, greedy — token-identical to llama-server b11192 on its oracle (prompts
-            // under 64 tokens, contexts under 512 cells); stdin is OpenAI-style messages, or plain text for one user turn
+            // stdin: OpenAI-style messages, or plain text as one user turn.
             let mut text = String::new();
             let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
             let max: usize = opt("--max").and_then(|v| v.parse().ok()).unwrap_or(256);
@@ -104,7 +104,7 @@ fn main() {
             }
         }
         (Some("create"), Some(name)) => {
-            // O5: `ollama create`, natively: a layer over a pinned base, verified as the base is verified
+            // `ollama create`: a layer over a pinned base, verified as the base is.
             let Some(mf) = opt("-f").or(opt("--file")) else {
                 eprintln!("bankml create: -f Modelfile is required");
                 std::process::exit(1);
@@ -123,7 +123,7 @@ fn main() {
             }
         }
         (Some("convert"), Some(dir)) => {
-            // O5: safetensors → GGUF F16, byte-identical to llama.cpp b11192's convert_hf_to_gguf.py --outtype f16
+            // Byte-identical to b11192 `convert_hf_to_gguf.py --outtype f16`.
             let Some(out) = opt("-o").or(opt("--outfile")) else {
                 eprintln!("bankml convert: -o OUT.gguf is required");
                 std::process::exit(1);
@@ -154,9 +154,9 @@ fn main() {
             }
         }
         (Some("gpu"), _) => {
-            // the video-card component: every GPU found (Vulkan, merged with the kernel's sysfs view) and the selection
+            // Every GPU found (Vulkan merged with sysfs) and the selection.
             if flag("--verify") {
-                // the on-card oracle: each selected card runs bankml's kernels and must give the CPU kernels' bits
+                // On-card oracle: each selected card must reproduce the CPU kernels' bits.
                 let sel = bankml::gpu::selected(&bankml::gpu::discover().0);
                 if sel.is_empty() {
                     println!("bankml gpu --verify: no usable GPU found; bankml runs on the CPU");
@@ -178,7 +178,7 @@ fn main() {
             }
         }
         (Some("tokenize"), Some(file)) => {
-            // bankml's tokenizer (P3, step one): token-identical to llama.cpp b11192 on its oracle; text from stdin
+            // Token-identical to llama.cpp's /tokenize; text from stdin.
             match bankml::tokenizer::Tokenizer::from_gguf(Path::new(file)) {
                 Err(e) => {
                     eprintln!("bankml tokenize: {e}");
@@ -194,7 +194,7 @@ fn main() {
             }
         }
         (Some("usage"), _) => {
-            // bankml's psutil: memory, cores, and rss + CPU % of the given pids (default: bankml itself), over 0.5 s
+            // Memory, cores, and RSS + CPU % of the given pids (default: self) over 0.5 s.
             let pids: Vec<u32> = a[1..].iter().filter_map(|x| x.parse().ok()).collect();
             if a.len() > 1 && pids.len() != a.len() - 1 {
                 eprintln!("bankml usage: not a process id: {}", a[1..].iter().filter(|x| x.parse::<u32>().is_err()).cloned().collect::<Vec<_>>().join(" "));
@@ -290,7 +290,7 @@ fn main() {
                     spec_ngram: flag("--spec-ngram"),
                     slot_dir: opt("--slot-dir").map(Into::into),
                     native: flag("--native"),
-                    // `--registry` alone means the importer's forks directory ($BANKML_FORKS, as sAGI/models.py)
+                    // `--registry` without DIR: the importer's forks directory.
                     registry: a.iter().any(|x| x == "--registry").then(|| registry_dir(&a)),
                     keep_alive: opt("--keep-alive"),
                 };
@@ -311,7 +311,7 @@ fn main() {
     std::process::exit(code);
 }
 
-/// `--registry DIR`, or the importer's forks directory ($BANKML_FORKS, else ~/.local/share/bankml/forks, as sAGI/models.py).
+/// `--registry DIR`, else `$BANKML_FORKS`, else `~/.local/share/bankml/forks` (as `sAGI/models.py`).
 fn registry_dir(a: &[String]) -> std::path::PathBuf {
     match a.iter().position(|x| x == "--registry").and_then(|i| a.get(i + 1)) {
         Some(d) if !d.starts_with("--") => d.into(),
@@ -320,8 +320,10 @@ fn registry_dir(a: &[String]) -> std::path::PathBuf {
     }
 }
 
-/// `bankml generate`: render, tokenize, run the prompt through bankml's forward pass, then greedy tokens to stdout as
-/// they come, until the turn ends or `max` tokens.
+/// `bankml generate`: renders and tokenizes the prompt, runs the forward pass, and streams tokens to stdout until
+/// an end-of-generation token or `max` tokens.
+///
+/// Greedy unless `sample` is given; `json` runs JSON mode through the native engine instead.
 fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sampler::Params>, json: bool) -> Result<(), String> {
     use bankml::{chat, forward::Weights, serve::Json, tokenizer::Tokenizer};
     use std::io::Write;
@@ -331,8 +333,8 @@ fn generate(model: &Path, input: &str, max: usize, sample: Option<bankml::sample
         _ => vec![chat::Message::new("user", input.trim_end_matches('\n'))],
     };
     if json {
-        // 0.3.3: JSON mode through the native engine — the grammar, its prefill and the redraw exactly as llama-server
-        // answers `response_format: {"type": "json_object"}` (greedy is its temperature 0); the content is printed
+        // Grammar, prefill and redraw as llama-server answers `response_format: {"type": "json_object"}`;
+        // greedy is its temperature 0. Only the content is printed.
         use bankml::grammar::{Constraint, ContentStream};
         let eng = bankml::native::Native::open(model, 4096)?;
         let params = sample.unwrap_or_else(|| bankml::sampler::Params { temp: 0.0, ..eng.defaults.clone() });

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! System and process readings, the part of psutil (or Rust's `sysinfo`) bankml needs, with no crates: on Linux
-//! everything comes from `/proc`, which is what those libraries read too. Used by `bankml serve` (`GET
-//! /bankml/usage`) and `bankml usage`, and by the Savante UI's Resources sliders.
+//! System and process readings from `/proc` and `/sys`, with no crates: memory, cores, per-process RSS and
+//! CPU time, the CPU package's RAPL energy counter, and per-GPU load and memory. Used by `bankml usage`,
+//! `bankml serve` (`GET /bankml/usage`) and the native engine. Readings that are unavailable are `None`
+//! (`null` in JSON), never estimated.
 //!
-//! - memory: `/proc/meminfo` (MemTotal, MemAvailable, SwapTotal, SwapFree);
-//! - a process: `/proc/<pid>/status` (VmRSS) and `/proc/<pid>/stat` (utime + stime, in clock ticks);
-//! - CPU %: the change in a process's ticks over a sampling interval, divided by the ticks per second (`sysconf`),
-//!   so 100 % is one core busy and `cores × 100 %` is the machine.
+//! Details: docs/modules/sys.md.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// System memory and swap, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Memory {
     pub total: u64,
@@ -19,7 +18,7 @@ pub struct Memory {
     pub swap_free: u64,
 }
 
-/// One kB-valued field of a `/proc` key: value table.
+/// One kB-valued field of a `/proc` `key: value` table, in bytes.
 fn field_kb(text: &str, key: &str) -> Option<u64> {
     text.lines().find_map(|l| {
         let rest = l.strip_prefix(key)?.strip_prefix(':')?;
@@ -27,6 +26,7 @@ fn field_kb(text: &str, key: &str) -> Option<u64> {
     })
 }
 
+/// `/proc/meminfo`: MemTotal and MemAvailable required; swap fields default to 0.
 pub fn memory() -> Option<Memory> {
     let t = std::fs::read_to_string("/proc/meminfo").ok()?;
     Some(Memory {
@@ -37,17 +37,18 @@ pub fn memory() -> Option<Memory> {
     })
 }
 
+/// Available parallelism; 1 if unknown.
 pub fn cores() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
 
-/// Resident memory of a process in bytes.
+/// Resident memory of a process in bytes (`/proc/<pid>/status` VmRSS).
 pub fn rss(pid: u32) -> Option<u64> {
     field_kb(&std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?, "VmRSS")
 }
 
-/// utime + stime of a process, in clock ticks. The command name (field 2) may contain spaces and parentheses, so
-/// fields are counted after the last ')'.
+/// utime + stime of a process in clock ticks, from `/proc/<pid>/stat`. The command name (field 2) may
+/// contain spaces and parentheses, so fields are counted after the last `)`.
 pub fn cpu_ticks(pid: u32) -> Option<u64> {
     parse_ticks(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }
@@ -55,7 +56,7 @@ pub fn cpu_ticks(pid: u32) -> Option<u64> {
 fn parse_ticks(stat: &str) -> Option<u64> {
     let rest = &stat[stat.rfind(')')? + 1..];
     let f: Vec<&str> = rest.split_whitespace().collect();
-    // after ')': state(0) ppid(1) … utime is field 14 of the full line = index 11 here, stime index 12
+    // after `)`: state is index 0; utime (field 14 of the full line) is index 11, stime index 12
     Some(f.get(11)?.parse::<u64>().ok()? + f.get(12)?.parse::<u64>().ok()?)
 }
 
@@ -75,6 +76,7 @@ pub fn ticks_per_second() -> u64 {
     100
 }
 
+/// Whether `/proc/<pid>` exists.
 pub fn alive(pid: u32) -> bool {
     Path::new(&format!("/proc/{pid}")).exists()
 }
@@ -89,13 +91,73 @@ pub fn cpu_percent(pids: &[u32], interval: Duration) -> f64 {
     b.saturating_sub(a) as f64 / ticks_per_second() as f64 / secs * 100.0
 }
 
-/// A snapshot for the named processes: JSON with memory, cores and, per process, rss and CPU %.
+/// The RAPL package energy counter in µJ and its wrap value (`max_energy_range_uj`), when readable.
+/// The counter is root-only unless `./install.sh power` has run; otherwise `None`.
+pub fn energy_uj() -> Option<(u64, u64)> {
+    let base = Path::new("/sys/class/powercap/intel-rapl:0");
+    let read = |f: &str| std::fs::read_to_string(base.join(f)).ok()?.trim().parse::<u64>().ok();
+    Some((read("energy_uj")?, read("max_energy_range_uj").unwrap_or(u64::MAX)))
+}
+
+/// Joules between two `energy_uj` readings, across one wrap of the counter.
+pub fn joules(a: (u64, u64), b: (u64, u64)) -> f64 {
+    let d = if b.0 >= a.0 { b.0 - a.0 } else { b.0 + (a.1 - a.0) };
+    d as f64 / 1e6
+}
+
+/// One GPU's readings from sysfs; a field the driver does not expose is `None`.
+#[derive(Debug, Clone, Default)]
+pub struct Gpu {
+    pub card: String,
+    pub driver: String,
+    pub busy_percent: Option<u64>,
+    pub vram_used: Option<u64>,
+    pub vram_total: Option<u64>,
+    pub gtt_used: Option<u64>,
+    pub gtt_total: Option<u64>,
+}
+
+/// Every DRM card with a device (`card0`, `card1`, …; not its connectors).
+pub fn gpus() -> Vec<Gpu> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir("/sys/class/drm") else { return out };
+    let mut names: Vec<String> = rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("card") && n[4..].chars().all(|c| c.is_ascii_digit())).collect();
+    names.sort();
+    for n in names {
+        let dev = Path::new("/sys/class/drm").join(&n).join("device");
+        let num = |f: &str| std::fs::read_to_string(dev.join(f)).ok()?.trim().parse::<u64>().ok();
+        let driver = std::fs::read_link(dev.join("driver")).ok().and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned())).unwrap_or_default();
+        out.push(Gpu { card: n, driver, busy_percent: num("gpu_busy_percent"), vram_used: num("mem_info_vram_used"), vram_total: num("mem_info_vram_total"),
+                       gtt_used: num("mem_info_gtt_used"), gtt_total: num("mem_info_gtt_total") });
+    }
+    out
+}
+
+fn opt(v: Option<u64>) -> String {
+    v.map(|x| x.to_string()).unwrap_or_else(|| "null".into())
+}
+
+/// One `Gpu` as a JSON object; missing fields are `null`.
+pub fn gpu_json(g: &Gpu) -> String {
+    format!("{{\"card\": {}, \"driver\": {}, \"busy_percent\": {}, \"vram_used_bytes\": {}, \"vram_total_bytes\": {}, \"gtt_used_bytes\": {}, \"gtt_total_bytes\": {}}}",
+            crate::gguf::jstr(&g.card), crate::gguf::jstr(&g.driver), opt(g.busy_percent), opt(g.vram_used), opt(g.vram_total), opt(g.gtt_used), opt(g.gtt_total))
+}
+
+/// A JSON snapshot for the named processes over one `interval`: memory, cores, per-process RSS and CPU %,
+/// package power (RAPL; `null` when unreadable), each GPU's readings and the GPU limiter state.
+/// Processes with pid 0 or not alive are omitted.
 pub fn usage_json(procs: &[(&str, u32)], interval: Duration) -> String {
     let live: Vec<(&str, u32)> = procs.iter().copied().filter(|&(_, p)| p > 0 && alive(p)).collect();
     let before: Vec<Option<u64>> = live.iter().map(|&(_, p)| cpu_ticks(p)).collect();
+    let e0 = energy_uj();
     let t = Instant::now();
     std::thread::sleep(interval);
     let secs = t.elapsed().as_secs_f64().max(1e-3);
+    let watts = match (e0, energy_uj()) {
+        (Some(a), Some(b)) => format!("{:.2}", joules(a, b) / secs),
+        _ => "null".into(),
+    };
     let hz = ticks_per_second() as f64;
     let mut rows = Vec::new();
     let (mut rss_sum, mut cpu_sum) = (0u64, 0.0);
@@ -112,8 +174,10 @@ pub fn usage_json(procs: &[(&str, u32)], interval: Duration) -> String {
     let m = memory().unwrap_or_default();
     format!(
         "{{\"source\": \"bankml sys.rs (/proc)\", \"cores\": {}, \"mem_total_bytes\": {}, \"mem_available_bytes\": {}, \"swap_total_bytes\": {}, \
-         \"swap_free_bytes\": {}, \"rss_bytes\": {rss_sum}, \"cpu_percent\": {cpu_sum:.1}, \"interval_ms\": {}, \"processes\": [{}]}}",
-        cores(), m.total, m.available, m.swap_total, m.swap_free, interval.as_millis(), rows.join(", ")
+         \"swap_free_bytes\": {}, \"rss_bytes\": {rss_sum}, \"cpu_percent\": {cpu_sum:.1}, \"interval_ms\": {}, \"processes\": [{}], \
+         \"package_watts\": {watts}, \"gpus\": [{}], \"gpu_limiter\": {}}}",
+        cores(), m.total, m.available, m.swap_total, m.swap_free, interval.as_millis(), rows.join(", "),
+        gpus().iter().map(gpu_json).collect::<Vec<_>>().join(", "), crate::gpu::worker::status_json()
     )
 }
 
@@ -129,6 +193,25 @@ mod tests {
         let me = std::process::id();
         assert!(rss(me).unwrap() > 0 && cpu_ticks(me).is_some() && alive(me));
         assert!(ticks_per_second() >= 1);
+    }
+
+    #[test]
+    fn energy_counter_wraps() {
+        assert_eq!(joules((1_000_000, 10_000_000), (3_500_000, 10_000_000)), 2.5);
+        // wrapped: from 9.5 J up to the 10 J range, then on to 0.5 J
+        assert_eq!(joules((9_500_000, 10_000_000), (500_000, 10_000_000)), 1.0);
+    }
+
+    #[test]
+    fn gpus_and_power_are_reported_or_null() {
+        let j = usage_json(&[("self", std::process::id())], Duration::from_millis(20));
+        assert!(j.contains("\"package_watts\": ") && j.contains("\"gpus\": ["));
+        for g in gpus() {
+            assert!(g.card.starts_with("card"));
+            if let (Some(u), Some(t)) = (g.vram_used, g.vram_total) {
+                assert!(u <= t);
+            }
+        }
     }
 
     #[test]

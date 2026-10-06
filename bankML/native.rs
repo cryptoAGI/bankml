@@ -1,25 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The native engine behind `bankml serve --native` (0.3.0): chat completions from bankML's own forward pass,
-//! token-identical to llama-server b11192 on its oracle — the same template, tokenizer, forward pass (every kernel
-//! llama.cpp chooses), sampler chain and, across requests, the same prompt cache:
+//! The native engine behind `bankml serve --native`: chat completions from bankML's own forward pass.
 //!
-//! - one slot, as `-np 1`; a request reuses the longest common prefix of the tokens already in the slot's KV cache
-//!   and its own prompt, less one token when the whole prompt is cached (llama-server evaluates at least one), then
-//!   truncates the cache there and computes the rest in micro-batches of 512 (`Weights::prefill`), as
-//!   `server-context.cpp` does — so the kernels each row takes are the ones llama-server's rows take;
-//! - the sampling parameters are the request's over the model's GGUF defaults, as llama-server resolves them; the
-//!   penalties (0.3.6) see the whole prompt in their window, as llama-server's do; a sampler bankML does not
-//!   reproduce (dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason, never approximated;
-//! - the answer streams as whole UTF-8 characters; the end-of-turn token ends it, is not part of the text, and is
-//!   counted among the completion tokens as llama-server counts it.
-//!
-//! 0.3.1 adds the model's lifecycle (`Registry`, `Residency`): every pinned GGUF in the forks directory gets a name,
-//! one model is resident at a time, a load runs the full `verify` (guard, then the sha256 pin) exactly as `serve`'s
-//! start does, and an idle model is dropped (its mmap with it) when its keep-alive runs out — Ollama's lifecycle,
-//! bankML's gate.
+//! Token-identical to llama-server b11192 with one slot (`-np 1`): the same template, tokenizer, kernels, slot
+//! prefix reuse, host prompt cache and default sampler chain (all of it; mirostat and a custom sampler order are
+//! refused). It also owns the model lifecycle (`Registry`, `Residency`): one verified model resident at a time,
+//! dropped when its keep-alive runs out, as Ollama does.
+//! Details: docs/modules/native.md.
 
 use crate::chat::{self, Message};
 use crate::forward::{KvCache, Weights};
+use crate::prompt_cache::PromptCache;
 use crate::sampler::{Params, Sampler};
 use crate::serve::{ident, FileIdent, Json};
 use crate::tokenizer::Tokenizer;
@@ -28,9 +18,30 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// The slot file's first bytes (`Native::save_slot`).
+const SLOT_MAGIC: &[u8] = b"bankML slot v1\n";
+
 struct Slot {
     tokens: Vec<u32>,
     caches: Vec<KvCache>,
+    /// llama-server's host prompt cache (`prompt_cache.rs`); `None` with `BANKML_CACHE_RAM=0`.
+    saved: Option<PromptCache<Vec<KvCache>>>,
+}
+
+/// The host prompt cache's byte limit: `BANKML_CACHE_RAM` in MiB, as `--cache-ram` (0 off, -1 no limit).
+///
+/// Unset, it is llama-server's 8192 MiB capped at a quarter of the memory available at load.
+fn cache_ram_limit() -> Option<usize> {
+    const MIB: usize = 1 << 20;
+    match std::env::var("BANKML_CACHE_RAM").ok().and_then(|v| v.trim().parse::<i64>().ok()) {
+        Some(0) => None,
+        Some(n) if n < 0 => Some(0),
+        Some(n) => Some(n as usize * MIB),
+        None => {
+            let quarter = crate::sys::memory().map(|m| (m.available / 4) as usize).unwrap_or(usize::MAX);
+            Some((8192 * MIB).min(quarter).max(MIB))
+        }
+    }
 }
 
 pub struct Native {
@@ -39,32 +50,71 @@ pub struct Native {
     pub defaults: Params,
     pub n_ctx: usize,
     pub model: PathBuf,
-    /// the model's chat template (by the sha256 of its text, `chat::TEMPLATES`)
+    /// Chat template, identified by the sha256 of its text (`chat::TEMPLATES`).
     pub template: chat::Template,
     eog: Vec<u32>,
     slot: Mutex<Slot>,
-    /// every token's piece and the end set, as the grammar reads them; built on the first constrained request
+    /// Every token's piece and the end set, as the grammar reads them; built on first use.
     gvocab: std::sync::OnceLock<crate::grammar::Vocab>,
-    /// the JSON-mode grammar, parsed once
+    /// JSON-mode grammar, parsed once.
     json_rules: std::sync::OnceLock<Arc<crate::grammar::Rules>>,
+    /// DRY breakers for the last breaker list requested (building them scans the whole vocabulary).
+    dry_cache: Mutex<Option<(Vec<String>, Arc<crate::sampler::DryBreakers>)>>,
 }
 
 /// How a completion ended, and its counts (llama-server's `usage` and `timings.cache_n`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Done {
     pub prompt_tokens: usize,
     pub cached_tokens: usize,
     pub completion_tokens: usize,
     pub finish_reason: &'static str,
     pub text: String,
-    /// wall time of the prompt's computation (the uncached part) and of the generation after it, in nanoseconds
+    /// Wall time of the prompt's uncached part and of the generation, in nanoseconds.
     pub prompt_ns: u64,
     pub eval_ns: u64,
-    /// the generated token ids (with the end token, when one ended the answer)
+    /// Generated token ids, including the end token when one ended the answer.
     pub tokens: Vec<u32>,
-    /// under a grammar: the time spent in it (the checks, the masks, the accepts) and how many tokens were redrawn
+    /// Under a grammar: time spent in it (checks, masks, accepts) and the number of redrawn tokens.
     pub grammar_ns: u64,
     pub resampled: usize,
+    /// Time from the start of the completion to its first piece, and the CPU package energy when RAPL is readable.
+    pub ttft_ns: Option<u64>,
+    pub energy_j: Option<f64>,
+    /// With `n_probs` > 0: each generated token's probability and the top `n_probs`, from the raw logits.
+    pub probs: Vec<TokenLogprob>,
+}
+
+/// One step of a completion, as `Native::complete_with` reports it.
+///
+/// - `piece`: the text this step released (may be empty).
+/// - `complete`: the token left no incomplete UTF-8 behind; llama-server sends a token only then.
+/// - `entry`: its logprobs, when requested and complete.
+/// - `n`: tokens generated so far.
+/// - `eog`: the end-of-turn token, which ends the answer.
+///
+/// A final step with `n` unchanged and `complete` false flushes bytes left incomplete at the end.
+pub struct Step<'a> {
+    pub piece: &'a str,
+    pub complete: bool,
+    pub entry: Option<&'a TokenLogprob>,
+    pub n: usize,
+    pub eog: bool,
+}
+
+/// One generated token's probability and the top tokens with their probabilities.
+///
+/// Top-token text excludes specials, as llama-server renders `top_logprobs`. `piece` is what this token emitted;
+/// the serving layer replaces it with what was sent (`serve::logprob_entries`). `complete`: no incomplete UTF-8
+/// was left after this token; llama-server keeps an entry only then.
+#[derive(Debug, Clone, Default)]
+pub struct TokenLogprob {
+    pub id: u32,
+    pub p: f32,
+    pub piece: Vec<u8>,
+    pub top: Vec<(u32, f32, Vec<u8>)>,
+    pub emitted: bool,
+    pub complete: bool,
 }
 
 impl Native {
@@ -74,26 +124,46 @@ impl Native {
         let w = Weights::open(model)?;
         let defaults = Params::from_gguf(model)?;
         let eog = eog_from_gguf(model, &tok)?;
-        let caches = w.caches();
-        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }),
-                    gvocab: Default::default(), json_rules: Default::default() })
+        // BANKML_CACHE_TYPE=q8_0 as llama.cpp's `--cache-type-k q8_0 --cache-type-v q8_0` (flash attention)
+        let kind = crate::forward::KvType::parse(std::env::var("BANKML_CACHE_TYPE").as_deref().unwrap_or("f16"))?;
+        if kind == crate::forward::KvType::Q8_0 && w.head_dim % crate::q1_0::QK8_0 != 0 {
+            return Err(format!("a q8_0 cache needs a head size that is a multiple of 32; this model's is {}", w.head_dim));
+        }
+        let caches = w.caches_of(kind);
+        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches, saved: cache_ram_limit().map(|b| PromptCache::new(b, n_ctx)) }),
+                    gvocab: Default::default(), json_rules: Default::default(), dry_cache: Default::default() })
     }
 
-    /// The vocabulary as the grammar reads it (built once, ~10 MB, on the first constrained request).
+    /// DRY breakers for this vocabulary (`sampler::dry_breakers`), built once per breaker list and kept.
+    fn dry_breakers(&self, breakers: &[String]) -> Result<Arc<crate::sampler::DryBreakers>, String> {
+        let mut cache = self.dry_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((k, b)) = cache.as_ref() {
+            if k == breakers {
+                return Ok(b.clone());
+            }
+        }
+        let b = Arc::new(crate::sampler::dry_breakers(breakers, self.grammar_vocab().pieces(), |s| self.tok.encode(s, false))?);
+        *cache = Some((breakers.to_vec(), b.clone()));
+        Ok(b)
+    }
+
+    /// The vocabulary as the grammar and DRY read it; built once (about 10 MB) on first use.
     pub fn grammar_vocab(&self) -> &crate::grammar::Vocab {
         self.gvocab.get_or_init(|| crate::grammar::Vocab::new((0..self.tok.n_tokens() as u32).map(|i| self.tok.piece(i)).collect(), &self.eog))
     }
 
-    /// The grammar a request's constraint asks for, in its starting state: JSON mode's grammar with the generation
-    /// prompt already taken in (llama-server prefills an output-format grammar), or the user's GBNF as it is.
+    /// The grammar a request's constraint asks for, in its starting state.
+    ///
+    /// JSON mode and schemas use the template's output-format grammar with the generation prompt already accepted,
+    /// as llama-server prefills it; a user GBNF is used as given.
     pub fn grammar(&self, c: &crate::grammar::Constraint) -> Result<Option<crate::grammar::Grammar>, String> {
         use crate::grammar::{json_object_grammar, Constraint, Grammar, Rules};
         let tokenize = |b: &[u8]| self.tok.encode(&String::from_utf8_lossy(b), true);
         match c {
             Constraint::None => Ok(None),
             Constraint::JsonObject | Constraint::Schema(_) => {
-                // the template's own output-format grammar (JSON mode's, or the schema's through the template's chat
-                // parser): its root opens with the template's generation prompt, which is prefilled
+                // the template's output-format grammar (JSON mode's, or the schema's via the template's chat parser):
+                // its root opens with the generation prompt, which is prefilled
                 let (r, prefill) = match c {
                     Constraint::Schema(s) => (Arc::new(Rules::parse(&crate::schema::chat_grammar(s, self.template)?.0, &tokenize)?), self.template.generation_prompt()),
                     _ => {
@@ -126,13 +196,10 @@ impl Native {
         self.prompt_fit(messages, None)
     }
 
-    /// 0.3.5: the prompt under a `num_ctx` (a request's option or a derived model's `PARAMETER num_ctx`), fitted as
-    /// Ollama fits it (`server/prompt.go` `chatPrompt`, v0.13.3): walking back from the last message, each earlier
-    /// message is kept while the conversation from it — with the system messages before it — still fits; the last
-    /// message always stays, and so do the system messages before the first one kept (a system message that is itself
-    /// the first one cut is dropped, as Ollama drops it). The tokens counted are the prompt bankML answers (the GGUF's
-    /// template, as llama-server renders it). A prompt that still does not fit is refused: Ollama's runner would cut
-    /// tokens out of its middle (`num_keep`) and shift the cache during the answer, which bankML does not reproduce.
+    /// The prompt fitted under a `num_ctx` as Ollama v0.13.3 fits it (`fit_messages`).
+    ///
+    /// Tokens are counted on the prompt bankML answers (the GGUF's template). A prompt that still does not fit is
+    /// refused: Ollama's runner would cut tokens from its middle (`num_keep`), which bankML does not reproduce.
     pub fn prompt_fit(&self, messages: &Json, num_ctx: Option<usize>) -> Result<Vec<u32>, String> {
         let msgs: Vec<Message> = chat::messages_from_json(messages)?;
         let enc = |m: &[Message]| -> Result<Vec<u32>, String> { Ok(self.tok.encode(&self.template.render(m)?, true)) };
@@ -147,24 +214,51 @@ impl Native {
         Ok(p)
     }
 
-    /// One completion. `emit` receives the answer as whole UTF-8 pieces as they come, and returns false to stop.
-    /// With a grammar (`Native::grammar`) every token is drawn as `common_sampler_sample` draws it under one.
-    pub fn complete(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
+    /// One completion; `emit` receives whole UTF-8 pieces as they come and returns false to stop.
+    ///
+    /// Under a grammar (`Native::grammar`) each token is drawn as llama.cpp's `common_sampler_sample` draws it.
+    pub fn complete(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, grammar: Option<crate::grammar::Grammar>,
                     mut emit: impl FnMut(&str) -> bool) -> Result<Done, String> {
+        self.complete_with(prompt, params, max_tokens, grammar, |s| s.eog || s.piece.is_empty() || emit(s.piece))
+    }
+
+    /// `complete`, reporting every step (`Step`).
+    ///
+    /// Steps include whole tokens that release no text and the end-of-turn token, each with its logprobs, so a
+    /// stream can send them as llama-server does.
+    pub fn complete_with(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
+                         mut emit: impl FnMut(Step) -> bool) -> Result<Done, String> {
         if prompt.is_empty() {
             return Err("an empty prompt".into());
         }
         if prompt.len() >= self.n_ctx {
             return Err(format!("the prompt has {} tokens; the context is {}", prompt.len(), self.n_ctx));
         }
+        let n_probs = params.n_probs;
+        let mut probs = Vec::new();
         let mut sampler = Sampler::new(params)?;
-        // O2: llama-server accepts the whole prompt into the penalties' window before the first draw, cached or not
+        if sampler.wants_dry_breakers() {
+            sampler.set_dry_breakers(self.dry_breakers(sampler.dry_sequence_breakers())?);
+        }
+        // llama-server accepts the whole prompt into the samplers' windows before the first draw, cached or not
         for &t in prompt {
             sampler.accept(t);
         }
         let mut slot = self.slot.lock().map_err(|_| "the slot is poisoned")?;
         let t0 = Instant::now();
-        // llama-server's prompt cache: the longest common prefix, less one when the whole prompt is cached
+        let e0 = crate::sys::energy_uj();
+        let mut ttft_ns = None;
+        // host prompt cache: when the slot serves this prompt poorly, park its state and take back a better one
+        let Slot { tokens, caches, saved } = &mut *slot;
+        if let Some(pc) = saved.as_mut().filter(|_| PromptCache::<Vec<KvCache>>::wants_update(tokens, prompt)) {
+            let bytes = caches.iter().map(KvCache::bytes).sum();
+            pc.save(tokens, bytes, || caches.clone());
+            if let Some((t, c)) = pc.take_better(tokens, prompt) {
+                (*tokens, *caches) = (t, c);
+            }
+            pc.update();
+        }
+        // the slot's prefix: the longest common prefix, less one when the whole prompt is cached
         let mut n_past = slot.tokens.iter().zip(prompt).take_while(|(a, b)| a == b).count();
         if n_past == prompt.len() {
             n_past -= 1;
@@ -173,7 +267,7 @@ impl Native {
         for c in slot.caches.iter_mut() {
             c.truncate(n_past);
         }
-        let Slot { tokens, caches } = &mut *slot;
+        let Slot { tokens, caches, .. } = &mut *slot;
         let mut rn = self.w.prefill(caches, &prompt[n_past..], |_, _, _| {})?;
         tokens.extend_from_slice(&prompt[n_past..]);
         let prompt_ns = t0.elapsed().as_nanos() as u64;
@@ -199,21 +293,44 @@ impl Native {
             };
             out.push(next);
             sampler.accept(next);
+            if n_probs > 0 {
+                let (p, top) = crate::sampler::token_probs(&logits, next, n_probs);
+                probs.push(TokenLogprob { id: next, p, piece: Vec::new(), complete: true, emitted: false,
+                                          top: top.into_iter().map(|t| (t.id, t.p, self.tok.token_bytes(t.id))).collect() });
+            }
             if self.eog.contains(&next) {
                 n += 1; // llama-server counts the end-of-turn token it sampled among the completion tokens
                 finish = "stop";
+                // it releases no text; it is a whole token only if nothing incomplete is pending before it
+                let complete = pending.is_empty();
+                if let Some(e) = probs.last_mut() {
+                    e.complete = complete;
+                }
+                emit(Step { piece: "", complete, entry: probs.last().filter(|_| complete), n, eog: true });
                 break;
             }
             n += 1;
             pending.extend(self.tok.token_bytes(next));
+            let incomplete_after = std::str::from_utf8(&pending).is_err();
+            if let Some(e) = probs.last_mut() {
+                e.complete = !incomplete_after;
+            }
             let valid = match std::str::from_utf8(&pending) {
                 Ok(s) => s.len(),
                 Err(e) => e.valid_up_to(),
             };
-            if valid > 0 {
+            // a step for every piece of text, and for every whole token even when it releases none
+            if valid > 0 || !incomplete_after {
                 let piece: String = String::from_utf8(pending.drain(..valid).collect()).unwrap();
                 text.push_str(&piece);
-                if !emit(&piece) {
+                if valid > 0 {
+                    if let Some(e) = probs.last_mut() {
+                        e.emitted = true;
+                        e.piece = piece.as_bytes().to_vec();
+                    }
+                    ttft_ns.get_or_insert(t0.elapsed().as_nanos() as u64);
+                }
+                if !emit(Step { piece: &piece, complete: !incomplete_after, entry: probs.last().filter(|_| !incomplete_after), n, eog: false }) {
                     finish = "stop";
                     break;
                 }
@@ -227,13 +344,155 @@ impl Native {
         if !pending.is_empty() {
             let piece = String::from_utf8_lossy(&pending).into_owned();
             text.push_str(&piece);
-            emit(&piece);
+            emit(Step { piece: &piece, complete: false, entry: None, n, eog: false });
         }
+        let eval_ns = t1.elapsed().as_nanos() as u64;
+        let energy_j = e0.zip(crate::sys::energy_uj()).map(|(a, b)| crate::sys::joules(a, b));
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        crate::metrics::push(crate::metrics::Record {
+            at, model: self.model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), prompt_tokens: prompt.len(),
+            cached_tokens: n_past, completion_tokens: n, prompt_ms: prompt_ns as f64 / 1e6, ttft_ms: ttft_ns.map(|t| t as f64 / 1e6),
+            eval_ms: eval_ns as f64 / 1e6, finish: finish.to_string(), grammar_ms: grammar_ns as f64 / 1e6, resampled, energy_j,
+        });
         Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text, prompt_ns,
-                  eval_ns: t1.elapsed().as_nanos() as u64, tokens: out, grammar_ns, resampled })
+                  eval_ns, tokens: out, grammar_ns, resampled, ttft_ns, energy_j, probs })
     }
 
-    /// Empty the slot (the next request computes its whole prompt, as a fresh llama-server or `cache_prompt: false`).
+    /// Saves the slot (tokens and every layer's K and V) to `path`, as llama-server's `/slots/{id}?action=save`.
+    ///
+    /// Returns (tokens, bytes). bankML's own format: the magic line, `model_sha256`, the context, token and layer
+    /// counts, each layer's cache, the tokens, then a sha256 of all of it. The file is written under a temporary
+    /// name and renamed, so a crash leaves no partial file.
+    pub fn save_slot(&self, path: &Path, model_sha256: &str) -> Result<(usize, u64), String> {
+        let slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut b: Vec<u8> = Vec::new();
+        b.extend_from_slice(SLOT_MAGIC);
+        b.extend_from_slice(format!("{model_sha256:0<64}").as_bytes()[..64].as_ref());
+        for v in [self.n_ctx as u64, slot.tokens.len() as u64, slot.caches.len() as u64] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for c in &slot.caches {
+            // a q8_0 cache sets the width's top bit and stores its blocks as they are
+            let q8 = c.kind == crate::forward::KvType::Q8_0;
+            b.extend_from_slice(&(c.width as u64 | (q8 as u64) << 63).to_le_bytes());
+            if q8 {
+                b.extend_from_slice(&c.kq);
+                b.extend_from_slice(&c.vq);
+            }
+            for x in c.k.iter().chain(&c.v) {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        for t in &slot.tokens {
+            b.extend_from_slice(&t.to_le_bytes());
+        }
+        let mut h = crate::sha256::Sha256::default();
+        h.update(&b);
+        b.extend_from_slice(&h.finish());
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &b).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("Unable to save slot: {e}"))?;
+        Ok((slot.tokens.len(), b.len() as u64))
+    }
+
+    /// Restores a slot saved by `save_slot` for this model and context; returns (tokens, bytes).
+    ///
+    /// On any error the slot is emptied and the reason returned as llama-server's "Unable to restore slot: …".
+    pub fn restore_slot(&self, path: &Path, model_sha256: &str) -> Result<(usize, u64), String> {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let r = (|| -> Result<(Vec<u32>, Vec<KvCache>, u64), String> {
+            let b = std::fs::read(path).map_err(|e| e.to_string())?;
+            if b.len() < SLOT_MAGIC.len() + 64 + 24 + 32 || &b[..SLOT_MAGIC.len()] != SLOT_MAGIC {
+                return Err("not a bankML slot file".into());
+            }
+            let (body, sum) = b.split_at(b.len() - 32);
+            let mut h = crate::sha256::Sha256::default();
+            h.update(body);
+            if h.finish()[..] != sum[..] {
+                return Err("the slot file is damaged (its sha256 does not match)".into());
+            }
+            let mut at = SLOT_MAGIC.len();
+            if &body[at..at + 64] != format!("{model_sha256:0<64}").as_bytes()[..64].as_ref() {
+                return Err("the slot was saved for another model".into());
+            }
+            at += 64;
+            let u64_at = |at: &mut usize| -> Result<u64, String> {
+                let v = body.get(*at..*at + 8).ok_or("truncated")?;
+                *at += 8;
+                Ok(u64::from_le_bytes(v.as_chunks::<8>().0[0]))
+            };
+            let (n_ctx, n_tok, n_layers) = (u64_at(&mut at)?, u64_at(&mut at)? as usize, u64_at(&mut at)? as usize);
+            if n_ctx as usize != self.n_ctx {
+                return Err(format!("the slot was saved with a {n_ctx}-token context, this engine has {}", self.n_ctx));
+            }
+            if n_tok > self.n_ctx {
+                return Err("Restored prompt does not fit in the slot context".into());
+            }
+            if n_layers != slot.caches.len() {
+                return Err("the slot's layers do not match this model".into());
+            }
+            let mut caches = Vec::with_capacity(n_layers);
+            for c in slot.caches.iter() {
+                let w = u64_at(&mut at)?;
+                let (width, q8) = ((w & !(1 << 63)) as usize, w >> 63 == 1);
+                if q8 != (c.kind == crate::forward::KvType::Q8_0) {
+                    return Err(format!("the slot was saved with a {} cache, this engine keeps {}",
+                                       if q8 { "q8_0" } else { "f16" }, c.kind.name()));
+                }
+                if width != c.width {
+                    return Err("the slot's cache shape does not match this model".into());
+                }
+                if q8 {
+                    let mut k = KvCache { head_dim: c.head_dim, ..KvCache::of(c.kind, width) };
+                    let nb = n_tok * k.row_bytes();
+                    k.kq = body.get(at..at + nb).ok_or("truncated")?.to_vec();
+                    k.vq = body.get(at + nb..at + 2 * nb).ok_or("truncated")?.to_vec();
+                    at += 2 * nb;
+                    caches.push(k);
+                    continue;
+                }
+                let n = n_tok * width;
+                let mut read = |n: usize| -> Result<Vec<u16>, String> {
+                    let raw = body.get(at..at + 2 * n).ok_or("truncated")?;
+                    at += 2 * n;
+                    Ok(raw.as_chunks::<2>().0.iter().map(|p| u16::from_le_bytes(*p)).collect())
+                };
+                let (k, v) = (read(n)?, read(n)?);
+                caches.push(KvCache { k, v, ..KvCache::new(width) });
+            }
+            let raw = body.get(at..at + 4 * n_tok).ok_or("truncated")?;
+            let tokens: Vec<u32> = raw.as_chunks::<4>().0.iter().map(|p| u32::from_le_bytes(*p)).collect();
+            if at + 4 * n_tok != body.len() {
+                return Err("the slot file has trailing data".into());
+            }
+            if tokens.iter().any(|&t| t as usize >= self.tok.n_tokens()) {
+                return Err("Invalid tokens in slot save file".into());
+            }
+            Ok((tokens, caches, b.len() as u64))
+        })();
+        match r {
+            Ok((tokens, caches, n)) => {
+                let len = tokens.len();
+                (slot.tokens, slot.caches) = (tokens, caches);
+                Ok((len, n))
+            }
+            Err(e) => {
+                slot.tokens.clear();
+                for c in slot.caches.iter_mut() {
+                    c.truncate(0);
+                }
+                Err(format!("Unable to restore slot: {e}"))
+            }
+        }
+    }
+
+    /// Empties the slot, as `/slots/{id}?action=erase`; returns the number of tokens it held.
+    pub fn erase_slot(&self) -> usize {
+        let n = self.slot.lock().unwrap_or_else(|e| e.into_inner()).tokens.len();
+        self.reset();
+        n
+    }
+
+    /// Empties the slot; the next request computes its whole prompt, as a fresh llama-server or `cache_prompt: false`.
     pub fn reset(&self) {
         let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
         slot.tokens.clear();
@@ -263,36 +522,54 @@ pub fn eog_from_gguf(model: &Path, tok: &Tokenizer) -> Result<Vec<u32>, String> 
     Ok(tok.eog_ids(&ids))
 }
 
-/// The request's sampling parameters over a model's defaults (llama-server's resolution); a sampler bankML does not
-/// reproduce (dry, typical-p, xtc, top-n-σ, dynamic temperature) is refused with a reason. O2: the repeat, frequency
-/// and presence penalties and `repeat_last_n` are reproduced (`Sampler::new` refuses what llama-server refuses).
+/// The request's sampling parameters over a model's defaults, as llama-server resolves them.
+///
+/// Soft limits clamp; hard limits and sampler errors refuse (in `Sampler::new`). Every sampler of the default chain
+/// is reproduced; mirostat and a custom `samplers` order are refused.
 pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
     let num = |k: &str| match req.get(k) {
         Some(Json::Num(n)) => Some(*n),
         _ => None,
     };
     let mut p = defaults;
-    if let Some(v) = num("temperature") { p.temp = v as f32 }
+    // soft limits clamp, as llama-server's `set_limits`
+    let unit = |v: f64| v.clamp(0.0, 1.0) as f32;
+    if let Some(v) = num("temperature") { p.temp = v.max(0.0) as f32 }
     if let Some(v) = num("top_k") { p.top_k = v as i32 }
-    if let Some(v) = num("top_p") { p.top_p = v as f32 }
-    if let Some(v) = num("min_p") { p.min_p = v as f32 }
+    if let Some(v) = num("top_p") { p.top_p = unit(v) }
+    if let Some(v) = num("min_p") { p.min_p = unit(v) }
     if let Some(v) = num("min_keep") { p.min_keep = v as usize }
     if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
+    if let Some(v) = num("n_probs") { p.n_probs = v.max(0.0) as usize }
     if let Some(v) = num("repeat_last_n") { p.penalty_last_n = v as i64 as i32 }
     if let Some(v) = num("repeat_penalty") { p.penalty_repeat = v as f32 }
     if let Some(v) = num("frequency_penalty") { p.penalty_freq = v as f32 }
     if let Some(v) = num("presence_penalty") { p.penalty_present = v as f32 }
-    for (k, neutral) in [("typical_p", 1.0), ("xtc_probability", 0.0), ("dry_multiplier", 0.0), ("dynatemp_range", 0.0)] {
-        if let Some(v) = num(k) {
-            if v != neutral {
-                return Err(format!("{k} = {v}: bankML's native engine reproduces llama.cpp's penalties, top-k, top-p, min-p and temperature; this sampler is not reproduced yet"));
-            }
+    // the rest of the default chain
+    if let Some(v) = num("typical_p") { p.typical_p = v as f32 }
+    if let Some(v) = num("top_n_sigma") { p.top_n_sigma = v as f32 }
+    if let Some(v) = num("xtc_probability") { p.xtc_probability = unit(v) }
+    if let Some(v) = num("xtc_threshold") { p.xtc_threshold = unit(v) }
+    if let Some(v) = num("dynatemp_range") { p.dynatemp_range = v as f32 }
+    if let Some(v) = num("dynatemp_exponent") { p.dynatemp_exponent = v as f32 }
+    if let Some(v) = num("dry_multiplier") { p.dry_multiplier = v as f32 }
+    if let Some(v) = num("dry_base") { if v >= 1.0 { p.dry_base = v as f32 } else { p.dry_base = 1.75 } }
+    if let Some(v) = num("dry_allowed_length") { p.dry_allowed_length = v as i64 as i32 }
+    if let Some(v) = num("dry_penalty_last_n") { p.dry_penalty_last_n = v as i64 as i32 }
+    match req.get("dry_sequence_breakers") {
+        None | Some(Json::Null) => {}
+        // anything but an array of strings reads as empty, as nlohmann's json_value falls back, and is refused
+        Some(Json::Arr(a)) if a.iter().all(|x| matches!(x, Json::Str(_))) => {
+            p.dry_sequence_breakers = a.iter().filter_map(|x| x.as_str().map(String::from)).collect()
         }
+        Some(_) => p.dry_sequence_breakers = Vec::new(),
     }
-    if let Some(v) = num("top_n_sigma") {
-        if v > 0.0 {
-            return Err("top_n_sigma: not reproduced yet".into());
-        }
+    // what changes the answer and is not reproduced is refused, never ignored
+    if num("mirostat").is_some_and(|v| v != 0.0) {
+        return Err("mirostat: not reproduced; bankML reproduces llama-server's default sampler chain".into());
+    }
+    if req.get("samplers").is_some_and(|v| *v != Json::Null) {
+        return Err("samplers: a custom sampler order is not reproduced; bankML runs llama-server's default order (penalties, dry, top-n-σ, top-k, typical-p, top-p, min-p, xtc, temperature)".into());
     }
     Ok(p)
 }
@@ -303,17 +580,17 @@ pub fn engine_name(eng: &Native) -> String {
     format!("bankML {} native: its own forward pass, token-identical to llama.cpp b11192 on its oracle{gpu}", crate::VERSION)
 }
 
-// ---------------------------------------------------------------- the registry and residency (0.3.1) ----------
+// ---------------------------------------------------------------- the registry and residency ----------
 
 /// What the header says about a pinned file, read once when the registry is built.
 #[derive(Debug, Clone)]
 pub struct Info {
     pub arch: Option<String>,
-    /// the most frequent non-F32 tensor type, e.g. `Q1_0`
+    /// Most frequent non-F32 tensor type, e.g. `Q1_0`.
     pub quant: String,
-    /// `general.size_label`, or the weights counted, e.g. `1.7B`
+    /// `general.size_label`, else the counted weights, e.g. `1.7B`.
     pub params: String,
-    /// `Ok` when bankML's forward pass plays this file; otherwise why not, and the milestone that would
+    /// `Ok` when bankML's forward pass plays this file; otherwise the reason.
     pub native: Result<(), String>,
     pub defaults: Option<Params>,
 }
@@ -321,10 +598,10 @@ pub struct Info {
 /// One pinned GGUF: a name, the file, and the FORK.json that pins it.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    /// the file's stem, lower-cased (`bonsai-1.7b-q1_0`); `:latest` and the file name are accepted as aliases
+    /// The file's stem, lower-cased (`bonsai-1.7b-q1_0`); `:latest` and the file name are accepted as aliases.
     pub name: String,
     pub file: String,
-    /// where the file was found; `None` when it is pinned but not on this machine
+    /// Where the file was found; `None` when it is pinned but not on this machine.
     pub path: Option<PathBuf>,
     pub fork_json: String,
     pub sha256: String,
@@ -332,8 +609,10 @@ pub struct Entry {
     pub info: Info,
 }
 
-/// The models `serve --native` can be asked for: the one it started with, and with `--registry` every GGUF pinned in
-/// the forks directory. The pins are read at start; a load verifies the file against them again.
+/// The models `serve --native` can be asked for.
+///
+/// The startup model and, with `--registry`, every GGUF pinned in the forks directory. Pins are read at start; a
+/// load verifies the file against them again.
 #[derive(Debug, Clone)]
 pub struct Registry {
     pub entries: Vec<Entry>,
@@ -357,8 +636,9 @@ pub fn model_name(file: &str) -> String {
     stem.to_lowercase()
 }
 
-/// Whether bankML's forward pass plays a file, from its header alone (the guard, the architecture, the weight type,
-/// the chat template); the reason names what is missing and where it is on the road.
+/// Whether bankML's forward pass plays a file, judged from its header alone.
+///
+/// Checks the guard, architecture, weight type, tokenizer and chat template; the error names what is missing.
 pub fn header_info(path: &Path) -> Info {
     let none = |why: String| Info { arch: None, quant: String::new(), params: String::new(), native: Err(why), defaults: None };
     let r = match crate::gguf::guard_file(path, crate::gguf::Engine::Mainline) {
@@ -388,8 +668,9 @@ pub fn header_info(path: &Path) -> Info {
 }
 
 impl Registry {
-    /// The startup model first (it is the default), then, with `dir`, every `*.FORK.json` there: each `.gguf` it
-    /// pins, looked for beside the startup model and in `dir`. A name pinned twice keeps its first entry.
+    /// Builds the registry: the startup model first (the default), then each `.gguf` a `*.FORK.json` in `dir` pins.
+    ///
+    /// Pinned files are looked for beside the startup model and in `dir`. A name pinned twice keeps its first entry.
     pub fn build(model: &Path, fork_json: &str, dir: Option<&Path>) -> Registry {
         let file = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let entry = |file: &str, path: Option<PathBuf>, fork_json: &str| {
@@ -424,16 +705,18 @@ impl Registry {
         Registry { entries, default: 0 }
     }
 
-    /// A request's `model` to a pinned entry: absent or empty is the startup model; otherwise the name, with or
-    /// without `:latest`, or the file name, case-insensitively.
+    /// Resolves a request's `model` to a pinned entry.
+    ///
+    /// Absent or empty is the startup model; otherwise the name, with or without `:latest`, or the file name,
+    /// case-insensitively.
     pub fn resolve(&self, model: Option<&str>) -> Result<&Entry, String> {
         let m = model.map(str::trim).unwrap_or("");
         if m.is_empty() {
             return Ok(&self.entries[self.default]);
         }
         let n = model_name(m.strip_suffix(":latest").unwrap_or(m));
-        // 0.3.4: a name without its weight-type suffix is accepted when exactly one pin has that base (`mindx-gen39`
-        // for mindx-gen39-f16, as mindX's Ollama tag names it)
+        // a name without its weight-type suffix matches when exactly one pin has that base (`mindx-gen39` for
+        // mindx-gen39-f16, as mindX's Ollama tag names it)
         let base: Vec<&Entry> = self.entries.iter().filter(|e| base_name(&e.name) == n).collect();
         self.entries.iter().find(|e| e.name == n).or(if base.len() == 1 { Some(base[0]) } else { None }).ok_or_else(|| {
             format!("model '{m}' not found: bankml serves pinned models only ({})",
@@ -456,7 +739,7 @@ pub struct Loaded {
     pub name: String,
     pub native: Arc<Native>,
     pub verified: Arc<Verified>,
-    /// the canonical path that was hashed, and its identity then
+    /// The canonical path that was hashed, and its identity at that time.
     pub model: PathBuf,
     pub ident: FileIdent,
     pub engine: String,
@@ -467,30 +750,31 @@ pub struct Loaded {
 
 pub struct Resident {
     pub loaded: Loaded,
-    /// `None`: resident until told otherwise
+    /// `None`: resident until told otherwise.
     pub expires: Option<SystemTime>,
 }
 
-/// One resident model at a time (Ollama's `MAX_LOADED_MODELS=1`). `run` is held for a whole completion, load or
-/// unload, so the one engine has one user and a switch never has two models in memory; `cur` is held only briefly.
+/// One resident model at a time (Ollama's `MAX_LOADED_MODELS=1`).
+///
+/// `run` is held for a whole completion, load or unload, so the engine has one user and a switch never has two
+/// models in memory; `cur` is held only briefly.
 pub struct Residency {
     pub reg: Registry,
     pub n_ctx: usize,
     pub engine: crate::gguf::Engine,
     pub run: Mutex<()>,
     pub cur: Mutex<Option<Resident>>,
-    /// the most recent verification (what `/bankml` reports when nothing is resident)
+    /// The most recent verification (what `/bankml` reports when nothing is resident).
     pub last: Mutex<Option<Loaded>>,
-    /// O5: the derived models of the registry directory (`create.rs`), layered on these pins
+    /// Derived models of the registry directory (`create.rs`), layered on these pins.
     pub derived: crate::create::Store,
-    /// 0.3.5: what `/api/ps` names and the context it reports — Ollama's runner keeps the name of the model whose
-    /// request loaded it, and reloads (under the new name) when a request's `num_ctx` differs; bankML keeps the
-    /// weights and records the same (`shown_as`)
+    /// What `/api/ps` names and the context it reports (`shown_as`).
     pub shown: Mutex<Option<(String, usize)>>,
 }
 
-/// Ollama's `chatPrompt` truncation (`server/prompt.go`, v0.13.3), over any token count: the messages kept, and how
-/// many were cut. `count` is the length of a candidate conversation's prompt.
+/// Ollama v0.13.3's `chatPrompt` truncation (`server/prompt.go`) over any token count.
+///
+/// Returns the messages kept and how many were cut. `count` gives the length of a candidate conversation's prompt.
 pub fn fit_messages(msgs: &[Message], num_ctx: usize, count: impl Fn(&[Message]) -> Result<usize, String>) -> Result<(Vec<Message>, usize), String> {
     let last = msgs.len().saturating_sub(1);
     let (mut n, mut system) = (last, Vec::new());
@@ -513,7 +797,7 @@ fn now_secs() -> u64 {
 }
 
 impl Residency {
-    /// `serve --native`'s start: the startup model, already verified by `serve::run`, resident until told otherwise.
+    /// Starts with the startup model, already verified by `serve::run`, resident until told otherwise.
     pub fn start(reg: Registry, n_ctx: usize, engine: crate::gguf::Engine, verified: Verified, model: PathBuf, id: FileIdent) -> Result<Residency, String> {
         let e = &reg.entries[reg.default];
         if let Err(why) = &e.info.native {
@@ -526,9 +810,11 @@ impl Residency {
                        cur: Mutex::new(Some(Resident { loaded, expires: None })), derived: Default::default(), shown: Mutex::new(None) })
     }
 
-    /// Record the model a request named (`tag`, a pin's or a derived model's) and its context, as Ollama's runner
-    /// would be named: when the weights were (re)loaded for it (`loaded`), when nothing is recorded yet, or when its
-    /// context differs from the recorded one (Ollama reloads then).
+    /// Records the model a request named (`tag`, a pin's or a derived model's) and its context for `/api/ps`.
+    ///
+    /// Ollama's runner keeps the name of the model whose request loaded it and reloads when `num_ctx` differs;
+    /// bankML keeps the weights and records the same: when they were (re)loaded for this request (`loaded`), when
+    /// nothing is recorded yet, or when the context differs from the recorded one.
     pub fn shown_as(&self, tag: &str, num_ctx: usize, loaded: bool) {
         let mut s = self.shown.lock().unwrap_or_else(|e| e.into_inner());
         if loaded || s.as_ref().is_none_or(|(_, n)| *n != num_ctx) {
@@ -554,9 +840,11 @@ impl Residency {
         self.lock_cur().as_ref().map(|r| (r.loaded.clone(), r.expires))
     }
 
-    /// The model `e` names, loaded: the resident one if it is that model and its file is unchanged, else the resident
-    /// one dropped and `e` verified (guard, then the sha256 pin) and opened. The caller holds `run`. Returns the load
-    /// time in nanoseconds (0 when it was resident). Errors carry the HTTP status they answer with.
+    /// The model `e` names, loaded; the caller holds `run`.
+    ///
+    /// Reuses the resident model if it is `e` and its file is unchanged; otherwise drops it, then verifies `e`
+    /// (guard, then the sha256 pin) and opens it. Returns the load time in nanoseconds (0 when already resident).
+    /// Errors carry their HTTP status.
     pub fn acquire(&self, _run: &MutexGuard<'_, ()>, e: &Entry) -> Result<(Loaded, u64), (u16, String)> {
         {
             let mut cur = self.lock_cur();
@@ -591,7 +879,7 @@ impl Residency {
         Ok((loaded, t0.elapsed().as_nanos() as u64))
     }
 
-    /// After a request: the keep-alive starts now (`Unload` drops the model at once).
+    /// Starts the keep-alive after a request (`Unload` drops the model at once).
     pub fn touch(&self, name: &str, ka: KeepAlive) {
         let mut cur = self.lock_cur();
         if cur.as_ref().is_some_and(|r| r.loaded.name == name) {
@@ -618,7 +906,7 @@ impl Residency {
         Ok(l)
     }
 
-    /// Drop the resident model once its keep-alive has run out, unless a request is using the engine.
+    /// Drops the resident model once its keep-alive has run out, unless a request is using the engine.
     pub fn reap(&self) {
         let Ok(_run) = self.run.try_lock() else { return };
         let mut cur = self.lock_cur();
@@ -653,18 +941,16 @@ mod tests {
         assert_eq!(fit_messages(&[m("user", "long question")], 1, count).map(|(k, d)| (names(&k), d)), Ok(("long question".into(), 0)));
     }
 
-    /// Savante-style conversations, turn after turn in one engine, against llama-server b11192's own chat endpoint
-    /// (testing/serve_oracle.py): the same answer text, the same prompt and completion counts, and the same number of
-    /// prompt tokens taken from the cache, every turn.
+    /// Savante-style conversations in one engine against llama-server b11192's chat endpoint (testing/serve_oracle.py).
+    ///
+    /// Every turn must match the answer text, prompt and completion counts, and cached prompt tokens.
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + its serve-*.jsonl (testing/serve_oracle.py); --release"]
     fn oracle_native_serve() {
         native_serve("Bonsai-8B-Q1_0");
     }
 
-    /// 0.3.4: the same conversations on the models O4 opens: Bonsai-1.7B (tied embeddings), and the Llama graph in F16
-    /// (SmolLM2-135M-Instruct and mindx-gen39), each against llama-server running that model; then each one's JSON
-    /// mode, with its template's own grammar.
+    /// The same conversations, then JSON mode, on the O4 models (Bonsai-1.7B, SmolLM2-135M-Instruct, mindx-gen39).
     #[test]
     #[ignore = "needs .models/{Bonsai-1.7B-Q1_0,SmolLM2-135M-Instruct-F16,mindx-gen39-F16}.gguf + their serve-*/json-*.jsonl; --release"]
     fn oracle_native_serve_o4() {
@@ -704,9 +990,10 @@ mod tests {
         assert_eq!(ok, n);
     }
 
-    /// llama-server b11192's answers under JSON mode and user grammars (testing/json_oracle.py), each from an empty
-    /// cache: the same tokens (end token included), raw text, message content, finish reason and counts; and the
-    /// grammar and generation prompt the server reports are the ones bankML uses.
+    /// Replays llama-server b11192's answers under JSON mode and user grammars (testing/json_oracle.py).
+    ///
+    /// Each from an empty cache: the same tokens (end token included), raw text, message content, finish reason and
+    /// counts, and the same reported grammar and generation prompt.
     fn json_replay(stem: &str, kind: &str) {
         use crate::grammar::{json_message, json_object_grammar, Constraint};
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
@@ -719,7 +1006,7 @@ mod tests {
         for line in rec.lines() {
             let c = Json::parse(line).unwrap();
             let req = c.get("request").unwrap();
-            // O6b: a schema record carries the request as it was sent, read exactly (a float literal stays one)
+            // a schema record carries the request as sent, read exactly (a float literal stays one)
             let constraint = match c.get("request_text").and_then(Json::as_str) {
                 Some(t) => crate::grammar::from_openai_text(req, t).unwrap(),
                 None => crate::grammar::from_openai(req).unwrap(),
@@ -776,9 +1063,7 @@ mod tests {
         json_replay("Ternary-Bonsai-8B-Q2_0_g64", "json");
     }
 
-    /// O6b: llama-server b11192's answers under JSON schemas (testing/json_schema_oracle.py --record): objects with
-    /// required and optional fields, enums, ranges, nested `$defs`, a pattern, a top-level array and string, through
-    /// `response_format: json_schema`, the top-level `json_schema` and `json_object` with a schema
+    /// llama-server b11192's answers under JSON schemas (testing/json_schema_oracle.py --record).
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
     fn oracle_json_schema() {
@@ -791,14 +1076,21 @@ mod tests {
         json_replay("Ternary-Bonsai-8B-Q2_0_g64", "schema");
     }
 
-    /// O2: llama-server b11192's penalties sampler, token for token (testing/penalty_oracle.py): repeat, frequency and
-    /// presence penalties over `repeat_last_n`, greedy and seeded, the prompt in the window. Each request resolves to
-    /// the parameters the server read back, its answer is the server's tokens, and what the server refused is refused
-    /// with its message.
+    /// Replays llama-server b11192's penalties sampler, token for token (testing/penalty_oracle.py).
+    ///
+    /// Each request must resolve to the parameters the server read back and give its tokens; what the server refused
+    /// is refused with its message.
     fn penalty_replay(stem: &str) {
+        sampler_replay("penalty", stem)
+    }
+
+    /// The same for any record kind of testing/penalty_oracle.py (`penalty`, `sampler`).
+    ///
+    /// Every sampler parameter the record carries must equal the resolved one, then the tokens must match.
+    fn sampler_replay(kind: &str, stem: &str) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
         let eng = Native::open(&dir.join(format!("{stem}.gguf")), 2048).unwrap();
-        let rec = std::fs::read_to_string(dir.join(format!("oracle-forward/penalty-{stem}.jsonl"))).unwrap();
+        let rec = std::fs::read_to_string(dir.join(format!("oracle-forward/{kind}-{stem}.jsonl"))).unwrap();
         let ids = |v: &Json, k: &str| -> Vec<u32> { match v.get(k) { Some(Json::Arr(a)) => a.iter().map(|x| match x { Json::Num(n) => *n as u32, _ => panic!() }).collect(), _ => panic!("no {k}") } };
         let num = |v: &Json, k: &str| match v.get(k) { Some(Json::Num(n)) => *n, _ => panic!("no {k}") };
         let (mut n, mut same, mut refused, mut toks, mut bad) = (0, 0, 0, 0, Vec::new());
@@ -816,10 +1108,28 @@ mod tests {
             }
             let p = resolved.unwrap();
             let g = c.get("params").unwrap();
-            let got_p = (p.temp, p.top_k, p.top_p, p.min_p, p.penalty_last_n, p.penalty_repeat, p.penalty_freq, p.penalty_present, p.seed);
-            let want_p = (num(g, "temperature") as f32, num(g, "top_k") as i32, num(g, "top_p") as f32, num(g, "min_p") as f32, num(g, "repeat_last_n") as i32,
-                          num(g, "repeat_penalty") as f32, num(g, "frequency_penalty") as f32, num(g, "presence_penalty") as f32, num(g, "seed") as u32);
-            assert_eq!(got_p, want_p, "case {n}: the request resolves to the server's parameters");
+            // every parameter the server reported (a record carries the keys its recorder knew)
+            let floats: [(&str, f32); 15] = [("temperature", p.temp), ("top_p", p.top_p), ("min_p", p.min_p), ("repeat_penalty", p.penalty_repeat),
+                ("frequency_penalty", p.penalty_freq), ("presence_penalty", p.penalty_present), ("typical_p", p.typical_p),
+                ("top_n_sigma", p.top_n_sigma), ("xtc_probability", p.xtc_probability), ("xtc_threshold", p.xtc_threshold),
+                ("dynatemp_range", p.dynatemp_range), ("dynatemp_exponent", p.dynatemp_exponent), ("dry_multiplier", p.dry_multiplier),
+                ("dry_base", p.dry_base), ("min_keep", p.min_keep as f32)];
+            for (k, v) in floats {
+                if let Some(Json::Num(w)) = g.get(k) {
+                    assert_eq!(v, *w as f32, "case {n}: {k} resolves to the server's");
+                }
+            }
+            let ints: [(&str, i64); 5] = [("top_k", p.top_k as i64), ("repeat_last_n", p.penalty_last_n as i64), ("seed", p.seed as i64),
+                ("dry_allowed_length", p.dry_allowed_length as i64), ("dry_penalty_last_n", p.dry_penalty_last_n as i64)];
+            for (k, v) in ints {
+                if let Some(Json::Num(w)) = g.get(k) {
+                    assert_eq!(v, *w as i64, "case {n}: {k} resolves to the server's");
+                }
+            }
+            if let Some(Json::Arr(b)) = g.get("dry_sequence_breakers") {
+                let want: Vec<&str> = b.iter().filter_map(Json::as_str).collect();
+                assert_eq!(p.dry_sequence_breakers, want, "case {n}: dry_sequence_breakers resolve to the server's");
+            }
             let want = ids(&c, "ids");
             eng.reset();
             let max = num(req, "n_predict") as usize;
@@ -833,7 +1143,7 @@ mod tests {
                 bad.push(format!("case {n} {}: first difference at {at:?} (bankML {} tokens, llama-server {})", req_text(req), d.tokens.len(), want.len()));
             }
         }
-        eprintln!("penalty oracle ({stem}): {same} of {} answers token-identical to llama-server b11192 ({toks} tokens), {refused} refusals with its message",
+        eprintln!("{kind} oracle ({stem}): {same} of {} answers token-identical to llama-server b11192 ({toks} tokens), {refused} refusals with its message",
                   n - refused);
         for b in bad.iter().take(12) {
             eprintln!("  {b}");
@@ -861,8 +1171,22 @@ mod tests {
         penalty_replay("Bonsai-8B-Q1_0");
     }
 
-    /// 0.3.5: the same on the O4 models — Bonsai-1.7B (the Qwen3 template) and the two ChatML templates, whose schema
-    /// grammar has no reasoning block (`schema::chat_grammar`)
+    /// Typical-p, top-n-σ, XTC, dynamic temperature and DRY, token for token (`--kind sampler` records).
+    #[test]
+    #[ignore = "needs .models/{mindx-gen39-F16,Bonsai-1.7B-Q1_0}.gguf + oracle-forward/sampler-*.jsonl (testing/penalty_oracle.py --kind sampler); --release"]
+    fn oracle_samplers() {
+        for stem in std::env::var("BANKML_SAMPLER_STEMS").unwrap_or("mindx-gen39-F16,Bonsai-1.7B-Q1_0".into()).split(',') {
+            sampler_replay("sampler", stem);
+        }
+    }
+
+    #[test]
+    #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + oracle-forward/sampler-Bonsai-8B-Q1_0.jsonl (testing/penalty_oracle.py --kind sampler); --release"]
+    fn oracle_samplers_8b() {
+        sampler_replay("sampler", "Bonsai-8B-Q1_0");
+    }
+
+    /// The schema oracle on the O4 models; the ChatML templates' schema grammar has no reasoning block.
     #[test]
     #[ignore = "needs .models/{Bonsai-1.7B-Q1_0,SmolLM2-135M-Instruct-F16,mindx-gen39-F16}.gguf + oracle-json/schema-*.jsonl (testing/json_schema_oracle.py --record); --release"]
     fn oracle_json_schema_o4() {

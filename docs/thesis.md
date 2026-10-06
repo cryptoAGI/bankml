@@ -221,7 +221,7 @@ Each proposition below is a claim anyone can re-test: the oracle named is in the
 
 **Open proposition.** P12: *1-bit decode is at least at the reference's speed.* A loaded-machine pair read 2.30–2.59
 against 2.33–2.48 tokens/s after 0.3.4; the claim waits for the pinned, idle-machine measurement
-([`testing/decode_ab.py`](https://github.com/cryptoAGI/bankml/blob/o4-speed/testing/decode_ab.py), on the release branch until 0.3.9 ships) and is not made here.
+([`testing/decode_ab.py`](../testing/decode_ab.py)) and is not made here.
 
 ---
 

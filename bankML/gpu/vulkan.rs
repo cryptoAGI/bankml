@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The Vulkan backend: every GPU a Vulkan driver exposes — AMD (RADV, AMDVLK), NVIDIA, Intel (ANV), Arm, Qualcomm,
-//! Apple (MoltenVK) — through one API. No crate and no link-time dependency: the loader `libvulkan.so.1` is opened
-//! at run time and every entry point comes from `vkGetInstanceProcAddr`, with the handful of C structs bankml needs
-//! declared here from the Vulkan 1.x headers. A machine without the loader reports no Vulkan devices.
+//! The Vulkan backend: enumerates every GPU a Vulkan driver exposes.
+//!
+//! The loader is opened at run time with `dlopen` and every entry point comes from `vkGetInstanceProcAddr`; the
+//! few C structs used are declared here from the Vulkan 1.x headers. Without a loader there are no Vulkan devices.
+//! Details: docs/modules/gpu.md.
 
 use super::{Device, Kind};
 use std::ffi::{c_char, c_void, CStr};
@@ -85,7 +86,7 @@ const fn make_version(major: u32, minor: u32) -> u32 {
 /// The loader's `vkGetInstanceProcAddr`, or why it is not there.
 fn loader() -> Result<GetInstanceProcAddr, String> {
     for name in [c"libvulkan.so.1", c"libvulkan.so", c"libvulkan.1.dylib", c"libMoltenVK.dylib"] {
-        // SAFETY: dlopen/dlsym with NUL-terminated names; the symbol has the documented signature
+        // SAFETY: dlopen and dlsym get NUL-terminated names; `vkGetInstanceProcAddr` has the documented signature.
         let h = unsafe { dlopen(name.as_ptr(), RTLD_NOW) };
         if !h.is_null() {
             let f = unsafe { dlsym(h, c"vkGetInstanceProcAddr".as_ptr()) };
@@ -98,14 +99,19 @@ fn loader() -> Result<GetInstanceProcAddr, String> {
 }
 
 /// An instance-level function by name, cast to its signature.
+///
+/// # Safety
+/// `T` must be the function-pointer type of `name`'s Vulkan signature; `inst` must be NULL (for global functions)
+/// or a live instance.
 unsafe fn proc<T>(gipa: GetInstanceProcAddr, inst: *mut c_void, name: &CStr) -> Result<T, String> {
     let f = gipa(inst, name.as_ptr()).ok_or_else(|| format!("the Vulkan loader has no {}", name.to_string_lossy()))?;
     Ok(std::mem::transmute_copy::<Pfn, T>(&f))
 }
 
-/// A Vulkan instance for compute (kept for the life of the process) and the loader's `vkGetInstanceProcAddr`.
+/// A new Vulkan instance for compute, never destroyed, and the loader's `vkGetInstanceProcAddr`.
 pub(super) fn instance() -> Result<(GetInstanceProcAddr, *mut c_void), String> {
     let gipa = loader()?;
+    // SAFETY: each pointer is cast to its Vulkan signature; the create-info structs outlive the call.
     unsafe {
         let create: unsafe extern "C" fn(*const InstanceCreateInfo, *const c_void, *mut *mut c_void) -> VkResult =
             proc(gipa, std::ptr::null_mut(), c"vkCreateInstance")?;
@@ -122,9 +128,10 @@ pub(super) fn instance() -> Result<(GetInstanceProcAddr, *mut c_void), String> {
     }
 }
 
-/// Every physical device the Vulkan loader enumerates.
+/// Every physical device the Vulkan loader enumerates, from a temporary instance.
 pub fn devices() -> Result<Vec<Device>, String> {
     let gipa = loader()?;
+    // SAFETY: as in `instance`; the instance is destroyed only after `enumerate` is done with it.
     unsafe {
         let create: unsafe extern "C" fn(*const InstanceCreateInfo, *const c_void, *mut *mut c_void) -> VkResult =
             proc(gipa, std::ptr::null_mut(), c"vkCreateInstance")?;
@@ -144,6 +151,10 @@ pub fn devices() -> Result<Vec<Device>, String> {
     }
 }
 
+/// Describe each physical device of `inst`.
+///
+/// # Safety
+/// `inst` must be a live instance obtained through `gipa`.
 unsafe fn enumerate(gipa: GetInstanceProcAddr, inst: *mut c_void) -> Result<Vec<Device>, String> {
     let enum_pd: unsafe extern "C" fn(*mut c_void, *mut u32, *mut *mut c_void) -> VkResult = proc(gipa, inst, c"vkEnumeratePhysicalDevices")?;
     let props: unsafe extern "C" fn(*mut c_void, *mut u8) = proc(gipa, inst, c"vkGetPhysicalDeviceProperties")?;
@@ -158,8 +169,8 @@ unsafe fn enumerate(gipa: GetInstanceProcAddr, inst: *mut c_void) -> Result<Vec<
     }
     let mut out = Vec::new();
     for (index, &pd) in pds.iter().take(n as usize).enumerate() {
-        // VkPhysicalDeviceProperties: apiVersion, driverVersion, vendorID, deviceID, deviceType, deviceName[256], …
-        // (limits and sparse properties follow; the buffer is larger than the whole struct)
+        // VkPhysicalDeviceProperties begins apiVersion, driverVersion, vendorID, deviceID, deviceType,
+        // deviceName[256]; the 4 KiB buffer is larger than the whole struct.
         let mut p = vec![0u8; 4096];
         props(pd, p.as_mut_ptr());
         let u = |o: usize| u32::from_le_bytes(p[o..o + 4].try_into().unwrap());

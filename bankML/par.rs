@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Threads for the matmuls, dependency-free: a persistent pool (spawned once, woken per matmul) and a
-//! row scheduler that hands out fixed-size row chunks from an atomic counter, as ggml's mul_mat does.
-//! Rows are independent and each is computed by the same single-thread kernel, so the output bits do
-//! not depend on the thread count — the oracle tests check that.
+//! Thread pool and row scheduler for the matmuls, using only `std`.
 //!
-//! Why a pool and not `std::thread::scope` per matmul: a token is ~253 matmuls; spawning 3 threads for
-//! each costs ~20 µs apiece, tens of ms per token (measured in `bench_pool_overhead`).
+//! Workers are spawned once and woken per matmul; rows are claimed in fixed-size chunks from an atomic
+//! counter, as ggml's `mul_mat` does. Each row is computed by the same single-thread kernel, so the
+//! output bits do not depend on the thread count.
+//! Details: docs/modules/par.md.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-/// Rows per chunk. 16 measured best for the ternary GEMV on the dev box (a static split was 1.1× slower
-/// at 3 threads: one core also runs the OS).
+/// Rows per scheduler claim (measured best for the ternary GEMV).
 pub const CHUNK_ROWS: usize = 16;
 
 type Job = *const (dyn Fn(usize) + Sync);
@@ -32,7 +30,9 @@ struct Shared {
     done: Condvar,
 }
 
-/// A fixed set of worker threads. The caller's thread is worker 0, so `Pool::new(1)` spawns nothing.
+/// A fixed set of worker threads.
+///
+/// The caller's thread is worker 0, so `Pool::new(1)` spawns nothing.
 pub struct Pool {
     shared: Arc<Shared>,
     workers: Vec<std::thread::JoinHandle<()>>,
@@ -113,8 +113,9 @@ impl Pool {
         st.job = None;
     }
 
-    /// Fills `out[..rows]`: `f(r0, chunk)` computes rows r0..r0+chunk.len(), chunks of `CHUNK_ROWS` handed
-    /// out dynamically so a slow core takes fewer.
+    /// Fills `out[..rows]`; `f(r0, chunk)` computes rows `r0..r0 + chunk.len()`.
+    ///
+    /// Chunks of `CHUNK_ROWS` are claimed dynamically, so a slower core takes fewer.
     pub fn rows(&self, rows: usize, out: &mut [f32], f: &(dyn Fn(usize, &mut [f32]) + Sync)) {
         assert!(out.len() >= rows);
         if self.n == 1 || rows <= CHUNK_ROWS {
@@ -158,7 +159,7 @@ mod tests {
                 assert!(out[..rows].iter().enumerate().all(|(i, v)| *v == i as f32), "th {th} rows {rows}");
                 assert!(out[rows..].iter().all(|v| *v == -1.0));
             }
-            // the pool is reusable many times
+            // the pool is reusable
             let hits = AtomicUsize::new(0);
             for _ in 0..200 {
                 pool.run(&|_| {
@@ -169,8 +170,8 @@ mod tests {
         }
     }
 
-    /// The memory floor the decode kernels are measured against: streaming read bandwidth of a buffer far
-    /// larger than cache, split across 1–4 threads with the same scheduler the matmuls use. (0.0.4)
+    /// Streaming read bandwidth of a 768 MiB buffer at 1–4 threads: the decode kernels' memory floor.
+    ///
     /// `cargo test --release -- --ignored bench_memory_floor --nocapture --test-threads=1`
     #[test]
     #[ignore = "benchmark; allocates 768 MiB"]
@@ -203,7 +204,7 @@ mod tests {
         }
     }
 
-    /// Wake-up cost per `run` on this machine vs spawning scoped threads. `--ignored --nocapture`
+    /// Wake-up cost per `run` against spawning scoped threads (`--ignored --nocapture`).
     #[test]
     #[ignore = "benchmark"]
     fn bench_pool_overhead() {

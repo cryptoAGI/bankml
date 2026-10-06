@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Hugging Face's rented GPUs: the hardware flavors of Hugging Face Jobs (`huggingface.co/api/jobs/hardware`, a public
-//! list — no token), each with its card model, count, memory and price per minute. Hugging Face provisions them on the
-//! big clouds (its Inference Endpoints name AWS, Azure and GCP); NVIDIA agreed on 2026-09-02 to acquire Hugging Face.
+//! The Hugging Face backend: the GPU flavors Hugging Face Jobs rents, as remote devices.
 //!
-//! bankml has no TLS stack of its own (no crates), so the list comes through the system's `curl`, as the installer's
-//! downloads do; without `curl` or the network the backend reports why and bankml carries on with local cards.
-//! Nothing here starts, rents or pays for anything: a flavor is listed, never provisioned. Running bankml on one is a
-//! Hugging Face Job the owner starts, and there the Vulkan backend finds the card like any local one.
+//! The public hardware list (no token) is fetched with the system `curl`, since bankML has no TLS stack; without
+//! `curl` or the network the backend returns the reason. Nothing is started, rented or paid for.
+//! Details: docs/modules/gpu.md.
 
 use super::{Device, Kind};
 use crate::serve::Json;
 
 pub const HARDWARE_URL: &str = "https://huggingface.co/api/jobs/hardware";
 
-/// The GPU flavors Hugging Face Jobs rents, as remote devices.
+/// Fetch the hardware list and return its GPU flavors as remote devices.
 pub fn devices() -> Result<Vec<Device>, String> {
     let out = std::process::Command::new("curl")
         .args(["-fsS", "--max-time", "20", "-A", "bankml", HARDWARE_URL])
@@ -25,7 +22,9 @@ pub fn devices() -> Result<Vec<Device>, String> {
     parse(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// The hardware list's JSON to devices (GPU flavors only).
+/// Parse the hardware list's JSON into devices, GPU flavors only.
+///
+/// A multi-card flavor is one device with its `count`; the price per hour is set only for a per-minute price.
 pub fn parse(text: &str) -> Result<Vec<Device>, String> {
     let Some(Json::Arr(items)) = Json::parse(text) else { return Err("the hardware list is not a JSON array".into()) };
     let s = |v: Option<&Json>| v.and_then(Json::as_str).unwrap_or("").to_string();

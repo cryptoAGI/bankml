@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! O6b (JSON schemas) — llama.cpp b11192's `json_schema_to_grammar`, and the wrapping llama-server puts around it on
-//! the jinja chat path, ported so that bankML builds, for any schema, the GBNF text llama-server would, byte for byte.
+//! JSON schema to GBNF: llama.cpp b11192's `json_schema_to_grammar` and the wrapping llama-server adds around it on
+//! the jinja chat path, ported so that bankML builds the GBNF text llama-server would for any schema, byte for byte.
 //!
 //! Ported from llama.cpp b11192 (MIT, © the ggml authors, github.com/ggml-org/llama.cpp @ 171e8846b):
-//! `common/json-schema.cpp` (the schema tree: which keywords decide a node's kind, `$ref` resolution, the errors),
-//! `common/json-schema-to-grammar.cpp` (`common_chat_schema_converter`: rule naming and de-duplication, objects with
-//! required / optional / additional properties, `_not_strings`, arrays and tuples, integer ranges, the regex → GBNF
-//! pattern translation, string formats, the primitive rules), `common/trie.cpp` (the trie `_not_strings` walks),
-//! the parts of nlohmann's `ordered_json` the grammar text depends on (object key order and duplicate keys, the
-//! integer / float distinction, `dump()`), and from `common/chat-auto-parser-generator.cpp` + `common/peg-parser.cpp`
-//! the GBNF the PEG chat parser contributes on the pinned Qwen3 template with `--reasoning off` (the `json-*` rules,
-//! the `until-13` rules for the reasoning block, `response-format` and `root`). llama.cpp's notice, kept as its
-//! licence asks (LICENSING.md):
+//! `common/json-schema.cpp`, `common/json-schema-to-grammar.cpp`, `common/trie.cpp`, the parts of nlohmann's
+//! `ordered_json` the grammar text depends on, and the GBNF that `common/chat-auto-parser-generator.cpp` and
+//! `common/peg-parser.cpp` add on the chat path. llama.cpp's notice, kept as its licence asks (LICENSING.md):
 //!
 //! > MIT License — Copyright (c) 2023-2026 The ggml authors. Permission is hereby granted, free of charge, to any
 //! > person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the
@@ -24,15 +18,7 @@
 //! > COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 //! > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //!
-//! **The oracle** is llama.cpp itself: `testing/schema_oracle.cpp` calls `json_schema_to_grammar` and
-//! `common_chat_templates_apply` inside the b11192 release's `libllama-common.so` (no model is loaded) over a corpus
-//! (llama.cpp's own `tests/test-json-schema-to-grammar.cpp` cases, Pydantic-shaped schemas like mindX's, edge cases);
-//! `oracle_schema_grammars` requires every grammar and every refusal to be the same. The unit tests below carry
-//! llama.cpp's test cases with their expected grammars (`testing/json_schema_cases.json`).
-//!
-//! **Known limit, measured not assumed:** a float in an `enum` / `const` is printed as nlohmann prints it (Grisu2,
-//! shortest round-trip, `1e+20` style exponents); Rust's shortest round-trip digits are used, which agree with Grisu2
-//! except on rare doubles where Grisu2 is not shortest.
+//! Details: docs/modules/schema.md.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -60,15 +46,15 @@ fn obj_insert(o: &mut Vec<(String, Value)>, k: String, v: Value) {
 }
 
 impl Value {
-    /// The exact reading (nlohmann's): `None` if the text is not JSON.
+    /// Parses `s` as nlohmann does; `None` if the text is not JSON.
     pub fn parse(s: &str) -> Option<Value> {
         let mut p = VP { b: s.as_bytes(), i: 0, depth: 0 };
         let v = p.value()?;
         p.ws();
         (p.i == p.b.len()).then_some(v)
     }
-    /// From bankML's request JSON, whose numbers are f64: an integral number within i64 is taken as an integer.
-    /// (A schema written `2.0` reads as `2` this way; the servers re-read the body with `parse` to keep it a float.)
+    /// Converts bankML's request JSON, whose numbers are f64: an integral number within i64 becomes an integer, so
+    /// `2.0` reads as `2` (the servers re-read the body with `parse` to keep it a float).
     pub fn from_json(j: &crate::serve::Json) -> Value {
         use crate::serve::Json;
         match j {
@@ -101,7 +87,7 @@ impl Value {
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
-    /// nlohmann's `empty()`: null and empty containers are empty, every other value is not
+    /// nlohmann's `empty()`: true for null and empty containers.
     pub fn is_empty(&self) -> bool {
         match self {
             Value::Null => true,
@@ -119,7 +105,7 @@ impl Value {
     fn is_int(&self) -> bool {
         matches!(self, Value::Int(_) | Value::UInt(_))
     }
-    /// `get<int64_t>()` on an integer (an unsigned one is cast, as C++ does)
+    /// `get<int64_t>()` on an integer; an unsigned one is cast, as C++ does.
     fn as_i64(&self) -> i64 {
         match self {
             Value::Int(i) => *i,
@@ -128,7 +114,7 @@ impl Value {
             _ => 0,
         }
     }
-    /// `dump()`: compact, keys in order, non-ASCII as it is, floats as nlohmann prints them
+    /// `dump()`: compact, keys in order, non-ASCII unescaped, floats as nlohmann prints them.
     pub fn dump(&self) -> String {
         let mut s = String::new();
         self.dump_to(&mut s);
@@ -310,8 +296,8 @@ impl VP<'_> {
         self.depth -= 1;
         v
     }
-    /// nlohmann's lexer: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`; an integer is i64 when negative and u64
-    /// otherwise, and a float when it does not fit
+    /// nlohmann's lexer: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`; an integer is i64 when negative, u64
+    /// otherwise, and a float when it does not fit.
     fn number(&mut self) -> Option<Value> {
         let s = self.i;
         let d = |p: &VP, i: usize| p.b.get(i).is_some_and(u8::is_ascii_digit);
@@ -460,8 +446,8 @@ fn fail<T>(path: &str, msg: &str) -> SR<T> {
     Err(format!("JSON schema error at {path}: {msg}"))
 }
 
-/// `std::stoull` / `std::stoi` as the C++ reads a number out of a string: leading space, a sign, digits, and the
-/// rest ignored; `None` where it throws (no digits, out of range)
+/// `std::stoull` / `std::stoi` as the C++ reads a number out of a string: leading space, a sign, digits, the rest
+/// ignored; `None` where it throws (no digits, out of range).
 fn sto(s: &str, lo: i128, hi: i128, unsigned: bool) -> Option<i128> {
     let b = s.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']).as_bytes();
     let (neg, b) = match b.first() {
@@ -726,7 +712,7 @@ fn schema_doc(schema: &Value) -> SR<Doc> {
 
 const SPACE_RULE: &str = "| \" \" | \"\\n\"{1,2} [ \\t]{0,20}";
 
-/// (name, content, deps): PRIMITIVE_RULES, then STRING_FORMAT_RULES
+/// `(name, content, deps)`: PRIMITIVE_RULES, then STRING_FORMAT_RULES.
 const PRIMITIVES: &[(&str, &str, &[&str])] = &[
     ("boolean", "(\"true\" | \"false\")", &[]),
     ("decimal-part", "[0-9]{1,16}", &[]),
@@ -757,7 +743,7 @@ fn is_reserved(name: &str) -> bool {
     name == "root" || PRIMITIVES.iter().any(|p| p.0 == name)
 }
 
-/// `regex_replace(s, "[^a-zA-Z0-9-]+", "-")`, over bytes as std::regex reads them
+/// `regex_replace(s, "[^a-zA-Z0-9-]+", "-")`, over bytes as `std::regex` reads them.
 fn esc_name(s: &str) -> String {
     let mut o = String::new();
     let mut run = false;
@@ -773,7 +759,7 @@ fn esc_name(s: &str) -> String {
     o
 }
 
-/// `format_literal`: `\r \n " \` escaped, in quotes (llama.cpp's `gbnf_format_literal`)
+/// `format_literal`: `\r \n " \` escaped, in quotes (llama.cpp's `gbnf_format_literal`).
 pub fn format_literal(s: &str) -> String {
     let mut o = String::from("\"");
     for c in s.chars() {
@@ -987,7 +973,7 @@ fn build_min_max_int(min: i64, max: i64, o: &mut String, decimals_left: i32, top
 }
 
 /// `gbnf_escape_length`: the length of an escape GBNF reads the same way as the regex (`\x..`, `\u....`,
-/// `\U........`, `\t \r \n \\ \" \[ \] \-`), 0 for any other
+/// `\U........`, `\t \r \n \\ \" \[ \] \-`), 0 for any other.
 fn gbnf_escape_length(p: &[u8], pos: usize) -> usize {
     if pos + 1 >= p.len() || p[pos] != b'\\' {
         return 0;
@@ -1008,8 +994,8 @@ fn gbnf_escape_length(p: &[u8], pos: usize) -> usize {
 enum PatErr {
     Unsupported(String),
     Invalid(String),
-    /// the translation splits a multi-byte character (a non-ASCII character before a quantifier): llama.cpp writes
-    /// the grammar byte by byte and it is not UTF-8; bankML refuses it rather than reproduce a grammar that misreads
+    /// The translation splits a multi-byte character (a non-ASCII character before a quantifier). llama.cpp writes
+    /// that grammar byte by byte, not as UTF-8; bankML refuses it instead.
     Split,
 }
 
@@ -1302,7 +1288,7 @@ impl Conv {
         Ok(join(&seq))
     }
 
-    /// A JSON string that is none of `strings` (a trie over their code points)
+    /// A JSON string that is none of `strings` (a trie over their code points).
     fn not_strings(&mut self, strings: &[String]) -> String {
         struct TNode {
             children: BTreeMap<u32, usize>,
@@ -1640,22 +1626,21 @@ const PEG_UNTIL_RULES: &[(&str, &str)] = &[
 ];
 const PEG_ROOT_QWEN3: &str = "\"<|im_start|>assistant\\n\" space (\"<think>\" \"\\n\"? until-13 \"\\n\"? \"</think>\" \"\\n\"? \"\\n\"?)? space (\"```json\" space response-format space \"```\" | space response-format space)";
 
-/// 0.3.5: on a ChatML template without reasoning (SmolLM2-Instruct's, mindx-genN's) the parser has no reasoning
-/// block: no `until-13` rules, and the root is the generation prompt then the value (llama.cpp b11192's own output on
-/// both templates, `oracle_schema_grammars`).
+/// The root on a ChatML template without reasoning (SmolLM2-Instruct's, mindx-genN's): no reasoning block and no
+/// `until-13` rules, the generation prompt then the value, as llama.cpp b11192 emits on both templates.
 const PEG_ROOT_CHATML: &str = "\"<|im_start|>assistant\\n\" space space (\"```json\" space response-format space \"```\" | space response-format space)";
 
 /// The grammar llama-server b11192 builds for a response-format schema on the jinja path (thinking off) for the
 /// model's template: `common_peg_arena::build_grammar` through one converter, so the schema's rules sit beside the
 /// parser's. The schema must be a non-empty object (llama-server builds no grammar for anything else).
 pub fn chat_grammar(schema: &Value, t: crate::chat::Template) -> Result<(String, Vec<String>), String> {
-    // common_chat_templates_apply_jinja wraps whatever the parser generation throws (chat.cpp:1364)
+    // common_chat_templates_apply_jinja wraps whatever parser generation throws (chat.cpp:1364).
     const WRAP: &str = "Unable to generate parser for this template. Automatic parser generation failed: ";
     chat_grammar_inner(schema, t).map_err(|e| if e.contains("not UTF-8") { e } else { format!("{WRAP}{e}") })
 }
 
 fn chat_grammar_inner(schema: &Value, t: crate::chat::Template) -> Result<(String, Vec<String>), String> {
-    // `common_chat_schema_from_json` throws out of `p.schema(…)` before any grammar is built
+    // `common_chat_schema_from_json` throws out of `p.schema(…)` before any grammar is built.
     let doc = schema_doc(schema)?;
     let mut c = Conv::new();
     for (n, r) in PEG_JSON_RULES {
@@ -1697,7 +1682,7 @@ mod tests {
 
     #[test]
     fn the_object_schema_is_the_json_mode_grammar() {
-        // the constant 0.3.3 checked against the server's own report, now built by the converter
+        // JSON mode's grammar, built by the converter, equals the recorded constant.
         for s in [r#"{"type": "object"}"#, r#"{"type": "object", "additionalProperties": true}"#] {
             assert_eq!(chat_grammar_q(&v(s)).unwrap().0, crate::grammar::JSON_OBJECT_GRAMMAR);
             for t in [crate::chat::Template::SmolLm2, crate::chat::Template::ChatMl] {
@@ -1706,7 +1691,7 @@ mod tests {
         }
     }
 
-    /// llama.cpp's own `tests/test-json-schema-to-grammar.cpp` cases (b11192), with their expected grammars
+    /// llama.cpp b11192's own `tests/test-json-schema-to-grammar.cpp` cases, with their expected grammars.
     #[test]
     fn llama_cpp_test_cases() {
         let trim = |s: &str| s.trim().lines().map(str::trim_start).collect::<Vec<_>>().join("\n");
@@ -1737,7 +1722,7 @@ mod tests {
     #[ignore = "needs .models/oracle-schema (testing/schema_oracle.py)"]
     fn oracle_schema_grammars() {
         use crate::chat::Template;
-        // 0.3.5: each reproduced template, from the model that carries it (schema_oracle.py records each)
+        // Each reproduced template, read from the model that carries it (schema_oracle.py records each).
         let mut files = 0;
         for (file, t) in [("schemas.jsonl", Template::Qwen3), ("schemas-SmolLM2-135M-Instruct-F16.jsonl", Template::SmolLm2),
                           ("schemas-mindx-gen39-F16.jsonl", Template::ChatMl)] {

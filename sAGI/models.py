@@ -601,10 +601,11 @@ CTX_MIN, CTX_MAX = 512, 32768
 
 
 def resources() -> dict:
-    """{"threads", "ctx", "ram_gb", "spec_ngram", "engine"}: the saved choice, else the defaults (BANKML_THREADS_SERVE,
-    BANKML_CTX). engine: "auto" (bankML's own forward pass for the ternary Qwen3 files, where it is about 8x
-    llama-server; llama-server otherwise), "native" or "llama.cpp"."""
-    r = {"threads": THREADS, "ctx": CTX, "ram_gb": None, "spec_ngram": False, "engine": "auto"}
+    """{"threads", "ctx", "ram_gb", "spec_ngram", "engine", "gpu_limit"}: the saved choice, else the defaults
+    (BANKML_THREADS_SERVE, BANKML_CTX). engine: "auto" (bankML's own forward pass for the ternary Qwen3 files, where it
+    is about 8x llama-server; llama-server otherwise), "native" or "llama.cpp". gpu_limit (0.3.7): the share of the
+    GPU's memory and time the native engine may use (BANKML_GPU_LIMIT), 0 for none (BANKML_GPU=off)."""
+    r = {"threads": THREADS, "ctx": CTX, "ram_gb": None, "spec_ngram": False, "engine": "auto", "gpu_limit": 0.8}
     try:
         r.update({k: v for k, v in json.loads(RESOURCES.read_text()).items() if k in r})
     except (OSError, ValueError):
@@ -669,7 +670,8 @@ def native_for(model: Path, engine: str | None = None) -> bool:
     return e == "native" or (e == "auto" and "Q2_0" in model.name)
 
 
-def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False, engine: str = "auto") -> dict:
+def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False, engine: str = "auto",
+                    gpu_limit: float | None = None) -> dict:
     """Save the choice and restart the carrier on the same model with it (a verified switch, with rollback)."""
     threads = max(1, min(int(threads), os.cpu_count() or 1))
     st = serve_status()
@@ -683,8 +685,9 @@ def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram:
         raise RuntimeError(f"{ram_gb:.1f} GB cannot hold {path.name}: it needs at least {pl['min_ram_gb']} GB")
     prev = resources()  # the last settings that ran, restored if these do not
     RESOURCES.parent.mkdir(parents=True, exist_ok=True)
+    gl = prev.get("gpu_limit", 0.8) if gpu_limit is None else max(0.0, min(1.0, float(gpu_limit)))
     RESOURCES.write_text(json.dumps({"threads": threads, "ctx": pl["ctx"], "ram_gb": ram_gb, "spec_ngram": bool(spec_ngram),
-                                     "engine": engine if engine in ("auto", "native", "llama.cpp") else "auto"}) + "\n")
+                                     "engine": engine if engine in ("auto", "native", "llama.cpp") else "auto", "gpu_limit": gl}) + "\n")
     if busy():
         raise RuntimeError("saved; an answer is being written, so the engine restarts with these settings on the next switch")
     JOB["what"] = f"restarting {path.name} with {threads} threads and a {pl['ctx']}-token context"
@@ -720,8 +723,11 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
         n_threads, n_ctx = str(threads or resources()["threads"]), str(ctx or resources()["ctx"])
         if native_for(model):
             # bankML's own forward pass answers, on the gateway and on the engine address (0.3.0)
-            cmd = [str(BANKML), "serve", str(model), "--fork", str(fork), "--native", "--upstream", UPSTREAM, "--listen", LISTEN, "--ctx", n_ctx]
-            env = {**os.environ, "BANKML_THREADS": n_threads}
+            # 0.3.8: the native engine saves and restores slots too (Savante's warm start)
+            cmd = [str(BANKML), "serve", str(model), "--fork", str(fork), "--native", "--upstream", UPSTREAM, "--listen", LISTEN, "--ctx", n_ctx,
+                   "--slot-dir", str(SLOTS)]
+            gl = float(resources().get("gpu_limit", 0.8))
+            env = {**os.environ, "BANKML_THREADS": n_threads, **({"BANKML_GPU": "off"} if gl <= 0 else {"BANKML_GPU_LIMIT": f"{gl:.2f}"})}
         else:
             if not (LLAMA.is_file() and os.access(LLAMA, os.X_OK)):
                 raise RuntimeError(f"no llama-server at {LLAMA}: run ./install.sh engine, or set BANKML_LLAMA_SERVER to a llama.cpp {LLAMA_TAG} build")

@@ -1,37 +1,30 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! # bankML — verified low-bit inference for the CPU you already have
+//! # bankML
 //!
-//! A zero-dependency Rust runtime for GGUF models in `Q1_0` (1-bit), `Q2_0_g64` (ternary) and F16, whose kernels,
-//! forward pass, tokenizer, templates, samplers and grammars are checked against llama.cpp b11192's compiled code:
-//! bit-exact where ggml computes, token-identical where llama-server answers.
+//! A zero-dependency Rust runtime for GGUF models in `Q1_0` (1-bit), `Q2_0_g64` (ternary) and F16. Kernels, forward
+//! pass, tokenizer, templates, samplers and grammars are checked against llama.cpp b11192: bit-exact where ggml
+//! computes, token-identical where llama-server answers.
 //!
-//! **The rule: the same bits first, then the speed.** A result counts only when an external oracle confirms it; a
-//! speed-up counts only on code that passed every oracle in the same gate run (`testing/release_gate.sh`).
-//!
-//! **The gate in front of every answer:** [`verify`] = the GGUF guard ([`gguf`]: `play | refuse | need_more`), then
-//! the sha256 pin against the model's `FORK.json` ([`pin`]). A refused file never loads. Served answers carry a
-//! `bankml_receipt` (model, request and response sha256; tokens; timings).
+//! Every model passes [`verify`] before it answers: the GGUF header guard ([`gguf`]), then the sha256 pin against
+//! the model's `FORK.json` ([`pin`]).
 //!
 //! ## Modules
 //!
 //! | module | role |
 //! |---|---|
-//! | [`gguf`], [`sha256`] | header parser and guard, `Mmap`; FIPS 180-4 sha256 (SHA-NI when present), the pin |
-//! | [`q1_0`], [`q2_0`], [`f16`] | ggml's weight formats and their products, SIMD chosen at run time; scalar models as the reference |
-//! | [`par`], [`sys`] | the thread pool (bits independent of thread count); machine facts |
-//! | [`gpu`] | Vulkan through dlopen, bankML's own SPIR-V, a verified card's share of each 1-bit matrix |
-//! | [`forward`] | the Qwen3 and Llama graphs: weights, KV cache, ggml's three attention kernels, prefill, decode |
-//! | [`tokenizer`], [`chat`], [`unicode_letters`] | llama.cpp's tokenizer and pre-tokenizers; the chat templates by sha |
-//! | [`sampler`], [`grammar`], [`schema`] | llama-server's sampler chain (penalties included); GBNF; JSON schemas |
-//! | [`native`], [`serve`], [`ollama`] | the engine and its slot; the OpenAI gateway; Ollama's API; the model registry |
+//! | [`gguf`], [`sha256`] | GGUF header parser and guard, `Mmap`; sha256 and the pin |
+//! | [`q1_0`], [`q2_0`], [`f16`](mod@f16) | ggml weight formats and their products; runtime SIMD dispatch over a scalar reference |
+//! | [`par`], [`sys`] | thread pool (results independent of thread count); machine facts |
+//! | [`gpu`] | Vulkan through dlopen with bankML's own SPIR-V |
+//! | [`forward`] | Qwen3 and Llama graphs: weights, KV cache, attention, prefill, decode |
+//! | [`tokenizer`], [`chat`], [`unicode_letters`] | llama.cpp's tokenizer and pre-tokenizers; chat templates by sha |
+//! | [`sampler`], [`grammar`], [`schema`] | llama-server's sampler chain; GBNF; JSON schemas |
+//! | [`native`], [`prompt_cache`], [`metrics`] | the engine, its slot and the model registry; host prompt cache; per-completion measurements |
+//! | [`serve`], [`ollama`] | the OpenAI-compatible gateway; Ollama's API |
 //! | [`create`], [`convert`] | derived models as verified layers; safetensors → GGUF, byte-identical to llama.cpp |
 //! | [`train`] | mindXtrain's author and score stages |
 //!
-//! ## Where the rest is
-//!
-//! Usage: `docs/usage.md`, `docs/install.md`. Each module's usage, advantages and limits: `docs/modules/`.
-//! The checks: `docs/oracles.md`. Speed: `docs/PERFORMANCE.md`. Releases: `CHANGELOG.md`.
-//! How it was built, phase by phase (the ledger this header held until 0.3.5): `docs/BUILD_HISTORY.md`.
+//! Details: docs/modules/bankml.md; one page per module in docs/modules/.
 
 #![allow(dead_code)]
 
@@ -46,6 +39,7 @@ pub mod gpu;
 pub mod native;
 pub mod ollama;
 pub mod par;
+pub mod prompt_cache;
 pub mod serve;
 pub mod q1_0;
 pub mod q2_0;
@@ -53,13 +47,14 @@ pub mod sampler;
 pub mod schema;
 pub mod sha256;
 pub mod sys;
+pub mod metrics;
 pub mod train;
 pub mod tokenizer;
 pub mod unicode_letters;
 
 use std::path::Path;
 
-/// ggml type ids bankml.rs plays (mainline ids, read 2026-09-24; Q2_0 re-read from b11192 `ggml.h` 2026-09-26).
+/// ggml type ids bankML plays; values match b11192 `ggml.h`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GgmlType {
     F32 = 0,
@@ -70,7 +65,7 @@ pub enum GgmlType {
     Q2_0 = 42,
 }
 
-/// Guard verdict, as in minaiml `gguf_guard.py`.
+/// Guard verdict (the verdicts of minaiml `gguf_guard.py`).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
     Play,
@@ -78,8 +73,7 @@ pub enum Verdict {
     NeedMore(u64),
 }
 
-/// The receipt's design-time shape (goal 3 of docs/BUILD_HISTORY.md). Served answers carry `serve.rs`'s
-/// `bankml_receipt` JSON; this type is kept for the signed receipts of 0.8.0 (docs/TODO.md).
+/// Design-time receipt shape, reserved for signed receipts. Served answers carry `serve.rs`'s `bankml_receipt`.
 #[derive(Debug, Default)]
 pub struct Receipt {
     pub model_sha256: String,
@@ -92,7 +86,7 @@ pub struct Receipt {
     pub thot8_leaf: Option<[u8; 32]>,
 }
 
-/// P1: header-only GGUF check (reads a header prefix; tensor data is never read).
+/// Header-only GGUF check on the mainline engine; tensor data is never read.
 pub fn guard(gguf: &Path) -> Verdict {
     match gguf::guard_file(gguf, gguf::Engine::Mainline) {
         Ok(r) => r.verdict,
@@ -100,7 +94,7 @@ pub fn guard(gguf: &Path) -> Verdict {
     }
 }
 
-/// P1: the pin. `Ok(sha)` only when the file's sha256 equals its `FORK.json` record.
+/// Returns `Ok(sha)` only when the file's sha256 equals its `FORK.json` record.
 pub fn pin(gguf: &Path, fork_json: &str) -> Result<String, String> {
     let name = gguf.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let want = sha256::pinned_sha256(fork_json, &name).ok_or(format!("{name} has no sha256 record in FORK.json: unpinned, refused"))?;
@@ -108,7 +102,7 @@ pub fn pin(gguf: &Path, fork_json: &str) -> Result<String, String> {
     if got == want { Ok(got) } else { Err(format!("{name} sha256 {got} != pinned {want}: refused")) }
 }
 
-/// The crate version (`Cargo.toml`), printed by `bankml version` and carried by every verification.
+/// The crate version from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Log levels of [`log`] (the C API's `BANKML_LOG_ERROR` … `BANKML_LOG_DEBUG`).
@@ -122,13 +116,12 @@ pub type LogSink = fn(i32, &str);
 
 static LOG_SINK: std::sync::RwLock<Option<LogSink>> = std::sync::RwLock::new(None);
 
-/// Where the library's own messages go (0.3.2): standard error, unless an embedder installs a sink — the C API's
-/// `bankml_set_log` does, so a program that embeds bankML hears from it through one callback. `None` restores stderr.
+/// Installs the library's log sink (the C API's `bankml_set_log`); `None` restores standard error.
 pub fn set_log_sink(sink: Option<LogSink>) {
     *LOG_SINK.write().unwrap_or_else(|e| e.into_inner()) = sink;
 }
 
-/// One message from the library, at `level`, to the sink (or to standard error, one line, as before 0.3.2).
+/// Sends one message at `level` to the sink, or one line to standard error.
 pub fn log(level: i32, msg: &str) {
     let sink = *LOG_SINK.read().unwrap_or_else(|e| e.into_inner());
     match sink {
@@ -137,13 +130,13 @@ pub fn log(level: i32, msg: &str) {
     }
 }
 
-/// What a model file earned before it may answer: the guard said play and the pin matched.
+/// Proof a model file passed the gate: the guard played and the pin matched.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Verified {
     pub model_sha256: String,
     pub guard: &'static str,
     pub engine: &'static str,
-    /// what was verified, from the header: `general.architecture`, `general.name`, and the tensor types by count
+    /// From the header: `general.architecture`, `general.name`, tensor types by count.
     pub arch: Option<String>,
     pub name: Option<String>,
     pub types: Vec<(String, usize)>,
@@ -160,8 +153,9 @@ impl Verified {
     }
 }
 
-/// P1 as one gate — the check P0 puts in front of every answer: the header guard first (cheap, reads
-/// only the header), then the sha256 pin (reads the whole file). Either refusal stops it, reason given.
+/// The gate: the header guard (reads the header only), then the sha256 pin (reads the whole file).
+///
+/// Either refusal returns `Err` with the reason.
 pub fn verify(gguf: &Path, fork_json: &str, engine: gguf::Engine) -> Result<Verified, String> {
     let r = gguf::guard_file(gguf, engine).map_err(|e| format!("cannot read {}: {e}", gguf.display()))?;
     match r.verdict {

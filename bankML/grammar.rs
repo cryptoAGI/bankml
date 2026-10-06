@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! O6, first cut (0.3.3) — grammar-constrained sampling: JSON mode, token-identical to llama-server b11192.
+//! Grammar-constrained sampling (GBNF), JSON mode and the JSON content rule, token-identical to llama-server b11192.
 //!
 //! Ported from llama.cpp b11192 (MIT, © the ggml authors, github.com/ggml-org/llama.cpp @ 171e8846b):
-//! `src/llama-grammar.cpp` (the GBNF parser, the pushdown stacks, `advance_stack`, `reject_candidates`, the partial
-//! UTF-8 decoder, `accept_token`, `apply`) and the grammar's place in `common/sampling.cpp`'s `common_sampler_sample`.
-//! The port keeps llama.cpp's semantics exactly; only its data layout differs (a stack element is an index into one
-//! flat element array instead of a pointer, which compares the same way). llama.cpp's notice, kept as its licence
-//! asks (LICENSING.md):
+//! `src/llama-grammar.cpp` (parser, pushdown stacks, `advance_stack`, `reject_candidates`, partial UTF-8 decoder,
+//! `accept_token`, `apply`) and the grammar's place in `common/sampling.cpp`'s `common_sampler_sample`. Semantics are
+//! llama.cpp's; a stack element is an index into one flat element array instead of a pointer. llama.cpp's notice,
+//! kept as its licence asks (LICENSING.md):
 //!
 //! > MIT License — Copyright (c) 2023-2026 The ggml authors. Permission is hereby granted, free of charge, to any
 //! > person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the
@@ -19,29 +18,19 @@
 //! > COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 //! > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //!
-//! **Where the grammar sits** (`common_sampler_sample`, `grammar_first = false`, as llama-server calls it): the
-//! unconstrained chain runs first (top-k … temperature → dist, one RNG draw); if the token it picked passes the
-//! grammar it is taken. Only if it does not, the logits are reset, every token the grammar rejects is set to −∞, and
-//! the whole chain runs again — a **second** draw from the same `mt19937`. `Sampler::sample_constrained` does exactly
-//! that, so a seeded run consumes the generator as llama-server's does.
+//! Sampling order (`common_sampler_sample`, `grammar_first = false`): the unconstrained chain draws first; only if
+//! that token fails the grammar are rejected tokens set to −∞ and the chain redrawn from the same `mt19937`
+//! (`Sampler::sample_constrained`). JSON mode uses the chat layer's grammar, not `grammars/json.gbnf`, and accepts
+//! the generation prompt into the grammar before the first draw; a user `grammar` gets no prefill. Other JSON
+//! schemas are converted by `schema.rs` and share the prefill, fence and content rule.
 //!
-//! **What llama-server asks for** with `response_format: {"type": "json_object"}` on the pinned Qwen3 template with
-//! thinking off is not `grammars/json.gbnf`: the chat layer turns the schema `{"type": "object"}` into a PEG parser and
-//! that into GBNF (`common/chat-auto-parser-generator.cpp`), whose root starts with the generation prompt, and the
-//! sampler then *accepts the generation prompt's tokens* into the grammar before the first draw
-//! (`common_grammar_needs_prefill`). `JSON_OBJECT_GRAMMAR` is that text, byte for byte as b11192 reports it in
-//! `generation_settings.grammar` (the oracle checks it on every recorded request); `JSON_OBJECT_PREFILL` is the
-//! generation prompt. A user's own `grammar` is a USER grammar: no prefill.
-//!
-//! O6b: every other JSON schema is converted as llama-server converts it (`schema.rs`: `json_schema_to_grammar` and
-//! the chat parser's wrapping, byte-identical over llama.cpp's own test cases and a mindX-shaped corpus) and answered
-//! through the same prefill, fence and content rule as JSON mode. A schema b11192 refuses is refused with its reason.
+//! Details: docs/modules/grammar.md.
 
 use crate::sampler::Cand;
 use crate::schema::Value;
 use crate::serve::Json;
 
-/// The rules every JSON-mode grammar of llama-server b11192 shares (the schema `{"type": "object"}` turned into GBNF).
+/// Rules shared by every llama-server b11192 JSON-mode grammar (`{"type": "object"}` converted to GBNF).
 macro_rules! json_object_rules {
     () => {
         concat!(
@@ -66,8 +55,10 @@ macro_rules! json_object_rules {
     };
 }
 
-/// The grammar llama-server b11192 builds for `response_format: {"type": "json_object"}` (and for the schemas `{}` and
-/// `{"type": "object"}`) on the pinned Qwen3 template with `--reasoning off`.
+/// llama-server b11192's grammar for `response_format: {"type": "json_object"}` (and the schemas `{}` and
+/// `{"type": "object"}`) on the Qwen3 template with `--reasoning off`.
+///
+/// Byte-identical to b11192's `generation_settings.grammar`; the JSON-mode oracle checks it on every request.
 pub const JSON_OBJECT_GRAMMAR: &str = concat!(
     json_object_rules!(),
     "root ::= \"<|im_start|>assistant\\n\" space (\"<think>\" \"\\n\"? until-13 \"\\n\"? \"</think>\" \"\\n\"? \"\\n\"?)? space (\"```json\" space response-format space \"```\" | space response-format space)\n",
@@ -84,8 +75,7 @@ pub const JSON_OBJECT_GRAMMAR: &str = concat!(
     "value ::= object | array | string | number | boolean | null\n",
 );
 
-/// The same request on a ChatML template without reasoning (SmolLM2-Instruct's, mindx-genN's; 0.3.4): the root
-/// opens with that template's generation prompt and has no `<think>` block.
+/// `JSON_OBJECT_GRAMMAR` for the ChatML templates (SmolLM2-Instruct, mindx-genN): no `<think>` block in the root.
 pub const JSON_OBJECT_GRAMMAR_CHATML: &str = concat!(
     json_object_rules!(),
     "root ::= \"<|im_start|>assistant\\n\" space space (\"```json\" space response-format space \"```\" | space response-format space)\n",
@@ -94,8 +84,7 @@ pub const JSON_OBJECT_GRAMMAR_CHATML: &str = concat!(
     "value ::= object | array | string | number | boolean | null\n",
 );
 
-/// The JSON-mode grammar and its prefill (the generation prompt the sampler accepts before the first draw) for a
-/// model's template.
+/// The JSON-mode grammar and its prefill (the generation prompt accepted before the first draw) for a template.
 pub fn json_object_grammar(t: crate::chat::Template) -> (&'static str, &'static str) {
     match t {
         crate::chat::Template::Qwen3 => (JSON_OBJECT_GRAMMAR, JSON_OBJECT_PREFILL),
@@ -103,28 +92,27 @@ pub fn json_object_grammar(t: crate::chat::Template) -> (&'static str, &'static 
     }
 }
 
-/// The template's generation prompt (thinking off): the tokens the JSON grammar accepts before the first draw.
+/// The Qwen3 generation prompt (thinking off), accepted by the JSON grammar before the first draw.
 pub const JSON_OBJECT_PREFILL: &str = "<|im_start|>assistant\n<think>\n\n</think>\n\n";
 
-// ---------------------------------------------------------------- the request: which constraint ----------
+// ---------------------------------------------------------------- request → constraint ----------
 
 /// What a request asks the sampler to obey.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     None,
-    /// `response_format` `json_object` (or the schemas `{}` / `{"type": "object"}`), Ollama's `format: "json"`
+    /// `response_format` `json_object`, the schemas `{}` / `{"type": "object"}`, or Ollama's `format: "json"`
     JsonObject,
-    /// O6b: any other JSON schema — the grammar llama-server builds for it on the model's template
-    /// (`schema::chat_grammar`; converted once at parse so a refusal is a 400), prefilled as JSON mode is
+    /// Any other JSON schema, via `schema::chat_grammar`; converted at parse time so a refusal is a 400
     Schema(Value),
-    /// llama-server's raw `grammar` field: GBNF, root `root`, no prefill
+    /// llama-server's `grammar` field: GBNF, root `root`, no prefill
     Gbnf(String),
 }
 
-/// The constraint for a response-format schema: llama-server's chat-path grammar (JSON mode's own when the schema is
-/// "any object"), or llama.cpp's refusal.
+/// The constraint for a schema: `JsonObject` when it converts to JSON mode's grammar, else `Schema`, or llama.cpp's
+/// refusal.
 fn schema_constraint(schema: &Value) -> Result<Constraint, String> {
-    // the refusals and warnings do not depend on the template (llama.cpp b11192's own output on each, the oracle)
+    // Refusals and warnings do not depend on the template, so Qwen3 stands in for all.
     let (g, warnings) = crate::schema::chat_grammar(schema, crate::chat::Template::Qwen3)?;
     for w in warnings {
         eprintln!("bankml: JSON schema conversion was incomplete (as llama.cpp b11192's): {w}");
@@ -132,21 +120,22 @@ fn schema_constraint(schema: &Value) -> Result<Constraint, String> {
     Ok(if g == JSON_OBJECT_GRAMMAR { Constraint::JsonObject } else { Constraint::Schema(schema.clone()) })
 }
 
-/// The constraint of an OpenAI / llama-server chat request, resolved as `oaicompat_chat_params_parse` does: the
-/// top-level `json_schema` and `grammar` fields, then `response_format` (`text`, `json_object` with an optional
-/// `schema`, `json_schema` with `json_schema.schema`); an empty schema means any object. The numbers of the schema
-/// are read as bankML's JSON reads them; `from_openai_text` reads them from the request's own text, exactly.
+/// The constraint of an OpenAI-style chat request, resolved as `oaicompat_chat_params_parse` does.
+///
+/// Reads `json_schema` and `grammar`, then `response_format` (`text`; `json_object` with optional `schema`;
+/// `json_schema` with `json_schema.schema`). An empty schema means any object. Numbers go through `Json`; use
+/// `from_openai_text` to keep their exact text.
 pub fn from_openai(req: &Json) -> Result<Constraint, String> {
     openai(&Value::from_json(req))
 }
 
-/// `from_openai` over the request's text (as llama-server parses it: `2.0` stays a float in an `enum`).
+/// `from_openai` over the request's raw text, so `2.0` stays a float (as llama-server parses it).
 pub fn from_openai_text(req: &Json, body: &str) -> Result<Constraint, String> {
     openai(&Value::parse(body).unwrap_or_else(|| Value::from_json(req)))
 }
 
 fn openai(req: &Value) -> Result<Constraint, String> {
-    // json_value(body, key, default): a missing or null field is the default
+    // llama.cpp's json_value(body, key, default): a missing or null field is the default.
     let field = |v: &Value, k: &str| v.get(k).filter(|x| !x.is_null()).cloned();
     let mut schema = field(req, "json_schema").unwrap_or(Value::Null);
     let grammar = match req.get("grammar") {
@@ -178,30 +167,28 @@ fn openai(req: &Value) -> Result<Constraint, String> {
         schema = Value::Obj(vec![("type".into(), Value::Str("object".into()))]);
     }
     match &schema {
-        // the chat path builds the grammar for a non-empty object schema, and llama-server uses it over any other
+        // An object schema yields the chat-path grammar, which llama-server prefers over any other.
         Value::Obj(_) if !grammar.is_empty() => Err("response_format and grammar together: send one (llama-server keeps only the format's grammar)".into()),
         Value::Obj(_) => schema_constraint(&schema),
-        // otherwise the top-level `json_schema` field goes to the sampler's own reading, which fails on this path:
-        // a non-object is not a schema, and null becomes {"type": "object"} converted bare, which the generation
-        // prompt cannot be fed to (llama-server answers with an error in both cases)
+        // A non-object top-level json_schema fails in llama-server; null converts to a bare object grammar that
+        // rejects the generation prompt. Both are errors there, so both refuse here.
         _ if req.get("json_schema").is_some() && grammar.is_empty() => Err(match req.get("json_schema") {
             Some(Value::Null) => "json_schema: null: llama-server b11192 converts it to a bare {\"type\": \"object\"} grammar that rejects the \
                                   chat template's generation prompt and fails the request; send {} or {\"type\": \"object\"}".into(),
             _ => "\"json_schema\": JSON schema conversion failed:\nJSON schema error at #: schema must be an object".into(),
         }),
-        // a response_format schema that is not an object: llama-server builds no grammar and answers unconstrained
+        // A non-object response_format schema: llama-server builds no grammar and answers unconstrained.
         _ if grammar.is_empty() => Ok(Constraint::None),
         _ => Ok(Constraint::Gbnf(grammar)),
     }
 }
 
-/// Ollama's `format`: `"json"` is JSON mode (mapped onto llama-server's `json_object`); a schema object is mapped
-/// onto `response_format: {"type": "json_schema", …}` — the grammar llama-server would build for it.
+/// Ollama's `format`: `"json"` maps to `json_object`, a schema object to `response_format` `json_schema`.
 pub fn from_ollama(format: Option<&Json>) -> Result<Constraint, String> {
     ollama(format.map(Value::from_json).as_ref())
 }
 
-/// `from_ollama` reading `format` from the request's own text (exact numbers).
+/// `from_ollama` reading `format` from the request's raw text (exact numbers).
 pub fn from_ollama_text(req: &Json, body: &str) -> Result<Constraint, String> {
     match Value::parse(body) {
         Some(v) => ollama(v.get("format")),
@@ -221,11 +208,11 @@ fn ollama(format: Option<&Value>) -> Result<Constraint, String> {
     }
 }
 
-/// The answer's `content` in JSON mode, as llama-server's chat parser gives it: the response-format rule is
-/// `space ("```json" space VALUE space "```" | space VALUE space)`, and the content is VALUE alone — the object once it
-/// is complete, everything after its first byte while it is still open (a length-limited answer). It only grows as
-/// the raw text grows, so a stream can send the difference. O6b: a schema's value need not be an object — a string
-/// ends at its closing quote, a number or literal at the first space (or the fence).
+/// The answer's `content` under a JSON constraint, as llama-server's chat parser gives it.
+///
+/// The rule is `space ("```json" space VALUE space "```" | space VALUE space)`; the content is VALUE alone: complete,
+/// or from its first byte while still open. A string ends at its closing quote, a number or literal at the first
+/// whitespace or backtick. The result only grows as `raw` grows, so a stream can send the difference.
 pub fn json_content(raw: &str) -> &str {
     let ws = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c');
     let mut s = raw.trim_start_matches(ws);
@@ -238,8 +225,8 @@ pub fn json_content(raw: &str) -> &str {
         Some(b'{' | b'[' | b'"') | None => {}
         Some(_) => return &s[..s.find(|c: char| c.is_ascii_whitespace() || c == '`').unwrap_or(s.len())],
     }
-    // 0.3.5: an escape the cut left unfinished (`\` alone, or `\u` with fewer than four hex digits) is not content:
-    // llama.cpp's JSON parser ends the string before it (the content oracle)
+    // An unfinished escape (`\` alone, or `\u` with < 4 hex digits) is not content: llama.cpp's parser ends the
+    // string before it.
     let (mut depth, mut in_str, mut esc, mut hex_left, mut esc_at) = (0usize, false, false, 0u8, 0usize);
     for (i, b) in s.bytes().enumerate() {
         if in_str {
@@ -282,10 +269,9 @@ pub fn json_content(raw: &str) -> &str {
     s
 }
 
-/// 0.3.5: the `content` llama-server b11192 answers a whole (non-streamed) constrained request with: the chat parser's
-/// content (`json_content`), or — when that parse gives an empty message, e.g. an answer cut inside or right after
-/// the opening fence — the raw text (`server_task_result_cmpl_final::to_json_oaicompat_chat`). A stream never sends
-/// that fallback (the server's final parse adds no difference), so `ContentStream` keeps `json_content`.
+/// The non-streamed `content` of a constrained answer: `json_content`, or `raw` when that is empty.
+///
+/// Mirrors `server_task_result_cmpl_final::to_json_oaicompat_chat`. A stream never sends this fallback.
 pub fn json_message(raw: &str) -> &str {
     match json_content(raw) {
         "" => raw,
@@ -293,7 +279,7 @@ pub fn json_message(raw: &str) -> &str {
     }
 }
 
-/// JSON mode's content as a stream: raw pieces in, the growth of `json_content` out (the whole piece otherwise).
+/// Streams content: raw pieces in, the growth of `json_content` out (pieces unchanged without a JSON constraint).
 pub struct ContentStream {
     json: bool,
     raw: String,
@@ -314,8 +300,7 @@ impl ContentStream {
         self.sent = self.sent.max(c.len());
         d
     }
-    /// The answer's content from its whole raw text: what the stream sent (`streamed`), or the whole answer's message
-    /// (`json_message`: the raw text when the parse is empty, as llama-server answers a non-streamed request).
+    /// The final content for `raw`: `json_content` if `streamed`, else `json_message`.
     pub fn content(&self, raw: &str, streamed: bool) -> String {
         match (self.json, streamed) {
             (false, _) => raw.to_string(),
@@ -361,7 +346,7 @@ fn is_word(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'-' || is_digit(c)
 }
 
-/// llama-grammar.cpp's parser over a NUL-terminated byte string (`s` ends with 0; reading stops there, as C does).
+/// llama-grammar.cpp's parser over a NUL-terminated byte string; `s` ends with 0 and reading stops there, as in C.
 struct Parser<'a> {
     s: Vec<u8>,
     symbol_ids: std::collections::HashMap<Vec<u8>, u32>,
@@ -438,7 +423,7 @@ impl Parser<'_> {
         Ok((v, p))
     }
 
-    /// `decode_utf8(const char *)`: a lead byte's length, continuation bytes taken as they come, stopping at NUL.
+    /// `decode_utf8(const char *)`: length from the lead byte, continuation bytes unchecked, stopping at NUL.
     fn utf8(&self, src: usize) -> (u32, usize) {
         const LOOKUP: [usize; 16] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4];
         let first = self.at(src);
@@ -672,7 +657,7 @@ impl Parser<'_> {
         Ok(p)
     }
 
-    /// S{m,n} → S…S (m times) S'(n−m), S'(x) ::= S S'(x−1) |, …; S{m,} → S…S S', S' ::= S S' |.
+    /// Expands repetition: `S{m,n}` → S…S (m times) S'(n−m), `S'(x) ::= S S'(x−1) |`; `S{m,}` → S…S S', `S' ::= S S' |`.
     #[allow(clippy::too_many_arguments)]
     fn repetitions(&mut self, rule: &mut Vec<El>, last_sym_start: usize, n_prev_rules: &mut u64, name: &[u8], mn: u64, mx: u64, p: usize) -> R<()> {
         let no_max = mx == u64::MAX;
@@ -685,7 +670,7 @@ impl Parser<'_> {
             return Err("number of rules that are going to be repeated multiplied by the new repetition exceeds sane defaults, please reduce the number of repetitions or rule complexity".into());
         }
         if !no_max && mx < mn {
-            // llama.cpp computes max − min in unsigned arithmetic here and loops (practically) forever; refused instead
+            // llama.cpp computes max − min unsigned here and loops practically forever; refuse instead.
             return Err(format!("repetition {{{mn},{mx}}}: the maximum is below the minimum"));
         }
         if mn == 0 {
@@ -750,8 +735,9 @@ pub struct Rules {
 }
 
 impl Rules {
-    /// `llama_grammar_init_impl(vocab, text, "root")`: parse, check every reference, refuse left recursion. `tokenize`
-    /// is the vocabulary's tokenizer with special tokens parsed (for `<token>` terminals).
+    /// `llama_grammar_init_impl(vocab, text, "root")`: parse, check every reference, refuse left recursion.
+    ///
+    /// `tokenize` is the vocabulary's tokenizer with special tokens parsed, used for `<token>` terminals.
     pub fn parse(text: &str, tokenize: &dyn Fn(&[u8]) -> Vec<u32>) -> Result<Rules, String> {
         let mut s = text.as_bytes().to_vec();
         s.push(0);
@@ -837,8 +823,8 @@ pub struct Partial {
     n_remain: i32,
 }
 
-/// llama-grammar.cpp's `decode_utf8(const std::string &, partial)`: code points (with a terminating 0) and the
-/// sequence left open at the end. Reading stops at a NUL byte, as it does on a C string.
+/// llama-grammar.cpp's `decode_utf8(const std::string &, partial)`: code points (0-terminated) and the sequence left
+/// open at the end. Reading stops at a NUL byte, as on a C string.
 fn decode(src: &[u8], start: Partial) -> (Vec<u32>, Partial) {
     const LOOKUP: [i32; 16] = [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 3, 4];
     let at = |i: usize| src.get(i).copied().unwrap_or(0);
@@ -882,14 +868,77 @@ fn decode(src: &[u8], start: Partial) -> (Vec<u32>, Partial) {
 }
 
 /// Every token's piece as llama.cpp's grammar reads it (`token_to_piece`, special tokens rendered), decoded once,
-/// and the tokens that end generation (llama-vocab.cpp's EOG set).
+/// and the end-of-generation set (llama-vocab.cpp's EOG).
 pub struct Vocab {
     pieces: Vec<Vec<u8>>,
     decoded: Vec<(Vec<u32>, Partial)>,
     eog: Vec<bool>,
+    /// Candidate trie, built on the first whole-vocabulary mask
+    trie: std::sync::OnceLock<Trie>,
+}
+
+/// Trie of the grammar candidates (not EOG, piece not starting with NUL) over their decoded code points.
+///
+/// Tokens are sorted by code points, so each node's subtree is one range of `order`, with the tokens that end at the
+/// node first.
+struct Trie {
+    nodes: Vec<TNode>,
+    /// Each node's children as (code point, child), sorted by code point
+    edges: Vec<(u32, u32)>,
+    order: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TNode {
+    edges: (u32, u32),
+    ends: (u32, u32),
+    sub: (u32, u32),
+}
+
+impl Trie {
+    fn new(v: &Vocab) -> Trie {
+        let key = |id: u32| -> &[u32] {
+            let c = &v.decoded[id as usize].0;
+            &c[..c.iter().position(|&x| x == 0).unwrap_or(c.len())]
+        };
+        let mut order: Vec<u32> = (0..v.len() as u32).filter(|&id| !v.is_eog(id) && v.piece(id).first().is_some_and(|&b| b != 0)).collect();
+        order.sort_by(|&a, &b| key(a).cmp(key(b)));
+        let mut t = Trie { nodes: Vec::new(), edges: Vec::new(), order };
+        t.node(&key, 0, t.order.len(), 0);
+        t
+    }
+
+    fn node<'v>(&mut self, key: &dyn Fn(u32) -> &'v [u32], lo: usize, hi: usize, depth: usize) -> u32 {
+        let me = self.nodes.len();
+        self.nodes.push(TNode::default());
+        let mut i = lo;
+        while i < hi && key(self.order[i]).len() == depth {
+            i += 1;
+        }
+        let ends = (lo as u32, i as u32);
+        let mut kids = Vec::new();
+        while i < hi {
+            let cp = key(self.order[i])[depth];
+            let mut j = i;
+            while j < hi && key(self.order[j])[depth] == cp {
+                j += 1;
+            }
+            kids.push((cp, self.node(key, i, j, depth + 1)));
+            i = j;
+        }
+        let e0 = self.edges.len() as u32;
+        self.edges.extend(kids);
+        self.nodes[me] = TNode { edges: (e0, self.edges.len() as u32), ends, sub: (lo as u32, hi as u32) };
+        me as u32
+    }
 }
 
 impl Vocab {
+    /// Every token's `token_to_piece(special = true)` bytes, by id (also read by DRY's breakers).
+    pub fn pieces(&self) -> &[Vec<u8>] {
+        &self.pieces
+    }
+
     pub fn new(pieces: Vec<Vec<u8>>, eog_ids: &[u32]) -> Vocab {
         let decoded = pieces.iter().map(|p| decode(p, Partial::default())).collect();
         let mut eog = vec![false; pieces.len()];
@@ -898,7 +947,7 @@ impl Vocab {
                 *e = true;
             }
         }
-        Vocab { pieces, decoded, eog }
+        Vocab { pieces, decoded, eog, trie: Default::default() }
     }
     pub fn piece(&self, id: u32) -> &[u8] {
         self.pieces.get(id as usize).map(Vec::as_slice).unwrap_or(&[])
@@ -918,7 +967,10 @@ impl Vocab {
 
 type Stack = Vec<u32>;
 
-/// A grammar's state: the rules, the set of stacks, and a UTF-8 sequence a token may have left open.
+/// Candidate count from which `apply` walks the trie instead of each candidate.
+const TRIE_MIN: usize = 1024;
+
+/// Grammar state: the rules, the set of stacks, and any UTF-8 sequence the last token left open.
 pub struct Grammar {
     r: std::sync::Arc<Rules>,
     stacks: Vec<Stack>,
@@ -935,7 +987,7 @@ struct GCand<'a> {
 }
 
 impl Grammar {
-    /// The initial stacks: every alternate of `root`, advanced to its first terminals.
+    /// Initial state: every alternate of `root`, advanced to its first terminals.
     pub fn new(r: std::sync::Arc<Rules>) -> Grammar {
         let mut g = Grammar { r, stacks: Vec::new(), partial: Partial::default() };
         let mut p = g.r.start[g.r.root as usize];
@@ -963,7 +1015,7 @@ impl Grammar {
         self.r.els[p as usize]
     }
 
-    /// `llama_grammar_advance_stack`: a stack expanded into the stacks that end at a terminal (or are empty).
+    /// `llama_grammar_advance_stack`: expands a stack into the stacks that end at a terminal or are empty.
     fn advance(&self, stack: Stack, out: &mut Vec<Stack>) {
         let mut todo = vec![stack];
         let mut seen: std::collections::HashSet<Stack> = Default::default();
@@ -1133,9 +1185,98 @@ impl Grammar {
         rejects
     }
 
-    /// `llama_grammar_apply_impl`: every candidate the grammar rejects gets a logit of −∞. An end-of-generation token
-    /// passes only when a stack is empty (the grammar is complete); an empty piece never does.
+    /// `llama_grammar_apply_impl`: sets every rejected candidate's logit to −∞.
+    ///
+    /// An EOG token passes only when a stack is empty (grammar complete); an empty piece never passes.
     pub fn apply(&self, v: &Vocab, cands: &mut [Cand]) {
+        // Both paths give the same mask (oracle_grammar_masks); the trie needs no UTF-8 left open.
+        if self.partial.n_remain == 0 && cands.len() >= TRIE_MIN {
+            self.apply_trie(v, cands)
+        } else {
+            self.apply_each(v, cands)
+        }
+    }
+
+    /// `apply` through the vocabulary's trie; requires no UTF-8 left open by the last token.
+    fn apply_trie(&self, v: &Vocab, cands: &mut [Cand]) {
+        debug_assert_eq!(self.partial.n_remain, 0);
+        let allow_eog = self.stacks.iter().any(Vec::is_empty);
+        let t = v.trie.get_or_init(|| Trie::new(v));
+        let mut ok = vec![false; v.len()];
+        let mut after = Default::default();
+        for s in &self.stacks {
+            self.walk(t, v, s, 0, &mut ok, &mut after);
+        }
+        for c in cands.iter_mut() {
+            let pass = if v.is_eog(c.id) { allow_eog } else { ok.get(c.id as usize).copied().unwrap_or(false) };
+            if !pass {
+                c.logit = f32::NEG_INFINITY;
+            }
+        }
+    }
+
+    /// Marks in `ok` the tokens under `node` that `stack` accepts: `reject_for_stack` over a whole subtree.
+    ///
+    /// A token ending at `node` is judged by its open UTF-8, a deeper one by its next code point. `after` memoizes,
+    /// per stack, the stacks following its terminal (they do not depend on the node). The key is the stack's address
+    /// and length; this is sound because every walked stack lives in `self.stacks` or in an `Rc` held by the memo
+    /// until the mask is done, so no address is reused meanwhile.
+    fn walk(&self, t: &Trie, v: &Vocab, stack: &[u32], node: u32, ok: &mut [bool], after: &mut std::collections::HashMap<(usize, usize), std::rc::Rc<Vec<Stack>>>) {
+        let n = t.nodes[node as usize];
+        let ends = &t.order[n.ends.0 as usize..n.ends.1 as usize];
+        let partial = |id: u32| v.decoded[id as usize].1;
+        let Some(&sp) = stack.last() else {
+            for &id in ends {
+                if partial(id).n_remain == 0 {
+                    ok[id as usize] = true;
+                }
+            }
+            return;
+        };
+        if matches!(self.e(sp).t, T::Token | T::TokenNot) {
+            for &id in ends {
+                if partial(id).n_remain == 0 {
+                    ok[id as usize] = true;
+                }
+            }
+            for &id in &t.order[n.ends.1 as usize..n.sub.1 as usize] {
+                if self.match_token(sp, id) {
+                    ok[id as usize] = true;
+                }
+            }
+            return;
+        }
+        for &id in ends {
+            let pu = partial(id);
+            if pu.n_remain == 0 || self.match_partial_char(sp, pu) {
+                ok[id as usize] = true;
+            }
+        }
+        let mut next: Option<std::rc::Rc<Vec<Stack>>> = None;
+        for &(cp, child) in &t.edges[n.edges.0 as usize..n.edges.1 as usize] {
+            if !self.match_char(sp, cp).0 {
+                continue;
+            }
+            let stacks = next.get_or_insert_with(|| {
+                after.entry((stack.as_ptr() as usize, stack.len())).or_insert_with(|| {
+                    let end = self.match_char(sp, 0).1;
+                    let mut st: Stack = stack[..stack.len() - 1].to_vec();
+                    if !is_eos(self.e(end)) {
+                        st.push(end);
+                    }
+                    let mut out = Vec::new();
+                    self.advance(st, &mut out);
+                    std::rc::Rc::new(out)
+                }).clone()
+            }).clone();
+            for s in stacks.iter() {
+                self.walk(t, v, s, child, ok, after);
+            }
+        }
+    }
+
+    /// `apply`, one candidate at a time as llama.cpp does (short lists, or UTF-8 left open by the last token).
+    fn apply_each(&self, v: &Vocab, cands: &mut [Cand]) {
         let allow_eog = self.stacks.iter().any(Vec::is_empty);
         let fresh: Vec<(usize, (Vec<u32>, Partial))> = if self.partial.n_remain > 0 {
             cands.iter().enumerate().filter(|(_, c)| !v.is_eog(c.id) && v.piece(c.id).first().is_some_and(|&b| b != 0))
@@ -1166,7 +1307,7 @@ impl Grammar {
         }
     }
 
-    /// The single-candidate check of `common_sampler_sample`: would `apply` leave `id` above −∞?
+    /// The single-candidate check of `common_sampler_sample`: whether `apply` would leave `id` above −∞.
     pub fn allows(&self, v: &Vocab, id: u32) -> bool {
         let mut c = [Cand { id, logit: 1.0, p: 0.0 }];
         self.apply(v, &mut c);
@@ -1188,8 +1329,10 @@ impl Grammar {
         }
     }
 
-    /// `llama_grammar_accept_impl`: the token taken into the grammar. An end-of-generation token is taken only by a
-    /// complete grammar; a token that leaves no stack is an error (llama.cpp throws; bankML never samples one).
+    /// `llama_grammar_accept_impl`: advances the stacks by token `id`.
+    ///
+    /// An EOG token is accepted only by a complete grammar. A token that leaves no stack is an `Err` (llama.cpp
+    /// throws); the sampler never selects one.
     pub fn accept(&mut self, v: &Vocab, id: u32) -> Result<(), String> {
         if v.is_eog(id) {
             return if self.stacks.iter().any(Vec::is_empty) { Ok(()) } else { Err(format!("end-of-generation token {id} before the grammar is complete")) };
@@ -1234,13 +1377,13 @@ impl Grammar {
         Ok(())
     }
 
-    /// Whether a stack is empty (the grammar could end here).
+    /// Whether some stack is empty, i.e. the grammar may end here.
     pub fn complete(&self) -> bool {
         self.stacks.iter().any(Vec::is_empty)
     }
 }
 
-/// The FNV-1a 64 of a mask's allowed ids (little-endian u32 each), as `testing/grammar_oracle.cpp` prints it.
+/// (count, FNV-1a 64) of a mask's allowed ids, each as little-endian u32, as `testing/grammar_oracle.cpp` prints.
 pub fn mask_hash(allowed: impl Iterator<Item = u32>) -> (usize, u64) {
     let (mut h, mut n) = (1_469_598_103_934_665_603u64, 0usize);
     for id in allowed {
@@ -1258,8 +1401,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    /// 0.3.5: llama.cpp b11192's own chat parser on every prefix of every recorded constrained answer, and edge cases
-    /// (testing/content_oracle.py): bankML's content is the parser's, and the answered message is the server's.
+    /// `json_content` and `json_message` against llama.cpp b11192's chat parser on every prefix of every recorded
+    /// constrained answer, plus edge cases (`testing/content_oracle.py`).
     #[test]
     #[ignore = "needs .models/oracle-content/content-*.jsonl (testing/content_oracle.py)"]
     fn oracle_json_content() {
@@ -1282,8 +1425,7 @@ mod tests {
                         }
                     }
                     None => {
-                        // the parser refuses only a reasoning block in the answer, which no JSON-mode or schema grammar
-                        // admits after its prefill (the answers bankML gives never contain one)
+                        // The parser refuses only a reasoning block, which no JSON grammar admits after its prefill.
                         assert!(raw.starts_with("<think>"), "llama.cpp refuses {raw:?}");
                         refused += 1;
                     }
@@ -1317,10 +1459,18 @@ mod tests {
         (Vocab::new(pieces, &eog), names)
     }
 
+    /// The allowed tokens; with no UTF-8 open, the trie's mask must equal the one-by-one mask.
     fn allowed(g: &Grammar, v: &Vocab) -> Vec<u32> {
-        let mut c: Vec<Cand> = (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect();
-        g.apply(v, &mut c);
-        c.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id).collect()
+        let all = || (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect::<Vec<Cand>>();
+        let pass = |c: &[Cand]| c.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id).collect::<Vec<u32>>();
+        let mut c = all();
+        g.apply_each(v, &mut c);
+        if g.partial.n_remain == 0 {
+            let mut t = all();
+            g.apply_trie(v, &mut t);
+            assert_eq!(pass(&t), pass(&c), "the trie's mask");
+        }
+        pass(&c)
     }
 
     fn id(names: &[String], s: &str) -> u32 {
@@ -1407,7 +1557,7 @@ mod tests {
         assert_eq!(c(r#"{"response_format": {"type": "json_schema", "json_schema": {"schema": {}}}}"#), Ok(Constraint::JsonObject));
         assert_eq!(c(r#"{"json_schema": {}}"#), Ok(Constraint::JsonObject));
         assert_eq!(c(r#"{"grammar": "root ::= \"a\""}"#), Ok(Constraint::Gbnf("root ::= \"a\"".into())));
-        // O6b: any schema, converted as llama-server converts it; what b11192 refuses or ignores, the same way
+        // Any schema converts as in llama-server; what b11192 refuses or ignores, likewise.
         let g = |c: &Constraint| match c {
             Constraint::Schema(s) => crate::schema::chat_grammar(s, crate::chat::Template::Qwen3).unwrap().0,
             _ => String::new(),
@@ -1449,14 +1599,14 @@ mod tests {
         assert_eq!(json_content("{\n "), "{\n ");
         assert_eq!(json_content("``"), "");
         assert_eq!(json_content("\n"), "");
-        // O6b: values that are not objects
+        // Values that are not objects
         assert_eq!(json_content(" \"yes\" "), "\"yes\"");
         assert_eq!(json_content("```json\n\"a\\\"b\"\n```"), "\"a\\\"b\"");
         assert_eq!(json_content("\"ope"), "\"ope");
         assert_eq!(json_content("-12.5e3 \n"), "-12.5e3");
         assert_eq!(json_content("```json\ntrue\n```"), "true");
         assert_eq!(json_content("[1, 2] "), "[1, 2]");
-        // 0.3.5: a cut inside an escape (llama.cpp's parser ends the string before it)
+        // A cut inside an escape: llama.cpp's parser ends the string before it
         assert_eq!(json_content("{\"k\": \"v\\"), "{\"k\": \"v");
         assert_eq!(json_content("\"a\\u00e"), "\"a");
         assert_eq!(json_content("\"a\\u00e9"), "\"a\\u00e9");
@@ -1473,9 +1623,8 @@ mod tests {
         }
     }
 
-    /// llama.cpp b11192's grammar sampler on the pinned vocabulary (testing/grammar_oracle.py): every token's piece and
-    /// end flag, then every recorded mask over the whole vocabulary and every rejection, for 12 grammars × inputs ×
-    /// two tokenizations. Also times the whole-vocabulary mask (the cost of a resampled step).
+    /// llama.cpp b11192's grammar sampler on the pinned vocabulary (`testing/grammar_oracle.py`): pieces, EOG flags,
+    /// every whole-vocabulary mask and rejection point. Also times the whole-vocabulary mask.
     #[test]
     #[ignore = "needs .models/oracle-grammar (testing/grammar_oracle.py) and .models/Bonsai-8B-Q1_0.gguf; --release"]
     fn oracle_grammar_masks() {
@@ -1505,7 +1654,7 @@ mod tests {
         let cases = std::fs::read_to_string(dir.join("oracle-grammar/masks-Bonsai-8B-Q1_0.jsonl")).unwrap();
         let ids = |x: &Json| match x { Json::Arr(a) => a.iter().map(|n| match n { Json::Num(n) => *n as u64, _ => panic!() }).collect::<Vec<u64>>(), _ => panic!() };
         let (mut runs, mut masks, mut rejections, mut fails) = (0, 0, 0, 0);
-        let mut times = Vec::new();
+        let (mut times, mut trie_times) = (Vec::new(), Vec::new());
         let mut rules: std::collections::HashMap<String, Arc<Rules>> = Default::default();
         for line in cases.lines() {
             let c = Json::parse(line).unwrap();
@@ -1523,11 +1672,23 @@ mod tests {
             let want_rej = match c.get("rejected_at") { Some(Json::Num(n)) => Some(*n as usize), _ => None };
             let (mut got_rej, mut ok) = (None, true);
             for step in 0..=toks.len() {
+                // Both paths against llama.cpp's mask: one candidate at a time, then the trie walk.
+                let all = || (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect::<Vec<Cand>>();
                 let t0 = std::time::Instant::now();
-                let mut cs: Vec<Cand> = (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect();
-                g.apply(&v, &mut cs);
+                let mut each = all();
+                g.apply_each(&v, &mut each);
                 times.push(t0.elapsed().as_secs_f64() * 1e3);
-                let (n, h) = mask_hash(cs.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id));
+                let t1 = std::time::Instant::now();
+                let mut cs = all();
+                g.apply(&v, &mut cs);
+                trie_times.push(t1.elapsed().as_secs_f64() * 1e3);
+                let mask = |c: &[Cand]| mask_hash(c.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id));
+                if mask(&each) != mask(&cs) {
+                    ok = false;
+                    eprintln!("  {name} step {step}: the trie's mask differs from the one-by-one mask");
+                    break;
+                }
+                let (n, h) = mask(&cs);
                 masks += 1;
                 if want.get(step) != Some(&format!("{n} {h:016x}")) {
                     ok = false;
@@ -1553,10 +1714,14 @@ mod tests {
             rejections += got_rej.is_some() as usize;
             fails += !ok as usize;
         }
-        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        eprintln!("grammar oracle: {} of {runs} runs identical to llama.cpp b11192 ({masks} whole-vocabulary masks, {rejections} rejections); \
-                   one mask over {} tokens: median {:.1} ms, p90 {:.1} ms, max {:.1} ms", runs - fails, v.len(),
-                  times[times.len() / 2], times[times.len() * 9 / 10], times[times.len() - 1]);
+        let q = |t: &mut Vec<f64>| {
+            t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (t[t.len() / 2], t[t.len() * 9 / 10], t[t.len() - 1])
+        };
+        let (a, b) = (q(&mut times), q(&mut trie_times));
+        eprintln!("grammar oracle: {} of {runs} runs identical to llama.cpp b11192 ({masks} whole-vocabulary masks, {rejections} rejections, \
+                   each by both paths); one mask over {} tokens: one by one median {:.1} ms, p90 {:.1}, max {:.1}; \
+                   the trie median {:.2} ms, p90 {:.2}, max {:.2} (the first builds it)", runs - fails, v.len(), a.0, a.1, a.2, b.0, b.1, b.2);
         assert_eq!(fails, 0);
     }
 

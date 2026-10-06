@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P1 — SHA-256 (FIPS 180-4), dependency-free, for the model pin: a GGUF plays only if its sha256
-//! equals the record in the PYTHAI fork's `FORK.json` (`files[].sha256` for its path).
+//! SHA-256 (FIPS 180-4), dependency-free, with an x86 SHA-NI path, and the `FORK.json` pin scanner.
+//! A GGUF plays only if its sha256 equals the `files[].sha256` record for its path in the PYTHAI fork's
+//! `FORK.json`.
+//!
+//! Details: docs/modules/sha256.md.
 
 const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01,
@@ -31,8 +34,8 @@ impl Default for Sha256 {
 }
 
 impl Sha256 {
-    /// Compress whole 64-byte blocks: the CPU's SHA extensions when it has them (x86 SHA-NI: Zen, Ice Lake and
-    /// later), else the portable rounds. Both give the same digest; the tests check them against each other.
+    /// Compress whole 64-byte blocks with SHA-NI when available, else the portable rounds.
+    /// Both paths give the same digest.
     fn blocks(&mut self, data: &[u8]) {
         #[cfg(target_arch = "x86_64")]
         {
@@ -47,6 +50,7 @@ impl Sha256 {
         }
     }
 
+    /// One 64-byte block, portable rounds.
     fn block(&mut self, b: &[u8]) {
         let mut w = [0u32; 64];
         for i in 0..16 {
@@ -72,6 +76,7 @@ impl Sha256 {
         }
     }
 
+    /// Absorb `data`; whole blocks are compressed in one call, a partial block is buffered.
     pub fn update(&mut self, mut data: &[u8]) {
         self.len += data.len() as u64;
         if self.nbuf > 0 {
@@ -92,6 +97,7 @@ impl Sha256 {
         self.nbuf += r.len();
     }
 
+    /// Pad and return the digest.
     pub fn finish(mut self) -> [u8; 32] {
         let bits = self.len.wrapping_mul(8);
         self.update(&[0x80]);
@@ -109,13 +115,14 @@ impl Sha256 {
 
 #[cfg(target_arch = "x86_64")]
 mod shani {
-    //! SHA-256 with the x86 SHA extensions (`sha256rnds2`, `sha256msg1`, `sha256msg2`): two rounds per instruction,
-    //! the message schedule in hardware. The layout is Intel's reference (the state held as ABEF / CDGH).
+    //! SHA-256 compression with the x86 SHA extensions (`sha256rnds2`, `sha256msg1`, `sha256msg2`).
+    //! Intel's reference layout: the state is held as ABEF / CDGH.
     use std::arch::x86_64::*;
     use std::sync::atomic::{AtomicU8, Ordering};
 
     static HAVE: AtomicU8 = AtomicU8::new(0); // 0 unknown, 1 no, 2 yes
 
+    /// sha, sse4.1 and ssse3 detected and `BANKML_NO_SHANI` unset; computed once, then cached.
     pub fn available() -> bool {
         match HAVE.load(Ordering::Relaxed) {
             2 => true,
@@ -131,6 +138,10 @@ mod shani {
         }
     }
 
+    /// Compress whole 64-byte blocks of `data` into `h`.
+    ///
+    /// # Safety
+    /// The CPU supports sha, sse2, ssse3 and sse4.1 (`available()`); `data.len()` is a multiple of 64.
     #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
     pub unsafe fn compress(h: &mut [u32; 8], data: &[u8]) {
         let mask = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);
@@ -173,10 +184,12 @@ mod shani {
     }
 }
 
+/// Lowercase hex.
 pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// SHA-256 of a file as lowercase hex, read in 1 MiB chunks.
 pub fn file_hex(p: &std::path::Path) -> std::io::Result<String> {
     use std::io::Read;
     let mut f = std::fs::File::open(p)?;
@@ -191,9 +204,10 @@ pub fn file_hex(p: &std::path::Path) -> std::io::Result<String> {
     }
 }
 
-/// The pinned sha256 for `name` in a FORK.json (`"files": [{"path", "bytes", "sha256"}, …]`).
-/// A narrow scan, not a JSON parser: the object whose `"path"` equals `name` must carry a
-/// 64-hex `"sha256"` before the object closes, else `None` (refuse — unpinned).
+/// The pinned sha256 for `name` in a FORK.json (`"files": [{"path", "bytes", "sha256"}, …]`), lowercase.
+///
+/// A narrow scan, not a JSON parser: the object whose `"path"` equals `name` must carry a 64-hex
+/// `"sha256"` (in any key order), else `None`, which means unpinned and refused.
 pub fn pinned_sha256(fork_json: &str, name: &str) -> Option<String> {
     let quoted = crate::gguf::jstr(name);
     let value = |rest: &str| -> Option<(usize, String)> {

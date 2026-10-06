@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P1 — the GGUF guard: a header-only GGUF v3 parse and the three traps, ported from minaiml
-//! `minaiml-bonsai/tools/gguf_guard.py` (same verdicts, same reasons, same JSON keys). Tensor data is
-//! never read by `judge`; `tensor_bytes` exists for kernels/tests that need a tensor's raw blocks.
+//! GGUF v3 header parser and guard: a header-only parse that returns play, refuse (with reasons) or need-more,
+//! ported from minaiml `gguf_guard.py` (same verdicts, reasons and JSON keys). Type ids follow ggml.h at b11192.
+//! Also: checked tensor spans and `Mmap`, a read-only map of the file. Malformed or hostile headers refuse; they
+//! never panic, overflow or allocate from an unchecked size.
 //!
-//! Deliberate divergences from the Python (each one fails *closed*, never open):
-//! - a malformed header (bad magic, unknown value type, alignment 0, arrays nested deeper than
-//!   `MAX_ARRAY_DEPTH`) is `Refuse(reason)`; Python raises (for deep nesting, `RecursionError`).
-//! - a KV size per token that overflows i128 is `Refuse(reason)`; Python's big integers report it and play.
-//! - `guard(path)` re-reads with a larger prefix when the header outgrows 32 MiB, so `NeedMore` only
-//!   survives when the file itself is truncated; the pure `judge(bytes, ..)` behaves exactly like Python.
+//! Details: docs/modules/gguf.md.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -18,8 +14,8 @@ use std::path::Path;
 pub const MAINLINE_COUNT: u32 = 43; // GGML_TYPE_COUNT, ggml.h @ b11192 (read 2026-09-25)
 pub const FORK_ONLY: [u32; 2] = [142, 143]; // PQ2_0, PTQ1_0 (PrismML fork)
 const DEFAULT_PREFIX: u64 = 32 << 20;
-/// Arrays of arrays deeper than this refuse. Each level costs 12 header bytes and one stack frame, so an
-/// unbounded parse lets a 24 MB header overflow the stack (0.0.1 aborted there instead of refusing).
+/// Maximum nesting of arrays of arrays; deeper refuses. Each level costs 12 header bytes and one stack frame,
+/// so without a bound a 24 MB header overflows the stack.
 pub const MAX_ARRAY_DEPTH: u32 = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +33,7 @@ impl Engine {
     }
 }
 
-/// A GGUF metadata value. Arrays are skipped, as in the Python (`"<array n>"`).
+/// A GGUF metadata value. Arrays are skipped and keep only their length, as in the Python (`"<array n>"`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Val {
     U(u64),
@@ -49,7 +45,7 @@ pub enum Val {
 }
 
 impl Val {
-    /// Python `isinstance(x, int)` (bool included, as in Python).
+    /// Python `isinstance(x, int)`; bool counts as int, as in Python.
     fn int(&self) -> Option<i128> {
         match *self {
             Val::U(v) => Some(v as i128),
@@ -86,7 +82,7 @@ pub struct TensorInfo {
     pub name: String,
     pub dims: Vec<u64>,
     pub ty: u32,
-    /// relative to the data section
+    /// Relative to the data section.
     pub offset: u64,
 }
 
@@ -209,7 +205,7 @@ fn parse(b: &[u8]) -> Result<Header, Err> {
     Ok(Header { version, kv, tensors, alignment, data_start })
 }
 
-/// The guard's answer: `verdict` plus everything the Python reports.
+/// The guard's result: `verdict` plus every field the Python reports.
 #[derive(Debug)]
 pub struct Report {
     pub verdict: crate::Verdict,
@@ -218,7 +214,7 @@ pub struct Report {
     pub arch: Option<String>,
     pub name: Option<String>,
     pub tensors: usize,
-    /// (type name, count) sorted by type id, as the Python dict
+    /// (type name, count), sorted by type id as the Python dict is.
     pub types: Vec<(String, usize)>,
     pub kv_f16_bytes_per_token: Option<i128>,
     pub header: Option<Header>,
@@ -226,7 +222,7 @@ pub struct Report {
 
 pub fn type_name(t: u32) -> String {
     let n = match t {
-        // the standard ggml types (ggml.h at b11192), so a report on any common model reads by name
+        // Standard ggml types (ggml.h at b11192) plus the fork types; other ids print as numbers.
         0 => "F32", 1 => "F16", 2 => "Q4_0", 3 => "Q4_1", 6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0", 9 => "Q8_1",
         10 => "Q2_K", 11 => "Q3_K", 12 => "Q4_K", 13 => "Q5_K", 14 => "Q6_K", 15 => "Q8_K",
         16 => "IQ2_XXS", 17 => "IQ2_XS", 18 => "IQ3_XXS", 19 => "IQ1_S", 20 => "IQ4_NL", 21 => "IQ3_S", 22 => "IQ2_S",
@@ -248,7 +244,7 @@ fn bonsai2(label: &str) -> bool {
     })
 }
 
-/// Pure judgement over a header prefix, as `gguf_guard.judge(b, engine, file_size, filename)`.
+/// Judges a header prefix without I/O, as `gguf_guard.judge(b, engine, file_size, filename)`.
 pub fn judge(b: &[u8], engine: Engine, file_size: Option<u64>, filename: &str) -> Report {
     let mut rep = Report {
         verdict: crate::Verdict::Play,
@@ -283,7 +279,7 @@ pub fn judge(b: &[u8], engine: Engine, file_size: Option<u64>, filename: &str) -
     rep.types = ids.iter().map(|&t| (type_name(t), h.tensors.iter().filter(|x| x.ty == t).count())).collect();
     let mut why = Vec::new();
 
-    // KV bytes/token at f16 (R2 RAM plan); None when the header uses per-layer arrays.
+    // f16 KV-cache bytes per token, for the RAM budget; None when the header uses per-layer arrays.
     let a = arch_v.map(Val::py_str).unwrap_or_else(|| "None".into());
     let g = |k: &str| h.kv.get(&format!("{a}.{k}"));
     let (l, hk) = (g("block_count").and_then(Val::int), g("attention.head_count_kv").and_then(Val::int));
@@ -313,7 +309,7 @@ pub fn judge(b: &[u8], engine: Engine, file_size: Option<u64>, filename: &str) -
         why.push("PQ2_0/PTQ1_0 are PrismML-fork types; mainline and llama.rn refuse them".into());
     }
 
-    // legacy Q2_0: bytes between offsets vs the group-64 expectation (64 trits -> 18 B)
+    // Legacy Q2_0 (group 128): bytes between offsets below the group-64 size (64 trits -> 18 B).
     let mut ord: Vec<&TensorInfo> = h.tensors.iter().collect();
     ord.sort_by_key(|t| t.offset);
     let mut short = 0;
@@ -353,7 +349,7 @@ pub fn judge(b: &[u8], engine: Engine, file_size: Option<u64>, filename: &str) -
     rep
 }
 
-/// File-level guard: reads a header prefix (32 MiB, grown on demand up to the file size).
+/// Guards a file: judges a 32 MiB header prefix, re-reading a larger one (up to the file size) on `NeedMore`.
 pub fn guard_file(path: &Path, engine: Engine) -> std::io::Result<Report> {
     let size = std::fs::metadata(path)?.len();
     let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -369,7 +365,7 @@ pub fn guard_file(path: &Path, engine: Engine) -> std::io::Result<Report> {
     }
 }
 
-/// (elements per block, bytes per block) for the types bankml reads; None = not playable here.
+/// (elements, bytes) per block for the types bankml reads; `None` for any other type.
 pub fn block_layout(ty: u32) -> Option<(u64, u64)> {
     match ty {
         0 => Some((1, 4)),
@@ -381,8 +377,10 @@ pub fn block_layout(ty: u32) -> Option<(u64, u64)> {
     }
 }
 
-/// (absolute start, byte length) of a tensor's blocks, or why it cannot be read. Checked end to end:
-/// the type must be one bankml reads, rows (`dims[0]`) must be whole blocks, and no size may overflow.
+/// (absolute start, byte length) of a tensor's blocks, or the reason it cannot be read.
+///
+/// The type must be readable (`block_layout`), `dims[0]` a whole number of blocks, and no size or offset may
+/// overflow.
 pub fn tensor_span(h: &Header, t: &TensorInfo) -> Result<(u64, u64), String> {
     let (per, bb) = block_layout(t.ty).ok_or_else(|| format!("{}: type {} not readable", t.name, type_name(t.ty)))?;
     if t.dims.first().is_some_and(|&d0| d0 % per != 0) {
@@ -396,8 +394,9 @@ pub fn tensor_span(h: &Header, t: &TensorInfo) -> Result<(u64, u64), String> {
     }
 }
 
-/// Raw bytes of one tensor (for kernels and oracle tests; the player will mmap instead). The span is
-/// checked against the file before anything is allocated, so a lying header cannot ask for a huge buffer.
+/// Reads one tensor's raw bytes (kernel and oracle tests; the engine uses `Mmap`).
+///
+/// The span is checked against the file size before allocating, so a lying header cannot request a huge buffer.
 pub fn tensor_bytes(path: &Path, h: &Header, t: &TensorInfo) -> std::io::Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
     let (start, n) = tensor_span(h, t).map_err(std::io::Error::other)?;
@@ -411,14 +410,13 @@ pub fn tensor_bytes(path: &Path, h: &Header, t: &TensorInfo) -> std::io::Result<
     Ok(v)
 }
 
-/// The GGUF, mapped read-only (weights are never copied; pages load on first touch). Unix only.
-/// No crate: `mmap`/`munmap` are libc, which std already links.
+/// A GGUF file mapped read-only; weights are never copied. Unix only; `mmap`/`munmap` come from libc.
 pub struct Mmap {
     ptr: *const u8,
     len: usize,
 }
 
-// SAFETY: a PROT_READ, MAP_PRIVATE mapping never changes under the process; sharing reads is sound.
+// SAFETY: a PROT_READ, MAP_PRIVATE mapping is never written by the process, so shared reads are sound.
 unsafe impl Send for Mmap {}
 unsafe impl Sync for Mmap {}
 
@@ -434,7 +432,8 @@ impl Mmap {
         use std::os::fd::AsRawFd;
         let f = std::fs::File::open(path)?;
         let len = f.metadata()?.len() as usize;
-        // PROT_READ = 1, MAP_PRIVATE = 2; the mapping outlives the fd
+        // PROT_READ = 1, MAP_PRIVATE = 2; the mapping outlives the fd.
+        // SAFETY: a fresh read-only private mapping of an open file; failure is checked below.
         let p = unsafe { mmap(std::ptr::null_mut(), len.max(1), 1, 2, f.as_raw_fd(), 0) };
         if p as isize == -1 {
             return Err(std::io::Error::last_os_error());
@@ -442,9 +441,10 @@ impl Mmap {
         Ok(Mmap { ptr: p, len })
     }
     pub fn bytes(&self) -> &[u8] {
+        // SAFETY: `ptr` maps at least `len` readable bytes until `drop`, which needs `&mut self`.
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
-    /// One tensor's blocks, bounds-checked against the file (`tensor_span`, then the mapping's length).
+    /// One tensor's blocks, bounds-checked by `tensor_span` and then by the mapping's length.
     pub fn tensor(&self, h: &Header, t: &TensorInfo) -> Option<&[u8]> {
         let (start, n) = tensor_span(h, t).ok()?;
         self.bytes().get(usize::try_from(start).ok()?..usize::try_from(start + n).ok()?)
@@ -454,6 +454,7 @@ impl Mmap {
 #[cfg(unix)]
 impl Drop for Mmap {
     fn drop(&mut self) {
+        // SAFETY: unmaps exactly the region `open` mapped (`len.max(1)`); no borrow of it outlives `self`.
         unsafe { munmap(self.ptr as *mut u8, self.len.max(1)) };
     }
 }
@@ -467,7 +468,7 @@ impl Report {
         }
     }
 
-    /// The same JSON object `gguf_guard.py --json` prints (key set and values; whitespace differs).
+    /// The JSON object `gguf_guard.py --json` prints: same keys and values, different whitespace.
     pub fn to_json(&self) -> String {
         let mut o = String::from("{");
         if let crate::Verdict::NeedMore(n) = self.verdict {
@@ -519,8 +520,8 @@ mod tests {
         v
     }
 
-    /// The synthetic GGUF of test_gguf_guard.py: tensors = [(name, n_elements, type_id)];
-    /// pad = (elems_per_block, bytes_per_block) actually written for type 42 / >= 142.
+    /// The synthetic GGUF of `test_gguf_guard.py`; `tensors` is `[(name, n_elements, type_id)]`, `pad` the
+    /// (elements, bytes) per block written for type 42 and ids >= 142.
     fn gguf(name: &str, tensors: &[(&str, u64, u32)], pad: (u64, u64)) -> Vec<u8> {
         let mut h = b"GGUF".to_vec();
         h.extend(3u32.to_le_bytes());
@@ -571,8 +572,7 @@ mod tests {
 
     #[test]
     fn t10_standard_k_quant_model_plays_on_mainline() {
-        // a common Q4_K_M file (Qwen3, SmolLM, Granite …): K-quant and F32 tensors, no pin-free shortcut —
-        // the guard plays it; whether it answers is then the pin's decision alone
+        // A common Q4_K_M file plays under the guard; whether it answers is the pin's decision.
         let r = case("Qwen3-4B-Instruct", &[("a", N, 12), ("b", N, 14), ("c", N, 0)], (1, 2), Engine::Mainline);
         assert_eq!(r.verdict, Verdict::Play);
         assert_eq!(r.types, vec![("F32".to_string(), 1), ("Q4_K".to_string(), 1), ("Q6_K".to_string(), 1)]);
@@ -644,7 +644,7 @@ mod tests {
         assert!(matches!(judge(&b[..40], Engine::Mainline, None, "").verdict, Verdict::NeedMore(n) if n > 40));
     }
 
-    // beyond the Python suite: fail-closed cases
+    // Fail-closed cases beyond the Python suite.
     #[test]
     fn bad_magic_and_unknown_types_refuse() {
         assert!(matches!(judge(b"GGUX\x03\0\0\0", Engine::Mainline, None, "").verdict, Verdict::Refuse(_)));
@@ -670,7 +670,7 @@ mod tests {
         h
     }
 
-    /// 0.0.1 recursed once per nesting level and aborted on a stack overflow; now a bounded refusal.
+    /// Deep array nesting refuses instead of overflowing the stack.
     #[test]
     fn deeply_nested_arrays_refuse_not_crash() {
         let nest = |depth: usize| {
@@ -688,7 +688,7 @@ mod tests {
         assert!(matches!(judge(&deep, Engine::Mainline, None, "").verdict, Verdict::Refuse(ref w) if w[0].contains("nested deeper")));
     }
 
-    /// 0.0.1 wrapped i128 silently in release (and panicked in debug) and played.
+    /// A KV size per token that overflows i128 refuses.
     #[test]
     fn kv_size_overflow_refuses() {
         let mut e = vec![kv_entry("general.architecture", 8, &s("qwen3"))];
@@ -707,15 +707,13 @@ mod tests {
         assert_eq!(tensor_span(&h, &t(vec![128, 2], 41, 0)), Ok((64, 36)));
         assert_eq!(tensor_span(&h, &t(vec![64, 3], 42, 32)), Ok((96, 54)));
         assert!(tensor_span(&h, &t(vec![100, 2], 41, 0)).unwrap_err().contains("whole number"));
-        // 0.0.1 truncated this element count to 64 bits and returned a short slice
+        // An element count beyond u64 must refuse, not truncate.
         assert!(tensor_span(&h, &t(vec![1 << 62, 1 << 40], 42, 0)).unwrap_err().contains("overflows"));
         assert!(tensor_span(&h, &t(vec![64], 42, u64::MAX)).unwrap_err().contains("overflows"));
         assert!(tensor_span(&h, &t(vec![64], 12, 0)).unwrap_err().contains("not readable"));
     }
 
-    /// Real file (Apache-2.0, prism-ml/Bonsai-1.7B-gguf, 248,302,272 B). The expected values are
-    /// `python3 minaiml-bonsai/tools/gguf_guard.py <file> --json` on 2026-09-25; `testing/guard_agree.py`
-    /// re-checks the full JSON against the Python at any time.
+    /// Real file (prism-ml/Bonsai-1.7B-gguf); expected values from the Python guard (`testing/guard_agree.py`).
     #[test]
     #[ignore = "needs bankml/.models/Bonsai-1.7B-Q1_0.gguf"]
     fn real_bonsai_1_7b_q1_0() {

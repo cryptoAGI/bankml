@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! A small SPIR-V assembler: bankml writes its compute shaders as SPIR-V words itself, so no shader compiler is
-//! needed at build or run time (this machine has none, and bankml takes no crates). Only what compute kernels use:
-//! scalar and vector types, storage buffers, push constants, the invocation id, integer and float arithmetic, the
-//! GLSL.std.450 `Fma`, and structured control flow (one selection, loops). Every float `OpFMul`/`OpFAdd` it emits
-//! is decorated `NoContraction`, so a driver cannot fuse what bankml's CPU kernels keep separate; fused steps are
-//! written as explicit `Fma`.
+//! A minimal SPIR-V assembler for bankML's compute kernels, so no shader compiler is needed at build or run time.
+//!
+//! It covers what the kernels use. Every `OpFMul`, `OpFAdd`, `OpFSub` and extended instruction it emits is
+//! decorated `NoContraction`, so a driver cannot fuse operations the CPU kernels keep separate.
+//! Details: docs/modules/gpu.md.
 
 const MAGIC: u32 = 0x0723_0203;
 const VERSION_1_3: u32 = 0x0001_0300;
 
-// opcodes (SPIR-V 1.3 unified spec)
+/// Opcodes (SPIR-V 1.3 unified specification).
 pub mod op {
     pub const EXT_INST_IMPORT: u16 = 11;
     pub const EXT_INST: u16 = 12;
@@ -67,6 +66,7 @@ pub mod op {
     pub const RETURN: u16 = 253;
 }
 
+/// Decorations.
 pub mod dec {
     pub const BLOCK: u32 = 2;
     pub const ARRAY_STRIDE: u32 = 6;
@@ -78,6 +78,7 @@ pub mod dec {
     pub const NON_WRITABLE: u32 = 24;
 }
 
+/// Storage classes.
 pub mod sc {
     pub const UNIFORM_CONSTANT: u32 = 0;
     pub const INPUT: u32 = 1;
@@ -211,11 +212,12 @@ impl Module {
         (s, self.op(op::F_ADD, f32t, &[ea, eb]))
     }
 
-    /// A correctly rounded `fma(a, b, c)` from plain multiplies and adds, whatever the driver does with `Fma`: `a`
-    /// must carry at most 12 significant bits (an f16 value does), so splitting `b` into two 12-bit halves makes
-    /// both partial products exact; TwoSum keeps every rounding error; the last step is Boldo and Melquiond's
-    /// `RN(th + RO(tl + ul))` (rounding to odd, 2008), which gives the single rounding of an FMA.
-    /// `c_mask` is an OpConstant u32 0xFFFF_F000; `c1`, `c0` are u32 1 and 0; `cf0` is f32 0.
+    /// A correctly rounded `fma(a, b, c)` from plain multiplies and adds, independent of the driver's `Fma`.
+    ///
+    /// `a` must carry at most 12 significant bits (an f16 value does): `b` is split into two 12-bit halves so both
+    /// partial products are exact, TwoSum keeps every rounding error, and Boldo and Melquiond's
+    /// `RN(th + RO(tl + ul))` (rounding to odd, 2008) gives the FMA's single rounding. `c_mask` is the u32 constant
+    /// `0xFFFF_F000`; `c1` and `c0` are u32 1 and 0; `cf0` is f32 0.
     #[allow(clippy::too_many_arguments)]
     pub fn fma_exact(&mut self, tys: (u32, u32, u32), a: u32, b: u32, c: u32, c_mask: u32, c1: u32, c0: u32, cf0: u32) -> u32 {
         let (f32t, u32t, tbool) = tys;
@@ -228,7 +230,7 @@ impl Module {
         let (uh, ul) = self.two_sum(f32t, p1, p2);
         let (th, tl) = self.two_sum(f32t, c, uh);
         let (v, ve) = self.two_sum(f32t, tl, ul);
-        // round v to odd: when inexact and its last bit is even, step one ulp toward the lost part
+        // Round v to odd: when inexact and its last bit is even, step one ulp toward the lost part.
         let vb = self.op(op::BITCAST, u32t, &[v]);
         let last = self.op(op::BITWISE_AND, u32t, &[vb, c1]);
         let even = self.op(op::I_EQUAL, tbool, &[last, c0]);
@@ -245,6 +247,7 @@ impl Module {
         self.op(op::F_ADD, f32t, &[th, v_odd])
     }
 
+    /// The finished module: the header (id bound = next id) and the sections in the order the spec requires.
     pub fn words(&self) -> Vec<u32> {
         let mut w = vec![MAGIC, VERSION_1_3, 0, self.next, 0];
         for s in [&self.caps, &self.imports, &self.model, &self.entry, &self.modes, &self.decorations, &self.types, &self.code] {
