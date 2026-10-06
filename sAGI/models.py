@@ -723,7 +723,9 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
         n_threads, n_ctx = str(threads or resources()["threads"]), str(ctx or resources()["ctx"])
         if native_for(model):
             # bankML's own forward pass answers, on the gateway and on the engine address (0.3.0)
-            cmd = [str(BANKML), "serve", str(model), "--fork", str(fork), "--native", "--upstream", UPSTREAM, "--listen", LISTEN, "--ctx", n_ctx]
+            # 0.3.8: the native engine saves and restores slots too (Savante's warm start)
+            cmd = [str(BANKML), "serve", str(model), "--fork", str(fork), "--native", "--upstream", UPSTREAM, "--listen", LISTEN, "--ctx", n_ctx,
+                   "--slot-dir", str(SLOTS)]
             gl = float(resources().get("gpu_limit", 0.8))
             env = {**os.environ, "BANKML_THREADS": n_threads, **({"BANKML_GPU": "off"} if gl <= 0 else {"BANKML_GPU_LIMIT": f"{gl:.2f}"})}
         else:

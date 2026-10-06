@@ -67,6 +67,9 @@ out=testing/results/$v.txt
     # 0.3.8: the context limit as llama-server's (context shift off): stop at the full context; past it, its 400 body
     echo "## context_oracle_live"
     python3 -B testing/context_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: context_oracle_live"; exit 1; }
+    # 0.3.8: slot save/restore on the native engine — answers after a restore identical to an empty slot's, across a restart
+    echo "## slot_oracle_live"
+    python3 -B testing/slot_oracle.py Bonsai-1.7B-Q1_0 || { echo "FAILED: slot_oracle_live"; exit 1; }
     echo "## sampler_oracle_live"
     python3 -B testing/penalty_oracle.py --kind sampler --bankml mindx-gen39-F16 mindx-gen39 || { echo "FAILED: sampler_oracle_live"; exit 1; }
     # 0.3.3: JSON mode and grammars live — /v1 response_format (streamed once) and grammar, /api/chat format "json"

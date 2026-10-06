@@ -28,6 +28,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// The slot file's first bytes (`Native::save_slot`).
+const SLOT_MAGIC: &[u8] = b"bankML slot v1\n";
+
 struct Slot {
     tokens: Vec<u32>,
     caches: Vec<KvCache>,
@@ -264,6 +267,119 @@ impl Native {
         });
         Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text, prompt_ns,
                   eval_ns, tokens: out, grammar_ns, resampled, ttft_ns, energy_j })
+    }
+
+    /// 0.3.8: save the slot — its tokens and every layer's K and V — to `path`, for `model_sha256`, as llama-server's
+    /// `/slots/{id}?action=save`; returns (tokens, bytes). bankML's own format: a magic line, the model's sha256 (a slot
+    /// never restores into another model), the context, the tokens, each layer's cache, and a sha256 of all of it;
+    /// written to a temporary file and renamed, so a crash leaves no half slot.
+    pub fn save_slot(&self, path: &Path, model_sha256: &str) -> Result<(usize, u64), String> {
+        let slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut b: Vec<u8> = Vec::new();
+        b.extend_from_slice(SLOT_MAGIC);
+        b.extend_from_slice(format!("{model_sha256:0<64}").as_bytes()[..64].as_ref());
+        for v in [self.n_ctx as u64, slot.tokens.len() as u64, slot.caches.len() as u64] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for c in &slot.caches {
+            b.extend_from_slice(&(c.width as u64).to_le_bytes());
+            for x in c.k.iter().chain(&c.v) {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        for t in &slot.tokens {
+            b.extend_from_slice(&t.to_le_bytes());
+        }
+        let mut h = crate::sha256::Sha256::default();
+        h.update(&b);
+        b.extend_from_slice(&h.finish());
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &b).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("Unable to save slot: {e}"))?;
+        Ok((slot.tokens.len(), b.len() as u64))
+    }
+
+    /// Restore a slot saved by `save_slot` for this model and context; returns (tokens, bytes). Anything wrong — another
+    /// model, another context or layer shape, a damaged file — empties the slot and refuses with the reason, as
+    /// llama-server's "Unable to restore slot: …".
+    pub fn restore_slot(&self, path: &Path, model_sha256: &str) -> Result<(usize, u64), String> {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let r = (|| -> Result<(Vec<u32>, Vec<KvCache>, u64), String> {
+            let b = std::fs::read(path).map_err(|e| e.to_string())?;
+            if b.len() < SLOT_MAGIC.len() + 64 + 24 + 32 || &b[..SLOT_MAGIC.len()] != SLOT_MAGIC {
+                return Err("not a bankML slot file".into());
+            }
+            let (body, sum) = b.split_at(b.len() - 32);
+            let mut h = crate::sha256::Sha256::default();
+            h.update(body);
+            if h.finish()[..] != sum[..] {
+                return Err("the slot file is damaged (its sha256 does not match)".into());
+            }
+            let mut at = SLOT_MAGIC.len();
+            if &body[at..at + 64] != format!("{model_sha256:0<64}").as_bytes()[..64].as_ref() {
+                return Err("the slot was saved for another model".into());
+            }
+            at += 64;
+            let u64_at = |at: &mut usize| -> Result<u64, String> {
+                let v = body.get(*at..*at + 8).ok_or("truncated")?;
+                *at += 8;
+                Ok(u64::from_le_bytes(v.as_chunks::<8>().0[0]))
+            };
+            let (n_ctx, n_tok, n_layers) = (u64_at(&mut at)?, u64_at(&mut at)? as usize, u64_at(&mut at)? as usize);
+            if n_ctx as usize != self.n_ctx {
+                return Err(format!("the slot was saved with a {n_ctx}-token context, this engine has {}", self.n_ctx));
+            }
+            if n_tok > self.n_ctx {
+                return Err("Restored prompt does not fit in the slot context".into());
+            }
+            if n_layers != slot.caches.len() {
+                return Err("the slot's layers do not match this model".into());
+            }
+            let mut caches = Vec::with_capacity(n_layers);
+            for c in slot.caches.iter() {
+                let width = u64_at(&mut at)? as usize;
+                if width != c.width {
+                    return Err("the slot's cache shape does not match this model".into());
+                }
+                let n = n_tok * width;
+                let mut read = |n: usize| -> Result<Vec<u16>, String> {
+                    let raw = body.get(at..at + 2 * n).ok_or("truncated")?;
+                    at += 2 * n;
+                    Ok(raw.as_chunks::<2>().0.iter().map(|p| u16::from_le_bytes(*p)).collect())
+                };
+                let (k, v) = (read(n)?, read(n)?);
+                caches.push(KvCache { k, v, width });
+            }
+            let raw = body.get(at..at + 4 * n_tok).ok_or("truncated")?;
+            let tokens: Vec<u32> = raw.as_chunks::<4>().0.iter().map(|p| u32::from_le_bytes(*p)).collect();
+            if at + 4 * n_tok != body.len() {
+                return Err("the slot file has trailing data".into());
+            }
+            if tokens.iter().any(|&t| t as usize >= self.tok.n_tokens()) {
+                return Err("Invalid tokens in slot save file".into());
+            }
+            Ok((tokens, caches, b.len() as u64))
+        })();
+        match r {
+            Ok((tokens, caches, n)) => {
+                let len = tokens.len();
+                *slot = Slot { tokens, caches };
+                Ok((len, n))
+            }
+            Err(e) => {
+                slot.tokens.clear();
+                for c in slot.caches.iter_mut() {
+                    c.truncate(0);
+                }
+                Err(format!("Unable to restore slot: {e}"))
+            }
+        }
+    }
+
+    /// Empty the slot, as `/slots/{id}?action=erase`; returns the tokens it held.
+    pub fn erase_slot(&self) -> usize {
+        let n = self.slot.lock().unwrap_or_else(|e| e.into_inner()).tokens.len();
+        self.reset();
+        n
     }
 
     /// Empty the slot (the next request computes its whole prompt, as a fresh llama-server or `cache_prompt: false`).

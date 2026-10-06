@@ -64,6 +64,8 @@ struct State {
     engine: String,
     hashed_at: u64,
     ident: FileIdent,
+    /// 0.3.8: where `/slots/{id}?action=save|restore` keeps slot files (`--slot-dir`; native mode)
+    slot_dir: Option<PathBuf>,
 }
 
 /// What must not change between the hash and an answer: the file's identity, not its bytes (re-hashing a GB per
@@ -160,7 +162,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     }
     let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let engine = "llama.cpp b11192 llama-server (loopback), behind bankml P0".to_string();
-    let st = Arc::new(State { native: None, keep_alive: crate::native::KeepAlive::Forever, verified, model, upstream, engine, hashed_at, ident: id });
+    let st = Arc::new(State { native: None, keep_alive: crate::native::KeepAlive::Forever, verified, model, upstream, engine, hashed_at, ident: id, slot_dir: None });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
     eprintln!("bankml serve {}: {} verified (sha256 {}), upstream {} serves it; listening on http://{}",
         crate::VERSION, st.model.display(), st.verified.model_sha256, st.upstream, cfg.listen);
@@ -193,7 +195,7 @@ fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, up
         reaper.reap();
     });
     let sha = rs.peek().map(|(l, _)| l.sha256).unwrap_or_default();
-    let st = Arc::new(State { native: Some(rs), keep_alive: ka, verified: Verified { model_sha256: sha.clone(), guard: "play", engine: cfg.engine.as_str(), arch: None, name: None, types: Vec::new() },
+    let st = Arc::new(State { slot_dir: cfg.slot_dir.clone(), native: Some(rs), keep_alive: ka, verified: Verified { model_sha256: sha.clone(), guard: "play", engine: cfg.engine.as_str(), arch: None, name: None, types: Vec::new() },
                               model, upstream: upstream.clone(), engine, hashed_at, ident: id });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
     let lu = TcpListener::bind(&upstream).map_err(|e| format!("cannot listen on the engine address {upstream}: {e} (is llama-server running there?)"))?;
@@ -516,6 +518,7 @@ fn native_route(c: &mut TcpStream, st: &State, method: &str, path: &str, body: &
             let id = id.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             respond(c, 200, "application/json", format!("{{\"object\": \"list\", \"data\": [{{\"id\": {}, \"object\": \"model\", \"owned_by\": \"bankML\"}}]}}", crate::gguf::jstr(&id)).as_bytes())
         }
+        ("POST", p) if p.starts_with("/slots/") => slots(c, st, p, body),
         ("POST", "/tokenize") => {
             let Some(v) = req() else { return respond(c, 400, "text/plain", b"body is not JSON") };
             let l = match eng() {
@@ -698,6 +701,67 @@ pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t:
     format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
             crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(model_id), d.completion_tokens, d.prompt_tokens,
             d.completion_tokens + d.prompt_tokens, timings_json(d), t.receipt(engine, v))
+}
+
+/// llama-server's error object (`format_error_response`): `{"error": {"code", "message", "type"}}`.
+fn error_json(code: u16, message: &str, ty: &str) -> String {
+    format!("{{\"error\": {{\"code\": {code}, \"message\": {}, \"type\": \"{ty}\"}}}}", crate::gguf::jstr(message))
+}
+
+/// llama.cpp's `fs_validate_filename` (no subdirectories): a name the slot directory can hold and nothing else — no
+/// separators or reserved characters, no control or replacement characters, no surrogates or BOM, at most 255 bytes,
+/// no leading or trailing space and no trailing dot.
+pub fn slot_filename_ok(f: &str) -> bool {
+    if f.is_empty() || f.len() > 255 || f.starts_with(' ') || f.ends_with(' ') || f.ends_with('.') {
+        return false;
+    }
+    f.chars().all(|c| {
+        let u = c as u32;
+        !(u <= 0x1F || u == 0x7F || (0x80..=0x9F).contains(&u) || matches!(u, 0xFF0E | 0x2215 | 0x2216 | 0xFFFD | 0xFEFF)
+          || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|' | '/' | '\\'))
+    })
+}
+
+/// 0.3.8: llama-server's slot actions on the engine address — `POST /slots/{id}?action=save|restore|erase` with
+/// `{"filename"}` — over the native engine's one slot, with llama-server's replies and errors.
+fn slots(c: &mut TcpStream, st: &State, path: &str, body: &[u8]) -> std::io::Result<()> {
+    let Some(dir) = st.slot_dir.as_ref() else {
+        return respond(c, 501, "application/json", error_json(501, "This server does not support slots action. Start it with `--slot-save-path`", "not_supported_error").as_bytes());
+    };
+    let (id, query) = path["/slots/".len()..].split_once('?').unwrap_or((&path["/slots/".len()..], ""));
+    let Ok(id) = id.parse::<i64>() else {
+        return respond(c, 400, "application/json", error_json(400, "Invalid slot ID", "invalid_request_error").as_bytes());
+    };
+    let action = query.split('&').find_map(|kv| kv.strip_prefix("action=")).unwrap_or("");
+    if !matches!(action, "save" | "restore" | "erase") {
+        return respond(c, 400, "application/json", error_json(400, "Invalid action", "invalid_request_error").as_bytes());
+    }
+    if id != 0 {
+        return respond(c, 400, "application/json", error_json(400, "Invalid slot ID", "invalid_request_error").as_bytes());
+    }
+    let rs = st.native.as_ref().unwrap();
+    let l = match rs.current_or_default() {
+        Ok(l) => l,
+        Err((code, e)) => return respond(c, code, "text/plain", e.as_bytes()),
+    };
+    if action == "erase" {
+        let n = l.native.erase_slot();
+        return respond(c, 200, "application/json", format!("{{\"id_slot\": 0, \"n_erased\": {n}}}").as_bytes());
+    }
+    let name = Json::parse(&String::from_utf8_lossy(body)).and_then(|v| v.get("filename").and_then(Json::as_str).map(String::from));
+    let Some(name) = name.filter(|f| slot_filename_ok(f)) else {
+        return respond(c, 400, "application/json", error_json(400, "Invalid filename", "invalid_request_error").as_bytes());
+    };
+    let t0 = Instant::now();
+    let file = dir.join(&name);
+    let r = if action == "save" { l.native.save_slot(&file, &l.sha256) } else { l.native.restore_slot(&file, &l.sha256) };
+    let ms = t0.elapsed().as_secs_f64() * 1e3;
+    match (r, action) {
+        (Ok((n, bytes)), "save") => respond(c, 200, "application/json", format!("{{\"id_slot\": 0, \"filename\": {}, \"n_saved\": {n}, \"n_written\": {bytes}, \"timings\": {{\"save_ms\": {ms:.3}}}}}", crate::gguf::jstr(&name)).as_bytes()),
+        (Ok((n, bytes)), _) => respond(c, 200, "application/json", format!("{{\"id_slot\": 0, \"filename\": {}, \"n_restored\": {n}, \"n_read\": {bytes}, \"timings\": {{\"restore_ms\": {ms:.3}}}}}", crate::gguf::jstr(&name)).as_bytes()),
+        (Err(e), "save") => respond(c, 500, "application/json", error_json(500, &e, "server_error").as_bytes()),
+        (Err(e), _) => respond(c, 400, "application/json", error_json(400, &e, "invalid_request_error").as_bytes()),
+    }
 }
 
 /// llama-server b11192's refusal of a request longer than the context (`ERROR_TYPE_EXCEED_CONTEXT_SIZE`, context shift
