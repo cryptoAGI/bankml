@@ -247,6 +247,9 @@ In the next release (not yet tagged); each is checked against llama-server b1119
   llama-server `-np 1`. Like llama-server, it keeps the states of other conversations in RAM (`BANKML_CACHE_RAM`, MiB;
   0 off, -1 no limit; unset, 8192 MiB but at most a quarter of the memory available at load), so a conversation that comes back after
   another does not recompute its whole history.
+- **Your bankML from a web page (0.3.9).** `--allow-origin https://pythai-bankml.static.hf.space` lets the bankML
+  Space's page talk to your own `bankml serve` from your browser: your CPU, your verified model, a receipt on every
+  answer, nothing sent anywhere else. Only that one origin is answered with CORS headers.
 - **A smaller conversation memory (0.3.9, in progress).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
   about half the memory, so a long context fits on a small machine. It is llama.cpp's `--cache-type-k q8_0
   --cache-type-v q8_0` exactly, with the Hadamard rotation llama.cpp applies around a quantized cache, and gives the

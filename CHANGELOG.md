@@ -27,6 +27,15 @@ decode speed, the third, is measured on an idle machine next.
   against 38.8 ms** (13×), p90 49.3 against 80.6 ms, over the oracle's 1,645 masks. The oracle now computes every
   mask both ways: **196 / 196 runs, 1,645 / 1,645 masks** identical to llama.cpp b11192 by each.
 
+### Your own bankML from a web page (`--allow-origin`)
+- `bankml serve … --allow-origin ORIGIN` lets one named web page call the gateway from a browser: its CORS preflight
+  is answered (with Chrome's private-network grant, as a public page reaching a loopback address requires) and its
+  answers, streamed or not, carry `Access-Control-Allow-Origin`; any other origin gets none and a 403 preflight. The
+  loopback `Host` and JSON-POST rules are unchanged. It is what lets the bankML Space's page
+  ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml)) talk to a visitor's own bankML, free, on their own
+  CPU — the way Savante's page reaches a local engine. Checked live: the preflight, plain and streamed answers with
+  the receipt, and another origin refused.
+
 ### The code audit and the documentation (2026-10-06)
 - **Comments, professional and short.** Every source file's comments were cut to the contract, the invariants, the
   safety reasoning and the exact upstream behaviour that keeps the bits; the history and rationale moved to its

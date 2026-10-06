@@ -43,6 +43,25 @@ pub struct Config {
     pub registry: Option<PathBuf>,
     /// `--native`: how long `/api/*` keeps a model resident when the request does not say (Ollama's default, 5m)
     pub keep_alive: Option<String>,
+    /// one web page origin (`https://host[:port]`) whose scripts may call this gateway from a browser: CORS and
+    /// Chrome's private-network preflight are answered for it alone; the loopback `Host` rule still holds
+    pub allow_origin: Option<String>,
+}
+
+/// Whether `o` is an origin: `http(s)://host[:port]`, no path, query or credentials.
+pub fn is_origin(o: &str) -> bool {
+    let rest = o.strip_prefix("https://").or_else(|| o.strip_prefix("http://"));
+    rest.is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']')))
+}
+
+thread_local! {
+    /// The CORS headers for the request this connection thread is answering (empty unless its `Origin` is allowed).
+    static CORS: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The CORS header lines to add to this connection's response (`\r\n`-terminated; empty when none apply).
+pub(crate) fn cors_headers() -> String {
+    CORS.with(|c| c.borrow().clone())
 }
 
 struct State {
@@ -57,6 +76,8 @@ struct State {
     ident: FileIdent,
     /// where `/slots/{id}?action=save|restore` keeps slot files (`--slot-dir`; native mode)
     slot_dir: Option<PathBuf>,
+    /// `--allow-origin`: the one web origin answered with CORS headers
+    allow_origin: Option<String>,
 }
 
 /// The file identity checked before each P0 answer: device, inode, size and mtime, not the bytes (re-hashing per
@@ -110,6 +131,9 @@ mod sig {
 
 /// Verify the model, launch or check the upstream (or start `--native`), then serve until killed.
 pub fn run(cfg: Config) -> Result<(), String> {
+    if let Some(o) = cfg.allow_origin.as_deref().filter(|o| !is_origin(o)) {
+        return Err(format!("--allow-origin {o}: an origin is http(s)://host[:port], with no path"));
+    }
     let before = ident(&cfg.model).map_err(|e| format!("{}: {e}", cfg.model.display()))?;
     let verified = crate::verify(&cfg.model, &cfg.fork_json, cfg.engine)?;
     let model = cfg.model.canonicalize().map_err(|e| format!("{}: {e}", cfg.model.display()))?;
@@ -153,7 +177,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     }
     let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let engine = "llama.cpp b11192 llama-server (loopback), behind bankml P0".to_string();
-    let st = Arc::new(State { native: None, keep_alive: crate::native::KeepAlive::Forever, verified, model, upstream, engine, hashed_at, ident: id, slot_dir: None });
+    let st = Arc::new(State { native: None, keep_alive: crate::native::KeepAlive::Forever, verified, model, upstream, engine, hashed_at, ident: id, slot_dir: None, allow_origin: cfg.allow_origin.clone() });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
     eprintln!("bankml serve {}: {} verified (sha256 {}), upstream {} serves it; listening on http://{}",
         crate::VERSION, st.model.display(), st.verified.model_sha256, st.upstream, cfg.listen);
@@ -189,7 +213,7 @@ fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, up
     if let Some(d) = &cfg.slot_dir {
         std::fs::create_dir_all(d).map_err(|e| format!("--slot-dir {}: {e}", d.display()))?;
     }
-    let st = Arc::new(State { slot_dir: cfg.slot_dir.clone(), native: Some(rs), keep_alive: ka, verified: Verified { model_sha256: sha.clone(), guard: "play", engine: cfg.engine.as_str(), arch: None, name: None, types: Vec::new() },
+    let st = Arc::new(State { slot_dir: cfg.slot_dir.clone(), allow_origin: cfg.allow_origin.clone(), native: Some(rs), keep_alive: ka, verified: Verified { model_sha256: sha.clone(), guard: "play", engine: cfg.engine.as_str(), arch: None, name: None, types: Vec::new() },
                               model, upstream: upstream.clone(), engine, hashed_at, ident: id });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
     let lu = TcpListener::bind(&upstream).map_err(|e| format!("cannot listen on the engine address {upstream}: {e} (is llama-server running there?)"))?;
@@ -378,7 +402,7 @@ pub(crate) fn respond(c: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) ->
         _ => "Error",
     };
     let code = if (100..600).contains(&code) { code } else { 502 }; // a garbled upstream head is a bad gateway
-    write!(c, "HTTP/1.1 {code} {reason}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())?;
+    write!(c, "HTTP/1.1 {code} {reason}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n", body.len(), cors_headers())?;
     c.write_all(body)
 }
 
@@ -404,6 +428,18 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
     };
     if !loopback_host(header(&h, "host").unwrap_or("")) {
         return refuse(403, b"bankml serve answers loopback clients only (Host must be 127.0.0.1, localhost or [::1])", &mut r);
+    }
+    // --allow-origin: that one web page may read the answers from a browser; every other origin gets no CORS headers
+    let allowed = header(&h, "origin").filter(|o| st.allow_origin.as_deref() == Some(*o)).map(str::to_string);
+    CORS.with(|c| *c.borrow_mut() = allowed.as_deref().map(|o| format!("Access-Control-Allow-Origin: {o}\r\nVary: Origin\r\n")).unwrap_or_default());
+    if method == "OPTIONS" {
+        if allowed.is_none() {
+            return refuse(403, b"bankml serve: this origin is not allowed (start serve with --allow-origin ORIGIN)", &mut r);
+        }
+        // the preflight; Chrome asks before a public page may reach a loopback address (Private Network Access)
+        let pna = header(&h, "access-control-request-private-network").is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        return write!(c, "HTTP/1.1 204 No Content\r\n{}Access-Control-Allow-Methods: GET, POST\r\nAccess-Control-Allow-Headers: Content-Type\r\n{}Access-Control-Max-Age: 600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                      cors_headers(), if pna { "Access-Control-Allow-Private-Network: true\r\n" } else { "" });
     }
     if header(&h, "transfer-encoding").is_some() {
         return refuse(400, b"chunked requests are not accepted; send Content-Length", &mut r);
@@ -583,7 +619,7 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     let model_id = l.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let r = if stream {
-        write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
+        write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n{}Connection: close\r\n\r\n", cors_headers())?;
         // with logprobs, llama-server's shape: the first token's partial opens with the role delta, and each token's
         // entry rides on the last delta its partial sends (no delta, no entry)
         let logprobs = nc.params.n_probs > 0;
@@ -978,7 +1014,7 @@ fn chat(c: &mut TcpStream, st: &State, body: &[u8]) -> std::io::Result<()> {
         let merged = format!("{}, \"bankml_receipt\": {}}}", &s[..end], t.receipt(&st.engine, &st.verified));
         return respond(c, 200, "application/json", merged.as_bytes());
     }
-    write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
+    write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n{}Connection: close\r\n\r\n", cors_headers())?;
     let mut pending = Vec::new();
     while let Some(ch) = b.next(&mut r)? {
         pending.extend(ch);
@@ -1266,6 +1302,16 @@ mod tests {
         let ok = "Host: 127.0.0.1:18093\r\nContent-Type: application/json\r\n\r\n";
         let (_, h) = read_head_rest(&mut BufReader::new(ok.as_bytes())).unwrap();
         assert_eq!(header(&h, "host"), Some("127.0.0.1:18093"));
+    }
+
+    #[test]
+    fn origins_are_scheme_host_port_only() {
+        for o in ["https://pythai-bankml.static.hf.space", "http://127.0.0.1:8000", "https://[::1]:7860"] {
+            assert!(is_origin(o), "{o}");
+        }
+        for o in ["https://a.example/path", "pythai-bankml.static.hf.space", "https://", "https://u@h", "https://h?x=1", "*"] {
+            assert!(!is_origin(o), "{o}");
+        }
     }
 
     #[test]

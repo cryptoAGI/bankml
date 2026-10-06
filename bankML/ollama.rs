@@ -522,7 +522,7 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
     };
     let mut content = crate::grammar::ContentStream::new(&constraint);
     if stream {
-        write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
+        write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\n{}Connection: close\r\n\r\n", crate::serve::cors_headers())?;
         let send = |c: &mut TcpStream, piece: &str| piece.is_empty() || c.write_all(piece_line(model, chat, piece).as_bytes()).and_then(|_| c.flush()).is_ok();
         let done = eng.complete(&prompt, params, o.max, grammar, |piece| {
             if t.ttft.is_none() {
