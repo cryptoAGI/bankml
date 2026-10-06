@@ -305,75 +305,75 @@ reference where it matters.
 ## References
 
 Alves, P., Patankar, A., Pereira, B. et al. (2026). "EigenAI: Deterministic Inference, Verifiable Results."
-arXiv:2602.00182.
+[arXiv:2602.00182](https://arxiv.org/abs/2602.00182).
 
 Ashkboos, S., Mohtashami, A., Croci, M. L., Li, B., Cameron, P., Jaggi, M., Alistarh, D., Hoefler, T. and Hensman, J.
 (2024). "QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs." *Advances in Neural Information Processing Systems
-37*. arXiv:2404.00456.
+37*. [arXiv:2404.00456](https://arxiv.org/abs/2404.00456).
 
-Cankaya, E. (2026). "Bit-Exact AI Inference Verification Without Performance Tradeoffs." arXiv:2606.00279.
+Cankaya, E. (2026). "Bit-Exact AI Inference Verification Without Performance Tradeoffs." [arXiv:2606.00279](https://arxiv.org/abs/2606.00279).
 
 Codephreak, Professor and Magnusson, G. L. (2026). Design directives for bankML and the mindX runtime, recorded in the
 project (project record, 2026-07-04 to 2026-09-28); quoted in [TECHNICAL.md](TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson).
 
-Conway, K. D., So, C., Yu, X. et al. (2024). "opML: Optimistic Machine Learning on Blockchain." arXiv:2401.17555.
+Conway, K. D., So, C., Yu, X. et al. (2024). "opML: Optimistic Machine Learning on Blockchain." [arXiv:2401.17555](https://arxiv.org/abs/2401.17555).
 
 Courbariaux, M., Bengio, Y. and David, J.-P. (2015). "BinaryConnect: Training Deep Neural Networks with binary weights
-during propagations." *Advances in Neural Information Processing Systems 28*.
+during propagations." *Advances in Neural Information Processing Systems 28*. [arXiv:1511.00363](https://arxiv.org/abs/1511.00363).
 
 Dettmers, T., Lewis, M., Belkada, Y. and Zettlemoyer, L. (2022). "LLM.int8(): 8-bit Matrix Multiplication for
-Transformers at Scale." *Advances in Neural Information Processing Systems 35*.
+Transformers at Scale." *Advances in Neural Information Processing Systems 35*. [arXiv:2208.07339](https://arxiv.org/abs/2208.07339).
 
 Frantar, E., Ashkboos, S., Hoefler, T. and Alistarh, D. (2023). "GPTQ: Accurate Post-Training Quantization for
-Generative Pre-trained Transformers." *International Conference on Learning Representations (ICLR 2023)*.
+Generative Pre-trained Transformers." *International Conference on Learning Representations (ICLR 2023)*. [arXiv:2210.17323](https://arxiv.org/abs/2210.17323).
 
-Gerganov, G. et al. *llama.cpp* and *ggml* (software). github.com/ggml-org/llama.cpp, release b11192.
+Gerganov, G. et al. *llama.cpp* and *ggml* (software). [github.com/ggml-org/llama.cpp, release b11192](https://github.com/ggml-org/llama.cpp/releases/tag/b11192).
 
 Goldberg, D. (1991). "What Every Computer Scientist Should Know About Floating-Point Arithmetic." *ACM Computing
-Surveys* 23(1): 5–48.
+Surveys* 23(1): 5–48. [doi:10.1145/103162.103163](https://doi.org/10.1145/103162.103163).
 
 Hubara, I., Courbariaux, M., Soudry, D., El-Yaniv, R. and Bengio, Y. (2016). "Binarized Neural Networks." *Advances in
-Neural Information Processing Systems 29*.
+Neural Information Processing Systems 29*. [Proceedings](https://papers.nips.cc/paper_files/paper/2016/hash/d8330f857a17c53d217014ee776bfd50-Abstract.html); preprint [arXiv:1602.02830](https://arxiv.org/abs/1602.02830).
 
 Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J. E., Zhang, H. and Stoica, I. (2023).
 "Efficient Memory Management for Large Language Model Serving with PagedAttention." *Proceedings of the 29th Symposium
-on Operating Systems Principles (SOSP 2023)*.
+on Operating Systems Principles (SOSP 2023)*. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180).
 
 Lamb, C. and Zacchiroli, S. (2022). "Reproducible Builds: Increasing the Integrity of Software Supply Chains." *IEEE
-Software* 39(2).
+Software* 39(2). [doi:10.1109/MS.2021.3073045](https://doi.org/10.1109/MS.2021.3073045); preprint [arXiv:2104.06020](https://arxiv.org/abs/2104.06020).
 
-Li, F., Zhang, B. and Liu, B. (2016). "Ternary Weight Networks." arXiv:1605.04711.
+Li, F., Zhang, B. and Liu, B. (2016). "Ternary Weight Networks." [arXiv:1605.04711](https://arxiv.org/abs/1605.04711).
 
 Ma, S., Wang, H., Ma, L., Wang, L., Wang, W., Huang, S., Dong, L., Wang, R., Xue, J. and Wei, F. (2024). "The Era of
-1-bit LLMs: All Large Language Models are in 1.58 Bits." arXiv:2402.17764.
+1-bit LLMs: All Large Language Models are in 1.58 Bits." [arXiv:2402.17764](https://arxiv.org/abs/2402.17764).
 
-Qwen Team (2025). "Qwen3 Technical Report." arXiv:2505.09388.
+Qwen Team (2025). "Qwen3 Technical Report." [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 
 Rastegari, M., Ordonez, V., Redmon, J. and Farhadi, A. (2016). "XNOR-Net: ImageNet Classification Using Binary
-Convolutional Neural Networks." *European Conference on Computer Vision (ECCV 2016)*.
+Convolutional Neural Networks." *European Conference on Computer Vision (ECCV 2016)*. [arXiv:1603.05279](https://arxiv.org/abs/1603.05279).
 
 Sun, H., Li, J. and Zhang, H. (2024). "zkLLM: Zero Knowledge Proofs for Large Language Models." *Proceedings of the ACM
-Conference on Computer and Communications Security (CCS 2024)*. arXiv:2404.16109.
+Conference on Computer and Communications Security (CCS 2024)*. [arXiv:2404.16109](https://arxiv.org/abs/2404.16109).
 
-Thompson, K. (1984). "Reflections on Trusting Trust." *Communications of the ACM* 27(8): 761–763.
+Thompson, K. (1984). "Reflections on Trusting Trust." *Communications of the ACM* 27(8): 761–763. [doi:10.1145/358198.358210](https://doi.org/10.1145/358198.358210).
 
 Tseng, A., Chee, J., Sun, Q., Kuleshov, V. and De Sa, C. (2024). "QuIP#: Even Better LLM Quantization with Hadamard
-Incoherence and Lattice Codebooks." *International Conference on Machine Learning (ICML 2024)*.
+Incoherence and Lattice Codebooks." *International Conference on Machine Learning (ICML 2024)*. [arXiv:2402.04396](https://arxiv.org/abs/2402.04396).
 
 Wang, H., Ma, S., Dong, L., Huang, S., Wang, H., Ma, L., Yang, F., Wang, R., Wu, Y. and Wei, F. (2023). "BitNet:
-Scaling 1-bit Transformers for Large Language Models." arXiv:2310.11453.
+Scaling 1-bit Transformers for Large Language Models." [arXiv:2310.11453](https://arxiv.org/abs/2310.11453).
 
 Wang, J., Zhou, H., Song, T. et al. (2024). "1-bit AI Infra: Part 1.1, Fast and Lossless BitNet b1.58 Inference on
-CPUs." arXiv:2410.16144.
+CPUs." [arXiv:2410.16144](https://arxiv.org/abs/2410.16144).
 
 Wang, J., Zhou, H., Song, T. et al. (2025). "Bitnet.cpp: Efficient Edge Inference for Ternary LLMs."
-arXiv:2502.11880.
+[arXiv:2502.11880](https://arxiv.org/abs/2502.11880).
 
 Wei, J. et al. (2025). "T-MAC: CPU Renaissance via Table Lookup for Low-Bit LLM Deployment on Edge." *Proceedings of
-EuroSys 2025*. arXiv:2407.00088.
+EuroSys 2025*. [arXiv:2407.00088](https://arxiv.org/abs/2407.00088).
 
 Zhu, C., Han, S., Mao, H. and Dally, W. J. (2017). "Trained Ternary Quantization." *International Conference on
-Learning Representations (ICLR 2017)*.
+Learning Representations (ICLR 2017)*. [arXiv:1612.01064](https://arxiv.org/abs/1612.01064).
 
 *Notes on the references.* Author lists for the 2024–2026 preprints follow [research.md](research.md), which records
 which details were re-fetched and which are as commonly cited. QuaRot and QuIP# are cited for the technique of
