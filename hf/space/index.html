@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Why bankML — verified 1-bit and ternary AI on the CPU you already have</title>
+  <meta name="description" content="1-bit and ternary language models on the CPU you already have: llama.cpp's exact answers, checked bit for bit, then faster. Zero-dependency Rust." />
+  <meta name="keywords" content="bankML, bankml, 1-bit LLM, ternary LLM, BitNet, Bonsai-8B, Q1_0, Q2_0, low-bit inference, CPU inference, Rust, llama.cpp, bit-exact, verified inference, receipts, Ollama API, OpenAI API, mindX, Savante, DeltaVerse, cryptoAGI" />
+  <meta name="author" content="Professor Codephreak · Gregory L. Magnusson (cryptoAGI)" />
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="date" content="2026-10-06" />
+  <link rel="canonical" href="https://deltaverse.pythai.net/bankml" />
+  <link rel="alternate" type="text/plain" title="llms.txt" href="https://github.com/cryptoAGI/bankml/blob/main/llms.txt" />
+  <!-- the DeltaVerse $ -->
+  <link rel="icon" href="https://deltaverse.pythai.net/favicon.ico" sizes="16x16 32x32 48x48" />
+  <link rel="apple-touch-icon" href="https://deltaverse.pythai.net/gfx/bankml-touch-icon.png" />
+  <link rel="image_src" href="https://deltaverse.pythai.net/gfx/og-bankml.jpg" />
+
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="PYTHAI on Hugging Face" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:url" content="https://deltaverse.pythai.net/bankml" />
+  <meta property="og:title" content="Why bankML — verified 1-bit and ternary AI on the CPU you already have" />
+  <meta property="og:description" content="Exactly the same answers as llama.cpp, checked bit for bit, then faster: 9.4–10× per ternary matrix, about 8× llama-server end to end. One zero-dependency Rust binary, a receipt on every answer." />
+  <meta property="og:image" content="https://deltaverse.pythai.net/gfx/og-bankml.jpg" />
+  <meta property="og:image:secure_url" content="https://deltaverse.pythai.net/gfx/og-bankml.jpg" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="bankML — the DeltaVerse $ over a triangulated lattice: verified 1-bit and ternary language models on the CPU you already have; bit-exact vs llama.cpp, 9.4–10× ternary kernel, 0 dependencies" />
+  <meta property="og:image" content="https://deltaverse.pythai.net/gfx/og-bankml-square.jpg" />
+  <meta property="og:image:secure_url" content="https://deltaverse.pythai.net/gfx/og-bankml-square.jpg" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="1200" />
+  <meta property="og:image:alt" content="bankML — the DeltaVerse $ and the bankML wordmark" />
+  <meta property="article:published_time" content="2026-10-06T00:00:00Z" />
+  <meta property="article:author" content="https://github.com/Professor-Codephreak" />
+  <meta property="article:section" content="Technology" />
+  <meta property="article:tag" content="Rust" />
+  <meta property="article:tag" content="1-bit LLM" />
+  <meta property="article:tag" content="ternary LLM" />
+  <meta property="article:tag" content="verified inference" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@aiosml" />
+  <meta name="twitter:creator" content="@aiosml" />
+  <meta name="twitter:title" content="Why bankML — verified 1-bit and ternary AI on the CPU you already have" />
+  <meta name="twitter:description" content="Exactly llama.cpp's answers, checked bit for bit, then faster: 9.4–10× per ternary matrix. Zero-dependency Rust, a receipt on every answer." />
+  <meta name="twitter:image" content="https://deltaverse.pythai.net/gfx/og-bankml.jpg" />
+  <meta name="twitter:image:alt" content="bankML — the DeltaVerse $ over a triangulated lattice; bit-exact vs llama.cpp, 9.4–10× ternary kernel, 0 dependencies" />
+  <meta name="twitter:url" content="https://deltaverse.pythai.net/bankml" />
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@graph":[
+    {"@type":"TechArticle","@id":"https://deltaverse.pythai.net/bankml#article",
+     "headline":"Why bankML — verified 1-bit and ternary AI on the CPU you already have",
+     "description":"What bankML is good for, how Rust makes it fast and exact, and where it is going.",
+     "datePublished":"2026-10-06","dateModified":"2026-10-06","inLanguage":"en",
+     "url":"https://deltaverse.pythai.net/bankml",
+     "image":[{"@type":"ImageObject","url":"https://deltaverse.pythai.net/gfx/og-bankml.jpg","width":1200,"height":630},
+              {"@type":"ImageObject","url":"https://deltaverse.pythai.net/gfx/og-bankml-square.jpg","width":1200,"height":1200}],
+     "author":[{"@type":"Person","name":"Professor Codephreak","url":"https://github.com/Professor-Codephreak"},
+               {"@type":"Person","name":"Gregory L. Magnusson"}],
+     "publisher":{"@type":"Organization","name":"DeltaVerse","url":"https://deltaverse.pythai.net/","logo":"https://deltaverse.pythai.net/gfx/bankml-touch-icon.png"},
+     "about":{"@id":"https://deltaverse.pythai.net/bankml#software"},
+     "isPartOf":{"@id":"https://deltaverse.pythai.net/#website"},
+     "breadcrumb":{"@id":"https://deltaverse.pythai.net/bankml#crumb"}},
+    {"@type":"SoftwareSourceCode","@id":"https://deltaverse.pythai.net/bankml#software",
+     "name":"bankML","alternateName":"bankml",
+     "description":"A zero-dependency Rust runtime for 1-bit (Q1_0) and ternary (Q2_0_g64) GGUF language models, bit-exact against llama.cpp b11192, with a verifying server that puts a receipt on every answer.",
+     "codeRepository":"https://github.com/cryptoAGI/bankml","programmingLanguage":"Rust",
+     "license":"https://github.com/cryptoAGI/bankml/blob/main/LICENSING.md","runtimePlatform":"Linux x86-64 (AVX2)",
+     "author":{"@type":"Organization","name":"cryptoAGI","url":"https://github.com/cryptoAGI"},
+     "sameAs":["https://github.com/cryptoAGI/bankml","https://cryptoagi.github.io/bankml/","https://x.com/aiosml"]},
+    {"@type":"BreadcrumbList","@id":"https://deltaverse.pythai.net/bankml#crumb",
+     "itemListElement":[{"@type":"ListItem","position":1,"name":"DeltaVerse","item":"https://deltaverse.pythai.net/"},
+                        {"@type":"ListItem","position":2,"name":"bankML","item":"https://deltaverse.pythai.net/bankml"}]}
+  ]}
+  </script>
+  <style>
+    :root{
+      --bg0:#000000; --bg1:#080a16;
+      --txt:#ffffff; --muted:rgba(255,255,255,.78); --quiet:rgba(255,255,255,.46);
+      --cy:34,211,238; --vi:157,78,221; --am:255,176,84;
+      --panel:rgba(8,10,22,.80); --rule:rgba(34,211,238,.18);
+    }
+    html{background:radial-gradient(circle at center, var(--bg1) 0%, var(--bg0) 70%) fixed; background-color:#000;}
+    body{margin:0; color:var(--txt); font:17px/1.62 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif; background:transparent;}
+    /* the substrate: the DELTAVERSE ground, one layer above it, both behind the page and never taking the pointer */
+    #mark,#layer{position:fixed; inset:0; width:100%; height:100%; display:block; pointer-events:none;}
+    #mark{z-index:0; opacity:.9;}
+    #layer{z-index:1; opacity:0; transition:opacity 1.2s ease;}
+    main,footer{position:relative; z-index:2;}
+    main{max-width:780px; margin:0 auto; padding:56px 16px 24px;}
+    .hero{text-align:center; padding:6vh 0 4vh;}
+    .hero .delta{font-size:15px; letter-spacing:.5em; color:rgba(var(--cy),.75); text-transform:uppercase;}
+    .hero h1{font-size:clamp(40px,9vw,76px); letter-spacing:.14em; margin:.2em 0 .1em; font-weight:300;
+      text-shadow:0 0 28px rgba(var(--cy),.35);}
+    .hero p{color:var(--muted); margin:.4em auto 0; max-width:34em;}
+    .date{color:var(--quiet); font-size:14px; margin-top:1.2em !important;}
+    section{background:var(--panel); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+      border:1px solid var(--rule); border-radius:14px; padding:22px 26px; margin:0 0 22px;}
+    h2{font-size:22px; font-weight:500; letter-spacing:.04em; margin:0 0 .6em; color:#fff;}
+    h3{font-size:17px; font-weight:600; margin:1.3em 0 .3em; color:rgb(var(--cy));}
+    h3:first-of-type{margin-top:.2em;}
+    p,li{color:var(--muted);}
+    strong{color:#fff; font-weight:600;}
+    a{color:rgb(var(--cy)); text-decoration:none; border-bottom:1px solid rgba(var(--cy),.3);}
+    a:hover{color:#fff; border-bottom-color:rgba(var(--vi),.9);}
+    code{font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:rgba(255,255,255,.07); padding:1px 5px; border-radius:4px; color:#e6f7fb;}
+    .more{font-size:14.5px; color:var(--quiet); margin-top:.3em;}
+    .more::before{content:"→ "; color:rgba(var(--cy),.7);}
+    .soon{color:var(--quiet); border-bottom:1px dotted rgba(255,255,255,.3);}
+    ul{padding-left:1.2em;} li{margin:.35em 0;}
+    .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0 4px;}
+    .stat{border:1px solid var(--rule); border-radius:10px; padding:12px 14px; background:rgba(0,0,0,.25);}
+    .stat b{display:block; font-size:24px; font-weight:500; color:#fff;}
+    .stat span{font-size:13.5px; color:var(--quiet);}
+    .table{width:100%; border-collapse:collapse; font-size:15.5px;}
+    .table td{padding:9px 8px; border-top:1px solid var(--rule); vertical-align:top; color:var(--muted);}
+    .table td:first-child{color:#fff; font-weight:500; width:34%;}
+    .road li strong{color:rgb(var(--am));}
+    .hope p{font-size:18px; color:#eef;}
+    #ask .mantra{font-size:19px;color:#fff;margin:.2em 0 .6em}
+    #ask .modes{display:grid;gap:6px;margin:8px 0}
+    #ask .modes label{color:var(--muted);cursor:pointer}
+    #ask .modenote{font-size:14px;color:var(--quiet);margin:.3em 0 .8em}
+    #ask .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+    #ask input[type=text],#ask #endpoint,#ask #model{flex:1 1 220px;min-width:0;background:rgba(0,0,0,.35);color:#fff;border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font:14px ui-monospace,Menlo,monospace}
+    #ask textarea{flex:1 1 260px;min-width:0;background:rgba(0,0,0,.35);color:#fff;border:1px solid var(--rule);border-radius:8px;padding:9px 10px;font:15px system-ui,sans-serif;resize:vertical}
+    #ask button{background:rgba(var(--cy),.16);color:#fff;border:1px solid rgba(var(--cy),.5);border-radius:8px;padding:8px 14px;font:600 14px system-ui,sans-serif;cursor:pointer}
+    #ask button:hover{background:rgba(var(--cy),.3)}
+    #ask button:disabled{opacity:.5;cursor:wait}
+    #ask .status{font-size:13.5px;color:var(--quiet);flex:1 1 100%}
+    #ask details{flex:1 1 100%;font-size:14.5px;color:var(--muted)}
+    #ask details code{word-break:break-all}
+    #chat{display:grid;gap:8px;margin:12px 0 4px;max-height:420px;overflow-y:auto}
+    #chat .msg{white-space:pre-wrap;border-radius:10px;padding:9px 12px;line-height:1.5}
+    #chat .msg.user{background:rgba(var(--vi),.18);justify-self:end;max-width:85%;color:#fff}
+    #chat .msg.assistant{background:rgba(0,0,0,.35);border:1px solid var(--rule);color:#e8eef5}
+    #chat .meta{font:12.5px ui-monospace,Menlo,monospace;color:var(--quiet);margin:-4px 2px 4px}
+    #chat .meta.ok{color:#56d364}
+    #chat .meta.bad{color:#ff7b72}
+    #chat .meta.warn{color:rgb(var(--am))}
+    footer{max-width:780px; margin:0 auto; padding:10px 16px 90px; text-align:center; color:var(--quiet); font-size:14px;}
+    .social{display:flex; gap:22px; justify-content:center; align-items:center; margin:14px 0 10px;}
+    .social a{display:inline-flex; align-items:center; gap:8px; border:none; color:var(--muted);}
+    .social a:hover{color:#fff;}
+    .social svg{width:24px; height:24px; fill:currentColor;}
+    @media (max-width:560px){ body{font-size:16px;} section{padding:18px 16px;} .table td:first-child{width:auto;} .table td{display:block; border-top:none; padding:4px 0;} .table tr{display:block; border-top:1px solid var(--rule); padding:8px 0;} }
+  </style>
+</head>
+<body>
+  <canvas id="mark" aria-hidden="true"></canvas>
+  <canvas id="layer" aria-hidden="true"></canvas>
+
+  <main>
+    <header class="hero">
+      <div class="delta">Δ deltaverse · cryptoAGI</div>
+      <h1>bankML</h1>
+      <p>Verified 1-bit and ternary language models on the CPU you already have: exactly the same answers as
+        llama.cpp, checked bit for bit, then faster.</p>
+      <p class="date">Written 6 October 2026, while bankML 0.3.6 is the latest release, 0.3.7 is in its release gate,
+        and 0.3.8 and 0.3.9 are being built on the way to the 0.4.0 milestone.</p>
+    </header>
+
+
+    <section id="ask">
+      <h2>Ask bankML</h2>
+      <p class="mantra" id="mantra"></p>
+      <div class="modes" role="radiogroup" aria-label="who answers">
+        <label><input type="radio" name="mode" value="local" checked> <b>Your own bankML</b> — verified, with a receipt, on your CPU (free)</label>
+        <label><input type="radio" name="mode" value="hf"> <b>A Hugging Face provider</b> — not bankML, no receipt, your inference quota</label>
+      </div>
+      <p class="modenote" id="modenote"></p>
+      <div id="localrow" class="row">
+        <input id="endpoint" aria-label="your bankml serve address" spellcheck="false">
+        <button id="connect" type="button">connect</button>
+        <span id="localstatus" class="status"></span>
+        <details>
+          <summary>Start your own bankML for this page (Linux, AVX2; free)</summary>
+          <ol>
+            <li><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code> — builds bankML,
+              imports and verifies Bonsai-8B, and starts it so this page (<span id="origin"></span>) may talk to it. Already installed?
+              <code>git pull &amp;&amp; ./install.sh build start --space</code></li>
+            <li>Press <b>connect</b>. Your browser may ask to let this page reach devices on your local network: that is the
+              request for your own bankML on 127.0.0.1, and nothing else.</li>
+            <li><code>./install.sh start --no-space</code> takes the permission back.</li>
+          </ol>
+        </details>
+      </div>
+      <div id="hfrow" class="row" hidden>
+        <input id="model" aria-label="provider model (owner/name)" spellcheck="false">
+        <button id="signin" type="button">Sign in with Hugging Face</button>
+        <button id="signout" type="button" hidden>sign out</button>
+        <span id="who" class="status"></span>
+      </div>
+      <div id="chat" aria-live="polite"></div>
+      <div class="row ask">
+        <textarea id="message" rows="2" placeholder="Ask bankML about itself, its exactness, its speed… (Ctrl+Enter)"></textarea>
+        <button id="send" type="button">Ask</button>
+      </div>
+      <p id="askstatus" class="status"></p>
+    </section>
+
+    <section>
+      <h2>bankML in one paragraph</h2>
+      <p>bankML runs language models on the computer you already have: a laptop, a small server, no graphics card
+        needed. It specialises in <strong>1-bit and ternary models</strong>, which store each weight in one or two
+        bits instead of sixteen. An 8-billion-parameter model then fits in 1.2 GB (1-bit) or 2.3 GB (ternary). bankML
+        gives <strong>exactly the same answers as llama.cpp</strong>, the reference engine, and checks that it does,
+        bit for bit, before it is allowed to be faster. Every answer carries a <strong>receipt</strong> that says
+        which model file produced it.</p>
+      <div class="stats">
+        <div class="stat"><b>9.4–10×</b><span>faster per ternary matrix than llama.cpp</span></div>
+        <div class="stat"><b>≈ 8×</b><span>whole ternary answers vs llama-server</span></div>
+        <div class="stat"><b>0</b><span>external dependencies</span></div>
+        <div class="stat"><b>bit-exact</b><span>against llama.cpp b11192</span></div>
+      </div>
+      <p class="more">the full story: <a href="https://github.com/cryptoAGI/bankml#readme">README</a> · the technical
+        report: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md">TECHNICAL.md</a></p>
+    </section>
+
+
+    <section>
+      <h2>bankML, in its own words</h2>
+      <p>The console that talks to bankML speaks as bankML itself, from its persona file,
+        <a href="https://huggingface.co/spaces/PYTHAI/bankml/blob/main/sAGI/personas/bankml.persona"><code>sAGI/personas/bankml.persona</code></a>.
+        It knows its own use only from measurement: each question carries a SELF block of what bankML measured at that moment, and a value it did not measure it says it did not measure.</p>
+      <p style="font-size:22px;color:#fff;margin:.6em 0">“The same bits first, then the speed.”</p>
+      <p><strong>Its oath.</strong> I answer only from verified weights. What I cannot reproduce exactly I refuse, with the reason. Every answer carries its receipt, and what I say about my own use I have measured.</p>
+      <p class="more">the persona's sources: README's design goals and the thesis ·
+        <a href="https://huggingface.co/spaces/PYTHAI/bankml/blob/main/sAGI/console.py">the console (<code>sAGI/console.py</code>)</a></p>
+    </section>
+
+    <section>
+      <h2>This Space is the source</h2>
+      <p>Every file of bankML is here: the Rust engine (<code>bankML/</code>), the C API (<code>capi/</code>), the oracles and
+        the release gate (<code>testing/</code>), the tools, the docs and Savante's UI (<code>sAGI/</code>) —
+        <a href="https://huggingface.co/spaces/PYTHAI/bankml/tree/main">browse the files</a>. The source of record is
+        <a href="https://github.com/cryptoAGI/bankml">github.com/cryptoAGI/bankml</a>.</p>
+      <p><strong>Talk to bankML yourself.</strong> On a Linux machine with AVX2:</p>
+      <p><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh</code><br>
+        then <code>python3 sAGI/console.py</code> and open <code>http://127.0.0.1:7875</code>.</p>
+      <p class="more">the live engine here: this Space already carries its <code>Dockerfile</code> and
+        <code>hf/start.sh</code> (bankML serving the ternary Bonsai-8B, the console in front, public and read-only);
+        it runs once the Space is switched to Docker hardware</p>
+    </section>
+
+    <section>
+      <h2>The advantages</h2>
+
+      <h3>1. It is fast where it matters most</h3>
+      <p>llama.cpp has no fast x86 code for ternary weights; it falls back to plain C. bankML wrote the missing
+        kernel. Each matrix is <strong>9.4–10× faster</strong>, and whole answers on the ternary model come out at
+        <strong>about 8× llama-server's speed</strong> (2.3–2.4 tokens/s against 0.30 on the same laptop). The
+        ternary model gives the better answers of the two, so this is the speed that counts.</p>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/blob/main/docs/PERFORMANCE.md">PERFORMANCE.md</a> ·
+        the kernel: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/q2_0.md">modules/q2_0.md</a>,
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/bankML/q2_0.rs"><code>bankML/q2_0.rs</code></a></p>
+
+      <h3>2. It is exact, and proves it</h3>
+      <p>Speed only counts if the numbers are the same. Every kernel, the tokenizer, the chat templates, the
+        samplers and whole conversations are checked against llama.cpp b11192's own compiled code. These checks are
+        called <strong>oracles</strong>, and a release ships only when every oracle passes in its <strong>release
+        gate</strong>.</p>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md">oracles.md</a> · the gate:
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/testing/release_gate.sh"><code>testing/release_gate.sh</code></a>
+        and its records in <a href="https://github.com/cryptoAGI/bankml/tree/main/testing/results"><code>testing/results/</code></a></p>
+
+      <h3>3. It refuses to answer from a model it cannot verify</h3>
+      <p>Before a model answers, three gates run. A <strong>guard</strong> reads the file's header and refuses
+        known-bad files. A <strong>pin</strong> checks the file's sha256 against the record of where it came from.
+        The <strong>oracle</strong>, run ahead of time, has proven the arithmetic. Each answer then carries a
+        <strong>receipt</strong> with the model's sha256 and the hashes of the request and the answer.</p>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md#iii1-verified-response-three-gates-before-an-answer">TECHNICAL.md §III.1</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#9-receipts-and-how-to-check-an-answer">receipts (usage.md §9)</a> ·
+        the guard: <a href="https://github.com/cryptoAGI/bankml/blob/main/bankML/gguf.rs"><code>bankML/gguf.rs</code></a> ·
+        the pin: <a href="https://github.com/cryptoAGI/bankml/blob/main/bankML/sha256.rs"><code>bankML/sha256.rs</code></a></p>
+
+      <h3>4. It is small and has nothing to install around it</h3>
+      <p>bankML is one Rust crate with <strong>zero external dependencies</strong>. The GGUF reader, sha256, f16
+        maths, the thread pool, the HTTP server and every kernel are written in the crate. You get one binary and
+        nothing else to trust.</p>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/README.md">one page per source file</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/Cargo.toml"><code>Cargo.toml</code></a></p>
+
+      <h3>5. It speaks the languages your tools already use</h3>
+      <ul>
+        <li>the <strong>OpenAI</strong> chat API (<code>/v1/chat/completions</code>), streamed or not —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/serve.md">serve.md</a></li>
+        <li>the <strong>Ollama</strong> API (<code>/api/chat</code>, <code>/api/generate</code>, a registry of pinned
+          models), so programs written for Ollama work unchanged —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/OLLAMA.md">OLLAMA.md</a></li>
+        <li>a <strong>C library</strong> (<code>libbankml</code>) for C, C++, Python, Go or Swift programs —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/CAPI.md">CAPI.md</a></li>
+        <li><strong>JSON mode and JSON schemas</strong>: answers forced into a shape you choose —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/grammar.md">grammar.md</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/schema.md">schema.md</a></li>
+      </ul>
+
+      <h3>6. It measures itself</h3>
+      <p>bankML reports its own time to first token, tokens per second and, where the machine allows, the energy
+        each token costs. It also limits how much of a graphics card it may use.</p>
+      <p class="more"><span class="soon" title="arrives with 0.3.7">metrics.md and console.md (with 0.3.7)</span> · the GPU:
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/gpu.md">gpu.md</a></p>
+    </section>
+
+    <section>
+      <h2>What people use it for</h2>
+      <table class="table">
+        <tr><td>A private assistant on your own machine</td><td>Savante, a chat page on <code>127.0.0.1:7873</code>, answered by bankML —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#4-talk-to-savante">usage.md §4</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/playback.md">playback.md</a></td></tr>
+        <tr><td>The engine behind mindX</td><td>mindX's default model server on its VPS since 4 October 2026, in place of Ollama —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/OLLAMA.md">OLLAMA.md</a></td></tr>
+        <tr><td>A drop-in Ollama or OpenAI server</td><td><code>bankml serve --native --registry</code> —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#6a-ollamas-api">usage.md §6a</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/install.md">install.md</a></td></tr>
+        <tr><td>Your own model, verified</td><td><code>bankml convert</code> (safetensors → GGUF, byte-identical to llama.cpp's) and
+          <code>bankml create</code> (a persona layer from a Modelfile) —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/convert.md">convert.md</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/create.md">create.md</a></td></tr>
+        <tr><td>Structured answers for programs</td><td>JSON mode, JSON schemas and grammars —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#json-mode-and-grammars-033">usage.md</a></td></tr>
+        <tr><td>Inference inside another program</td><td><code>libbankml</code> and <code>bankml.h</code> —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/CAPI.md">CAPI.md</a></td></tr>
+        <tr><td>Agents with a provable history</td><td>receipts, Merkle commitments of the conversation, THOT bundles and iNFTs —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#8a-proof-of-data-without-the-data">usage.md §8a</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#8e-inft-mint-an-agent-load-one-from-a-token">§8e</a></td></tr>
+        <tr><td>Meaning search over notes</td><td>bge-m3 embeddings fused with keyword search —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/embedding.md">embedding.md</a></td></tr>
+      </table>
+      <p class="more">new here? start with <code>./install.sh</code>:
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#1-install">usage.md §1</a></p>
+    </section>
+
+    <section>
+      <h2>How Rust helps bankML go fast and stay exact</h2>
+      <p>Rust lets bankML write code as close to the hardware as C, while the compiler checks much of what C leaves
+        to the programmer.</p>
+      <ul>
+        <li><strong>Direct access to the CPU's vector instructions.</strong> The kernels use AVX2 through
+          <code>std::arch</code>, compiled with <code>#[target_feature(enable = "avx2,fma,f16c")]</code>. bankML checks
+          at run time which instructions the CPU has, so one binary runs everywhere and uses the fast path where it
+          can. — <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/q1_0.md">q1_0.md</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/q2_0.md">q2_0.md</a></li>
+        <li><strong>No hidden costs.</strong> No garbage collector and no runtime pauses. Iterators and fixed-size
+          chunks (<code>as_chunks</code>) compile down to plain loops, which lets the compiler drop bounds checks
+          inside the hot kernels.</li>
+        <li><strong>Safe threads, the same bits on any thread count.</strong> The thread pool hands out rows from an
+          atomic counter. Ownership rules guarantee each output chunk has exactly one writer, so threads can never
+          race, and the answer does not depend on how many threads ran. —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/par.md">par.md</a>,
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/bankML/par.rs"><code>bankML/par.rs</code></a></li>
+        <li><strong><code>unsafe</code> kept in small, named places.</strong> The memory map, the vector intrinsics and
+          the GPU loader carry documented safety contracts behind safe functions; the compiler checks the rest. —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/gguf.md">gguf.md</a></li>
+        <li><strong>Zero-copy model loading.</strong> The model file is memory-mapped, and the kernels read the
+          weights straight from the mapping. — <a href="https://github.com/cryptoAGI/bankml/blob/main/bankML/gguf.rs"><code>bankML/gguf.rs</code></a></li>
+        <li><strong>Hostile files handled safely.</strong> All header arithmetic is checked (<code>checked_add</code>,
+          <code>checked_mul</code>), so a malformed file is refused with a reason instead of crashing.</li>
+        <li><strong>Whole-program optimisation.</strong> Release builds use link-time optimisation, one
+          code-generation unit and abort-on-panic: one small, fast binary. —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/Cargo.toml"><code>Cargo.toml</code></a></li>
+        <li><strong>A pinned toolchain.</strong> Rust 1.99 is pinned, so a build today gives the same machine code as
+          a build next month, which an exactness project needs. —
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/rust-toolchain.toml"><code>rust-toolchain.toml</code></a></li>
+      </ul>
+    </section>
+
+    <section class="road">
+      <h2>Where it is going</h2>
+      <p>The road is laid out release by release in
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TODO.md">TODO.md</a>, and each step counts only once
+        its oracle passes.</p>
+      <ul>
+        <li><strong>0.3.7</strong> (in its release gate): llama-server's whole sampler chain, bankML measuring itself,
+          a GPU limiter, and the bankML console.</li>
+        <li><strong>0.3.8</strong> (built): llama-server's behaviour at the context limit, saved and restored
+          conversations (slots), a prompt cache so conversations taking turns each keep their context, and token
+          probabilities, streamed or not.</li>
+        <li><strong>0.3.9</strong> (in progress): a <code>q8_0</code> memory cache that halves the conversation memory,
+          a faster grammar mask, and 1-bit speed at or above llama-server's.</li>
+        <li><strong>0.4.0, the milestone:</strong> native serving complete. bankML answers everything Savante and mindX
+          ask of llama-server, and its own engine is chosen by default for both 1-bit and ternary models.</li>
+        <li><strong>0.5.0, hardware:</strong> ARM phones and tablets (NEON), newer x86 instructions (AVX-512), and more
+          graphics cards.</li>
+        <li><strong>1.0.0:</strong> llama.cpp is needed only as the oracle in the gate, never at run time. bankML runs
+          at llama.cpp's speed or better on every supported format, its interfaces are stable, and receipts are
+          signed.</li>
+      </ul>
+    </section>
+
+    <section class="hope">
+      <h2>Our hope for bankML</h2>
+      <p>We hope bankML shows that a capable, private AI does not need a data centre or a graphics card: that an
+        eight-billion-parameter model can run on the laptop in front of you and give answers you can check. We want
+        every speed claim to come with proof that the numbers are the same, so that "faster" always means faster
+        <em>and</em> correct. We hope the ternary kernel goes back upstream to llama.cpp, so everyone benefits from it.
+        We want bankML to become the dependable, verifiable engine under Savante, mindX and the agents built on them.
+        And we want it to stay small enough that one person can read all of it.</p>
+      <p class="more">the authors' own words:
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson">the Thesis</a> ·
+        the argument in full, with the contemporary field: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">the thesis</a> ·
+        among other engines and papers: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/research.md">research.md</a> ·
+        how it was built: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/BUILD_HISTORY.md">BUILD_HISTORY.md</a></p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="social">
+      <a href="https://github.com/cryptoAGI/bankml" rel="noopener" aria-label="bankML on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        cryptoAGI/bankml
+      </a>
+      <a href="https://x.com/aiosml" rel="noopener" aria-label="aiosml on X">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        @aiosml
+      </a>
+    </div>
+    <p><a href="https://huggingface.co/spaces/PYTHAI/bankml">bankML on Hugging Face</a> ·
+      <a href="https://github.com/minaiml">minaiml</a> (<a href="https://huggingface.co/spaces/PYTHAI/minaiml">Space</a>), language models in miniature ·
+      <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">thesis</a></p>
+    <p>bankML · MIT OR Apache-2.0 · Professor Codephreak · Gregory L. Magnusson · the substrate: DeltaVerse (MIT) ·
+      <a href="https://deltaverse.pythai.net/bankml">deltaverse.pythai.net/bankml</a></p>
+  </footer>
+
+  <script src="https://deltaverse.pythai.net/engine/frequency-source.js?v=09912494"></script>
+  <script src="https://deltaverse.pythai.net/engine/ngn/deltaverse-substrate.js?v=09912494"></script>
+  <script>
+  (() => {
+    if (!window.DVDeltaverse) return;                 // the page stands without its ground
+    const mark = new DVDeltaverse.Field('#mark', { demo: true, scale: 1.35, depth: 0.62 }).start();
+    window.DVMark = mark;
+    if (window.FrequencySource) { try { mark.attachFrequency(new FrequencySource()); } catch (e) {} }
+  })();
+  </script>
+  <script src="https://deltaverse.pythai.net/engine/ngn/half-sweep.js?v=09912494"></script>
+  <script src="https://deltaverse.pythai.net/engine/ngn/triad-genesis.js?v=09912494"></script>
+  <script src="https://deltaverse.pythai.net/engine/ngn/platonic-lattice.js?v=09912494"></script>
+  <script src="https://deltaverse.pythai.net/engine/ngn/prime-horizon.js?v=09912494"></script>
+  <script src="https://deltaverse.pythai.net/engine/ngn/emergent-menu.js?v=09912494"></script>
+  <script>
+  /* the bankML substrate: the DELTAVERSE ground under the page, and one layer chosen from the ⟁ layers menu,
+     'ground only' first and the default — as on the landing page and in bankML's Savante UI (sAGI/substrate) */
+  (function layers(){
+    if (!window.DVEmergentMenu) return;
+    var cv = document.getElementById('layer'), KEY = 'bankml_page';
+    var MAKE = {
+      'platonic-lattice': function(){ return window.DVPlatonicLattice && new DVPlatonicLattice.Field(cv, { scale:0.30, scope:0.5, pop:9, nested:true }); },
+      'prime-horizon':    function(){ return window.DVPrimeHorizon && new DVPrimeHorizon.Field(cv, { cols:110 }); },
+      'triad-genesis':    function(){ return window.DVTriadGenesis && new DVTriadGenesis.Field(cv, { loop:true }); },
+      'half-sweep':       function(){ return window.DVHalfSweep && new DVHalfSweep.Field(cv, { axis:'both' }); }
+    };
+    var layer = 'none';
+    try { layer = localStorage.getItem(KEY) || 'none'; } catch (e) {}
+    var current = null;
+    function mount(id){
+      if (current) { try { current.stop(); } catch (e) {} current = null; }
+      cv.style.opacity = '0'; layer = id;
+      try { localStorage.setItem(KEY, id); } catch (e) {}
+      if (!MAKE[id]) return;
+      try { current = MAKE[id](); if (current) { current.start(); cv.style.opacity = '0.55'; } } catch (e) {}
+      try { document.dispatchEvent(new CustomEvent('dv:layer', { detail: { id: id } })); } catch (e) {}
+    }
+    DVEmergentMenu.mount({
+      id:'bankml-layers', anchor:'bottom-left', label:'⟁ layers', selected:layer,   // explicit: never items[0] by accident
+      items:[ {id:'none',label:'ground only'},
+              {id:'platonic-lattice',label:'platonic lattice'},
+              {id:'prime-horizon',label:'prime horizon'},
+              {id:'triad-genesis',label:'triad genesis'},
+              {id:'half-sweep',label:'half sweep'} ],
+      onSelect:function(it){ mount(it.id); }
+    });
+    mount(layer);
+  })();
+  </script>
+  <script type="module" src="bankml-chat.js"></script>
+</body>
+</html>
