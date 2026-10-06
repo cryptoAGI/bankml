@@ -195,6 +195,9 @@ fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, up
         reaper.reap();
     });
     let sha = rs.peek().map(|(l, _)| l.sha256).unwrap_or_default();
+    if let Some(d) = &cfg.slot_dir {
+        std::fs::create_dir_all(d).map_err(|e| format!("--slot-dir {}: {e}", d.display()))?;
+    }
     let st = Arc::new(State { slot_dir: cfg.slot_dir.clone(), native: Some(rs), keep_alive: ka, verified: Verified { model_sha256: sha.clone(), guard: "play", engine: cfg.engine.as_str(), arch: None, name: None, types: Vec::new() },
                               model, upstream: upstream.clone(), engine, hashed_at, ident: id });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
