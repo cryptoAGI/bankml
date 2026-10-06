@@ -125,6 +125,10 @@
     .table td:first-child{color:#fff; font-weight:500; width:34%;}
     .road li strong{color:rgb(var(--am));}
     .hope p{font-size:18px; color:#eef;}
+    .spaces{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:3px;font-size:13px;margin-bottom:18px;background:rgba(0,0,0,.35)}
+    .spaces a,.spaces span{padding:3px 14px;border-radius:999px;border:none;color:var(--muted)}
+    .spaces a:hover{color:#fff}
+    .spaces .on{background:#fff;color:#000;font-weight:600}
     #ask .mantra{font-size:19px;color:#fff;margin:.2em 0 .6em}
     #ask .modes{display:grid;gap:6px;margin:8px 0}
     #ask .modes label{color:var(--muted);cursor:pointer}
@@ -160,6 +164,7 @@
 
   <main>
     <header class="hero">
+      <div class="spaces" role="group" aria-label="the Spaces"><a href="https://huggingface.co/spaces/PYTHAI/savante" rel="noopener">Savante</a><span class="on" aria-current="page">bankML</span></div>
       <div class="delta">Δ deltaverse · cryptoAGI</div>
       <h1>bankML</h1>
       <p>Verified 1-bit and ternary language models on the CPU you already have: exactly the same answers as
@@ -423,7 +428,8 @@
         @aiosml
       </a>
     </div>
-    <p><a href="https://huggingface.co/spaces/PYTHAI/bankml">bankML on Hugging Face</a> ·
+    <p><a href="https://huggingface.co/spaces/PYTHAI/savante">Savante</a> — the oversight office bankML serves ·
+      <a href="https://huggingface.co/spaces/PYTHAI/bankml">bankML on Hugging Face</a> ·
       <a href="https://github.com/minaiml">minaiml</a> (<a href="https://huggingface.co/spaces/PYTHAI/minaiml">Space</a>), language models in miniature ·
       <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">thesis</a></p>
     <p>bankML · MIT OR Apache-2.0 · Professor Codephreak · Gregory L. Magnusson · the substrate: DeltaVerse (MIT) ·
