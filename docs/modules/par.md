@@ -8,7 +8,8 @@ row scheduler that hands out fixed-size row chunks from an atomic counter, as gg
 Rows are independent, and each row is computed by the same single-thread kernel, so the output bits do not depend on
 the thread count. The oracle tests check that.
 
-It exists because a token is about 253 matmuls. Spawning threads for each one cost tens of milliseconds per token.
+It exists because one token of the 8B models is 253 matmuls (`decode_budget_q1_0`). Spawning threads for each one
+cost about 22 ms per token; waking the pool costs about 3 ms (CHANGELOG 0.0.3).
 Callers: the `_par` functions of [q1_0.md](q1_0.md), [q2_0.md](q2_0.md) and [f16.md](f16.md); the native forward
 pass (`forward.rs`, which builds its pool with `Pool::from_env()`); and the A/B harnesses, which run ggml's kernel on
 the same pool so that the comparison is kernel against kernel.
@@ -40,7 +41,7 @@ Environment:
 
 | variable | effect |
 |---|---|
-| `BANKML_THREADS` | the pool's size in `from_env`; in the decode budget tests, a comma list of thread counts |
+| `BANKML_THREADS` | the pool's size in `from_env`, read when the forward pass opens a model (Savante's and the console's CPU-threads slider restart the engine with a new value); in the decode budget tests, a comma list of thread counts |
 
 ```rust
 let pool = bankml::par::Pool::from_env();
@@ -58,12 +59,16 @@ pool.rows(rows, &mut out, &|r0, o| {
   `_par` paths against single-thread results, bit for bit.
 - `decode_budget_q1_0` / `decode_budget_q2_0` compare every threaded output with ggml's.
 - Benchmarks (`#[ignore]`): `bench_pool_overhead` (wake-up cost per `run` against `std::thread::scope`) and
-  `bench_memory_floor` (streaming read bandwidth of a 768 MiB buffer on the same scheduler, 1–4 threads).
+  `bench_memory_floor` (added in 0.0.4: streaming read bandwidth of a 768 MiB buffer, far larger than cache, on
+  the same scheduler, 1–4 threads; it prints the resulting floor for one ternary token, 2.13 GB, and one 1-bit token,
+  1.06 GB). Run it with `cargo test --release -- --ignored bench_memory_floor --nocapture --test-threads=1`.
 
 ## Advantages and efficiency
 
-- **Spawn once, wake per matmul.** Measured on the laptop at three threads (CHANGELOG 0.0.3): 12.6 µs per `run`
-  against 88.8 µs for `thread::scope`, about 3 ms per token instead of 22 ms. With it the three-thread ternary budget
+- **Spawn once, wake per matmul.** Spawning threads with `std::thread::scope` for every matmul costs about 20 µs
+  per spawned thread, tens of ms per token at 253 matmuls (`bench_pool_overhead`). Measured on the laptop at three
+  threads (CHANGELOG 0.0.3): 12.6 µs per `run` against 88.8 µs for `thread::scope`, about 3 ms per token instead of
+  22 ms. With it the three-thread ternary budget
   moved from 0.36 s to 0.23–0.25 s per token ([PERFORMANCE.md](../PERFORMANCE.md)).
 - **Dynamic chunks.** 16 rows per claim measured best for the ternary GEMV on the dev box; a static split was 1.1×
   slower at three threads, because one core also runs the OS.

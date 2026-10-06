@@ -14,15 +14,20 @@ It follows llama.cpp's three steps:
    `parse_special` only USER_DEFINED ones are.
 2. **Pre-tokenize** each remaining span. `qwen2`'s pattern is written out alternative by alternative (ECMAScript
    semantics). `smollm` runs two passes: digits cut out one by one, then GPT-2's pattern inside each piece.
-3. **Byte-level BPE** on each piece: the adjacent pair with the lowest merge rank is merged, the leftmost on ties.
+3. **Byte-level BPE** on each piece: its UTF-8 bytes become GPT-2's printable byte characters, each a token; the
+   adjacent pair with the lowest merge rank is merged, the leftmost on ties, until none is left.
+
+The tokenizer was step one of P3 (Qwen3 / Bonsai, `qwen2`); the `smollm` pre-tokenizer came in 0.3.4 (O4) for
+SmolLM2 and mindX's `mindx-genN`.
 
 `unicode_letters.rs` holds Unicode general category L (Lu, Ll, Lt, Lm, Lo) as 622 sorted inclusive ranges, generated
 from Python's `unicodedata` (Unicode 13.0.0). It exists because `\p{L}` is category L, and Rust's
 `char::is_alphabetic` is the Alphabetic property, which is not the same set.
 
-Callers: the native engine (`native.rs`: prompts, grammar pieces, end-of-generation ids); `bankml serve --native`
-(`POST /tokenize`, and every chat request); `bankml tokenize` and `bankml generate` (`main.rs`); and `native.rs`'s
-model check, which calls `check_gguf`.
+Callers: the native engine (`native.rs`: prompts, grammar pieces, end-of-generation ids, since 0.3.7 DRY's sequence
+breakers, since 0.3.8 the bytes of each logprobs entry and its top tokens); `bankml serve --native` (`POST /tokenize`,
+every chat request, and a stop word's tokens, which llama-server drops from the logprobs); `bankml tokenize` and
+`bankml generate` (`main.rs`); and `native::header_info`, the registry's playability check, which calls `check_gguf`.
 
 ## Technical usage
 
@@ -74,15 +79,29 @@ curl -s 127.0.0.1:PORT/tokenize -d '{"content": "Hello", "parse_special": true}'
   `/tokenize` on a corpus (the repository's documents and Savante's canon, the chat markers, edge cases: contractions,
   CRLF, every kind of whitespace, digits in several scripts, combining marks, CJK, right-to-left scripts, emoji with
   joiners, a seeded fuzz set of 2,000 strings from 17 Unicode ranges), with special tokens parsed and not. The test
-  re-derives every case and requires the same ids in the same order: **4,346 of 4,346** in the 0.3.6 gate record.
+  re-derives every case and requires the same ids in the same order: **4,346 of 4,346** in the 0.3.6 gate record
+  (`testing/results/0.3.6.txt`).
 - `oracle_tokenizer_smollm`: the same corpus on SmolLM2's vocabulary against llama-server running SmolLM2,
-  **4,346 of 4,346** (docs/oracles.md §5d).
-- Indirectly, every greedy, sampling, conversation and JSON oracle: they compare token ids, so a tokenizer error
-  shows there too. `oracle_grammar_masks` checks `piece` and the end set: 151,669 of 151,669 tokens and an end set of 6.
+  **4,346 of 4,346** (docs/oracles.md §5d; the same record).
+- Indirectly, every greedy, sampling, conversation, JSON and logprobs oracle: they compare token ids (and logprobs
+  entries their bytes), so a tokenizer error shows there too. `oracle_grammar_masks` checks `piece` and the end set: 151,669 of 151,669 tokens and an end set of 6.
 
 The oracle has caught real differences: which special tokens split the text (Qwen3's `<think>` markers are
 USER_DEFINED and split even without `parse_special`), the letter class, and in 0.3.4 `</s>` taken as text in 2 of
 4,346 cases before the type override was added.
+
+## Design notes
+
+- **`qwen2`'s pattern**, with alternatives tried in order at each position (ECMAScript semantics; the
+  backtracking results are written out in `pretokenize`): `'s|'t|'re|'ve|'m|'ll|'d` (either case) ·
+  `[^\r\n\p{L}\p{N}]?\p{L}+` · `\p{N}` · ` ?[^\s\p{L}\p{N}]+[\r\n]*` · `\s*[\r\n]+` · `\s+(?!\S)` · `\s+`.
+- **`smollm`**, read from llama-vocab.cpp and unicode.cpp b11192, runs two passes as llama.cpp does. First `\p{N}`
+  cuts every digit out on its own: this is the `std::regex` pass over the collapsed text, which matches ASCII digits
+  and non-ASCII codepoints whose only category is Number and that are not whitespace. Then GPT-2's pattern,
+  `'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`, runs inside each piece
+  (`unicode_regex_split_custom_gpt2`): the end of a piece is the end of its text, so a space before a digit stays
+  alone. Its oracle is llama-server's `/tokenize` on the SmolLM2 vocabulary.
+- Special tokens are cut out by llama-vocab's `tokenizer_st_partition`.
 
 ## Advantages and efficiency
 

@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! bankml's GPU kernels, generated as SPIR-V by `spirv.rs`. Each reproduces its CPU kernel's float order exactly, so
-//! the GPU result is the CPU result, which is ggml's (§III.4): same bits first, then speed.
+//! bankML's Q1_0 GPU kernels, assembled as SPIR-V by `spirv.rs`, and the on-card oracle that gates their use.
 //!
-//! `q1_0_mat_vec`: one invocation per output row, following `q1_0::vec_dot_ref` step by step — per 128-weight block,
-//! four 32-element sub-blocks; per sub-block eight lanes of an exact integer sum of ±q over four elements (ggml's
-//! i8 negation wraps −128 to −128); per lane `ab = d1·s` on the first sub-block and `fma(d1, s, ab)` after;
-//! `acc = fma(d0, ab, acc)`; then the horizontal sum `(a0+a4 + a2+a6) + (a1+a5 + a3+a7)`. Weights are repacked
-//! once on upload (scales f16→f32, exact; bits as u32 words) and activations per call (scales f32, quants packed
-//! four to a word) — the numbers are unchanged, only aligned.
+//! Each kernel performs `q1_0::vec_dot_ref`'s float operations in the CPU's order, so its result has the CPU
+//! kernel's bits, and therefore ggml's. Weights are repacked once on upload and activations per call; repacking
+//! aligns the numbers without changing them.
+//! Details: docs/modules/gpu.md.
 
 use super::spirv::{dec, op, sc, Module, BUILTIN_GLOBAL_INVOCATION_ID, BUILTIN_LOCAL_INVOCATION_INDEX, GLSL_FMA};
 
-/// Bindings of `q1_0_mat_vec`: weight scales (f32), weight bits (u32 ×4 per block), activation scales (f32 per 32),
-/// activation quants (i32 words of four i8), output (f32). Push constants: rows, blocks per row.
+/// Storage-buffer bindings of both Q1_0 kernels.
+///
+/// In order: weight scales (f32), weight bits (four u32 per block), activation scales (f32 per 32), activation
+/// quants (i32 words of four i8), output (f32). Push constants: rows, blocks per row.
 pub const Q1_0_BINDINGS: u32 = 5;
+/// Invocations per workgroup.
 pub const LOCAL_SIZE: u32 = 64;
 
+/// The Q1_0 matrix–vector kernel, one invocation per output row; dispatch `ceil(rows / 64)` workgroups.
+///
+/// Per 128-weight block, four 32-element sub-blocks; per sub-block, eight lanes each sum ±q over four elements
+/// exactly (an i8 −128 negates to −128, as in ggml); per lane `ab = d1·s` on the first sub-block and
+/// `fma(d1, s, ab)` after; `acc = fma(d0, ab, acc)` through [`Module::fma_exact`]; then the horizontal sum
+/// `(a0+a4 + a2+a6) + (a1+a5 + a3+a7)`.
 pub fn q1_0_mat_vec() -> Vec<u32> {
     let mut m = Module::new();
     m.capability(1); // Shader
@@ -28,7 +34,7 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
     let i32t = m.ty(op::TYPE_INT, &[32, 1]);
     let f32t = m.ty(op::TYPE_FLOAT, &[32]);
     let v3u = m.ty(op::TYPE_VECTOR, &[u32t, 3]);
-    // storage buffers: struct { T data[]; } per element type
+    // Storage buffers: `struct { T data[]; }` per element type.
     let buffer_ty = |m: &mut Module, elem: u32| {
         let arr = m.ty(op::TYPE_RUNTIME_ARRAY, &[elem]);
         m.decorate(arr, &[dec::ARRAY_STRIDE, 4]);
@@ -123,7 +129,7 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
             let qword = m.op(op::LOAD, i32t, &[pq]);
             let mut s = ci0;
             for e in 0..4u32 {
-                // sign-extend byte e: shift it to the top, then arithmetic-shift it back down
+                // Sign-extend byte e: shift it to the top, then arithmetic-shift it back down.
                 let up = m.op(op::SHIFT_LEFT_LOGICAL, i32t, &[qword, cu[(24 - 8 * e) as usize]]);
                 let q = m.op(op::SHIFT_RIGHT_ARITHMETIC, i32t, &[up, cu[24]]);
                 let sh = m.op(op::SHIFT_RIGHT_LOGICAL, u32t, &[wword, cu[(4 * l + e) as usize]]);
@@ -145,7 +151,7 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
     }
     for l in 0..8 {
         let a = m.op(op::LOAD, f32t, &[acc[l]]);
-        // the outer fma's product is not exact in f32, and a driver may not fuse it: computed exactly (spirv.rs)
+        // The outer product is inexact in f32 and a driver may not fuse `Fma`, so this FMA is built exactly.
         let n = m.fma_exact((f32t, u32t, tbool), d0, ab[l], a, c_mask, cu[1], cu[0], cf0);
         m.stmt(op::STORE, &[acc[l], n]);
     }
@@ -173,10 +179,11 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
     m.words()
 }
 
-/// `q1_0_mat_vec8`: the same arithmetic with eight invocations per row, one per accumulation lane of the CPU kernel
-/// (each lane's chain over the blocks is independent there too), so a workgroup of 64 covers 8 rows. The eight lane
-/// sums meet in workgroup memory and lane 0 adds them in the CPU's order, `(a0+a4 + a2+a6) + (a1+a5 + a3+a7)`: the
-/// same bits as `q1_0_mat_vec`, with eight times the parallelism. Dispatch `ceil(rows · 8 / 64)` workgroups.
+/// The Q1_0 kernel with eight invocations per row; dispatch `ceil(rows · 8 / 64)` workgroups.
+///
+/// Each invocation runs one of the CPU kernel's accumulation lanes, whose chains over the blocks are independent
+/// there too; a workgroup covers 8 rows. The lane sums meet in workgroup memory and lane 0 adds them in the CPU's
+/// order, so the bits equal `q1_0_mat_vec`'s.
 pub fn q1_0_mat_vec8() -> Vec<u32> {
     let mut m = Module::new();
     m.capability(1);
@@ -316,7 +323,7 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
     m.label(l_merge);
     m.stmt(op::BRANCH, &[l_after]);
 
-    // every invocation reaches the barrier (uniform control flow); lane 0 of each row sums in the CPU's order
+    // Every invocation reaches the barrier (uniform control flow); lane 0 of each row sums in the CPU's order.
     m.label(l_after);
     let mine = m.op(op::LOAD, f32t, &[acc]);
     let ps = m.op(op::ACCESS_CHAIN, pe_sh, &[shared, li]);
@@ -345,9 +352,10 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
     m.words()
 }
 
-/// The on-card oracle `bankml gpu --verify` runs before a card is trusted: both Q1_0 kernels against the CPU kernel
-/// (bit-exact against ggml) on seeded random weights and activations, −128 quants included. Returns one line per
-/// kernel and shape, or the first difference.
+/// The on-card oracle: both Q1_0 kernels against the CPU kernel, bit for bit, on seeded random data.
+///
+/// Run before a card is trusted (`bankml gpu --verify`, `Worker::open`). Returns one line per kernel and shape, or
+/// `Err` naming the first row that differs.
 pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
     use crate::q1_0::{mat_vec, Q8Act};
     let mut rng = 0x2545_f491_4f6c_dd1du64;
@@ -360,9 +368,8 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     for (kname, spv, per_row) in [("q1_0_mat_vec", q1_0_mat_vec(), 1u32), ("q1_0_mat_vec8", q1_0_mat_vec8(), 8)] {
         let pipe = gpu.pipeline(&spv, Q1_0_BINDINGS, 8)?;
-        // two regimes: uniform data with a −128 quant (the wrapping negation), and data shaped like a real layer —
-        // weight scales and activation magnitudes that vary per block, so the products are inexact in f32 and a
-        // driver that does not fuse an FMA shows (the Vega 3's does not: 0.2.14 computes the FMA exactly instead)
+        // Two regimes: uniform data with a −128 quant (the wrapping negation), and layer-shaped data whose per-block
+        // scales and magnitudes make the products inexact in f32, which exposes a driver that does not fuse `Fma`.
         for &(rows, n, real) in &[(1000usize, 512usize, false), (4096, 4096, false), (1024, 12288, false), (4096, 4096, true), (2048, 12288, true)] {
             let nb = n / 128;
             let w: Vec<u8> = (0..rows * nb).flat_map(|_| {
@@ -401,7 +408,9 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
-/// A Q1_0 matrix repacked for the kernel: per block its scale as f32 (exact) and its 128 bits as four u32 words.
+/// A Q1_0 matrix repacked for the kernels: per block, its scale as f32 (exact) and its 128 bits as four u32 words.
+///
+/// `w` holds `rows` rows of `n / 128` 18-byte blocks.
 pub fn pack_q1_0(w: &[u8], rows: usize, n: usize) -> (Vec<f32>, Vec<u32>) {
     let nb = n / 128;
     let (mut d, mut bits) = (Vec::with_capacity(rows * nb), Vec::with_capacity(rows * nb * 4));
@@ -412,7 +421,7 @@ pub fn pack_q1_0(w: &[u8], rows: usize, n: usize) -> (Vec<f32>, Vec<u32>) {
     (d, bits)
 }
 
-/// A q8_0 activation repacked for the kernel: its f32 scales and its quants four to a word.
+/// A q8_0 activation repacked for the kernels: its f32 scales and its quants four to a word.
 pub fn pack_act(a: &crate::q1_0::Q8Act) -> (Vec<f32>, Vec<i32>) {
     let q: Vec<i32> = a.qs().as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes([c[0] as u8, c[1] as u8, c[2] as u8, c[3] as u8])).collect();
     (a.d().to_vec(), q)
@@ -423,8 +432,7 @@ mod tests {
     use super::*;
     use crate::q1_0::{mat_vec, Q8Act};
 
-    /// The Q1_0 kernel on every usable local GPU against bankml's CPU kernel (itself bit-exact against ggml), on
-    /// random weights and activations, including −128 quants (ggml's wrapping negation).
+    /// Both Q1_0 kernels on every usable local GPU against the CPU kernel, including −128 quants.
     #[test]
     #[ignore = "needs a Vulkan GPU"]
     fn gpu_q1_0_mat_vec_bit_exact() {

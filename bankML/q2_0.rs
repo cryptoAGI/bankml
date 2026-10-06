@@ -1,22 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P2 — the ternary kernel: `Q2_0` (ggml type 42, group 64), as mainline ggml defines it at **b11192**
-//! (read from the tag's source 2026-09-26):
+//! The ternary `Q2_0` kernel (ggml type 42, group 64), bit-exact with ggml b11192's haswell build.
 //!
-//! - `ggml-common.h`: `block_q2_0 { ggml_half d; uint8_t qs[16]; }` — 18 bytes, scale first, 2.25 bpw.
-//! - `ggml-quants.c: dequantize_row_q2_0`: weight j is bits `2·(j%4)` of byte `j/4` (LSB first);
-//!   code c ∈ {0,1,2,3} → `(c − 1)·d`, i.e. {−1, 0, +1, **+2**}. The Bonsai files are ternary, the format
-//!   is not: code 3 is legal and every kernel here takes it.
-//! - `ggml-cpu.c` traits: `vec_dot = ggml_vec_dot_q2_0_q8_0`, `vec_dot_type = Q8_0`, one Q2_0 block
-//!   meets two q8_0 blocks (the same AVX2 q8_0 quantizer as Q1_0, `q1_0::quantize_row_q8_0`).
-//! - **x86 has no Q2_0 kernel.** `arch-fallback.h` renames `ggml_vec_dot_q2_0_q8_0_generic` to
-//!   `ggml_vec_dot_q2_0_q8_0` on x86; `repack.cpp` has no Q2_0 case and llamafile's sgemm none either.
-//!   The shipped haswell binary's symbol is that scalar C, unvectorised: 64 `imul`s per block, then
-//!   `vfmadd231ss` for `sumi += d1·s` (twice) and `sumf += d0·sumi` (read from the disassembly). Decode
-//!   *and* prefill run through it one (row, column) pair at a time. That is where the 5× goes.
+//! - Block (`ggml-common.h`): `block_q2_0 { ggml_half d; uint8_t qs[16]; }`, 18 bytes, scale first.
+//! - Decode (`dequantize_row_q2_0`): weight j is bits `2·(j%4)` of byte `j/4`, LSB first; code
+//!   c ∈ {0,1,2,3} → `(c − 1)·d`. Code 3 (+2) is legal and every kernel accepts it.
+//! - Dot (`ggml_vec_dot_q2_0_q8_0`, `vec_dot_type = Q8_0`): one Q2_0 block meets two q8_0 blocks,
+//!   quantized by `q1_0::quantize_row_q8_0`. On x86 the symbol is the generic C (`arch-fallback.h`;
+//!   no repack or sgemm case), compiled with `vfmadd231ss` for `sumi += d1·s` and `sumf += d0·sumi`.
 //!
-//! Bit-exactness: the two integer sums per block are exact in any order, so the AVX2 path may reorder
-//! the activation (once per token, `Q8Act2`) and use `maddubs`/`madd`; the float ops are ggml's, in
-//! ggml's order: `sumi = fma(d1₁, s₁, fma(d1₀, s₀, 0))`, `sumf = fma(d0, sumi, sumf)` block after block.
+//! Float order: the two integer sums per block are exact in any order, so the AVX2 path reorders the
+//! activation (`Q8Act2`) and uses `maddubs`/`madd`; the float ops are ggml's, in ggml's order:
+//! `sumi = fma(d1₁, s₁, fma(d1₀, s₀, 0))`, then `sumf = fma(d0, sumi, sumf)` block after block.
+//!
+//! Details: docs/modules/q2_0.md.
 
 use crate::q1_0::{f16_to_f32, quantize_row_q8_0, Q8_0_BYTES, QK8_0};
 
@@ -40,7 +36,7 @@ fn check(n: usize, x: &[u8], y: &[u8]) {
     assert!(x.len() >= n / QK2_0 * Q2_0_BYTES && y.len() >= n / QK8_0 * Q8_0_BYTES);
 }
 
-/// Scalar model of the shipped `ggml_vec_dot_q2_0_q8_0` (generic C, FMA-contracted by GCC).
+/// Scalar model of the shipped haswell `ggml_vec_dot_q2_0_q8_0`: the generic C, FMA-contracted by GCC.
 pub fn vec_dot_ref(n: usize, x: &[u8], y: &[u8]) -> f32 {
     check(n, x, y);
     let mut sumf = 0.0f32;
@@ -62,8 +58,8 @@ pub fn vec_dot_ref(n: usize, x: &[u8], y: &[u8]) -> f32 {
     sumf
 }
 
-/// The same C as built by ggml's baseline `libggml-cpu-x64.so` (SSE only, no FMA): `sumi += d1·s` as
-/// mul then add, `sumf += sumi·d0` likewise. Not the node's kernel; kept so both shipped variants are proven.
+/// Scalar model of the same C in ggml's baseline `libggml-cpu-x64.so` (SSE, no FMA): `sumi += d1·s` and
+/// `sumf += sumi·d0` each round the multiply, then the add. Not used for inference.
 pub fn vec_dot_ref_nofma(n: usize, x: &[u8], y: &[u8]) -> f32 {
     check(n, x, y);
     let mut sumf = 0.0f32;
@@ -80,14 +76,16 @@ pub fn vec_dot_ref_nofma(n: usize, x: &[u8], y: &[u8]) -> f32 {
     sumf
 }
 
-/// A q8_0 activation prepared once per token for Q2_0 rows, laid out for the AVX2 kernel so that no
-/// shuffle ever touches the weights: blocks go in quads (A,B,C,D); a 256-bit register holds the 16 code
-/// bytes of A (low half) and B (high half), and `(v >> 2r) & 3` is code r of every byte — so the
-/// activation stores, per pair and per r, the 16 quants of elements 4b+r of A then of B. `d` (f32, exact)
-/// and `sum` (Σq per q8 block, for Σ(c−1)·q = Σc·q − Σq with c ∈ {0..3} unsigned) are stored in the
-/// lane order `hadd` leaves: [A₀ A₁ C₀ C₁ | B₀ B₁ D₀ D₁]. Tail blocks (nb % 4) keep a plain r-major layout.
-/// Private fields, built only by `from_q8_0`/`quantize`: `qs()` and the AVX2 kernels trust `n` (0.0.1
-/// made `n`, `d` and `sum` public, so safe code could send the kernels past their buffers).
+/// A q8_0 activation prepared once per token for Q2_0 rows, laid out so the AVX2 kernel never shuffles
+/// the weights.
+///
+/// Blocks go in quads (A, B, C, D). A 256-bit register holds the 16 code bytes of A (low half) and B
+/// (high half), and `(v >> 2r) & 3` is code r of every byte, so `qs` stores, per pair and per r, the 16
+/// quants of elements 4b+r of A, then of B. `d` (f32, exact) and `sum` (Σq per q8 block, for
+/// Σ(c−1)·q = Σc·q − Σq with unsigned c) are stored in the lane order `hadd` leaves:
+/// [A₀ A₁ C₀ C₁ | B₀ B₁ D₀ D₁]. Tail blocks (nb % 4) use a plain r-major layout.
+///
+/// Fields are private and set only by `from_q8_0`/`quantize`: `qs()` and the AVX2 kernels trust `n`.
 pub struct Q8Act2 {
     n: usize,
     qs: Vec<Line>,
@@ -96,8 +94,7 @@ pub struct Q8Act2 {
 }
 
 /// 64-byte-aligned storage, so no 32-byte activation load straddles a cache line (a `Vec<i8>` is only
-/// 16-aligned). Not measured to matter on the dev box, whose run-to-run swings are the boost clock
-/// (both kernels move together); kept because it cannot cost.
+/// 16-aligned).
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
 struct Line([i8; 64]);
@@ -123,6 +120,7 @@ fn dpos(nb: usize, i: usize, k: usize) -> usize {
 }
 
 impl Q8Act2 {
+    /// From ggml-layout q8_0 blocks (what `quantize_row_q8_0` writes).
     pub fn from_q8_0(n: usize, q8: &[u8]) -> Self {
         assert_eq!(n % QK2_0, 0);
         let nb = n / QK2_0;
@@ -189,8 +187,8 @@ mod avx2 {
     use super::*;
     use std::arch::x86_64::*;
 
-    /// The four code vectors of blocks A (low half) and B (high half): `(v >> 2r) & 3` — a 16-bit
-    /// shift is fine, the `& 3` drops whatever crossed in from the neighbouring byte.
+    /// The four code vectors of blocks A (low half) and B (high half): `(v >> 2r) & 3`. A 16-bit shift
+    /// suffices; the `& 3` drops the bits shifted in from the neighbouring byte.
     #[inline(always)]
     pub unsafe fn codes2(xa: *const u8) -> [__m256i; 4] {
         let v = _mm256_loadu2_m128i(xa.add(Q2_0_BYTES + 2) as *const __m128i, xa.add(2) as *const __m128i);
@@ -203,8 +201,8 @@ mod avx2 {
         ]
     }
 
-    /// Σc·q for a block pair against its 128 prepared bytes → i32 [A₀ A₀ A₁ A₁ | B₀ B₀ B₁ B₁] partials.
-    /// i16 lanes stay within ±4·768: no saturation (c ≤ 3, q ≥ −128).
+    /// Σc·q for a block pair against its 128 prepared bytes → i32 partials [A₀ A₀ A₁ A₁ | B₀ B₀ B₁ B₁].
+    /// `maddubs` cannot saturate (c ≤ 3, q ≥ −128: |pair| ≤ 768), and the i16 sum of four stays within ±4·768.
     #[inline(always)]
     pub unsafe fn dot2(c: &[__m256i; 4], q: *const i8) -> __m256i {
         let m = |r: usize| _mm256_maddubs_epi16(c[r], _mm256_loadu_si256(q.add(32 * r) as *const __m256i));
@@ -212,8 +210,8 @@ mod avx2 {
         _mm256_madd_epi16(s16, _mm256_set1_epi16(1))
     }
 
-    /// ggml's float ops for a quad: `hadd` → [A₀ A₁ C₀ C₁ | B₀ B₁ D₀ D₁]; sumi in odd lanes; then the
-    /// serial `sumf = fma(d0, sumi, sumf)` in block order A, B, C, D.
+    /// ggml's float ops for a quad: `hadd` → [A₀ A₁ C₀ C₁ | B₀ B₁ D₀ D₁]; `sumi = fma(d1₁, s₁, fma(d1₀, s₀, 0))`
+    /// in the odd lanes; then the serial `sumf = fma(d0, sumi, sumf)` in block order A, B, C, D.
     #[inline(always)]
     pub unsafe fn finish4(ab: __m256i, cd: __m256i, a: &Q8Act2, g: usize, xb: *const u8, mut sumf: __m128) -> __m128 {
         let s = _mm256_sub_epi32(_mm256_hadd_epi32(ab, cd), _mm256_loadu_si256(a.sum.as_ptr().add(8 * g) as *const __m256i));
@@ -228,7 +226,7 @@ mod avx2 {
         sumf
     }
 
-    /// One tail block (nb % 4), 128-bit.
+    /// One tail block (nb % 4), 128-bit, with the same float ops.
     #[inline(always)]
     pub unsafe fn block1(xb: *const u8, a: &Q8Act2, i: usize, sumf: __m128) -> __m128 {
         let v = _mm_loadu_si128(xb.add(2) as *const __m128i);
@@ -244,6 +242,8 @@ mod avx2 {
     }
 }
 
+/// The AVX2 kernel: Q2_0 row · prepared activation; bits of `vec_dot_ref`.
+///
 /// # Safety
 /// AVX2+FMA+F16C present (`q1_0::has_avx2`); `x` holds `a.n / 64` blocks.
 #[cfg(target_arch = "x86_64")]
@@ -265,7 +265,7 @@ pub unsafe fn vec_dot_act_avx2(x: &[u8], a: &Q8Act2) -> f32 {
     _mm_cvtss_f32(sumf)
 }
 
-/// out[r] = row r of `w` · `a` for `rows` rows (the decode matvec); bits of per-row `vec_dot_ref`.
+/// `out[r]` = row r of `w` · `a` for `rows` rows (the decode matvec); bits of per-row `vec_dot_ref`.
 pub fn mat_vec(w: &[u8], rows: usize, a: &Q8Act2, out: &mut [f32]) {
     let rb = a.n / QK2_0 * Q2_0_BYTES;
     assert!(w.len() >= rows * rb && out.len() >= rows);

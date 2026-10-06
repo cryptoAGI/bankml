@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Vulkan compute, from the run-time loader and nothing else: a device with one compute queue, host-visible buffers
-//! (on an integrated GPU the device's own memory; on a discrete card, memory the CPU can write), pipelines from
-//! bankml's own SPIR-V, and a dispatch that waits on a fence. The C structs are declared here from the Vulkan 1.1
-//! headers; every call's result is checked.
+//! Vulkan compute on one device: a compute queue, host-visible coherent buffers mapped for their lifetime,
+//! pipelines from bankML's own SPIR-V, and a dispatch completed by a fence.
+//!
+//! Entry points come from the run-time loader (`vulkan.rs`); the C structs are declared here from the Vulkan 1.1
+//! headers. Every call's result is checked.
+//! Details: docs/modules/gpu.md.
 
 use super::vulkan;
 use std::ffi::{c_char, c_void, CStr};
@@ -88,13 +90,15 @@ struct Fns {
 }
 
 /// One GPU, ready for compute.
+///
+/// `Send` but not `Sync`: its Vulkan calls come from one thread at a time. Device objects are not destroyed on drop.
 pub struct Gpu {
     pub name: String,
     dev: P,
     queue: P,
     fns: Fns,
     mem_type: u32,
-    /// 0.3.7: the size of the heap bankml's buffers come from, and the bytes they hold now (the GPU limiter's budget)
+    /// Size of the heap bankML's buffers come from; the GPU limiter's budget, against [`Gpu::allocated`].
     pub heap_bytes: u64,
     allocated: std::sync::atomic::AtomicU64,
     cpool: H,
@@ -103,16 +107,18 @@ pub struct Gpu {
 }
 
 /// A host-visible storage buffer, mapped for its whole life.
+///
+/// Not released on drop: pass it to [`Gpu::free`] on the device that made it.
 pub struct Buffer {
     buf: H,
     mem: H,
     ptr: *mut u8,
     pub bytes: usize,
-    /// the memory the driver allocated for it (≥ `bytes`)
+    /// The memory the driver allocated for it (≥ `bytes`).
     alloc: u64,
 }
 
-/// A compute pipeline: its layout, descriptor set and push-constant size.
+/// A compute pipeline: its layout, single descriptor set and push-constant size. Never destroyed.
 pub struct Pipeline {
     pipe: H,
     layout: H,
@@ -124,6 +130,8 @@ pub struct Pipeline {
 impl Gpu {
     /// Open Vulkan physical device `index` (the index `bankml gpu` reports) for compute.
     pub fn open(index: usize) -> Result<Gpu, String> {
+        // SAFETY: each entry point is cast to its Vulkan signature; create-info structs and out-pointers outlive
+        // each call; `pd` comes from this instance and `dev` from `pd`.
         unsafe {
             let (gipa, inst) = vulkan::instance()?;
             let get = |name: &CStr| -> Result<Pfn, String> {
@@ -184,9 +192,11 @@ impl Gpu {
         }
     }
 
-    /// A buffer of `bytes`, mapped.
+    /// A mapped buffer of at least `bytes` (minimum 4), counted in [`Gpu::allocated`].
     pub fn buffer(&self, bytes: usize) -> Result<Buffer, String> {
         let bytes = bytes.max(4);
+        // SAFETY: `self.dev` is live; the memory type is checked against the buffer's requirements before allocating,
+        // and the mapping covers the whole allocation.
         unsafe {
             let mut buf = 0;
             let bci = BufferCreateInfo { s_type: 12, p_next: std::ptr::null(), flags: 0, size: bytes as u64, usage: 0x20, sharing: 0, family_count: 0, families: std::ptr::null() };
@@ -211,33 +221,39 @@ impl Gpu {
     pub fn upload<T: Copy>(&self, data: &[T]) -> Result<Buffer, String> {
         let bytes = std::mem::size_of_val(data);
         let b = self.buffer(bytes)?;
-        // SAFETY: the mapping is at least `bytes` long and T is plain data
+        // SAFETY: the mapping is at least `bytes` long and `T` is plain data.
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, b.ptr, bytes) };
         Ok(b)
     }
 
-    /// Overwrite the start of `b` with `data`.
+    /// Overwrite the start of `b` with `data`. Panics if `data` is larger than `b`.
+    ///
+    /// Must not be called while a pending submission uses `b`.
     pub fn write<T: Copy>(&self, b: &Buffer, data: &[T]) {
         let bytes = std::mem::size_of_val(data);
         assert!(bytes <= b.bytes);
+        // SAFETY: the mapping is at least `b.bytes` ≥ `bytes` long (asserted) and `T` is plain data.
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, b.ptr, bytes) };
     }
 
-    /// The first `n` f32 of `b`.
+    /// The first `n` f32 of `b`. Panics if `b` is shorter; call after [`Gpu::wait`] for the results.
     pub fn read_f32(&self, b: &Buffer, n: usize) -> Vec<f32> {
         assert!(n * 4 <= b.bytes);
+        // SAFETY: the mapping holds at least `n` f32 (asserted), the memory is coherent, and any bits are a valid f32.
         let mut v = vec![0.0f32; n];
         unsafe { std::ptr::copy_nonoverlapping(b.ptr as *const f32, v.as_mut_ptr(), n) };
         v
     }
 
-    /// The bytes bankml's buffers hold on this device now.
+    /// Bytes bankML's buffers hold on this device now.
     pub fn allocated(&self) -> u64 {
         self.allocated.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Destroy `b` and free its memory, which also unmaps it. `b` must not be in use by a pending submission.
     pub fn free(&self, b: Buffer) {
         self.allocated.fetch_sub(b.alloc, std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: `b` was made on this device and is consumed here, so it is destroyed exactly once.
         unsafe {
             (self.fns.destroy_buffer)(self.dev, b.buf, std::ptr::null());
             (self.fns.free)(self.dev, b.mem, std::ptr::null());
@@ -246,6 +262,7 @@ impl Gpu {
 
     /// A compute pipeline from SPIR-V with `bindings` storage buffers (bindings 0…) and `push_bytes` of constants.
     pub fn pipeline(&self, spirv: &[u32], bindings: u32, push_bytes: u32) -> Result<Pipeline, String> {
+        // SAFETY: `spirv` and every create-info struct outlive the calls that read them; handles come from `self.dev`.
         unsafe {
             let mut module = 0;
             let smci = ShaderModuleCreateInfo { s_type: 16, p_next: std::ptr::null(), flags: 0, code_size: spirv.len() * 4, code: spirv.as_ptr() };
@@ -283,19 +300,26 @@ impl Gpu {
         self.wait()
     }
 
-    /// Wait for the work `submit` started, and make the fence ready for the next submit.
+    /// Wait for the work `submit` started and reset the fence for the next submit.
+    ///
+    /// Call only after `submit`: the fence is otherwise never signalled and this blocks indefinitely.
     pub fn wait(&self) -> Result<(), String> {
+        // SAFETY: the fence belongs to `self.dev`.
         unsafe {
             check((self.fns.wait)(self.dev, 1, &self.fence, 1, u64::MAX), "vkWaitForFences")?;
             check((self.fns.reset_fence)(self.dev, 1, &self.fence), "vkResetFences")
         }
     }
 
-    /// Start `groups` workgroups of `p` on `bufs` and return at once; `wait` finishes it. One submission is in
-    /// flight at a time (one command buffer, one fence).
+    /// Start `groups` workgroups of `p` on `bufs` and return at once; [`Gpu::wait`] completes it.
+    ///
+    /// One submission is in flight at a time (one command buffer, one fence, one descriptor set per pipeline): call
+    /// `wait` before the next `submit`. Panics if `bufs` or `push` do not match the pipeline.
     pub fn submit(&self, p: &Pipeline, bufs: &[&Buffer], push: &[u32], groups: u32) -> Result<(), String> {
         assert_eq!(bufs.len() as u32, p.bindings);
         assert_eq!(push.len() as u32 * 4, p.push_bytes);
+        // SAFETY: the buffers and pipeline belong to this device; the previous submission has been waited for, so the
+        // command buffer may be reset and the descriptor set rewritten; `infos`, `writes` and `si` outlive the calls.
         unsafe {
             let infos: Vec<DescriptorBufferInfo> = bufs.iter().map(|b| DescriptorBufferInfo { buffer: b.buf, offset: 0, range: u64::MAX }).collect();
             let writes: Vec<WriteDescriptorSet> = infos.iter().enumerate()
@@ -319,8 +343,9 @@ impl Gpu {
     }
 }
 
-// SAFETY: every Vulkan call on a Gpu is made through &self from one thread at a time (the forward pass holds it
-// behind a Mutex); Vulkan objects are not tied to the thread that made them.
+// SAFETY: Vulkan objects are not tied to the thread that made them, and every call on a `Gpu` comes from one thread
+// at a time (`Gpu` is not `Sync`; the forward pass holds the worker behind a Mutex). A `Buffer`'s pointer is private
+// and used only through `Gpu` methods, so sharing `&Buffer` adds no unsynchronized access.
 unsafe impl Send for Gpu {}
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
@@ -328,8 +353,8 @@ unsafe impl Send for Pipeline {}
 
 impl Drop for Gpu {
     fn drop(&mut self) {
-        // the process is ending or the device is abandoned; wait so no work is in flight (objects are reclaimed with
-        // the device by the driver at exit)
+        // Wait until no work is in flight. Device objects are not destroyed; the driver reclaims them at process exit.
+        // SAFETY: `self.dev` is live.
         unsafe {
             (self.fns.idle)(self.dev);
         }

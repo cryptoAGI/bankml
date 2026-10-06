@@ -15,7 +15,79 @@ the THOT spec's vectors, Hugging Face's and Ollama's sha256 for a model file), a
 
 This file lists every oracle bankml uses, what it checks, how to run it, and what it last found. The results are in
 [`testing/results/`](../testing/results/), one record per release, written by
-[`testing/release_gate.sh`](../testing/release_gate.sh).
+[`testing/release_gate.sh`](../testing/release_gate.sh). The latest record is 0.3.6's; figures marked 0.3.7, 0.3.8 or
+0.3.9 are from [CHANGELOG.md](../CHANGELOG.md) for versions not yet released, and reach `testing/results/` when each
+is cut. Each module's own oracles are also listed on its page in [modules/](modules/README.md), under *How it is
+verified*.
+
+## The release gate, stage by stage
+
+Every stage of `testing/release_gate.sh`, in the order it runs. A stage that fails stops the gate. The rows marked
+*regression* compare bankml with itself or with its own scalar model; they guard against change, and by the rule at the
+end of this file they are not oracles.
+
+**Always (no model needed)**
+
+| stage | checks | against | § |
+|---|---|---|---|
+| `cargo test`, `cargo test -p bankml-capi` | unit tests, the scalar models of §2, the gateway's receipts against a mock server | scalar models of ggml; a mock llama-server (*regression* where it is bankml against bankml) | §2, §5 |
+| `cargo clippy -D warnings` | lint, both packages | — | — |
+| `spdx_check.py` | every tracked source file names its licence in an SPDX header matching its layer | LICENSING.md | — |
+| `test_gguf_guard.py` | the Python guard's own suite | its fixtures | §3 |
+| `test_ui.py` | the UI's data layer: keccak256, THOT manifests, CIDv1, the RFC 6962 tree | published values | §4 |
+| `test_console.py` (0.3.7) | the console's routes, loopback and CSP rules, the SELF block's units, the persona's doctrine root, the Infotags metadata | RFC 6962 roots; *regression* otherwise | §4 |
+| `test_connectors.py` | PostgreSQL publish and load on a throwaway cluster; a tampered row refused | the manifest's bytes | §4 |
+| `test_chain.py` | iNFT mint and load on a throwaway anvil devnet | the compiled contract | §4 |
+| `test_models.py` | the model importer: the pin, the licence gate, resume, a carrier started and rolled back | published sha256 values | §4 |
+| `guard_agree.py` | the Rust guard against the Python guard, JSON for JSON | the Python original | §3 |
+| `capi_oracle.py --printf` | `bankml_log` byte for byte | libc `snprintf` | §5b |
+
+**With the b11192 release (`BANKML_GGML_LIB`)**, each a Rust test run by name (`cargo test --release -- --ignored
+--exact`), then the live checks against a running `bankml serve --native`:
+
+| stage | checks | against | § |
+|---|---|---|---|
+| `schema_oracle.py`, `content_oracle.py` (when `LLAMA_SRC` is set) | re-record the schema grammars and the content rule | llama.cpp's own code in `libllama-common.so` | §5e |
+| `sort_oracle.cpp` (when `g++` is present) | re-record `std::sort`'s orders | libstdc++ | §5f |
+| `oracle_tokenizer` | token ids, 4,346 cases | llama-server `/tokenize` | §1b |
+| `oracle_chat_template` | prompts byte for byte, 317 conversations | llama-server `/apply-template` | §1c |
+| `oracle_forward_embed_norm`, `oracle_forward_qkv_rope`, `oracle_forward_attention`, `oracle_forward_attention_tiled`, `oracle_forward_attention_split`, `oracle_forward_swiglu_sweep` | layer 0 operation by operation, the three attention kernels, ggml's `expf` | the shipped ggml | §1d |
+| `oracle_forward_model`, `oracle_forward_model_ternary` | every layer, `result_norm` and the logits | the shipped ggml graph | §1d |
+| `oracle_greedy_llama_server`, `_ternary`, `_long`, `_deep` | greedy tokens, short, long and deep prompts | llama-server | §1d |
+| `oracle_sample_llama_server` | seeded sampling, 40 continuations | llama-server | §1d |
+| `oracle_native_serve` | three conversations, 9 turns: text, counts, cache reuse | llama-server `/v1` | §1d |
+| `oracle_grammar_masks` | whole-vocabulary masks, both paths since 0.3.9 | libllama's grammar sampler | §5c, §5h |
+| `oracle_json_mode`, `oracle_json_mode_ternary` | answers under JSON mode and user grammars | llama-server | §5c |
+| `oracle_schema_grammars`, `oracle_json_schema`, `oracle_json_schema_ternary`, `oracle_json_schema_o4`, `oracle_json_content` | schema grammars, answers under schemas, the content rule | llama.cpp's own code; llama-server | §5e |
+| `oracle_persona_layer` | mindX's persona Modelfile, two ways | llama-server with the persona as system message | §5e |
+| `oracle_penalties`, `oracle_penalties_8b` | the repeat, frequency and presence penalties | llama-server | §5f |
+| `oracle_samplers`, `oracle_samplers_8b` (0.3.7) | typical-p, top-n-σ, XTC, dynamic temperature, DRY | llama-server | §5f |
+| `oracle_std_sort` (0.3.7) | `std::sort`'s order of equal keys | libstdc++ | §5f |
+| `oracle_ggml_b11192_q8_0_kv_kernels` (0.3.9) | the `q8_0` KV cache's quantizer and dot product | the shipped ggml | §5h |
+| `gpu_q1_0_mat_vec_bit_exact` | the GPU kernels on every usable card | the CPU kernel, itself proven against ggml | §1d (0.2.13) |
+| `oracle_train_script`, `oracle_train_imprint` | mindXtrain's author and score stages | mindXtrain's Python | §1d (0.2.13) |
+| `oracle_ggml_b11192_real_bonsai_1_7b`, `_real_bonsai_8b_q1_0`, `_real_ternary_bonsai_8b` | every weight, `q8_0` rows, dot products | the shipped ggml | §1 |
+| `oracle_ggml_b11192_f16` | F16 products, both of ggml's paths | the shipped ggml | §5d |
+| `oracle_tokenizer_smollm`, `oracle_chat_template_chatml`, `oracle_forward_model_bonsai_1_7b`, `oracle_forward_model_llama_f16`, `oracle_llama_server_bonsai_1_7b`, `oracle_llama_server_llama_f16`, `oracle_native_serve_o4` | the O4 models: tokenizer, templates, whole model, llama-server's tokens, conversations and JSON mode | llama-server; the shipped ggml | §5d |
+| `ab_vs_ggml`, `ab_vs_ggml_q2_0`, `bench_q1_0_prefill_act`, `bench_memory_floor`, `decode_budget_q1_0`, `decode_budget_q2_0` | speed: kernel A/Bs (each first checks agreement), the memory floor, one token's matmul budget | the shipped ggml's own kernels; measurements, not oracles | §1, [PERFORMANCE.md](PERFORMANCE.md) |
+| `serve_oracle_ollama_shape` | the conversations through `/api/chat`, `/v1`, and `/v1` after a reload | llama-server's record | §1d (0.3.1) |
+| `o4_live` | the conversations, JSON mode and schemas live, on Bonsai-1.7B, SmolLM2-135M-Instruct and `mindx-gen39` | llama-server's records | §5d, §5e |
+| `persona_oracle_live` | the created `mindx-gen39` through `/api/chat`, `/api/generate`, `/v1`; `/api/ps` | llama-server's record | §5e |
+| `penalty_oracle_live`, `sampler_oracle_live` | the penalties and the sampler chain through `/v1` and `/api/chat` | llama-server's records | §5f |
+| `context_oracle_live` (0.3.8) | the context limit | llama-server's record | §5g |
+| `slot_oracle_live` (0.3.8) | slot save, restore and erase | the engine's own empty-slot answer; llama-server's refusals | §5g |
+| `session_oracle_live` (0.3.8) | interleaved conversations; simultaneous requests | llama-server's record; the queue against itself | §5g |
+| `kv_oracle_live` (0.3.9) | answers over a `q8_0` KV cache | llama-server with `--cache-type-k/v q8_0` | §5h |
+| `logprobs_oracle_live` (0.3.8) | logprobs, streamed and not | llama-server's record | §5g |
+| `json_oracle_live`, `json_schema_oracle_live` | JSON mode and schemas live on the 8B model | llama-server's records | §5c, §5e |
+| `capi_chat_oracle` | `bankml_chat` | `serve --native`; llama-server's record | §5b |
+
+**When their inputs are present**
+
+| stage | checks | against | § |
+|---|---|---|---|
+| `oracle_convert_b11192` (per directory under `.models/convert/`) | `bankml convert`'s GGUF, sha256 for sha256 | b11192's `convert_hf_to_gguf.py` | §5e |
+| `oracle_name_heuristics` (when `BANKML_LLAMA_SRC` is set) | model-name heuristics, 168 ids | gguf-py | §5e |
 
 ## 1. The ggml oracle: kernels bit-exact against the compiled llama.cpp
 
@@ -63,7 +135,10 @@ x64) and matches each one in 762 of 762.
    library directly (no crate, `dlopen`/`dlsym` declared by hand) and time ggml's kernel and bankml's on the same
    real weights in one process, after first checking they agree.
 
-### What it found (0.1.7–0.2.0 gates; identical in each)
+### What it found (0.1.7–0.2.0 gates; identical in each, and again under Rust 1.99 in 0.3.2)
+
+The gate runs these as `oracle_ggml_b11192_real_bonsai_1_7b`, `oracle_ggml_b11192_real_bonsai_8b_q1_0` and
+`oracle_ggml_b11192_real_ternary_bonsai_8b`.
 
 | model | tensors | weights | q8_0 rows | dot products |
 |---|---|---|---|---|
@@ -136,7 +211,7 @@ bankml's `forward.rs` computes the same in the float order read from b11192's `o
 - `scale = 1 / sqrtf(mean + eps)`;
 - each output `(x · scale) · w`, with no FMA.
 
-**300 of 300 rows bit-exact for both.**
+`oracle_forward_embed_norm` requires **300 of 300 rows bit-exact for both.**
 
 **Step four (0.2.4): Q, K, V, the head norms and RoPE.** The oracle also builds layer 0's attention inputs on a
 28-token chat prompt:
@@ -162,8 +237,8 @@ The reproduction follows ggml's reference path:
 - the f16 dot's four 8-lane FMA accumulators and their reduction tree;
 - an online softmax whose V accumulator is rounded to f16 at every step.
 
-The oracle rejects a near miss: with the softmax sum written as an FMA, only 59 of 84 rows match. Two other kernels
-are not yet covered, and each will get its own oracle:
+The oracle rejects a near miss: with the softmax sum written as an FMA, only 59 of 84 rows match. At 0.2.5 two other
+kernels were not yet covered; each got its own oracle in 0.2.9 and 0.2.10 (below):
 - the tiled kernel, for 64 or more query rows;
 - the split-KV kernel, for a decode whose padded KV length reaches 512 (llama.cpp pads to multiples of 256, so from
   257 cells in use).
@@ -194,8 +269,8 @@ of the difference, while the sweep matched only 19,245 of 24,600.
   (`/completion`, top-k 1, prompt cache off). `oracle_greedy_llama_server` requires bankml's own forward pass to
   produce the **same tokens on every prompt (6 of 6, 164 tokens)**, and to end the turn where the server did.
 
-Both stay inside the range bankml reproduces: prompts under 64 tokens, contexts up to 256 cells (the largest case
-uses 80). llama.cpp pads the KV length to multiples of 256, so a decode beyond 256 cells takes the split-KV kernel.
+Both stayed inside the range bankml reproduced at 0.2.7: prompts under 64 tokens, contexts up to 256 cells (the
+largest case uses 80). Steps nine and ten removed both limits. llama.cpp pads the KV length to multiples of 256, so a decode beyond 256 cells takes the split-KV kernel.
 
 **Step eight (0.2.8): the ternary model.** Both whole-model checks run again on Ternary-Bonsai-8B (Q2_0_g64), whose
 every matrix, including the embedding and the output, is ternary:
@@ -266,10 +341,10 @@ again, so each run starts as a fresh llama-server does): through Ollama's `/api/
 streamed as NDJSON and the options mapped from Ollama's names; through `/v1/chat/completions`; and through `/v1` once
 more after an unload in which `/v1` itself loads, and verifies, the startup model. Every turn must give the same text,
 prompt and completion counts and cache reuse on every path, equal to llama-server b11192's record. So the Ollama
-path inherits the conversation oracle, and a reload changes nothing.
+path inherits the conversation oracle, and a reload changes nothing. The gate runs it as `serve_oracle_ollama_shape`.
 
-Each later step of the forward pass (RoPE, attention, the feed-forward block,
-the logits) is added to the same oracle before it counts.
+Every step of the forward pass above was added to these oracles before it counted, and every later feature (§5b–§5h)
+follows the same rule.
 
 ## 2. Scalar models: every fast path against its own reference
 
@@ -333,7 +408,8 @@ Two oracles hold the C API (`capi/`, [CAPI.md](CAPI.md)), both run from C progra
 
   Then the cases it does not support must give their exact markers. No argument may be read that cannot be typed,
   and `%n` must not write. The same comparison runs in `cargo test -p bankml-capi`, from Rust.
-- **`bankml_chat` against `serve --native` and llama-server** (`testing/capi/capi_oracle.py --chat`). The
+- **`bankml_chat` against `serve --native` and llama-server** (`testing/capi/capi_oracle.py --chat`, the gate's
+  `capi_chat_oracle`). The
   conversation oracle of §1d, carried across the C boundary:
   - on Ternary-Bonsai-8B, the same request bytes go to a live `serve --native` and then to `bankml_chat` in a fresh
     process. They must give the same text, the same streamed pieces, the same counts and cache reuse, and the same
@@ -376,7 +452,7 @@ Two oracles hold O6's first cut (`bankML/grammar.rs`). Neither compares bankML w
     token included (one answer ends on `<|file_sep|>`), and the same raw text, `content`, finish reason and counts.
     The grammar text and generation prompt the server reports must be bankML's constant and prefill.
   - **The result:** Bonsai-8B Q1_0 **23 of 23** (860 tokens); Ternary-Bonsai-8B **13 of 13** (534 tokens, 49 redrawn).
-  - **The live check** (`testing/json_oracle.py --bankml`, in the gate) sends a subset through a running
+  - **The live check** (`testing/json_oracle.py --bankml`, the gate's `json_oracle_live`) sends a subset through a running
     `serve --native`, each from an empty slot: `/v1` with `response_format`, streamed once; `/v1` with `grammar`; and
     Ollama's `/api/chat` with `format: "json"`. Every answer must equal the record: **8 of 8**.
 
@@ -397,19 +473,21 @@ oracle.
 - **The whole model** (`testing/model_oracle.py`, now for tied embeddings, F16 and the Llama graph:
   `rope_ext` mode 0, no Q/K norms, `ext_factor` 0): every layer's `l_out`, `result_norm` and the logits. An F16
   model is replayed as one micro-batch with every row output, because that is what the oracle's graph computes.
-  Bonsai-1.7B **840 of 840** rows, SmolLM2-135M-Instruct and mindx-gen39 **800 of 800** each.
-- **The tokenizer** (`tokenizer_oracle.py 127.0.0.1:PORT .models/oracle-tokenizer-smollm`): the same corpus on
+  Bonsai-1.7B **840 of 840** rows, SmolLM2-135M-Instruct and mindx-gen39 **800 of 800** each
+  (`oracle_forward_model_bonsai_1_7b`, `oracle_forward_model_llama_f16`).
+- **The tokenizer** (`tokenizer_oracle.py 127.0.0.1:PORT .models/oracle-tokenizer-smollm` → `oracle_tokenizer_smollm`): the same corpus on
   SmolLM2's vocabulary, **4,346 of 4,346**, with two new edge strings: bytes SmolLM2 has no token for, and plane-4
   characters. Re-recorded on the Qwen3 vocabulary, the grown corpus caught a bug: `</s>` (NORMAL in the file, CONTROL
   in llama.cpp by its name) was taken as text in 2 of 4,346 cases. Fixed; 4,346 of 4,346.
-- **The templates** (`template_oracle.py`, written per model as `cases-<stem>.jsonl`): SmolLM2-Instruct's and
-  mindx-gen39's ChatML, **317 of 317** each.
+- **The templates** (`template_oracle.py`, written per model as `cases-<stem>.jsonl` → `oracle_chat_template_chatml`):
+  SmolLM2-Instruct's and mindx-gen39's ChatML, **317 of 317** each.
 - **llama-server's tokens** (greedy short, `--long`, `--deep`; seeded; conversations; JSON mode, each recorded from that
-  model's server): SmolLM2 6, 6, 3 and 40 of 40; mindx-gen39 6, 6, 3 and 40 of 40; Bonsai-1.7B 6 and 40 of 40;
+  model's server; `oracle_llama_server_bonsai_1_7b`, `oracle_llama_server_llama_f16`, `oracle_native_serve_o4`): SmolLM2 6, 6, 3 and 40 of 40; mindx-gen39 6, 6, 3 and 40 of 40; Bonsai-1.7B 6 and 40 of 40;
   conversations 9 of 9 and JSON mode 23 of 23 on each. On a ChatML template llama-server builds a different JSON
   grammar (no `<think>` in its root); the record shows it, and bankML carries it per template.
 - **Live and through the C API**: `serve_oracle.py --bankml STEM [NAME]` and `json_oracle.py --bankml STEM [NAME]` on
-  each model (mindx-gen39 asked for as `mindx-gen39`), and `capi_oracle.py --chat` against each model's record.
+  each model (mindx-gen39 asked for as `mindx-gen39`), and `capi_oracle.py --chat` against each model's record. The
+  gate runs the live pair, with `json_schema_oracle.py --bankml` since 0.3.5, as its `o4_live` stage.
 
 ## 5e. JSON schemas and `bankml create` (0.3.5): llama.cpp's converter, parser and converter script, and the persona
 
@@ -419,12 +497,14 @@ oracle.
   refusal path — with the template read from each model that carries it (Bonsai's Qwen3, SmolLM2-Instruct's ChatML,
   mindx-gen39's ChatML). **148 grammars byte-identical bare and on the chat path, on each template**; every refusal
   with llama.cpp's message (24, 20). The ChatML wrapping (no reasoning rules, another root) was read from this output.
-- **The answers** (`testing/json_schema_oracle.py --record STEM` → `oracle_json_schema`, `_ternary`, `_o4`):
+- **The answers** (`testing/json_schema_oracle.py --record STEM` → `oracle_json_schema`, `oracle_json_schema_ternary`,
+  `oracle_json_schema_o4`):
   llama-server b11192 asked under schemas through all three request shapes, greedy and seeded, each from an empty
   cache, with answers cut by `max_tokens` inside an object, a top-level string and a number. Required: the same token
   ids (end token included), raw text, content, finish and counts, and the server's grammar and generation prompt are
   bankML's. **Bonsai-8B 28 of 28, Ternary-Bonsai-8B 11 of 11, Bonsai-1.7B, SmolLM2-135M-Instruct and mindx-gen39
-  56 of 56 each.** Live (`--bankml STEM [NAME]`, in the gate): `/v1` (one streamed) and `/api/chat` `format: <schema>`.
+  56 of 56 each.** Live (`--bankml STEM [NAME]`, the gate's `json_schema_oracle_live` and `o4_live`): `/v1` (one
+  streamed) and `/api/chat` `format: <schema>`.
 - **The content rule** (`testing/content_oracle.{cpp,py}` → `oracle_json_content`): llama.cpp's `common_chat_parse`
   itself, with the parser llama-server builds for each request, on every prefix of every recorded constrained answer
   and on edge cases: **30,063 of 30,063 texts on each template** (36 texts with a reasoning block, which no grammar
@@ -434,18 +514,82 @@ oracle.
   against llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16` on the same directory, sha256 for sha256 — gen39
   `6b64c748…` and SmolLM2 `ec30a679…`, run directly in 0.3.5 (torch 2.14.1+cpu) — and gguf-py's name heuristics on
   168 of 168 ids.
-- **mindX's persona, end to end** (`testing/persona_oracle.py` → `oracle_persona_layer`, and live): promote.py's
+- **mindX's persona, end to end** (`testing/persona_oracle.py` → `oracle_persona_layer`, and live as
+  `persona_oracle_live`): promote.py's
   persona Modelfile created two ways (`FROM` the merged directory; `FROM mindx-gen39` in place), the user's turns
   alone, against llama-server given the persona as the system message on the same GGUF: **27 of 27** token-identical
   for each; live through `/api/chat`, `/api/generate` and `/v1` from an empty slot each, and `/api/ps` names the
   derived model. (Without the empty slot, seeded answers moved: a cached prefix changes F16's product paths, so the
   live check starts each answer as the record did.)
 
+## 5f. The penalties (0.3.6) and the rest of the sampler chain (0.3.7, unreleased)
+
+- **The penalties** (`testing/penalty_oracle.py` → `oracle_penalties`, `oracle_penalties_8b`). llama-server b11192
+  runs with Savante's flags from an empty cache, greedy and seeded, on 17 variants × 4 prompts made to repeat; the
+  window reaches into the prompt, as llama-server fills it. Each case keeps the parameters the server read back. bankML
+  must give the same tokens, and refuse what the server refuses with its message. **mindx-gen39 56 of 56 (2,478
+  tokens), Bonsai-1.7B 56 of 56 (1,895), Bonsai-8B 56 of 56 (1,568); 12 of 12 refusals each.**
+- **The rest of the default chain** (`penalty_oracle.py --kind sampler` → `oracle_samplers`, `oracle_samplers_8b`):
+  typical-p, top-n-σ, XTC, dynamic temperature and DRY, the same way, on 23 variants × 4 prompts — each sampler alone,
+  typical-p before top-p and min-p's unsorted path, XTC with a clamped probability and a disabling threshold, dynamic
+  temperature at 0, DRY with defaults, custom breakers and the repeat penalty, all five at once. **mindx-gen39 76 of 76
+  (3,576 tokens), Bonsai-1.7B 76 of 76 (2,587); 16 of 16 refusals each.** The Bonsai-8B record is still to be taken
+  (CHANGELOG 0.3.7).
+- **`std::sort`'s order** (`testing/sort_oracle.cpp` → `oracle_std_sort`). typical-p sorts with `std::sort`, which is
+  not stable, so the order equal scores end in is the algorithm's own. The oracle is libstdc++ itself, compiled by the
+  gate: **876 of 876 orders identical**, sizes 0 to 1,000, heavy ties, sorted, reversed and equal keys.
+- **Live** (`--bankml`, the gate's `penalty_oracle_live` and `sampler_oracle_live`): every recorded case through
+  `/v1/chat/completions` and every fourth also through Ollama's `/api/chat`, each from an empty slot; a refusal must
+  be a 400 with llama-server's message. The penalties: **85 of 85** on mindx-gen39. On `/api/chat` only typical-p of
+  the 0.3.7 samplers exists; the others are not Ollama options and go through `/v1`.
+
+## 5g. The serving contract (0.3.8, unreleased)
+
+Each records llama-server b11192's answers (`--record`) and replays the same requests through `bankml serve --native`
+on Bonsai-1.7B.
+
+- **The context limit** (`testing/context_oracle.py` → `context_oracle_live`). Both servers at a 256-token context,
+  with context shift off (llama-server's default). Eight requests from a few tokens to past the context: the same text,
+  counts and `finish_reason` (`"length"` at the full context), and for a prompt that does not fit the same 400 status
+  and body (`exceed_context_size_error`). **8 of 8.**
+- **Slots** (`testing/slot_oracle.py` → `slot_oracle_live`). `POST /slots/0?action=save|restore|erase`. Here the
+  answer to compare with is the engine's own: an answer after a restore, in the same server and after a restart, must
+  equal the answer computed from an empty slot, and the restore must skip the prompt (`cache_n` > 0). By the rule at
+  the end of this file that half is a regression test. The refusals are llama-server's (501 without a slot directory,
+  "Invalid slot ID", "Invalid action", "Invalid filename", "Unable to restore slot: …"), and a file from another model
+  or damaged by one bit is refused. **19 of 19.**
+- **One slot and the host prompt cache** (`testing/session_oracle.py` → `session_oracle_live`). Three conversations
+  take turns (A1 B1 C1 A2 …) through llama-server with its prompt cache on, so each turn finds another conversation's
+  tokens in the slot: bankML must give the same text, counts and `cache_n`, turn by turn
+  ([modules/prompt_cache.md](modules/prompt_cache.md)). Then four requests sent at once must all be answered, none
+  mixed, each with the text it gets alone; llama-server's order among simultaneous arrivals is not deterministic, so
+  this half checks bankML against itself. **14 of 14.**
+- **Logprobs** (`testing/logprobs_oracle.py` → `logprobs_oracle_live`). `/v1` with `logprobs` and `top_logprobs`: the
+  same token ids, texts and bytes, every logprob the same 32-bit float, llama-server's entry rules for stop words and
+  split UTF-8, and its refusals. Five cases are streamed, and there every chunk's delta and entry must match.
+  **14 of 14.**
+
+## 5h. The q8_0 KV cache and the grammar trie (0.3.9, in progress)
+
+- **The KV cache's kernels** (`oracle_ggml_b11192_q8_0_kv_kernels`, `forward.rs`). The shipped haswell library,
+  loaded with `dlopen`: `quantize_row_q8_0` byte for byte and `ggml_vec_dot_q8_0_q8_0` bit for bit, on random
+  activations with outliers and on blocks of −128 and 127 where `maddubs` saturates. **4,000 rows quantized
+  byte-exact, 4,000 dot products bit-exact.**
+- **Answers over the cache** (`testing/kv_oracle.py` → `kv_oracle_live`). llama-server b11192 with
+  `--cache-type-k q8_0 --cache-type-v q8_0`, and bankML with `BANKML_CACHE_TYPE=q8_0`: greedy and seeded, a 2,244-token
+  prompt, a 320-token answer and a two-turn conversation; text, counts and `cache_n`. **6 of 6 (567 tokens).** The
+  first replay passed 2 of 6: llama.cpp rotates Q, K and V through a Hadamard transform around a quantized cache, which
+  bankML now reproduces (`fwht`).
+- **The grammar mask through a trie** (`oracle_grammar_masks`, §5c). The oracle now computes every mask both ways, one
+  candidate at a time and by the trie's walk, each against llama.cpp's mask: **196 of 196 runs, 1,645 of 1,645 masks** identical to llama.cpp b11192 by each.
+
 ## 6. Oracles planned
 
-- **P3, bankml's own forward pass.** The criterion is already fixed: at temperature 0, on the same prompts, an answer
-  must be **token-identical** to llama.cpp b11192's. Every kernel it will use already passes §1, and its tokenizer
-  passes §1b (0.2.1).
+- **P3, bankml's own forward pass: done.** The criterion fixed here before it was built — at temperature 0, on the
+  same prompts, an answer **token-identical** to llama.cpp b11192's — is met by §1d's greedy oracles (0.2.7 on),
+  under seeded sampling too (0.2.11), and for whole conversations (0.3.0).
+- **Planned** ([TODO.md](TODO.md)): tool calls, each with llama-server's answers; a 4-bit (`q4_0`) KV cache with the
+  same rotation; `Q8_0` weights with an oracle for Qwen's own template; NEON kernels against llama.cpp's ARM build.
 - **Speculative decoding (measured in 0.1.8).** A draft model (Bonsai-1.7B) and n-gram speculation both left the
   output **token-identical** at temperature 0 on every run; neither was faster beyond this laptop's noise, so neither
   is the default (n-gram is an opt-in). The same criterion applies to any future speed-up that changes how tokens are

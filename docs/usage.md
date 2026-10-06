@@ -2,6 +2,11 @@
 
 How to install bankml, start it, and use it on your own computer. Everything runs on this machine: the model, the
 gate that verifies it, and Savante's page. New to Savante's page and her voice? Read **[playback.md](playback.md)**.
+Every flag, environment variable and service setting is in **[install.md](install.md)**; each source module, its
+use and its limits, in **[modules/](modules/README.md)**.
+
+This guide covers the latest release, 0.3.6. Sections marked 0.3.7, 0.3.8 or 0.3.9 describe the next release, which
+is not yet tagged; the details are in the *Unreleased* sections of [CHANGELOG.md](../CHANGELOG.md).
 
 - [1. Install](#1-install)
 - [2. What you need](#2-what-you-need)
@@ -11,6 +16,7 @@ gate that verifies it, and Savante's page. New to Savante's page and her voice? 
 - [6. By hand: build, verify, serve](#6-by-hand-build-verify-serve)
 - [6a. Ollama's API](#6a-ollamas-api)
 - [6b. The C API](#6b-the-c-api)
+- [6c. The bankML console: bankML as itself (0.3.7)](#6c-the-bankml-console-bankml-as-itself-037)
 - [7. Let others watch (view mode, on the LAN)](#7-let-others-watch-view-mode-on-the-lan)
 - [8. The files Savante keeps: `.history`, `.memory`, `.prompt`](#8-the-files-savante-keeps-history-memory-prompt)
 - [8a. Proof of data without the data](#8a-proof-of-data-without-the-data)
@@ -99,6 +105,8 @@ What runs where:
 
 - **bankml serve** is the gate. It refuses to start unless the model passes the guard, its sha256 equals the pin in
   the model's `FORK.json`, and llama-server serves that same file. Every answer carries a receipt (§9).
+- **With the native engine** (`--native`; Savante's `auto` engine setting chooses it for the ternary files), there is
+  no llama-server: `bankml serve` computes the answer itself and also listens on 18092 with llama-server's endpoints.
 - **Savante's page** is reachable only from this computer.
 - **View mode** is a read-only page for others on your network (§7).
 
@@ -181,6 +189,7 @@ curl -s 127.0.0.1:18093/v1/chat/completions -H 'Content-Type: application/json' 
 `/v1/chat/completions` (and the C API's `bankml_chat`) takes what llama-server takes, resolved the way it resolves it:
 
 ```sh
+B=127.0.0.1:18093; J='Content-Type: application/json'
 curl -s $B/v1/chat/completions -H "$J" -d '{"messages": [{"role": "user", "content": "Describe a cat."}],
     "response_format": {"type": "json_object"}, "temperature": 0, "max_tokens": 64}'
 curl -s $B/v1/chat/completions -H "$J" -d '{"messages": [{"role": "user", "content": "Is the sun a star?"}],
@@ -215,11 +224,15 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
 
 ### The context limit, slots and logprobs (0.3.8)
 
+In the next release (not yet tagged); each is checked against llama-server b11192's own answers
+([CHANGELOG.md](../CHANGELOG.md), [modules/serve.md](modules/serve.md), [modules/prompt_cache.md](modules/prompt_cache.md)).
+
 - **At the context limit** the native engine answers as llama-server does with context shift off: a generation that
   reaches `--ctx` stops with `finish_reason: "length"`; a prompt that does not fit is refused at once with HTTP 400
   and llama-server's `exceed_context_size_error` body, which names both counts — so a client can trim and retry.
-- **Slots.** Start with `--slot-dir DIR` and save the conversation's KV cache by name, restore it later — in another
-  process too — and skip recomputing the prompt:
+- **Slots.** Start `bankml serve --native` with `--slot-dir DIR` (created at start). Save the conversation's KV cache
+  by name, restore it later — in another process too — and skip recomputing the prompt. Without `--slot-dir` the
+  slot actions answer 501, as llama-server's do:
 
   ```sh
   curl -s 127.0.0.1:18092/slots/0?action=save    -H 'Content-Type: application/json' -d '{"filename":"warm.bin"}'
@@ -232,15 +245,17 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
   are plain names inside the directory; a path is refused.
 - **Conversations that take turns.** The native engine has one slot and serves requests one at a time, as
   llama-server `-np 1`. Like llama-server, it keeps the states of other conversations in RAM (`BANKML_CACHE_RAM`, MiB;
-  0 off; unset, up to 8 GiB but at most a quarter of the free memory), so a conversation that comes back after
+  0 off, -1 no limit; unset, 8192 MiB but at most a quarter of the memory available at load), so a conversation that comes back after
   another does not recompute its whole history.
-- **A smaller conversation memory (0.3.9).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
+- **A smaller conversation memory (0.3.9, in progress).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
   about half the memory, so a long context fits on a small machine. It is llama.cpp's `--cache-type-k q8_0
   --cache-type-v q8_0` exactly, with the Hadamard rotation llama.cpp applies around a quantized cache, and gives the
   same tokens as llama-server so configured (`testing/kv_oracle.py`). A slot saved with one cache type is refused by
   an engine with the other.
 - **Logprobs.** `"logprobs": true, "top_logprobs": 5` on `/v1/chat/completions` returns each token's log-probability
-  and the five most likely alternatives, the same floats llama-server reports. Streamed answers carry each token's entry in the chunk its text makes.
+  and the five most likely alternatives (`top_logprobs` defaults to 20), the same floats llama-server reports.
+  Streamed answers carry each token's entry in the chunk its text makes. `top_logprobs` without `logprobs` is refused
+  with llama-server's message. llama-server's own `/completion` endpoint (and its `n_probs`) is not served; use `/v1`.
 
 ## 6a. Ollama's API
 
@@ -300,6 +315,8 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
   - `bankml_receipt`, as on `/v1/chat/completions`.
 - **Options.**
   - **Honoured:** `temperature`, `top_k`, `top_p`, `min_p`, `seed`, `num_predict` and `stop` (also on `/v1`).
+    `top_k` is reproduced from 1 to 128; 0 or a larger value is refused, because llama.cpp sorts larger sets another
+    way.
   - **`num_ctx`:** accepted up to the served `--ctx`, refused above it. Under it (0.3.5) a conversation that does not
     fit loses its oldest messages first, as Ollama's do (the last message and the system messages stay); a prompt that
     still does not fit is refused with its size.
@@ -308,7 +325,7 @@ curl -s $B/api/generate -H "$J" -d '{"model": "ternary-bonsai-8b-q2_0_g64", "kee
     (default 64) **including the prompt's**, a repeated token's logit is divided by the repeat penalty (multiplied when
     not positive), then `count × frequency + presence` is taken off. `repeat_last_n` below 0 and a repeat penalty of 0
     or less are refused with llama-server's message. Also on `/v1` and as a Modelfile `PARAMETER`.
-  - **The rest of the chain (0.3.7):** `typical_p` on `/api/*` and `/v1`; on `/v1` (not Ollama options) also
+  - **The rest of the chain (0.3.7, next release; [modules/sampler.md](modules/sampler.md)):** `typical_p` on `/api/*` and `/v1`; on `/v1` (not Ollama options) also
     `top_n_sigma`, `xtc_probability`, `xtc_threshold`, `dynatemp_range`, `dynatemp_exponent`, `dry_multiplier`,
     `dry_base`, `dry_allowed_length`, `dry_penalty_last_n` and `dry_sequence_breakers` — each as llama-server b11192
     applies it, token for token on its oracle, in its default order. Clamped as it clamps (`top_p`, `min_p`, the XTC
@@ -416,11 +433,17 @@ int main(void) {
 
 ## 6c. The bankML console: bankML as itself (0.3.7)
 
+In the next release (not yet tagged). The design is in [modules/console.md](modules/console.md) and
+[modules/metrics.md](modules/metrics.md).
+
 ```sh
-python3 sAGI/console.py          # http://127.0.0.1:7875 — talks to bankml serve on 127.0.0.1:18093
+python3 sAGI/console.py          # http://127.0.0.1:7875 — talks to bankml serve at BANKML_SERVE_LISTEN (127.0.0.1:18093)
 ```
 
-A simple page with four tabs, loopback only:
+`--port` moves it; any `--host` other than loopback is refused, because the console can restart the engine.
+`./install.sh stop` does not stop it (it stops 7874, 7873, 18093 and 18092); stop it with Ctrl-C.
+
+A simple page with four tabs:
 
 - **Interaction**: ask; the answer streams, and under it the receipt — `✓ answer = receipt` when the sha256 of the text
   you received is the receipt's, the model, the tokens, the time to first token, the generation speed. bankML answers as
@@ -435,7 +458,8 @@ A simple page with four tabs, loopback only:
   sha256, the persona and its doctrine root, the token totals, and an RFC 6962 Merkle root over the exchanges with their
   CID. The exchanges stay on this machine; the root lets a holder check any one of them. Download it as JSON.
 
-Power appears only after `./install.sh power` (opt-in; see [install.md](install.md)); until then it reads "not measured".
+Power appears only after `./install.sh power` (opt-in, the one step that uses sudo; see
+[install.md §2](install.md#the-steps)); until then it reads "not measured".
 
 ## 7. Let others watch (view mode, on the LAN)
 
@@ -645,12 +669,13 @@ Every answer from `bankml serve` carries:
 | field | meaning |
 |---|---|
 | `bankml` | the version that served it |
-| `engine` | what computed it (today: llama.cpp b11192 behind bankml P0) |
+| `engine` | what computed it: `llama.cpp b11192 llama-server (loopback), behind bankml P0`, or with `--native` `bankML <version> native: its own forward pass, …` (and the GPU when one took part) |
 | `model_sha256`, `guard` | the file that was verified and pinned, and the guard's verdict |
 | `prompt_tokens`, `completion_tokens` | the engine's own counts |
-| `ttft_ms`, `wall_ms` | time to first token and total, at the gateway |
+| `ttft_ms`, `wall_ms` | time to first token and total, at the gateway (`ttft_ms` is `null` on a non-streamed answer in 0.3.6; the next release sets it there too) |
 | `response_sha256` | sha256 of the answer text exactly as the model produced it (`choices[0]`, UTF-8; an unpaired `\u` surrogate counts as U+FFFD) |
 | `request_sha256` | (0.1.7+) sha256 of the request body bankml forwarded: which prompt this answer is to |
+| `signed` | always `false`: a receipt is not a signature (below) |
 
 The UI recomputes the answer's sha256 and shows ✓ when it matches. A mismatch shows `(≠ received!)`. To check an
 answer yourself, hash `assistant_raw` from `.history` (older records: `assistant`) and compare it with
@@ -701,9 +726,13 @@ The gate runs, in order:
    models;
 7. the A/B speed tests, the prefill tile, the memory floor and the whole-token budgets;
 8. the conversation oracles: `serve --native` through `/api/chat` and `/v1`, and the C API's `bankml_chat` against
-   `serve --native` (ternary) and llama-server's record (1-bit).
+   `serve --native` (ternary) and llama-server's record (1-bit);
+9. the live oracles that start `serve --native` and compare it with llama-server's answers: JSON mode and schemas, the
+   persona layer, the penalties, and in the next release the samplers, the context limit, slots, sessions, logprobs
+   and the q8_0 KV cache.
 
-A speed counts only if every oracle passed on the same code. See `testing/README.md`.
+A speed counts only if every oracle passed on the same code. See [testing/README.md](../testing/README.md), and
+[oracles.md](oracles.md) for what each oracle compares.
 
 ## 12. Troubleshooting
 
@@ -723,26 +752,27 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 
 | command | what |
 |---|---|
-| `./install.sh [step …] [--skip-tests] [--no-start] [--view] [--voice]` | install and start (§1); steps: check build engine python canon model voice start stop status |
+| `./install.sh [step …] [--skip-tests] [--no-start] [--view] [--voice]` | install and start (§1); steps: check build engine python canon model voice start stop status, and (0.3.7, opt-in, sudo) `power [--remove]` ([install.md §2](install.md#the-steps)) |
 | `bankml guard FILE [--engine mainline\|prism] [--json]` | header check: play / refuse / need_more |
 | `bankml sha256 FILE` | the file's sha256 |
 | `bankml pin FILE --fork FORK.json` | sha256 against the fork's record |
 | `bankml verify FILE --fork FORK.json [--engine mainline\|prism] [--json]` | guard, then pin |
-| `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
+| `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; `--slot-dir` becomes llama-server's `--slot-save-path`) |
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
 | `BANKML_GPU=off` · `BANKML_GPU_SHARE=0.3` | the GPU worker (0.2.14): a verified card takes a calibrated share of every 1-bit matrix's rows; `off` disables it, a number overrides the share |
-| `BANKML_GPU_LIMIT=0.8` | the GPU limiter (0.3.7): bankML's GPU buffers stay within this share of the card's heap (of the RAM they could use, on an integrated card) and the card rests so it is busy at most this share of the time; what does not fit or arrives while it rests runs on the CPU, the same bits. Each matrix shape also decides, measured in the pipeline, whether the card's share pays (on the Vega 3 most shapes choose the CPU) |
-| `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N] [--registry [DIR]] [--keep-alive DUR]` | answers from bankML's own forward pass (0.3.0); since 0.3.1 also Ollama's API (§6a) and, with `--registry`, any pinned model by name, one resident at a time; token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. Savante's Models → Resources **engine** setting chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
+| `BANKML_GPU_LIMIT=0.8` | the GPU limiter (0.3.7, next release): bankML's GPU buffers stay within this share of the card's heap (of the RAM they could use, on an integrated card) and the card rests so it is busy at most this share of the time; what does not fit or arrives while it rests runs on the CPU, the same bits. Each matrix shape also decides, measured in the pipeline, whether the card's share pays (on the Vega 3 most shapes choose the CPU) |
+| `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N] [--registry [DIR]] [--keep-alive DUR] [--slot-dir DIR]` | answers from bankML's own forward pass (0.3.0); since 0.3.1 also Ollama's API (§6a) and, with `--registry`, any pinned model by name, one resident at a time; token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. `--slot-dir` (0.3.8, next release): llama-server's slot save/restore (§6). Savante's Admin tab **engine** setting (under *advanced*) chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
 | `bankml create NAME -f Modelfile [--registry DIR] [--models DIR]` | O5 (0.3.5): a derived model, a layer (SYSTEM, PARAMETER, stop, MESSAGE, LICENSE) over a pinned base, `FROM` a name, a pinned GGUF or a safetensors directory (converted); written as `DIR/NAME.MODEL.json`, no weights copied (§6a) |
 | `bankml convert DIR -o OUT.gguf [--model-name N] [--fork F --source S] [--ignore-model-card]` | O5 (0.3.5): Llama safetensors → GGUF F16, byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`; `--fork` writes the pin with every input's sha256 |
 | `bankml gpu --verify` | runs the bit-exact kernel oracle on every usable card (0.2.13); a card that fails is named and never used |
 | `bankml gpu [--remote]` | every video card found (Vulkan, merged with `/sys/class/drm`) and which bankml will use; `--remote` adds the GPUs Hugging Face rents (22 NVIDIA flavors with card counts and prices; listed, never started); `BANKML_GPU=off` turns the component off, `BANKML_GPU=0,2` picks cards (0.2.12; the GPU kernels are the next steps) |
 | `bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json` (or plain text) | bankml's own forward pass, greedy, or with `--sample` llama-server's sampler chain (the model's defaults unless given; same seed, same tokens as llama-server, 0.2.11), streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts of any length and contexts of any length (all three of ggml's CPU attention kernels, since 0.2.10); `BANKML_LLAMA_THREADS` (default 3) must equal the `-t` of the llama.cpp being matched, because its long-context decode kernel chunks by thread; `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
-| `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage`, with (0.3.7) package watts when RAPL is readable (`./install.sh power`), each GPU's busy %, VRAM and GTT, and the GPU limiter's state |
-| `GET /bankml/metrics` | (0.3.7) bankML's own measurements of its last 256 answers: TTFT, prompt and generation tokens per second, grammar time, energy and joules per token where measured; totals |
+| `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage`, with (0.3.7, next release) package watts when RAPL is readable (`./install.sh power`), each GPU's busy %, VRAM and GTT, and the GPU limiter's state |
+| `GET /bankml/metrics` | (0.3.7, next release) bankML's own measurements of its last 256 answers: TTFT, prompt and generation tokens per second, grammar time, energy and joules per token where measured; totals |
 | `python3 sAGI/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 sAGI/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
+| `python3 sAGI/console.py [--port 7875]` | (0.3.7, next release) the bankML console, loopback only (§6c) |
 | `python3 sAGI/models.py list \| catalog \| search Q \| import ID\|URL\|ollama:NAME:TAG \| use FILE \| first-run` | the model importer and carrier switch |
 | `python3 sAGI/speak.py [--prune]` | render every voice clip, write both exports (`--prune`: drop unused clips) |
 
@@ -752,6 +782,10 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | 18093 | bankml serve (loopback) |
 | 7873 | interact mode (loopback) |
 | 7874 | view mode (LAN) |
+| 7875 | the bankML console (loopback; 0.3.7, next release) |
+
+The variables below are the ones a user meets most. The complete list, with where each is read, is in
+[install.md §6](install.md#6-environment-variables-the-complete-list).
 
 | variable | default | meaning |
 |---|---|---|
@@ -778,3 +812,5 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `BANKML_SERVE_LISTEN`, `BANKML_UPSTREAM` | `127.0.0.1:18093`, `127.0.0.1:18092` | the ports the switch manages |
 | `BANKML_VOICE_DIR`, `BANKML_EXPORT_DIR` | `sAGI/voice/cache`, `sAGI/voice/export` | voice clips and the two exports |
 | `BANKML_VOICE_ASYNC` | `1` | `0` stops the UI rendering missing clips in the background |
+| `BANKML_CACHE_RAM` | 8192 MiB, at most a quarter of the memory available at load | (0.3.8, next release) the native engine's host prompt cache in MiB, as llama-server's `--cache-ram` (0 off, -1 no limit) |
+| `BANKML_CACHE_TYPE` | `f16` | (0.3.9, in progress) `q8_0` keeps the native KV cache as llama.cpp's `--cache-type-k/v q8_0` (§6) |

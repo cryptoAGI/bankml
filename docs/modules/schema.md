@@ -3,7 +3,8 @@
 ## Summary
 
 `schema.rs` turns a JSON schema into the GBNF text llama-server b11192 would build for it, byte for byte. It is a port
-(MIT, attributed in the file) of:
+of llama.cpp b11192 (github.com/ggml-org/llama.cpp @ 171e8846b; MIT, © the ggml authors, whose notice the file's
+header carries as the licence asks, see LICENSING.md) of:
 - `common/json-schema.cpp`: the schema tree, which keywords decide a node's kind, `$ref` resolution, the errors;
 - `common/json-schema-to-grammar.cpp` (`common_chat_schema_converter`): rule naming and de-duplication, objects with
   required / optional / additional properties, `_not_strings`, arrays and tuples, integer ranges, the regex → GBNF
@@ -13,13 +14,14 @@
   integer / float distinction, `dump()`;
 - the GBNF the PEG chat parser adds around the schema (`common/chat-auto-parser-generator.cpp`,
   `common/peg-parser.cpp`): the `json-*` rules, `response-format`, `root`, and on the Qwen3 template the `until-13`
-  rules for the reasoning block.
+  rules for the reasoning block (`until("</think>")`, parser id 13 on the pinned template, with `--reasoning off`).
 
 The grammar text matters because the answer depends on it: the grammar engine ([grammar.md](grammar.md)) masks the
 same tokens only if it parses the same rules.
 
 Callers: `grammar.rs` (`from_openai*` and `from_ollama*` convert a schema at request parse time to accept or refuse
-it); `native.rs` (`Native::grammar` builds the grammar for the model's template); `serve.rs` (`NativeChat::parse`).
+it); `native.rs` (`Native::grammar` builds the grammar for the model's template); `serve.rs` (`NativeChat::parse_ctx`
+checks that the grammar parses before any token is computed).
 The surfaces are `/v1/chat/completions` (`response_format` `json_schema`, `json_object` + `schema`, the top-level
 `json_schema`), Ollama's `/api/chat` and `/api/generate` with `format: <schema>`, and the C API's `bankml_chat`.
 
@@ -31,6 +33,9 @@ impl Value {
     pub fn parse(s: &str) -> Option<Value>
     pub fn from_json(j: &crate::serve::Json) -> Value
     pub fn get(&self, k: &str) -> Option<&Value>
+    pub fn is_null(&self) -> bool
+    pub fn is_empty(&self) -> bool
+    pub fn as_str(&self) -> Option<&str>
     pub fn dump(&self) -> String
 }
 pub fn json_schema_to_grammar(schema: &Value) -> Result<(String, Vec<String>), String>
@@ -70,7 +75,9 @@ curl -s 127.0.0.1:PORT/v1/chat/completions -d '{
 
 - Unit tests: `json_reads_and_prints_as_nlohmann`, `the_object_schema_is_the_json_mode_grammar`, `refusals_say_where`,
   and `llama_cpp_test_cases`, which carries llama.cpp's own `tests/test-json-schema-to-grammar.cpp` cases with their
-  expected grammars (`testing/json_schema_cases.json`, at least 80 cases) and checks that each grammar parses.
+  expected grammars (`testing/json_schema_cases.json`: 81 cases; the test requires at least 80). Each expected
+  grammar must come out the same (indentation aside) and parse in `grammar.rs`; each case llama.cpp refuses must be
+  refused.
 - `oracle_schema_grammars` (`#[ignore]`, in the gate): `testing/schema_oracle.{cpp,py}` calls llama.cpp b11192's own
   `json_schema_to_grammar` and `common_chat_templates_apply` inside the release's `libllama-common.so` (no model) on
   173 schemas: llama.cpp's 81 test cases, Pydantic-shaped schemas like mindX's, edge cases and every refusal path,
@@ -81,6 +88,17 @@ curl -s 127.0.0.1:PORT/v1/chat/completions -d '{
   llama-server b11192, greedy and seeded, from an empty cache, including answers cut by `max_tokens`: Bonsai-8B
   **28 of 28**, Ternary-Bonsai-8B **11 of 11**, Bonsai-1.7B, SmolLM2-135M-Instruct and mindx-gen39 **56 of 56** each.
   Live in the gate through `/v1` (one streamed) and `/api/chat` with `format: <schema>`.
+
+## Design notes
+
+- This is milestone O6b (JSON schemas). JSON mode's grammar was first a constant (0.3.3), checked against the
+  grammar llama-server reports; it is now built by the converter, and `the_object_schema_is_the_json_mode_grammar`
+  checks the two agree.
+- The ChatML templates without reasoning (SmolLM2-Instruct, `mindx-genN`) were added in 0.3.5: their root is the
+  generation prompt then the value, with no `until-13` rules, as llama.cpp b11192 emits on both templates
+  (`oracle_schema_grammars` records each template from the model that carries it).
+- The non-ASCII-before-a-quantifier refusal exists because llama.cpp's grammar for it is not UTF-8 and would misread
+  the character; bankml refuses rather than reproduce it.
 
 ## Advantages and efficiency
 

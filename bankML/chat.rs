@@ -1,36 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P3, step two — the chat template: a conversation rendered into the prompt text exactly as llama.cpp b11192 renders
-//! it with the Bonsai / Qwen3 template carried in the GGUF (`tokenizer.chat_template`, sha256 `30a75d10e60b57e2…`;
-//! thinking is off: the generation prompt ends in an empty `<think>` block). The oracle is llama-server's own
-//! `/apply-template` (`testing/template_oracle.py` → `oracle_chat_template`).
+//! Chat templates: a conversation rendered into prompt text byte-identically to llama.cpp b11192 applying the
+//! template carried in the GGUF (`tokenizer.chat_template`). Each template is pinned by the sha256 of its text
+//! (`TEMPLATES`); any other is refused. The oracle is llama-server's `/apply-template`.
 //!
-//! In scope: system, user, assistant and tool messages whose content is text, with or without `reasoning_content`,
-//! ending with a user or tool message (the generation prompt follows). Out of scope, refused rather than guessed:
-//! tool definitions and tool calls (the template serialises them with its own `tojson`), and a conversation ending
-//! with an assistant message (llama-server treats that as a prefill, which is server logic beyond the template).
+//! In scope: text messages (system, user, assistant, tool), optionally with `reasoning_content`, ending with a user
+//! or tool message. Refused: tool definitions, tool calls, and a conversation ending with an assistant message.
 //!
-//! 0.3.4 (O4): templates map per model, each pinned by the sha256 of its text (`TEMPLATES`): the Bonsai / Qwen3
-//! template above; SmolLM2-Instruct's (ChatML with a default system message when the conversation has none); and
-//! the plain ChatML that mindX's `mindx-genN` carries. On the two ChatML templates every message renders as
-//! `<|im_start|>{role}\n{content}<|im_end|>\n` whatever its role (a tool result included), and `reasoning_content`
-//! is dropped, as llama-server renders them (its oracle shows both). Ollama's persona `SYSTEM` for `mindx-genN` lives in its Modelfile, not in
-//! the GGUF: it is the caller's system message here (`bankml create` is O5). Each template's oracle is llama-server's
-//! `/apply-template` on a file that carries it (`testing/template_oracle.py`).
+//! Details: docs/modules/chat.md.
 
 use crate::serve::Json;
 
-/// The Bonsai / Qwen3 template, by the sha256 of its text (the 1.7B and 8B Bonsai files carry the same one).
+/// First 16 hex digits of the sha256 of the Bonsai / Qwen3 template text.
 pub const TEMPLATE_SHA256: &str = "30a75d10e60b57e2";
 
 /// The chat templates this module reproduces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Template {
-    /// Bonsai / Qwen3 (thinking off: the generation prompt ends in an empty `<think>` block)
+    /// Bonsai / Qwen3, thinking off: the generation prompt ends in an empty `<think>` block
     Qwen3,
-    /// SmolLM2-Instruct: ChatML, with "You are a helpful AI assistant named SmolLM, trained by Hugging Face" as the
-    /// system message when the first message is not one
+    /// SmolLM2-Instruct: ChatML, with `SMOLLM2_SYSTEM` prepended when the first message is not a system message
     SmolLm2,
-    /// plain ChatML, no default system message (mindX's `mindx-genN`, SmolLM2-135M fine-tuned by mindXtrain)
+    /// Plain ChatML, no default system message (mindX's `mindx-genN`)
     ChatMl,
 }
 
@@ -44,7 +34,7 @@ pub const TEMPLATES: [(&str, Template, &str); 3] = [
 const SMOLLM2_SYSTEM: &str = "You are a helpful AI assistant named SmolLM, trained by Hugging Face";
 
 impl Template {
-    /// The prompt, with the generation prompt appended. Refuses what is out of scope (see the module docs).
+    /// Renders `msgs` and appends the generation prompt; out-of-scope input is an `Err`.
     pub fn render(self, msgs: &[Message]) -> Result<String, String> {
         match self {
             Template::Qwen3 => render(msgs),
@@ -55,7 +45,7 @@ impl Template {
                     _ => {}
                 }
                 let mut out = String::new();
-                // reasoning_content is not rendered: these templates never read it
+                // These templates never read reasoning_content.
                 for (i, m) in msgs.iter().enumerate() {
                     if i == 0 && self == Template::SmolLm2 && m.role != "system" {
                         out += &format!("<|im_start|>system\n{SMOLLM2_SYSTEM}<|im_end|>\n");
@@ -90,12 +80,12 @@ impl Message {
     }
 }
 
-/// The model's own template, checked: only a template this module reproduces is accepted.
+/// Succeeds if the model's chat template is one this module reproduces.
 pub fn check_template(gguf: &std::path::Path) -> Result<(), String> {
     template_of(gguf).map(|_| ())
 }
 
-/// The model's own template (`tokenizer.chat_template`), identified by its sha256 among `TEMPLATES`.
+/// Identifies the model's `tokenizer.chat_template` by its sha256 prefix among `TEMPLATES`.
 pub fn template_of(gguf: &std::path::Path) -> Result<Template, String> {
     let h = crate::gguf::guard_file(gguf, crate::gguf::Engine::Mainline).map_err(|e| format!("{}: {e}", gguf.display()))?;
     let t = match h.header.as_ref().and_then(|h| h.kv.get("tokenizer.chat_template")) {
@@ -111,7 +101,7 @@ pub fn template_of(gguf: &std::path::Path) -> Result<Template, String> {
     })
 }
 
-/// Messages from OpenAI-style JSON (`[{"role", "content", "reasoning_content"?}, …]`); refuses what is out of scope.
+/// Parses OpenAI-style messages (`[{"role", "content", "reasoning_content"?}, …]`); out-of-scope input is an `Err`.
 pub fn messages_from_json(v: &Json) -> Result<Vec<Message>, String> {
     let Json::Arr(a) = v else { return Err("messages must be a JSON array".into()) };
     a.iter()
@@ -125,15 +115,14 @@ pub fn messages_from_json(v: &Json) -> Result<Vec<Message>, String> {
                 None | Some(Json::Null) => String::new(),
                 _ => return Err("only text content is in scope".to_string()),
             };
-            // an empty reasoning_content is dropped before templating, as llama-server does (the oracle shows it: the
-            // content's own <think> block is then split out, which a present-but-empty string would have prevented)
+            // llama-server drops an empty reasoning_content, so the content's own <think> block is split out instead.
             let reasoning = m.get("reasoning_content").and_then(Json::as_str).filter(|r| !r.is_empty()).map(str::to_string);
             Ok(Message { role, content, reasoning })
         })
         .collect()
 }
 
-// Python's str methods, exactly as the template uses them
+// Python str methods with the semantics the template relies on.
 fn rstrip_nl(s: &str) -> &str {
     s.trim_end_matches('\n')
 }
@@ -152,7 +141,7 @@ fn after_last<'a>(s: &'a str, sep: &str) -> &'a str {
     s.rsplit(sep).next().unwrap_or(s)
 }
 
-/// The prompt, with the generation prompt appended. Refuses what is out of scope (see the module docs).
+/// Renders `msgs` with the Qwen3 template and appends the generation prompt; out-of-scope input is an `Err`.
 pub fn render(msgs: &[Message]) -> Result<String, String> {
     match msgs.last() {
         None => return Err("no messages".into()),
@@ -163,7 +152,7 @@ pub fn render(msgs: &[Message]) -> Result<String, String> {
     if msgs[0].role == "system" {
         out += &format!("<|im_start|>system\n{}<|im_end|>\n", msgs[0].content);
     }
-    // the last real user query: scanning back, the first user message that is not a wrapped tool response
+    // Last real user query: scanning back, the first user message that is not a wrapped tool response.
     let last_query = msgs
         .iter()
         .enumerate()
@@ -236,14 +225,14 @@ mod tests {
         assert!(Template::ChatMl.render(&[Message::new("user", "x"), Message::new("assistant", "y")]).is_err());
     }
 
-    /// Every conversation llama.cpp b11192 rendered (testing/template_oracle.py), byte for byte.
+    /// Qwen3 template, byte-identical to llama.cpp b11192 on every recorded conversation (`testing/template_oracle.py`).
     #[test]
     #[ignore = "needs .models/oracle-template (testing/template_oracle.py)"]
     fn oracle_chat_template() {
         template_oracle(Template::Qwen3, "cases.jsonl");
     }
 
-    /// SmolLM2-Instruct's template and the plain ChatML of mindx-genN, against llama-server rendering each model's own.
+    /// SmolLM2-Instruct and mindx-genN ChatML templates against llama-server rendering each model's own.
     #[test]
     #[ignore = "needs .models/oracle-template/cases-{SmolLM2-135M-Instruct-F16,mindx-gen39-F16}.jsonl (testing/template_oracle.py)"]
     fn oracle_chat_template_chatml() {

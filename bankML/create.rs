@@ -1,36 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `bankml create` (O5 of docs/OLLAMA.md): Ollama's `ollama create` over bankML's gate. A **derived model** is a
-//! manifest that layers configuration on a **pinned base** — it never copies weights:
+//! `bankml create`: Ollama's `ollama create` over bankML's gate. A derived model is a manifest that layers
+//! configuration on a pinned base; it never copies weights:
 //!
 //! ```text
-//!   <forks>/<name>.MODEL.json   {kind, bankml, name, created_at, base: {name, file, sha256, fork, path},
-//!                                system, parameters, stop, template_sha256, license, messages, requires, digest}
+//! <registry>/<name>.MODEL.json  {kind, bankml, name, created_at, base: {name, file, sha256, fork, path},
+//!                                layer: {base_sha256, system, parameters, stop, template_sha256, license,
+//!                                        messages, requires},
+//!                                digest: "sha256:…"}
 //! ```
 //!
-//! `digest` is the sha256 of the manifest's *content* (the base's sha256 and the layer, not the name or the time), so
-//! the same Modelfile over the same base gives the same digest (Ollama's content addressing) and a hand-edited
-//! manifest is refused when it is read. Loading a derived model verifies the **base** exactly as a pinned model is
-//! verified (the guard, then the sha256 pin of its FORK.json), then applies the layer.
-//!
-//! **The Modelfile subset** (`ollama/parser/parser.go`'s grammar: case-insensitive instructions, `#` comments at a
-//! line's start, a value runs to the end of the line, `"…"` may span lines, `"""…"""` too, no escapes; the vendored
-//! reference is mindX `docs/ollama/setup/modelfile.md`):
-//!
-//! - `FROM` a registry name (pinned or derived), a pinned GGUF path, or a safetensors directory — converted by
-//!   `convert.rs` (byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`) and pinned by a FORK.json
-//!   that records every input's sha256;
-//! - `SYSTEM`; `PARAMETER` temperature, top_k, top_p, min_p, seed, num_ctx, num_predict, stop and (0.3.6)
-//!   repeat_penalty, repeat_last_n, presence_penalty, frequency_penalty (the parameters bankML reproduces) — any other
-//!   is refused with the reason; `TEMPLATE` only when it is the base's own pinned
-//!   template (bankML renders that template, byte-identical to llama.cpp; a different one would change every prompt);
-//!   `ADAPTER` refused (LoRA merging is a later O-phase: merge first, then `FROM` the merged directory); `LICENSE`,
-//!   `MESSAGE` and `REQUIRES` recorded (and `MESSAGE`s are applied, as Ollama applies them).
-//!
-//! **The layer, applied as Ollama applies it** (`server/routes.go`): `/api/chat` (and `/v1/chat/completions`) — the
-//! model's `MESSAGE`s go before the request's messages, and its `SYSTEM` goes first **unless the request's first
-//! message is a system message**; `/api/generate` — the request's `system` if it has one, else the model's, then the
-//! `MESSAGE`s, then the prompt (`raw` prompts get no system, as in Ollama); the parameters are defaults the request's
-//! `options` override key by key (`stop` as a whole list).
+//! `digest` is the sha256 of `layer` (the base's sha256 and the configuration, not the name or the time); a manifest
+//! whose digest does not match is refused when read. Loading a derived model verifies its base as any pinned model
+//! (guard, then pin) and then applies the layer. The Modelfile parser follows Ollama's `parser/parser.go`; the
+//! layer is applied to requests as Ollama's `server/routes.go` applies it.
+//! Details: docs/modules/create.md.
 
 use crate::gguf::jstr;
 use crate::native::{Entry, Registry, Residency};
@@ -42,8 +25,10 @@ use std::sync::{Arc, RwLock};
 
 // ---------------------------------------------------------------- the Modelfile parser (Ollama's) --------------
 
-/// One instruction: `name` is `model` (FROM), `system`, `template`, `adapter`, `license`, `message`, `requires`, or a
-/// parameter's name; `args` its value (`role: content` for a message), as Ollama's parser gives them.
+/// One parsed instruction, as Ollama's parser gives it.
+///
+/// `name` is `model` (FROM), `system`, `template`, `adapter`, `license`, `message`, `requires`, or a parameter's
+/// name; `args` is the value (`role: content` for a message).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
     pub name: String,
@@ -60,12 +45,12 @@ enum St {
     Comment,
 }
 
-/// Go's `strconv.IsPrint`, closely enough: no control characters, no space other than U+0020, no format characters.
+/// Approximates Go's `strconv.IsPrint`: no control characters, no space other than U+0020, no format characters.
 fn is_print(c: char) -> bool {
     !c.is_control() && !(c.is_whitespace() && c != ' ') && !matches!(c, '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}')
 }
 
-/// `unquote` of parser.go: `"""x"""` and `"x"` lose their quotes; an unterminated quote is not yet a value.
+/// parser.go's `unquote`: strips `"""x"""` or `"x"`; `None` while a quote is still open.
 fn unquote(s: &str) -> Option<String> {
     if let Some(r) = s.strip_prefix("\"\"\"") {
         return (s.len() >= 6 && s.ends_with("\"\"\"")).then(|| r[..r.len() - 3].to_string());
@@ -173,8 +158,9 @@ pub fn parse_modelfile(text: &str) -> Result<Vec<Command>, String> {
     Ok(cmds)
 }
 
-/// Ollama's `quote` (how `ollama show --modelfile` writes a value): `"""…"""` when it has a newline or an edge space and
-/// a quote, `"…"` when it has a newline or an edge space, bare otherwise.
+/// Ollama's `quote`, as `ollama show --modelfile` writes a value.
+///
+/// With a newline or an edge space: `"""…"""` if the value contains a quote, else `"…"`. Otherwise bare.
 pub fn quote(s: &str) -> String {
     if s.contains('\n') || s.starts_with(' ') || s.ends_with(' ') {
         if s.contains('"') { format!("\"\"\"{s}\"\"\"") } else { format!("\"{s}\"") }
@@ -212,16 +198,16 @@ fn fmt_f(f: f64) -> String {
     format!("{f}")
 }
 
-/// The parameters bankML reproduces, in the order a manifest keeps them, and whether each is an integer.
-/// O2 (0.3.6): the penalties join them.
-pub const PARAMS: [(&str, bool); 11] = [("temperature", false), ("top_k", true), ("top_p", false), ("min_p", false), ("seed", true), ("num_ctx", true), ("num_predict", true),
-                                        ("repeat_penalty", false), ("repeat_last_n", true), ("presence_penalty", false), ("frequency_penalty", false)];
+/// The parameters bankML reproduces, in manifest order, with whether each is an integer.
+pub const PARAMS: [(&str, bool); 13] = [("temperature", false), ("top_k", true), ("top_p", false), ("min_p", false), ("seed", true), ("num_ctx", true), ("num_predict", true),
+                                        ("repeat_penalty", false), ("repeat_last_n", true), ("presence_penalty", false), ("frequency_penalty", false),
+                                        ("typical_p", false), ("min_keep", true)];
 
 /// Why a parameter bankML does not reproduce is refused as a model default.
 fn param_refusal(k: &str) -> String {
     match k {
-        "penalize_newline" | "typical_p" | "tfs_z" | "mirostat" | "mirostat_eta" | "mirostat_tau" | "min_keep" =>
-            format!("PARAMETER {k}: bankML reproduces llama.cpp's penalties, temperature, top-k, top-p, min-p and seed; this sampler is not reproduced, so it cannot become a default of the model"),
+        "penalize_newline" | "tfs_z" | "mirostat" | "mirostat_eta" | "mirostat_tau" =>
+            format!("PARAMETER {k}: bankML reproduces llama.cpp's penalties, temperature, top-k, top-p, min-p, typical-p and seed; this sampler is not reproduced, so it cannot become a default of the model"),
         "num_thread" | "num_gpu" | "main_gpu" | "num_batch" | "use_mmap" | "use_mlock" | "low_vram" | "numa" | "f16_kv" | "vocab_only" | "logits_all" | "num_keep" | "num_gqa" | "rope_frequency_base" | "rope_frequency_scale" =>
             format!("PARAMETER {k}: a resource option; it does not change an answer bankML gives, so it is not part of a model (give it to bankml serve)"),
         _ => format!("PARAMETER {k}: not a parameter bankML reproduces (it reproduces {} and stop)", PARAMS.map(|p| p.0).join(", ")),
@@ -264,8 +250,10 @@ fn set_param(params: &mut Vec<(String, P)>, stop: &mut Option<Vec<String>>, k: &
 }
 
 impl Spec {
-    /// From a Modelfile: one FROM, the last SYSTEM and TEMPLATE, every LICENSE and MESSAGE, parameters with the last
-    /// value winning and `stop` accumulating — Ollama's rules; ADAPTER refused.
+    /// Builds a spec from a Modelfile by Ollama's rules.
+    ///
+    /// Exactly one FROM; the last SYSTEM and TEMPLATE win; every LICENSE and MESSAGE is kept; for parameters the
+    /// last value wins and `stop` accumulates. ADAPTER is refused.
     pub fn from_modelfile(text: &str) -> Result<Spec, String> {
         let mut s = Spec::default();
         let mut from = Vec::new();
@@ -295,8 +283,10 @@ impl Spec {
         }
     }
 
-    /// From `/api/create`'s structured form: `from`, `system`, `template`, `license` (a string or strings),
-    /// `parameters` (an object), `messages`; `files`, `adapters` and `quantize` refused with the reason.
+    /// Builds a spec from `/api/create`'s structured form.
+    ///
+    /// Reads `from`, `system`, `template`, `license` (a string or strings), `parameters` (an object) and `messages`;
+    /// refuses `files`, `adapters` and `quantize` with the reason.
     pub fn from_request(req: &Json) -> Result<Spec, String> {
         let nonempty = |k: &str| match req.get(k) {
             None | Some(Json::Null) => false,
@@ -362,9 +352,9 @@ pub struct Base {
     pub name: String,
     pub file: String,
     pub sha256: String,
-    /// the FORK.json that pins it (a file name in the registry directory)
+    /// File name, in the registry directory, of the FORK.json that pins it.
     pub fork: String,
-    /// where the file was verified when the model was created
+    /// Where the file was verified at creation.
     pub path: String,
 }
 
@@ -393,7 +383,7 @@ fn strs(v: &[String]) -> String {
 }
 
 impl Derived {
-    /// The content the digest is taken over: the base's identity and the layer (not the name, not the time).
+    /// The `layer` JSON the digest covers: the base's sha256 and the configuration; not the name or the time.
     pub fn content(&self) -> String {
         let params = self.params.iter().map(|(k, v)| format!("{}: {}", jstr(k), v.json())).collect::<Vec<_>>().join(", ");
         let msgs = self.messages.iter().map(|(r, c)| format!("{{\"role\": {}, \"content\": {}}}", jstr(r), jstr(c))).collect::<Vec<_>>().join(", ");
@@ -414,7 +404,7 @@ impl Derived {
                 crate::VERSION, jstr(&self.name), self.created_at, jstr(&b.name), jstr(&b.file), b.sha256, jstr(&b.fork), jstr(&b.path), self.content(), self.digest)
     }
 
-    /// A manifest read back; refused if its digest is not its content's.
+    /// Parses a manifest; refuses it if `digest` does not match its content.
     pub fn from_json(text: &str) -> Result<Derived, String> {
         let v = Json::parse(text).ok_or("not JSON")?;
         let s = |o: &Json, k: &str| o.get(k).and_then(Json::as_str).map(str::to_string);
@@ -458,7 +448,7 @@ impl Derived {
         format!("{}:latest", self.name)
     }
 
-    /// The Modelfile `ollama show --modelfile` would print for it (Ollama's `Command.String` quoting), FROM the base's name.
+    /// The Modelfile `ollama show --modelfile` would print (`Command.String` quoting), FROM the base's name.
     pub fn modelfile(&self) -> String {
         let mut o = format!("# bankml {}: derived model {} (digest sha256:{}), a layer over the pinned base {} (sha256 {}),\n# verified before every load\n# To build a new Modelfile based on this, replace FROM with:\n# FROM {}\n\nFROM {}\n",
                             crate::VERSION, self.name, self.digest, self.base.name, self.base.sha256, self.tag(), self.base.name);
@@ -483,7 +473,7 @@ impl Derived {
         o
     }
 
-    /// `/api/show`'s `parameters` text (Ollama's: one `key value` per line, the stops quoted).
+    /// `/api/show`'s `parameters` text: one `key value` per line, stops quoted, as Ollama prints it.
     pub fn parameters_text(&self) -> String {
         let mut v: Vec<String> = self.params.iter().map(|(k, p)| format!("{k:<30} {}", p.json())).collect();
         v.extend(self.stop.iter().map(|s| format!("{:<30} {}", "stop", jstr(s))));
@@ -505,9 +495,11 @@ impl Derived {
         out
     }
 
-    /// An Ollama `/api/chat` or `/api/generate` request with the layer applied: `options` over the model's
-    /// parameters, the messages by Ollama's rule; for a (non-raw) generate the conversation it becomes goes in
-    /// `bankml_messages` (the system, the MESSAGEs, the prompt as the user turn).
+    /// Applies the layer to an Ollama `/api/chat` or `/api/generate` request.
+    ///
+    /// The request's `options` override the model's parameters key by key (`stop` as a whole list); chat messages
+    /// follow Ollama's rule. A non-raw generate gets `bankml_messages`: the request's system or else the model's,
+    /// the MESSAGEs, then the prompt as the user turn. A raw generate gets no system.
     pub fn apply_ollama(&self, req: &Json, chat: bool) -> Json {
         let Json::Obj(mut f) = req.clone() else { return req.clone() };
         let mut opts: Vec<(String, Json)> = match req.get("options") { Some(Json::Obj(o)) => o.clone(), _ => Vec::new() };
@@ -545,8 +537,10 @@ impl Derived {
         Json::Obj(f)
     }
 
-    /// An OpenAI `/v1/chat/completions` request with the layer applied: the messages by Ollama's chat rule (its
-    /// OpenAI endpoint goes through the same handler), the parameters as defaults of the top-level fields.
+    /// Applies the layer to an OpenAI `/v1/chat/completions` request.
+    ///
+    /// Messages follow Ollama's chat rule (Ollama's OpenAI endpoint shares the chat handler); the parameters fill
+    /// absent top-level fields.
     pub fn apply_openai(&self, req: &Json) -> Json {
         let Json::Obj(mut f) = req.clone() else { return req.clone() };
         let has = |f: &[(String, Json)], k: &str| f.iter().any(|(n, v)| n == k && *v != Json::Null);
@@ -573,13 +567,13 @@ impl Derived {
         Json::Obj(f)
     }
 
-    /// The layer's `num_ctx`, if any (checked against what the server holds).
+    /// The layer's `num_ctx`, if any; the server checks it against its context.
     pub fn num_ctx(&self) -> Option<i64> {
         self.params.iter().find(|(k, _)| k == "num_ctx").map(|(_, v)| v.num() as i64)
     }
 }
 
-/// JSON text of a value (the same escaping as `jstr`).
+/// JSON text of a value, escaped as `jstr` escapes.
 pub fn to_json(v: &Json) -> String {
     match v {
         Json::Null => "null".into(),
@@ -591,7 +585,10 @@ pub fn to_json(v: &Json) -> String {
     }
 }
 
-/// A model name as bankML keeps it: lower-case, `:latest` dropped; letters, digits, `.`, `_`, `-`.
+/// Normalises a model name: lower-case, `:latest` dropped.
+///
+/// Refuses another tag, characters other than letters, digits, `.`, `_`, `-`, more than 128 bytes, a leading `.`
+/// or `-`, and a `.gguf` suffix.
 pub fn check_name(n: &str) -> Result<String, String> {
     let n = n.trim();
     let n = n.strip_suffix(":latest").unwrap_or(n);
@@ -618,7 +615,7 @@ fn manifest_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{name}.MODEL.json"))
 }
 
-/// Every GGUF pinned in `dir` (each `*.FORK.json`'s `.gguf` files, looked for in `dir` and the `look` directories).
+/// Every GGUF pinned in `dir`: each `*.FORK.json`'s `.gguf` files, looked up in `dir`, then in `look`.
 pub fn pinned_entries(dir: &Path, look: &[PathBuf]) -> Vec<Entry> {
     let mut forks: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".FORK.json")).collect();
     forks.sort();
@@ -660,7 +657,7 @@ fn fork_for(dir: &Path, file: &str) -> Option<(String, String)> {
 }
 
 impl Store {
-    /// Reads every `*.MODEL.json` of `dir`; a manifest that does not verify is skipped, and said why.
+    /// Loads every `*.MODEL.json` in `dir`; returns the reason for each manifest that fails to verify and is skipped.
     pub fn open(&self, dir: Option<&Path>, reg: &Registry) -> Vec<String> {
         *self.dir.write().unwrap_or_else(|e| e.into_inner()) = dir.map(Path::to_path_buf);
         let mut errs = Vec::new();
@@ -679,7 +676,7 @@ impl Store {
         errs
     }
 
-    /// The entry a derived model loads through: its base as the registry has it, else as the manifest recorded it.
+    /// The entry a derived model loads through: its base from the registry, else as the manifest recorded it.
     fn bind(dir: &Path, reg: &Registry, d: Derived) -> Result<(Arc<Derived>, Entry), String> {
         let e = match reg.entries.iter().find(|e| e.sha256 == d.base.sha256 && e.path.is_some()) {
             Some(e) => e.clone(),
@@ -708,7 +705,7 @@ impl Store {
         self.models.read().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| d.name == n).cloned()
     }
 
-    /// Writes the manifest (atomically) and lists it.
+    /// Writes the manifest atomically (`.json.part`, then rename) and adds it to the store.
     pub fn insert(&self, d: Derived, e: Entry) -> Result<(), String> {
         let dir = self.dir().ok_or("no registry directory")?;
         let p = manifest_path(&dir, &d.name);
@@ -730,10 +727,10 @@ impl Store {
     }
 }
 
-/// A request's `model` to the entry it loads and the layer over it: a pinned model (no layer) or a derived one.
+/// Resolves a request's `model` to the entry it loads and, for a derived model, its layer.
 pub fn resolve(rs: &Residency, model: Option<&str>) -> Result<(Entry, Option<Arc<Derived>>), String> {
-    // 0.3.5: a pin's exact name first, then a derived model's, then the registry's suffix-less alias — so the derived
-    // `mindx-gen39` promote.py layers in place (FROM mindx-gen39, the alias of mindx-gen39-f16) answers as itself
+    // Order: exact pin name, derived model name, then suffix-less alias, so a derived model created in place over
+    // an alias (`mindx-gen39` FROM `mindx-gen39`) shadows the alias.
     if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
         let n = crate::native::model_name(m.strip_suffix(":latest").unwrap_or(m));
         if !rs.reg.entries.iter().any(|e| e.name == n) {
@@ -756,23 +753,23 @@ pub fn resolve(rs: &Residency, model: Option<&str>) -> Result<(Entry, Option<Arc
 
 // ---------------------------------------------------------------- create ---------------------------------------
 
-/// What a create did, step by step (Ollama's status lines).
+/// The result of a create, with Ollama's status lines.
 pub struct Created {
     pub derived: Derived,
     pub entry: Entry,
     pub status: Vec<String>,
 }
 
-/// Where the base is: a registry name, a pinned GGUF path, or a safetensors directory (converted and pinned here).
+/// Locates the base: a registry name, a pinned GGUF path, or a safetensors directory (converted and pinned here).
 fn base_for(spec_from: &str, name: &str, dir: &Path, reg_entries: &[Entry], store: &Store, status: &mut Vec<String>) -> Result<(Base, Entry, Option<Arc<Derived>>), String> {
     let p = Path::new(spec_from);
     let is_path = spec_from.contains('/') || spec_from.starts_with('.') || spec_from.to_ascii_lowercase().ends_with(".gguf");
     let (path, fork_name, fork_text, parent) = if is_path && p.is_dir() {
-        // a safetensors directory: converted to GGUF F16 beside the pins, and pinned by what was written
+        // Safetensors directory: convert to GGUF F16 beside the pins and pin what was written.
         let file = format!("{name}-F16.gguf");
         let out = dir.join(&file);
         if out.exists() || dir.join(format!("{file}.FORK.json")).exists() {
-            // 0.3.5: an existing pin (its FORK.json, wherever the file is) is never overwritten either
+            // Never overwrite an existing pin, nor its FORK.json wherever the file is.
             return Err(format!("FROM {spec_from}: {file} is already pinned in {} (a conversion is pinned once); FROM it by name, {}",
                                dir.display(), crate::native::model_name(&file)));
         }
@@ -798,7 +795,7 @@ fn base_for(spec_from: &str, name: &str, dir: &Path, reg_entries: &[Entry], stor
         let path = e.path.clone().ok_or(format!("FROM {spec_from}: its base {} is not on this machine", e.file))?;
         (path, d.base.fork.clone(), e.fork_json.clone(), Some(d))
     } else if let Some(e) = {
-        // 0.3.5: the registry's suffix-less alias (`mindx-gen39` for the one pin mindx-gen39-f16), as requests resolve it
+        // The registry's suffix-less alias, resolved as requests resolve it; only when it is unambiguous.
         let n = crate::native::model_name(spec_from.strip_suffix(":latest").unwrap_or(spec_from));
         let hits: Vec<&Entry> = reg_entries.iter().filter(|e| crate::native::base_name(&e.name) == n).collect();
         if hits.len() == 1 { Some(hits[0]) } else { None }
@@ -821,8 +818,10 @@ fn base_for(spec_from: &str, name: &str, dir: &Path, reg_entries: &[Entry], stor
     Ok((base, entry, parent))
 }
 
-/// `bankml create` and `POST /api/create`: the spec checked, the base verified, the layer merged over its parent's
-/// (a FROM naming a derived model inherits its layer, Ollama's rule), the manifest written.
+/// `bankml create` and `POST /api/create`: checks the spec, verifies the base, merges the layer over its parent's,
+/// and writes the manifest.
+///
+/// A FROM naming a derived model inherits its layer (Ollama's rule).
 pub fn create(name: &str, spec: &Spec, dir: &Path, reg_entries: &[Entry], store: &Store) -> Result<Created, String> {
     let name = check_name(name)?;
     if reg_entries.iter().any(|e| e.name == name) {
@@ -830,7 +829,7 @@ pub fn create(name: &str, spec: &Spec, dir: &Path, reg_entries: &[Entry], store:
     }
     let mut status = vec!["parsing modelfile".to_string()];
     let (base, entry, parent) = base_for(&spec.from, &name, dir, reg_entries, store, &mut status)?;
-    // the template: only the base's own
+    // TEMPLATE is accepted only when it equals the base's own chat template.
     let base_template = entry.path.as_ref().and_then(|p| crate::gguf::guard_file(p, crate::gguf::Engine::Mainline).ok())
         .and_then(|r| r.header).and_then(|h| match h.kv.get("tokenizer.chat_template") { Some(crate::gguf::Val::S(t)) => Some(t.clone()), _ => None });
     let mut template_sha256 = parent.as_ref().and_then(|p| p.template_sha256.clone());
@@ -843,7 +842,7 @@ pub fn create(name: &str, spec: &Spec, dir: &Path, reg_entries: &[Entry], store:
         h.update(t.as_bytes());
         template_sha256 = Some(crate::sha256::hex(&h.finish()));
     }
-    // the layer: the parent's, then this spec's over it
+    // The parent's layer, then this spec's over it.
     let mut params = parent.as_ref().map(|p| p.params.clone()).unwrap_or_default();
     for (k, v) in &spec.params {
         match params.iter_mut().find(|(n, _)| n == k) {
@@ -876,7 +875,7 @@ pub fn create(name: &str, spec: &Spec, dir: &Path, reg_entries: &[Entry], store:
             "num_ctx" => v.num() < 1.0,
             "num_predict" => v.num() < -2.0,
             "top_k" | "seed" => false,
-            // llama.cpp takes any finite frequency or presence penalty, negative ones too; a repeat penalty must be > 0
+            // llama.cpp accepts any finite frequency or presence penalty, including negative; repeat must be > 0.
             "frequency_penalty" | "presence_penalty" => !v.num().is_finite(),
             "repeat_penalty" => v.num() <= 0.0,
             _ => v.num() < 0.0,
@@ -910,8 +909,8 @@ fn err(c: &mut TcpStream, code: u16, msg: &str) -> std::io::Result<()> {
     respond(c, code, "application/json", format!("{{\"error\": {}}}", jstr(msg)).as_bytes())
 }
 
-/// `POST /api/create`: `{model, modelfile}` (a Modelfile's text) or Ollama's structured form
-/// `{model, from, system, template, license, parameters, messages}`; streamed status lines (NDJSON) unless `stream: false`.
+/// `POST /api/create`: `{model, modelfile}` or Ollama's structured `{model, from, system, template, license,
+/// parameters, messages}`; status lines stream as NDJSON unless `stream: false`.
 pub fn http_create(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return err(c, 400, "body is not JSON") };
     let Some(name) = req.get("model").or(req.get("name")).and_then(Json::as_str) else { return err(c, 400, "model: name the model to create") };
@@ -926,7 +925,7 @@ pub fn http_create(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::R
         Ok(s) => s,
         Err(m) => return err(c, 400, &m),
     };
-    // a create rewrites what a request may resolve: it waits for the engine like a load does
+    // A create changes what requests resolve to, so it takes the engine lock as a load does.
     let run = rs.lock_run();
     let r = create(name, &spec, &dir, &rs.reg.entries, &rs.derived);
     drop(run);
@@ -945,7 +944,7 @@ pub fn http_create(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::R
     }
 }
 
-/// `DELETE /api/delete`: a derived model only; a pinned model is refused with the reason.
+/// `DELETE /api/delete`: derived models only; a pinned model is refused with the reason.
 pub fn http_delete(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return err(c, 400, "body is not JSON") };
     let Some(name) = req.get("model").or(req.get("name")).and_then(Json::as_str) else { return err(c, 400, "model: name the model to delete") };
@@ -967,8 +966,9 @@ pub fn http_delete(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::R
     }
 }
 
-/// `POST /api/copy`: a derived model under a second name (the same content and digest); a pinned model's copy is a
-/// derived model with an empty layer over it.
+/// `POST /api/copy`: a derived model under a second name, same content and digest.
+///
+/// Copying a pinned model creates a derived model with an empty layer.
 pub fn http_copy(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return err(c, 400, "body is not JSON") };
     let (Some(src), Some(dst)) = (req.get("source").and_then(Json::as_str), req.get("destination").and_then(Json::as_str)) else {
@@ -985,8 +985,8 @@ pub fn http_copy(c: &mut TcpStream, rs: &Residency, body: &[u8]) -> std::io::Res
     }
 }
 
-/// `/api/show` of a derived model: the base's own answer (`base_show`), with the derived model's Modelfile,
-/// parameters, system, licence, messages and `details.parent_model`.
+/// `/api/show` of a derived model: `base_show` with the derived model's Modelfile, parameters, system, licence,
+/// messages and `details.parent_model`.
 pub fn show_json(d: &Derived, base_show: &str) -> String {
     let Some(Json::Obj(mut f)) = Json::parse(base_show) else { return base_show.to_string() };
     let set = |f: &mut Vec<(String, Json)>, k: &str, v: Json| match f.iter_mut().find(|(n, _)| n == k) {
@@ -1021,7 +1021,7 @@ pub fn show_json(d: &Derived, base_show: &str) -> String {
     to_json(&Json::Obj(f))
 }
 
-/// The derived models' `/api/tags` objects (`details` from the base's, `parent_model` set).
+/// The derived models' `/api/tags` objects: the base's `details` with `parent_model` set.
 pub fn tag_objects(rs: &Residency, details: impl Fn(&Entry) -> String, native: impl Fn(&Entry) -> String) -> Vec<String> {
     rs.derived.list().iter().map(|(d, e)| {
         let det = details(e).replacen("\"parent_model\": \"\"", &format!("\"parent_model\": {}", jstr(&format!("{}:latest", d.base.name))), 1);
@@ -1036,7 +1036,7 @@ pub fn tag_objects(rs: &Residency, details: impl Fn(&Entry) -> String, native: i
 pub fn cli(name: &str, modelfile: &str, dir: &Path, models: &[PathBuf]) -> Result<Derived, String> {
     let text = std::fs::read_to_string(modelfile).map_err(|e| format!("{modelfile}: {e}"))?;
     let spec = Spec::from_modelfile(&text)?;
-    // a relative FROM path is relative to the Modelfile, as in Ollama
+    // A relative FROM path is relative to the Modelfile, as in Ollama.
     let spec = if spec.from.starts_with("./") || spec.from.starts_with("../") {
         let base = Path::new(modelfile).parent().unwrap_or(Path::new("."));
         Spec { from: base.join(&spec.from).display().to_string(), ..spec }
@@ -1116,7 +1116,7 @@ mod tests {
         assert_eq!(sp.stop, Some(vec!["<|im_end|>".into(), "END".into()]));
         assert_eq!(sp.license, vec!["MIT".to_string()]);
         assert_eq!(sp.messages, Some(vec![("user".into(), "hi".into())]));
-        for (mf, why) in [("FROM b\nPARAMETER typical_p 0.9", "not reproduced"), ("FROM b\nPARAMETER num_thread 4", "resource option"),
+        for (mf, why) in [("FROM b\nPARAMETER mirostat 2", "not reproduced"), ("FROM b\nPARAMETER num_thread 4", "resource option"),
                           ("FROM b\nPARAMETER warp 9", "not a parameter"), ("FROM b\nPARAMETER num_ctx 2048.0", "not an integer"),
                           ("FROM b\nPARAMETER temperature hot", "not a number"), ("FROM b\nADAPTER /x", "LoRA"), ("SYSTEM x", "no FROM"),
                           ("FROM a\nFROM b", "more than one FROM")] {
@@ -1343,7 +1343,7 @@ mod tests {
         assert_eq!(rs.derived.find("p3").unwrap().0.digest, p2.digest);
         // the refusals, with their reasons
         for (body, why) in [(r#"{"model": "x", "modelfile": "FROM base-f16\nADAPTER /lora"}"#, "LoRA"),
-                            (r#"{"model": "x", "modelfile": "FROM base-f16\nPARAMETER typical_p 0.9"}"#, "not reproduced"),
+                            (r#"{"model": "x", "modelfile": "FROM base-f16\nPARAMETER mirostat 2"}"#, "not reproduced"),
                             (r#"{"model": "x", "modelfile": "FROM base-f16\nTEMPLATE {{ .Prompt }}"}"#, "TEMPLATE"),
                             (r#"{"model": "base-f16", "from": "base-f16"}"#, "pinned model's name"),
                             (r#"{"model": "x", "from": "base-f16", "quantize": "q4_K_M"}"#, "quantize")] {
@@ -1363,9 +1363,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 0.3.5 (O5 end to end): mindx-gen39 created with promote.py's persona layer (testing/persona_oracle.py: FROM the
-    /// merged safetensors directory, and promote.py's own Modelfile FROM mindx-gen39 in place), asked the user's turns
-    /// alone, must give llama-server b11192's tokens for the same GGUF given the persona as the system message.
+    /// The persona layer against llama-server b11192: user turns through the layer must give the tokens llama-server
+    /// gives for the same GGUF with the persona as the system message.
+    ///
+    /// Two variants from `testing/persona_oracle.py`: FROM the merged safetensors directory, and FROM `mindx-gen39`
+    /// in place.
     #[test]
     #[ignore = "needs .models/oracle-persona (testing/persona_oracle.py --record); --release"]
     fn oracle_persona_layer() {

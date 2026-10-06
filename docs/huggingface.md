@@ -65,9 +65,15 @@ The rules, stated in code and tested:
   native NVIDIA backend module (`gpu/cuda.rs`) if Vulkan compute leaves speed on the table on these parts.
   Vulkan comes first because it covers AMD and Intel as well, with nothing linked.
 
-### Where it stands
+### Where it stands (updated 2026-10-06)
 
 - Discovery is done: local cards via Vulkan and sysfs, remote cards via the Jobs API.
-- The bit-exact GPU kernels are next: Q1_0 and ternary matmuls in bankml's own SPIR-V.
-- Next after that is a Job recipe that runs `bankml` on a chosen flavor, with its oracle on the card.
+- The Q1_0 kernel is done in bankML's own SPIR-V: bit-exact against the CPU reference (0.2.13), working inside the
+  forward pass (0.2.14), and checked on each card by `bankml gpu --verify` before it is used. Since 0.3.7
+  (unreleased) `BANKML_GPU_LIMIT` caps the card's share of memory and time, and each matrix shape is calibrated
+  between card and CPU ([modules/gpu.md](modules/gpu.md), CHANGELOG 0.3.7). The only card verified so far is the
+  integrated Radeon Vega 3.
+- Q2_0 (ternary) and F16 still run on the CPU. Their GPU kernels, and the vendor matrix (AMD discrete, NVIDIA,
+  Intel), are in [TODO.md 0.5.0](TODO.md#050--hardware).
+- A Job recipe that runs `bankml` on a chosen flavor, with its oracle on the card, comes with the first rented run.
 - No money has been spent and none will be spent without the owner starting a Job.

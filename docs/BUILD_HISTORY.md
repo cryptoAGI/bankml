@@ -6,16 +6,19 @@ the crate documentation can say what bankML *is*, while this page keeps how it *
 [The original design and phase ledger](#the-original-design-and-phase-ledger) on is preserved word for word, stale
 status lines included: they are the record of what was true when they were written. The full per-release detail
 is in [CHANGELOG.md](../CHANGELOG.md), and every release's gate record is in [testing/results/](../testing/results/).
+What bankML is now, module by module, is in [modules/](modules/README.md); the design intent the phases test is the
+Thesis in [TECHNICAL.md](TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson), which also stands alone
+in [thesis.md](thesis.md).
 
-## Where each phase ended up (as of 0.3.6, 2026-10-04)
+## Where each phase ended up (as of 2026-10-06: 0.3.6 released, 0.3.7–0.3.9 unreleased)
 
 | phase | what it asked | where it was done |
 |---|---|---|
 | **P0 — wrap** | `bankml serve` in front of llama-server: the gate, the upstream bound to the verified file, a receipt on every answer | **0.0.6** (2026-09-28); the Savante UI on it from 0.0.6–0.1.0 |
 | **P1 — guard + receipts** | the GGUF guard, the sha256 pin, one `verify` gate; a receipt per answer | guard and pin **0.0.1–0.0.2**; `bankml_receipt` on every answer since **0.0.6**; signed receipts and the THOT8 leaf are still open (0.8.0 in [TODO.md](TODO.md)) |
-| **P2 — own the kernels** | Q1_0 and Q2_0, bit-exact against ggml, then faster | AVX2 kernels **0.0.1**, threads **0.0.3**, memory floor and experiments **0.0.4–0.0.5**, SHA-NI **0.1.8**; the GPU (Vulkan, bankML's own SPIR-V) **0.2.12–0.2.14**; F16 products **0.3.4**. NEON and AVX-512 still open |
-| **P3 — own the forward** | the Qwen3 block, token-identical to llama.cpp | eleven steps, **0.2.1–0.2.11** (tokenizer, template, layer 0 op by op, the whole model, the ternary model, the three attention kernels, sampling); milestone **0.3.0** (2026-09-29): Savante answered by bankML's own forward pass. The Llama graph followed in **0.3.4** |
-| **P4 — the mindX seam** | an OpenAI-compatible provider mindX can route to | `serve --native` **0.3.0**, Ollama's API **0.3.1**, the C API **0.3.2**, JSON mode **0.3.3**, mindX's own model **0.3.4**, JSON schemas and `bankml create` **0.3.5**, the penalties **0.3.6**; **mindX's default engine on its VPS since 2026-10-04** |
+| **P2 — own the kernels** | Q1_0 and Q2_0, bit-exact against ggml, then faster | AVX2 kernels **0.0.1**, threads **0.0.3**, memory floor and experiments **0.0.4–0.0.5**, SHA-NI **0.1.8**; the GPU (Vulkan, bankML's own SPIR-V) **0.2.12–0.2.14**; F16 products **0.3.4**. Unreleased: the GPU limiter and per-shape calibration (0.3.7); ggml's `q8_0` quantizer and `vec_dot_q8_0_q8_0` for the KV cache (0.3.9). NEON and AVX-512 still open |
+| **P3 — own the forward** | the Qwen3 block, token-identical to llama.cpp | eleven steps, **0.2.1–0.2.11** (tokenizer, template, layer 0 op by op, the whole model, the ternary model, the three attention kernels, sampling); milestone **0.3.0** (2026-09-29): Savante answered by bankML's own forward pass. The Llama graph followed in **0.3.4**. The `q8_0` KV cache the original ledger asked for first is unreleased (0.3.9), with llama.cpp's Hadamard rotation |
+| **P4 — the mindX seam** | an OpenAI-compatible provider mindX can route to | `serve --native` **0.3.0**, Ollama's API **0.3.1**, the C API **0.3.2**, JSON mode **0.3.3**, mindX's own model **0.3.4**, JSON schemas and `bankml create` **0.3.5**, the penalties **0.3.6**; **mindX's default engine on its VPS since 2026-10-04**. Unreleased: the rest of the sampler chain (0.3.7); the context limit, slots, the host prompt cache, logprobs (0.3.8). Open: mindX's inference discovery using it as a provider (0.9.0 in [TODO.md](TODO.md)) |
 | **P5 — handheld** | the same crate on Android and iOS | open (see [TODO.md](TODO.md), *Handheld and distributed intelligence*) |
 
 Two lines of the original ledger no longer hold, and are kept below as written: "Nothing here runs a model yet" (true
@@ -23,6 +26,41 @@ until 0.2.7, when bankML's own forward pass first generated llama.cpp's tokens),
 need: GPU backends, … training" (the GPU component arrived in 0.2.12 and mindXtrain's stages in Rust in 0.2.13, each
 after a measurement asked for it). The `answer()` stub the status line names was removed at 0.3.6: answers come from
 `native::Native::complete`, behind `serve`, the C API and `bankml generate`.
+
+## The phases since the ledger
+
+The ledger below ends at 0.3.5. What followed, release by release, with the evidence each step stood on. The figures
+come from [CHANGELOG.md](../CHANGELOG.md); the oracles are described in [oracles.md](oracles.md) §5f–§5h.
+
+**0.3.6 (released 2026-10-04): the penalties (O2).** llama-server's repeat, frequency and presence penalties over
+`repeat_last_n`, with the prompt in the window as llama-server fills it (`sampler.rs`). Evidence: `oracle_penalties`
+and `oracle_penalties_8b`, 56 of 56 answers token-identical on mindx-gen39, Bonsai-1.7B and Bonsai-8B each, 12 of 12
+refusals each; live 85 of 85 through `/v1` and `/api/chat`. Record: `testing/results/0.3.6.txt`.
+
+**0.3.7 (unreleased): the whole sampler chain; bankML measures itself; the GPU limiter; the console.**
+- Typical-p, top-n-σ, XTC, dynamic temperature and DRY, as `llama-sampler.cpp` writes each, in the default order
+  ([modules/sampler.md](modules/sampler.md)). Evidence: `oracle_samplers` 76 of 76 on mindx-gen39 and on Bonsai-1.7B,
+  16 of 16 refusals each (Bonsai-8B to be recorded); `oracle_std_sort` 876 of 876 orders against libstdc++.
+- A record per completion (TTFT, prompt and generation speed, energy where RAPL is readable) at `GET /bankml/metrics`
+  ([modules/metrics.md](modules/metrics.md)).
+- `BANKML_GPU_LIMIT` and per-shape calibration ([modules/gpu.md](modules/gpu.md)). Measured on the Vega 3 with
+  Bonsai-1.7B: with one global share the card cost 18 % (10.40 → 8.51–8.58 tok/s); per shape it is neutral (10.36 off,
+  10.30–10.38 on), and card memory falls from 66 to about 13 MB.
+- The bankML persona and console ([modules/console.md](modules/console.md)), checked by `testing/test_console.py`.
+
+**0.3.8 (unreleased): the serving contract.** Each against llama-server b11192's answers on Bonsai-1.7B, except where
+[oracles.md](oracles.md) §5g says the engine is its own reference: the context limit (8 of 8), slot save, restore and
+erase (19 of 19), one slot with llama-server's host prompt cache (14 of 14,
+[modules/prompt_cache.md](modules/prompt_cache.md)), and logprobs on `/v1`, streamed or not (14 of 14).
+
+**0.3.9 (in progress): a `q8_0` KV cache and a faster grammar mask.**
+- `BANKML_CACHE_TYPE=q8_0` stores K and V as `q8_0` blocks, 53 % of the f16 cache's bytes, with llama.cpp's Hadamard
+  rotation around the quantized cache. Evidence: `oracle_ggml_b11192_q8_0_kv_kernels` (4,000 rows byte-exact, 4,000
+  dot products bit-exact against the shipped library) and `kv_oracle_live` (6 of 6 answers against llama-server with
+  `--cache-type-k/v q8_0`).
+- The whole-vocabulary mask through a trie: median 2.94 ms against 38.8 ms (13×) over the oracle's 1,645 masks, every
+  mask identical to llama.cpp's by both paths ([modules/grammar.md](modules/grammar.md)).
+- 1-bit decode speed, the third piece, is still to be measured on an idle machine.
 
 ## The original design and phase ledger
 

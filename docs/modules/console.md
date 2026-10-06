@@ -11,25 +11,27 @@ measurement, not invention.
 ## Technical usage
 
 ```sh
-python3 sAGI/console.py [--port 7875]       # loopback only; bankml serve at $BANKML_SERVE_LISTEN (127.0.0.1:18093)
+python3 sAGI/console.py [--host 127.0.0.1] [--port 7875]   # loopback hosts only; bankml serve at $BANKML_SERVE_LISTEN (127.0.0.1:18093)
 ```
 
 | route | what |
 |---|---|
-| `GET /`, `/app.js`, `/style.css`, `/vendor/d3.v7.min.js` | the page and its assets (D3 v7.9.0, ISC, vendored) |
+| `GET /`, `/app.js`, `/style.css`, `/vendor/d3.v7.min.js`, `/vendor/d3.LICENSE` | the page and its assets (D3 v7.9.0, ISC, vendored) |
 | `GET /api/state` | `/bankml`, `/bankml/usage`, `/bankml/metrics`, the saved resources, the persona and its doctrine root, the SELF block |
-| `POST /api/ask` `{"message", "history"?, "temperature"?…}` | NDJSON: `{"piece"}` lines, then `{"done", "receipt", "metrics", "answer_sha256_ok"}`; the exchange is appended to `$BANKML_UI_STATE/console.jsonl` |
+| `POST /api/ask` `{"message", "history"?, "max_tokens"?, "temperature"?, "top_k"?, "top_p"?, "min_p"?, "repeat_penalty"?, "seed"?}` | NDJSON: `{"piece"}` lines, then `{"done", "error", "receipt", "metrics", "answer_sha256_ok"}`; the exchange (question, answer, receipt, the engine's metrics record, the SELF block it was asked with) is appended to `$BANKML_UI_STATE/console.jsonl` |
 | `POST /api/resources` `{"threads", "ram_gb", "gpu_limit"}` | one verified restart of the native engine with rollback (`models.apply_resources`) |
 | `GET /api/log` | the last 200 exchanges and the engine log's tail |
 | `GET /api/infotags` | ERC-721 metadata: name, description, `attributes`, and the RFC 6962 root and CIDs |
 
-The SELF block is rendered for the model as one sentence per measurement with its unit (`self_text`), "not measured"
-for a `null` — a bare JSON key (`last_eval_tps`) was read as seconds in testing.
+`/api/ask` sends the persona's system prompt with the SELF block appended, the last 12 user and assistant turns of
+`history`, and the question to `/v1/chat/completions` (streamed, `max_tokens` 256 unless set). The SELF block is
+rendered for the model as one sentence per measurement with its unit (`self_text`), "not measured" for a `null` — a
+bare JSON key (`last_eval_tps`) was read as seconds in testing.
 
 ## How it is verified
 
-`testing/test_console.py` (in the gate, no engine needed): every asset served; the CSP; unknown paths 404; a foreign
-`Host` 403; a cross-origin POST 403; a non-JSON POST 400; SELF says "not measured" without an engine and names units
+`testing/test_console.py` (18 checks, in the gate, no engine needed): every asset served; the CSP; unknown paths 404; a foreign
+`Host` 403; a cross-origin POST 403; a non-JSON POST 400; an empty question 400; SELF says "not measured" without an engine and names units
 with one; the Infotags root equals `savante.merkle_root` over the log's exact lines. Live on Bonsai-1.7B: "I am bankML…",
 its token totals and generation speed read correctly from SELF, and every receipt's sha256 matches the streamed text.
 
@@ -46,9 +48,10 @@ its token totals and generation speed read correctly from SELF, and every receip
 ## Limitations
 
 - The persona's system prompt is about 550 tokens: the first question of a session pays for it on the CPU.
-- It answers through `/v1`, so the samplers it can set are the OpenAI-shaped ones; one conversation at a time (bankML's
-  single slot).
-- The DeltaVerse substrate is mounted only once its module is committed (another session is building it).
+- It forwards only `temperature`, `top_k`, `top_p`, `min_p`, `repeat_penalty` and `seed`; the rest of the 0.3.7
+  sampler chain and logprobs are reachable through `/v1` directly, not from the page. One conversation at a time
+  (bankML's single slot; requests sent together are answered in turn).
+- The page has no DeltaVerse substrate background yet.
 
 ## See also
 

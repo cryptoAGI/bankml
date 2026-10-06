@@ -123,8 +123,9 @@ The road is laid out release by release in [TODO.md](TODO.md), and each step cou
 - **0.3.8** (built): llama-server's behaviour at the context limit, saved and restored conversations (slots), a
   prompt cache so conversations taking turns each keep their context, and token probabilities (logprobs), streamed
   or not. → [modules/prompt_cache.md](modules/prompt_cache.md)
-- **0.3.9** (in progress): a `q8_0` memory cache that halves the conversation memory, a faster grammar mask, and 1-bit
-  speed at or above llama-server's.
+- **0.3.9** (in progress): a `q8_0` conversation memory in 53 % of the space (done, the same answers as llama-server
+  on 6 of 6 checks), a grammar mask 13× faster at the median (done), and 1-bit speed at or above llama-server's
+  (next). → [CHANGELOG.md](../CHANGELOG.md)
 - **0.4.0, the milestone:** native serving complete. bankML answers everything Savante and mindX ask of llama-server,
   and its own engine is chosen by default for both 1-bit and ternary models.
 - **0.5.0, hardware:** ARM phones and tablets (NEON), newer x86 instructions (AVX-512), and more graphics cards.
@@ -140,6 +141,7 @@ We hope the ternary kernel goes back upstream to llama.cpp, so everyone benefits
 the dependable, verifiable engine under Savante, mindX and the agents built on them. And we want it to stay small
 enough that one person can read all of it.
 
-→ the authors' own words: [the Thesis](TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson) · where
+→ the thesis in full: [thesis.md](thesis.md) · the authors' own words:
+[the Thesis in TECHNICAL.md](TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson) · where
 bankML stands among other engines and papers: [research.md](research.md) · how it was built, step by step:
 [BUILD_HISTORY.md](BUILD_HISTORY.md)

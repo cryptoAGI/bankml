@@ -32,15 +32,16 @@ is refused too. It is written atomically (a `.json.part` file, then a rename).
 ### The Modelfile (`parse_modelfile`, `Spec::from_modelfile`)
 
 The parser is Ollama's `parser/parser.go`, state for state: case-insensitive instructions; `#` opens a comment only at
-a line's start; a value runs to the end of the line; `"…"` and `"""…"""` may span lines, with no escapes. `quote()`
+a line's start; a value runs to the end of the line; `"…"` and `"""…"""` may span lines, with no escapes. The
+vendored reference for the format is mindX's `docs/ollama/setup/modelfile.md`. `quote()`
 writes values back as Ollama's `ollama show --modelfile` does, and they round-trip.
 
 | instruction | handling |
 |---|---|
 | `FROM` | exactly one: a registry name (pinned or derived), its suffix-less alias, a pinned GGUF path, or a safetensors directory (converted to `<name>-F16.gguf` and pinned with every input's sha256) |
-| `SYSTEM`, `TEMPLATE` | the last wins; `TEMPLATE` only when it is the base's own chat template |
+| `SYSTEM`, `TEMPLATE` | the last wins; `TEMPLATE` only when it is the base's own chat template (bankML renders that template byte-identically to llama.cpp; a different one would change every prompt) |
 | `PARAMETER` | one of `PARAMS` (below) or `stop`; the last value wins, `stop` accumulates |
-| `MESSAGE role content` | role `system`, `user` or `assistant`; recorded and applied |
+| `MESSAGE role content` | role `system`, `user` or `assistant`; recorded and applied, as Ollama applies them |
 | `LICENSE`, `REQUIRES` | recorded |
 | `ADAPTER` | refused |
 
@@ -50,16 +51,18 @@ writes values back as Ollama's `ollama show --modelfile` does, and they round-tr
 ### `PARAMS`
 
 ```rust
-pub const PARAMS: [(&str, bool); 11] = [("temperature", false), ("top_k", true), ("top_p", false), ("min_p", false),
+pub const PARAMS: [(&str, bool); 13] = [("temperature", false), ("top_k", true), ("top_p", false), ("min_p", false),
     ("seed", true), ("num_ctx", true), ("num_predict", true), ("repeat_penalty", false), ("repeat_last_n", true),
-    ("presence_penalty", false), ("frequency_penalty", false)];
+    ("presence_penalty", false), ("frequency_penalty", false), ("typical_p", false), ("min_keep", true)];
 ```
 
-The four penalties joined in 0.3.6 (O2). Floats are parsed at 32 bits, as Ollama parses them. Range checks at create:
+The `bool` says whether the value is an integer; the order is the order a manifest keeps. The four penalties joined
+in 0.3.6 (O2); `typical_p` and its `min_keep` in 0.3.7, when the engine came to reproduce typical-p. Floats are parsed at 32 bits, as Ollama parses them. Range checks at create:
 `num_ctx` ≥ 1; `num_predict` ≥ −2; `repeat_penalty` > 0; `frequency_penalty` and `presence_penalty` any finite value
 (negative too, as llama.cpp takes them); `top_k` and `seed` unchecked; the rest ≥ 0. A `PARAMETER` outside `PARAMS`
-is refused with one of three reasons: a sampler not reproduced (`typical_p`, `tfs_z`, `mirostat*`,
-`penalize_newline`, `min_keep`); a resource option that belongs to `bankml serve`; or not a parameter bankML knows.
+is refused with one of three reasons: a sampler not reproduced (`tfs_z`, `mirostat`, `mirostat_eta`,
+`mirostat_tau`, `penalize_newline`); a resource option that belongs to `bankml serve`; or not a parameter bankML
+knows.
 
 ### Applying the layer (Ollama's `server/routes.go`)
 
@@ -68,14 +71,15 @@ is refused with one of three reasons: a sampler not reproduced (`typical_p`, `tf
   first unless the request's first message is a system message. For a non-raw generate, the conversation goes in
   `bankml_messages`: the request's `system` if any, else the model's, then the `MESSAGE`s, then the prompt. A `raw`
   prompt gets neither.
-- `apply_openai(&self, req)`: the same message rule; the parameters fill absent top-level fields (`num_predict` as
+- `apply_openai(&self, req)`: the same message rule (Ollama's OpenAI endpoint goes through the same chat handler); the parameters fill absent top-level fields (`num_predict` as
   `max_tokens`); `num_ctx` is not a field but fits the conversation (`num_ctx()`).
 
 ### Resolution
 
 `resolve(rs, model)` tries a pin's exact name first, then a derived model's name, then the registry's suffix-less
-alias. So promote.py's re-create in place (`FROM mindx-gen39` as `mindx-gen39`) gives the layer, and
-`mindx-gen39-f16` the pin. A derived model loads through its base's entry, so it and its base share one residency.
+alias (0.3.5). So promote.py's re-create in place (`FROM mindx-gen39` as `mindx-gen39`, where `mindx-gen39` is the
+alias of the one pin `mindx-gen39-f16`) answers as itself with the layer, and `mindx-gen39-f16` gives the pin. `FROM`
+resolves the suffix-less alias the same way, and only when exactly one pin has it. A derived model loads through its base's entry, so it and its base share one residency.
 
 ### HTTP (needs `serve --native --registry`)
 
@@ -132,7 +136,17 @@ curl -s -X DELETE $B/api/delete -H "$J" -d '{"model": "mindx-persona-b"}'
 - More than one `FROM`; a name a pinned file already has; a `FROM` file not pinned in the registry directory.
 - Model names: letters, digits, `.`, `_`, `-`, at most 128, no tag but `latest`, not ending in `.gguf`.
 - A layer `num_ctx` above the server's `--ctx` is accepted at create (with a warning) and refused per request.
-- The module's header comment lists the `PARAMETER`s without the penalties; `PARAMS` includes them since 0.3.6.
+- The 0.3.7 samplers that are not Ollama options (DRY, XTC, top-n-σ, dynamic temperature) are not Modelfile
+  parameters; a request gives them through `/v1`.
+
+## Design notes
+
+- `bankml create` is phase O5 of [../OLLAMA.md](../OLLAMA.md), first built in 0.3.5; since 0.3.5 a conversion under
+  `create` never overwrites an existing pin, nor its FORK.json wherever the file is.
+- `is_print` approximates Go's `strconv.IsPrint` (no control characters, no space other than U+0020, no format
+  characters), which the parser uses as Ollama's does.
+- A create changes what requests resolve to, so `POST /api/create` takes the engine's run lock, as a model load does.
+- Parameter floats are stored at 32 bits, as Ollama parses them, and written in the shortest form that reads back.
 
 ## See also
 

@@ -2,8 +2,9 @@
 
 ## Summary
 
-`metrics.rs` (0.3.7) keeps one record per completion, taken inside the engine (`Native::complete`), in a ring of the last
-256, and serves them at `GET /bankml/metrics`. The definitions are the conventional ones, so the numbers compare with
+`metrics.rs` (0.3.7) keeps one record per completion, taken inside the engine (`Native::complete_with`, which
+`Native::complete` wraps since 0.3.8, so streamed, non-streamed and logprobs answers are all counted), in a ring of the
+last 256, and serves them at `GET /bankml/metrics`. The definitions are the conventional ones, so the numbers compare with
 llama.cpp's: time to first token (TTFT), prompt processing in tokens per second (llama-bench's `pp`), generation in tokens
 per second (`tg`), and — when the CPU package's RAPL counter is readable — the energy a completion took and joules per
 generated token. Nothing is estimated: a field that was not measured is `null`. The console's charts and the bankML
@@ -21,10 +22,16 @@ impl Record { pub fn prompt_tps(&self) -> Option<f64>; pub fn eval_tps(&self) ->
 pub fn push(r: Record); pub fn records() -> Vec<Record>; pub fn json() -> String
 ```
 
-- `prompt_tps` counts only the prompt tokens actually computed (the cached prefix excluded), over `prompt_ms`.
+- `model` is the GGUF's file stem; `at` the end of the completion in Unix seconds.
+- `prompt_tps` counts only the prompt tokens actually computed, over `prompt_ms`. `cached_tokens` is the prefix found
+  in the slot, or brought back from the host prompt cache ([prompt_cache.md](prompt_cache.md)); it is the `cache_n`
+  of the answer's `timings`.
 - `energy_j` is the difference of two `sys::energy_uj()` readings around the completion (the counter's wrap handled); it
   includes everything the package drew in that time, an integrated GPU too.
-- `GET /bankml/metrics` → `{"kept", "keep", "prompt_tokens", "completion_tokens", "energy_j", "joules_per_token", "records": […]}`.
+- `Record::json` adds the derived `prompt_tps`, `eval_tps` and `joules_per_token` to the stored fields.
+- `GET /bankml/metrics` → `{"source", "kept", "keep", "prompt_tokens", "completion_tokens", "energy_j",
+  "joules_per_token", "records": […]}`. The token totals cover every kept record; `energy_j` and `joules_per_token`
+  only the records whose energy was measured (`null` when none was).
 
 ```sh
 curl -s 127.0.0.1:18093/bankml/metrics | python3 -m json.tool | head
@@ -51,4 +58,4 @@ Unit tests: `rates_and_energy_are_measured_or_null` (the rates, J/token, and `nu
 
 ## See also
 
-[sys.md](sys.md) · [native.md](native.md) · [serve.md](serve.md) · [console.md](console.md) · [../usage.md](../usage.md) §13
+[sys.md](sys.md) · [native.md](native.md) · [serve.md](serve.md) · [prompt_cache.md](prompt_cache.md) · [console.md](console.md) · [../usage.md](../usage.md) §13

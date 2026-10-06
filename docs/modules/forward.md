@@ -13,7 +13,8 @@ The oracle is the shipped ggml computing the same graph, not the C source. The c
 several expressions into FMAs in `libggml-cpu-haswell.so`, and the bits follow the binary. Those expressions are
 written here as the `mul_add`s the disassembly shows.
 
-Callers: the native engine (`native.rs`, which owns a `Weights`, the K/V caches of one slot, and the prompt cache),
+Callers: the native engine (`native.rs`, which owns a `Weights` and the K/V caches of its one slot; the host prompt
+cache, `prompt_cache.rs`, holds copies of those caches),
 and through it `bankml serve --native` (`/v1/chat/completions`, `/api/chat`, `/api/generate`) and the C API;
 `bankml generate` (`main.rs`) directly; `native.rs` also calls `plan` to check a model before it is loaded.
 
@@ -35,7 +36,8 @@ outside the reproduced graph is an `Err` that names the tensor or key and why (s
 
 ```rust
 pub fn Weights::open(path: &Path) -> Result<Self, String>
-pub fn caches(&self) -> Vec<KvCache>
+pub fn caches(&self) -> Vec<KvCache>                       // f16
+pub fn caches_of(&self, kind: KvType) -> Vec<KvCache>      // 0.3.9: KvType::F16 or KvType::Q8_0
 pub fn prefill(&self, caches: &mut [KvCache], tokens: &[u32], each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String>
 pub fn prefill_with(&self, caches: &mut [KvCache], tokens: &[u32], outputs: Outputs, each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<Vec<f32>>, String>
 pub fn decode(&self, caches: &mut [KvCache], token: u32) -> Result<Vec<f32>, String>
@@ -56,7 +58,18 @@ pub fn logits_rows(&self, result_norms: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, St
   K and V are rotated and quantized with ggml's AVX2 `quantize_row_q8_0` as they are stored. Attention over a q8_0
   cache always takes ggml's reference kernel, as ggml does whenever K is not f16 (`attend_head_q8`: Q rotated and
   quantized, scores by the AVX2 `vec_dot_q8_0_q8_0`, V dequantized into an f32 accumulator). 53 % of the f16
-  cache's bytes (34 bytes per 32 values against 64).
+  cache's bytes (34 bytes per 32 values against 64). The engine reads the type from `BANKML_CACHE_TYPE`
+  (`KvType::parse`: `f16` or `q8_0`, anything else refused) and refuses a q8_0 cache for a head size that is not a
+  multiple of 32.
+
+  ```rust
+  pub enum KvType { F16, Q8_0 }                              // parse("f16" | "q8_0"), name()
+  pub fn KvCache::of(kind: KvType, width: usize) -> KvCache  // len, is_empty, bytes, row_bytes, truncate, push
+  pub fn fwht(x: &mut [f32], n: usize)                       // ggml's fast Walsh–Hadamard transform, in blocks of n
+  pub fn rot_k_size(head_dim: usize) -> usize                // the K/Q rotation's block; ROT_V = 64
+  pub fn vec_dot_q8_0_q8_0(n: usize, x: &[u8], y: &[u8]) -> f32
+  pub fn attend_head_q8(q: &[f32], k: &[u8], v: &[u8], n_kv: usize, rb: usize, scale: f32, out: &mut [f32])
+  ```
 - `prefill` computes a prompt in micro-batches of up to `N_UBATCH` (512) tokens, each through every layer together.
   It returns the last token's `result_norm` (`output_norm` of the last layer's output). `prefill_with(…,
   Outputs::All, …)` returns every token's, which is what the model oracle's graph computes.
@@ -104,16 +117,17 @@ The split-KV bits depend on llama.cpp's thread count. `Weights::llama_threads` h
   llama-context.cpp derives (YaRN: `freq_scale = 1/factor`, `ext_factor = 1`, beta_fast 32, beta_slow 1).
 - `v_expf(x)`: ggml's AVX2 `ggml_v_expf`, one lane. `swiglu(gate, up, out)`: `silu(g) · u` with that `expf`, not libm's.
 - `dot_f16`, `dot_f16_ref`: `ggml_vec_dot_f16` as the AVX2 build reduces it.
-- `Weights::embed`, `matrix`, `quantize`, `quantize_rows`, `mv`, `mm`, `mv_many`, `qkv`, `attention`, `ffn`: the
-  layer pieces the oracle tests call one by one.
+- `Weights::embed`, `f32_vec`, `norm`, `matrix`, `quantize`, `quantize_rows`, `mv`, `mm`, `mv_many`, `qkv`,
+  `attention`, `attention_with`, `attend`, `ffn`: the layer pieces the oracle tests call one by one.
 
 ### Environment
 
 | variable | default | effect |
 |---|---|---|
-| `BANKML_LLAMA_THREADS` | 3 | the `-t` of the llama.cpp being matched; decides the split-KV chunks |
+| `BANKML_LLAMA_THREADS` | 3 | the `-t` of the llama.cpp being matched (Savante runs 3); decides the split-KV chunks |
 | `BANKML_THREADS` | all cores | size of the thread pool (`par::Pool::from_env`) |
-| `BANKML_GPU`, `BANKML_GPU_SHARE` | — | the GPU worker for 1-bit matrices (docs/usage.md §13) |
+| `BANKML_CACHE_TYPE` | `f16` | the K/V cache type, `f16` or `q8_0` (read by `native.rs`, 0.3.9) |
+| `BANKML_GPU`, `BANKML_GPU_SHARE`, `BANKML_GPU_LIMIT` | —, measured, 0.8 | the GPU worker for 1-bit matrices and its limiter ([gpu.md](gpu.md), docs/usage.md §13) |
 
 ## How it is verified
 
@@ -133,9 +147,11 @@ All oracle tests are `#[ignore]`d (they need the models and recorded files) and 
 | `oracle_forward_model_llama_f16` | same (SmolLM2-135M-Instruct, mindx-gen39) | 800 of 800 each |
 | `oracle_greedy_llama_server` (`_ternary`, `_long`, `_deep`) | llama-server b11192, `testing/greedy_oracle.py` | 6 of 6 (164 tokens); ternary 6 of 6 (140); long 6 of 6; deep 600 tokens |
 | `oracle_sample_llama_server`, `oracle_llama_server_bonsai_1_7b`, `oracle_llama_server_llama_f16` | `testing/{greedy,sample}_oracle.py` | 40 of 40 seeded continuations (1,175 tokens) on Bonsai-8B; 40 of 40 on each O4 model |
+| `oracle_ggml_b11192_q8_0_kv_kernels` (0.3.9) | the shipped haswell library through `dlopen` (`BANKML_GGML_LIB`) | 4,000 rows quantized byte-exact, 4,000 dot products bit-exact, saturating `maddubs` cases included |
+| `kv_oracle_live` (0.3.9, `testing/kv_oracle.py`, Bonsai-1.7B in the gate) | llama-server b11192 with `--cache-type-k q8_0 --cache-type-v q8_0` | 6 of 6 answers (greedy, seeded, a 2,244-token prompt, a 320-token answer, two turns; 567 tokens) |
 
 Rows are compared by the sha256 of their f32 bytes, not within a tolerance. Figures are from docs/oracles.md §1d and
-§5d and the 0.3.6 gate record (`testing/results/0.3.6.txt`).
+§5d and the 0.3.6 gate record (`testing/results/0.3.6.txt`); the two 0.3.9 rows from CHANGELOG.md (Unreleased 0.3.9).
 
 ## Advantages and efficiency
 
@@ -164,8 +180,61 @@ Rows are compared by the sha256 of their f32 bytes, not within a tolerance. Figu
   attention jobs, each with a `SAFETY` comment. The toolchain is pinned (`rust-toolchain.toml`, 1.99.0), and the gate
   runs `cargo clippy -D warnings`.
 - **Next** (docs/TODO.md 0.4.0): 1-bit decode at least at llama-server's speed (cut per-token allocations, compute
-  logits only where sampled); a `q8_0` K/V cache matching `--cache-type-k/v q8_0`, then a rotated 4-bit K/V. 0.5.0:
+  logits only where sampled); after the `q8_0` cache (0.3.9), a 4-bit `q4_0` K/V with the same rotation. 0.5.0:
   batched GPU submissions and the ternary GPU kernel.
+
+## Design notes
+
+### How the forward pass was built (P3)
+
+The forward pass was built one verified operation at a time. Each step reproduces the float order of the ggml
+operation llama.cpp b11192's graph uses (read from the tag's `ggml/src/ggml-cpu/ops.cpp`), and each was checked against
+the shipped ggml computing the same graph (`testing/forward_oracle.py` → `oracle_forward_*`) before the next began.
+
+- **Step three (0.2.3):** the token embedding (`get_rows` on a Q1_0 table → `inp_embd`) and the first RMS norm with
+  its weight (`rms_norm` then `mul` → `attn_norm-0`).
+- **Step four (0.2.4):** layer 0's attention inputs — the Q, K and V projections (`mul_mat` of a Q1_0 weight with the
+  q8_0-quantized normed row, bankml's bit-exact kernel), the per-head RMS norms of Q and K (`attn_q_norm`,
+  `attn_k_norm`), and RoPE (`rope_ext`, NEOX pairs, YaRN) with the parameters llama.cpp's context derives.
+- **Step five (0.2.5):** attention — K and V kept in f16 as llama.cpp's cache keeps them, the causal flash attention
+  of ggml's CPU reference path (`flash_attn_ext`, fewer than 64 query rows and fewer than 512 KV cells), then `wo` and
+  the residual (`kqv_out`, `attn_out`, `ffn_inp`).
+- **Step six (0.2.6):** the feed-forward block — `ffn_norm`, the gate and up projections, SwiGLU with ggml's own
+  vectorized `expf` (not libm's), `ffn_down` and the residual: `l_out`, the whole of layer 0.
+- **Step seven (0.2.7):** the whole model — every layer in turn with its own K/V cache, `output_norm` and the logits
+  (`Weights::step`, `Weights::logits`). Each matmul runs on a thread pool; `mat_vec_par` has the same bits at any
+  thread count.
+- **Step eight (0.2.8):** the ternary model. The same forward pass over either weight type — Q1_0 (1-bit, 128-weight
+  blocks) or Q2_0_g64 (ternary, 64-weight blocks) — through each type's bit-exact kernel (TECHNICAL.md §III.4,
+  §III.6).
+- **Step nine (0.2.9):** long prompts. llama.cpp computes a prompt in micro-batches of up to 512 tokens, and a
+  micro-batch of 64 rows or more takes ggml's *tiled* flash attention (f32 Q, a SIMD GEMM over 64-cell KV tiles, a
+  vectorized softmax summed in double, an f32 accumulator) instead of the reference path. `Weights::prefill` follows
+  the same micro-batching and kernel choice.
+- **Step ten (0.2.10):** long contexts. A single-token decode whose padded KV length (multiples of 256) reaches 512
+  takes ggml's split-KV kernel: the padded cells cut into one chunk per llama.cpp thread, a partial reference pass per
+  chunk, then a reduction — so the bits depend on llama.cpp's thread count (`Weights::llama_threads`).
+- **0.2.12, batched prefill:** a micro-batch goes through each layer together. Every matmul is one matrix–matrix
+  product over the micro-batch's rows (`q1_0::mat_mul_act_par`, `q2_0::mat_mul_par`: each element has the bits of the
+  per-pair dot, so the result is the token-by-token result), the micro-batch's K and V enter the cache before its
+  attention (as llama.cpp writes them), and each row attends over the cells up to its own position.
+- **0.3.4 (O4):** tied embeddings (no `output.weight`: the logits read `token_embd`, as llama.cpp's
+  `TENSOR_DUPLICATED` does), F16 weights (`f16.rs`: ggml's two F16 paths, chosen by the product's shape exactly as
+  `ggml_compute_forward_mul_mat` chooses them), and the Llama graph (`llm_build_llama`: no Q/K norms, RoPE in NORM mode
+  on adjacent pairs, GQA). The multi-row tiled attention (`attend_heads_tiled`) and the tensor-name hash map date from
+  this release. What the forward pass runs is decided from the header alone (`plan`); everything else is refused with
+  the reason.
+- **0.3.9:** the q8_0 K/V cache (`KvType::Q8_0`, `caches_of`) with llama.cpp's Hadamard rotation, and its oracle
+  `oracle_ggml_b11192_q8_0_kv_kernels`.
+
+### Why only the output rows leave the last layer
+
+On the last layer of a prompt only the rows llama.cpp outputs go through the feed-forward block (its `inp_out_ids`:
+none, the last, or all). For the quantized types this changes no bits, since each element of a matrix–matrix product
+has the per-pair dot's bits. For an F16 model it matters: ggml chooses between `ggml_vec_dot_f16` (one column) and
+llamafile's tinyBLAS (two or more) by the product's shape, so a different number of rows would give different bits.
+For the same reason the model oracle replays an F16 model as one micro-batch with every row output, which is what
+the oracle's graph computes.
 
 ## Limitations
 
@@ -176,8 +245,8 @@ Rows are compared by the sha256 of their f32 bytes, not within a tolerance. Figu
   other than `none`, an attention scale, or experts are refused. Llama 3.x is therefore refused (docs/TODO.md).
 - Partial RoPE, a value head of another width, and a head width that is not a multiple of 32 are refused.
 - The K/V cache is f16 or q8_0 (both K and V the same type; llama.cpp also allows them to differ, and q4/q5 types).
-  A q8_0 cache has no tiled or split-KV kernel, as in ggml, so its long prefills are slower than f16's. The split-KV bits are correct only when `BANKML_LLAMA_THREADS` equals the matched
-  llama.cpp's `-t`.
+  A q8_0 cache has no tiled or split-KV kernel, as in ggml, so its long prefills are slower than f16's. The
+  split-KV bits are correct only when `BANKML_LLAMA_THREADS` equals the matched llama.cpp's `-t`.
 - The GPU worker takes part only in 1-bit matrix–vector products; the ternary GPU kernel is next.
 
 ## See also

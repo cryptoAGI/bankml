@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The score stage: did the persona take? mindXtrain's (github.com/Professor-Codephreak/mindXtrain, continued at
-//! huggingface.co/PYTHAI/mindXtrain; Apache-2.0) `mindxtrain/eval/imprint.py` poses the same inquiries to the model before
-//! and after training and scores the utterances against the persona's voice examples. This is its dependency-free
-//! path, exactly: tokens are `[a-z0-9']+` of the Unicode-lowercased text; similarity is token Jaccard; the voice
-//! score is the mean over utterances of the best similarity to any voice example; the shift is the mean
-//! `1 − similarity(before, after)`; every figure is rounded to 4 decimals as Python's `round` rounds; and the
-//! verdict is `imprinted = delta > 0 and shift > 0` on the unrounded values.
-//! (mindXtrain prefers sentence-transformer cosine when that package is installed; that path is not ported.)
+//! The score stage: mindXtrain's `mindxtrain/eval/imprint.py` on its lexical (dependency-free) path, exactly. It
+//! scores the utterances to the same inquiries before and after training against the persona's voice examples:
+//! token-Jaccard voice score, shift, and the `imprinted` verdict, rounded as Python's `round` rounds.
+//!
+//! Details: docs/modules/train.md.
 
 use std::collections::BTreeSet;
 
@@ -57,6 +54,7 @@ pub fn round4(x: f64) -> f64 {
     format!("{x:.4}").parse().unwrap()
 }
 
+/// `score_imprint`'s report: voice scores before and after, their delta, the shift, the method and the verdict.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImprintReport {
     pub before_voice: f64,

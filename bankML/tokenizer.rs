@@ -1,24 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P3, step one — the tokenizer: GGUF `gpt2`-model byte-level BPE with the `qwen2` pre-tokenizer (Qwen3, Bonsai),
-//! with no crates, **token-identical to llama.cpp b11192** (the oracle: `testing/tokenizer_oracle.py` records the
-//! engine's own `/tokenize`; `oracle_tokenizer` re-derives every case).
+//! Tokenizer: GGUF `gpt2`-model byte-level BPE with the `qwen2` (Qwen3, Bonsai) and `smollm` (SmolLM2, mindX's
+//! `mindx-genN`) pre-tokenizers, token-identical to llama.cpp b11192's `llama_tokenize` (llama-vocab.cpp,
+//! unicode.cpp):
 //!
-//! What llama.cpp does, and this reproduces:
-//! 1. **Special tokens first.** Tokens whose type is CONTROL (3) or USER_DEFINED (4) are cut out of the text, the
-//!    longest first; without `parse_special` only USER_DEFINED ones are (llama-vocab's `tokenizer_st_partition`).
-//! 2. **Pre-tokenize** each remaining span with Qwen2's pattern, whose alternatives are tried in order at each
-//!    position (ECMAScript semantics, backtracking results written out below):
-//!    `'s|'t|'re|'ve|'m|'ll|'d` (either case) · `[^\r\n\p{L}\p{N}]?\p{L}+` · `\p{N}` · ` ?[^\s\p{L}\p{N}]+[\r\n]*` ·
-//!    `\s*[\r\n]+` · `\s+(?!\S)` · `\s+`.
-//! 3. **Byte-level BPE** on each piece: its UTF-8 bytes become GPT-2's printable byte characters, each a token; the
-//!    adjacent pair with the lowest merge rank is merged (the leftmost on ties) until none is left.
+//! 1. Special tokens are cut out first, longest first: CONTROL (3) and USER_DEFINED (4) ones, or only USER_DEFINED
+//!    ones without `parse_special` (`tokenizer_st_partition`).
+//! 2. Each remaining span is pre-tokenized: `qwen2` by Qwen2's pattern (`pretokenize`), `smollm` by a digit pass
+//!    followed by GPT-2's pattern (`pretokenize_smollm`).
+//! 3. Each piece's UTF-8 bytes become GPT-2's printable byte characters, one token each; the adjacent pair with the
+//!    lowest merge rank is merged (the leftmost on ties) until none is left.
 //!
-//! 0.3.4 (O4): the `smollm` pre-tokenizer (SmolLM2, mindX's `mindx-genN`), read from llama-vocab.cpp and unicode.cpp
-//! b11192: two passes, as llama.cpp runs them. First `\p{N}` cuts every digit out on its own (the `std::regex` pass
-//! over the collapsed text: ASCII digits, and non-ASCII codepoints whose only category is Number and that are not
-//! whitespace); then GPT-2's pattern, `'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`, runs
-//! inside each piece (`unicode_regex_split_custom_gpt2`: the end of a piece is the end of its text, so a space before
-//! a digit stays alone). Its oracle is llama-server's `/tokenize` on the SmolLM2 vocabulary.
+//! Details: docs/modules/tokenizer.md.
 
 use crate::gguf::Mmap;
 use crate::unicode_letters::is_letter;
@@ -28,9 +20,9 @@ use std::path::Path;
 /// The pre-tokenizers this module reproduces (`tokenizer.ggml.pre`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pre {
-    /// `qwen2`: Qwen3, Bonsai
+    /// `qwen2`: Qwen3, Bonsai.
     Qwen2,
-    /// `smollm`: SmolLM2 and mindX's lineage built on it
+    /// `smollm`: SmolLM2 and mindX's lineage built on it.
     Smollm,
 }
 
@@ -51,16 +43,17 @@ fn pre_of(model: &str, pre: &str) -> Result<Pre, String> {
     }
 }
 
+/// A byte-level BPE vocabulary with llama.cpp's token types, merges and special tokens.
 pub struct Tokenizer {
     pub tokens: Vec<String>,
     pub pre: Pre,
     types: Vec<i32>,
     ids: HashMap<String, u32>,
-    /// (left id, right id) -> (rank, merged id)
+    /// `(left id, right id) -> (rank, merged id)`.
     merges: HashMap<(u32, u32), (u32, u32)>,
-    /// each byte's token, or `NO_TOKEN` when the vocabulary has none (SmolLM2 lacks 21 of them)
+    /// Each byte's token, or `NO_TOKEN` when the vocabulary has none (SmolLM2 lacks 21).
     byte_id: [u32; 256],
-    /// (text, id, type), longest first
+    /// `(text, id, type)`, longest first.
     specials: Vec<(String, u32, i32)>,
 }
 
@@ -112,7 +105,7 @@ fn llama_vocab_types(tokens: &[String], types: &mut [i32]) -> Result<(), String>
     }
     Ok(())
 }
-/// a byte the vocabulary has no token for
+/// A byte the vocabulary has no token for.
 const NO_TOKEN: u32 = u32::MAX;
 const USER_DEFINED: i32 = 4;
 
@@ -181,7 +174,7 @@ impl<'a> Rd<'a> {
 
 impl Tokenizer {
     /// The vocabulary of a GGUF file (`tokenizer.ggml.{model,pre,tokens,token_type,merges}`); refused unless it is
-    /// the `gpt2` model with a pre-tokenizer this module reproduces: `qwen2` or (0.3.4) `smollm`.
+    /// the `gpt2` model with a pre-tokenizer this module reproduces (`qwen2` or `smollm`).
     pub fn from_gguf(path: &Path) -> Result<Self, String> {
         let mm = Mmap::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut r = Rd { b: mm.bytes(), o: 0 };
@@ -246,7 +239,7 @@ impl Tokenizer {
                     mm.entry((ia, ib)).or_insert((rank as u32, im));
                 }
                 // llama.cpp merges by text, so a merge naming a string outside the vocabulary still applies there;
-                // merging by id here would differ, so such a vocabulary is refused (none of the pinned ones has one)
+                // merging by id here would differ, so such a vocabulary is refused (none of the pinned ones has one).
                 _ => return Err(format!("merge {rank} ({m:?}) names a string outside the vocabulary: not reproduced")),
             }
         }
@@ -261,7 +254,6 @@ impl Tokenizer {
         Ok(Tokenizer { tokens, pre: Pre::Qwen2, types, ids, merges: mm, byte_id, specials })
     }
 
-    /// Token ids of `text`, as llama.cpp's `llama_tokenize(…, add_special = false, parse_special)`.
     /// A token's bytes, as llama.cpp's detokenizer gives them without special tokens: a normal token's GPT-2
     /// characters mapped back to bytes, a user-defined token's text as written, a control token nothing.
     pub fn token_bytes(&self, id: u32) -> Vec<u8> {
@@ -314,7 +306,7 @@ impl Tokenizer {
         out.extend(kv_ids.iter().copied().filter(|&i| (i as usize) < self.tokens.len()));
         let text = |i: &u32| self.tokens[*i as usize].as_str();
         // b11192's two exceptions: <|end|> is not an end when <|return|> and <|call|> (or <|calls|>, <|flush|>) are;
-        // </s> is not when <|tool_response> is
+        // </s> is not when <|tool_response> is.
         let has = |out: &[u32], s: &str| out.iter().any(|i| text(i) == s);
         let call = has(&out, "<|call|>") || has(&out, "<|calls|>");
         if call && has(&out, "<|end|>") && (has(&out, "<|return|>") || has(&out, "<|flush|>")) {
@@ -328,6 +320,7 @@ impl Tokenizer {
         out
     }
 
+    /// Token ids of `text`, as llama.cpp's `llama_tokenize(…, add_special = false, parse_special)`.
     pub fn encode(&self, text: &str, parse_special: bool) -> Vec<u32> {
         // 1. cut out special tokens, longest first, from the spans that are still raw text
         let mut parts: Vec<Result<u32, &str>> = vec![Err(text)];
@@ -377,7 +370,7 @@ impl Tokenizer {
 
     fn bpe(&self, piece: &str, out: &mut Vec<u32>) {
         // a byte without a token never merges (no merge names it: checked at load) and is dropped at the end, as
-        // llama-vocab's fallback drops it: none of its UTF-8 bytes is a token on its own
+        // llama-vocab's fallback drops it: none of its UTF-8 bytes is a token on its own.
         let mut syms: Vec<u32> = piece.bytes().map(|b| self.byte_id[b as usize]).collect();
         loop {
             let mut best: Option<(u32, usize, u32)> = None; // (rank, position, merged id)
@@ -418,7 +411,9 @@ fn is_num(c: char) -> bool {
     c.is_numeric() // Nd, Nl, No: \p{N}
 }
 
-/// Split `text` into pieces as Qwen2's pattern does, alternative by alternative, first match wins.
+/// Splits `text` as Qwen2's pattern does, alternatives tried in order at each position, first match wins (ECMAScript
+/// semantics, backtracking written out): `'s|'t|'re|'ve|'m|'ll|'d` (either case) · `[^\r\n\p{L}\p{N}]?\p{L}+` ·
+/// `\p{N}` · ` ?[^\s\p{L}\p{N}]+[\r\n]*` · `\s*[\r\n]+` · `\s+(?!\S)` · `\s+`.
 pub fn pretokenize(text: &str) -> Vec<&str> {
     let cs: Vec<(usize, char)> = text.char_indices().collect();
     let n = cs.len();
@@ -498,7 +493,7 @@ fn is_digit_piece(c: char) -> bool {
     if c.is_ascii() { c.is_ascii_digit() } else { !c.is_whitespace() && is_num(c) }
 }
 
-/// Split `text` as llama.cpp's `smollm` pre-tokenizer does: digits cut out one by one, then GPT-2's pattern inside
+/// Splits `text` as llama.cpp's `smollm` pre-tokenizer does: digits cut out one by one, then GPT-2's pattern inside
 /// each remaining piece.
 pub fn pretokenize_smollm(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
@@ -518,7 +513,9 @@ pub fn pretokenize_smollm(text: &str) -> Vec<&str> {
     out
 }
 
-/// `unicode_regex_split_custom_gpt2` over one piece (the piece's end is the text's end for every lookahead).
+/// `unicode_regex_split_custom_gpt2` over one piece, GPT-2's pattern
+/// `'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`.
+/// The piece's end counts as the text's end for every lookahead, so a space before a digit stays alone.
 fn gpt2_split<'a>(text: &'a str, out: &mut Vec<&'a str>) {
     let cs: Vec<(usize, char)> = text.char_indices().collect();
     let n = cs.len();
@@ -527,7 +524,7 @@ fn gpt2_split<'a>(text: &'a str, out: &mut Vec<&'a str>) {
     let letter = |i: usize| at(i).is_some_and(is_letter);
     let number = |i: usize| at(i).is_some_and(is_num);
     let space = |i: usize| at(i).is_some_and(char::is_whitespace);
-    // [^\s\p{L}\p{N}]: every codepoint in range has flags, so only the end of the piece fails it
+    // [^\s\p{L}\p{N}]: every codepoint in range has flags, so only the end of the piece fails it.
     let other = |i: usize| at(i).is_some_and(|c| !c.is_whitespace() && !is_letter(c) && !is_num(c));
     let (mut pos, mut prev) = (0usize, 0usize);
     let mut emit = |end: usize, prev: &mut usize| {
@@ -618,7 +615,7 @@ mod tests {
         tokenizer_oracle("Bonsai-1.7B-Q1_0.gguf", "oracle-tokenizer");
     }
 
-    /// 0.3.4: SmolLM2's vocabulary and the `smollm` pre-tokenizer, against llama-server running SmolLM2.
+    /// SmolLM2's vocabulary and the `smollm` pre-tokenizer, against llama-server running SmolLM2.
     #[test]
     #[ignore = "needs .models/SmolLM2-135M-Instruct-F16.gguf + .models/oracle-tokenizer-smollm (testing/tokenizer_oracle.py); --release"]
     fn oracle_tokenizer_smollm() {

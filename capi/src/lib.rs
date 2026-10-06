@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! bankML's C API (0.3.2): `libbankml.so` / `libbankml.a`, declared in `capi/include/bankml.h`, documented in
-//! docs/CAPI.md. The llama.h-shaped seam for embedding bankML in another program, with bankML's gate in front:
+//! The C ABI of `libbankml.so` / `libbankml.a`, declared in `capi/include/bankml.h`.
 //!
-//! - `bankml_open` runs the same `verify` as `bankml serve` (the guard, then the sha256 pin to FORK.json), then opens
-//!   the model in bankML's own forward pass; a model it does not play natively is refused with serve's reason;
-//! - `bankml_chat` takes the OpenAI / llama-server chat request `serve --native` takes, refuses what it refuses, streams
-//!   the answer to a callback, and returns the object `/v1/chat/completions` returns — usage, `timings.cache_n` and
-//!   the same `bankml_receipt` (one code path: `serve::NativeChat`, `serve::completion_json`, `serve::Tally`);
-//! - `bankml_log` is a printf-style C-variadic function **defined in Rust** (`mut args: ...`, Rust 1.99), formatting
-//!   with `printf.rs`; it and the library's own messages go to the one sink `bankml_set_log` installs.
-//!
-//! Nothing here unwinds into C: every entry point returns an error code or NULL with a message, and wraps its work
-//! in `catch_unwind` (which catches in an unwinding build; the release profile aborts on a panic, as a C library's
-//! failed assertion does). One handle has one slot: calls on it serialize.
+//! `bankml_open` verifies a model as `bankml serve` does and opens it in bankML's forward pass; `bankml_chat` runs
+//! one `serve --native` chat request through serve's own code path; `bankml_log` is a C-variadic printf defined in
+//! Rust (`printf.rs`). No panic unwinds into C: every entry point runs under `catch_unwind` and reports an error code
+//! or NULL with a message. Calls on one handle serialize.
+//! Details: docs/modules/capi.md.
 
 use engine::native::{engine_name, header_info, Native};
 use engine::serve::{completion_json, ident, FileIdent, Json, NativeChat, Tally};
@@ -24,38 +17,38 @@ use std::sync::{Mutex, OnceLock};
 
 pub mod printf;
 
-/// `bankml_chat`'s return codes (`BANKML_OK`, `BANKML_E_*` in bankml.h).
+/// Success. `bankml_chat` returns this or one of the `BANKML_E_*` codes (as in bankml.h).
 pub const BANKML_OK: c_int = 0;
-/// a NULL handle or request, or a request that is not UTF-8
+/// A NULL handle or request, or a request that is not UTF-8.
 pub const BANKML_E_ARG: c_int = -1;
-/// the request is refused: not JSON, no messages, a sampler bankML does not reproduce, a malformed `stop`
+/// The request is refused: not JSON, no messages, a sampler bankML does not reproduce, or a malformed `stop`.
 pub const BANKML_E_REQUEST: c_int = -2;
-/// the model file changed since `bankml_open` verified it: no answer; open it again to verify it again
+/// The model file changed since `bankml_open` verified it; no answer is given. Reopen to verify it again.
 pub const BANKML_E_CHANGED: c_int = -3;
-/// the engine failed (the prompt does not fit the context, …)
+/// The engine failed (for example, the prompt does not fit the context).
 pub const BANKML_E_ENGINE: c_int = -4;
-/// a panic was caught (only in an unwinding build)
+/// A panic was caught (unwinding builds only).
 pub const BANKML_E_PANIC: c_int = -5;
 
-/// A verified model, open in bankML's forward pass, with its one slot. Opaque to C (`bankml_t`).
+/// A verified model open in bankML's forward pass, with one slot. Opaque to C (`bankml_t`).
 pub struct Bankml {
     native: Native,
     verified: Verified,
     engine: String,
-    /// the canonical path that was hashed, and its identity then
+    /// The canonical path that was hashed, and its identity at that time.
     model: PathBuf,
     ident: FileIdent,
     model_id: String,
     run: Mutex<()>,
 }
 
-/// The streaming callback, `int (*)(const char* piece, size_t len, void* user)`: returns 0 to stop.
+/// Streaming callback `int (*)(const char* piece, size_t len, void* user)`; returns 0 to stop.
 pub type PieceCb = unsafe extern "C" fn(piece: *const c_char, len: usize, user: *mut c_void) -> c_int;
-/// The log sink: the level, the message (NUL-terminated, `len` bytes before the NUL), the user pointer.
+/// Log sink: level, message (NUL-terminated, `len` bytes before the NUL), user pointer.
 pub type LogCb = unsafe extern "C" fn(level: c_int, msg: *const c_char, len: usize, user: *mut c_void);
 
 fn to_c(s: &str) -> *mut c_char {
-    // a NUL inside a message would cut it short in C: it is shown as U+2400 instead
+    // An interior NUL would truncate the message in C; it is replaced by U+2400.
     CString::new(s.replace('\0', "\u{2400}")).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
 }
 
@@ -68,7 +61,7 @@ unsafe fn path_arg(p: *const c_char, what: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(std::ffi::OsStr::from_bytes(b)))
 }
 
-/// The library's version, e.g. `"0.3.2"`. Static; do not free.
+/// The library version, e.g. `"0.3.2"`. Static storage; do not free.
 #[no_mangle]
 pub extern "C" fn bankml_version() -> *const c_char {
     static V: OnceLock<CString> = OnceLock::new();
@@ -77,7 +70,7 @@ pub extern "C" fn bankml_version() -> *const c_char {
 
 fn open(model: &Path, fork_json: &Path, n_ctx: u32) -> Result<Bankml, String> {
     let fork = std::fs::read_to_string(fork_json).map_err(|e| format!("cannot read {}: {e}", fork_json.display()))?;
-    // as `bankml serve`: the file's identity before the hash must be its identity after it
+    // As `bankml serve`: the file's identity must be the same before and after the hash.
     let before = ident(model).map_err(|e| format!("{}: {e}", model.display()))?;
     let verified = engine::verify(model, &fork, engine::gguf::Engine::Mainline).map_err(|e| format!("refuse: {e}"))?;
     let canon = model.canonicalize().map_err(|e| format!("{}: {e}", model.display()))?;
@@ -85,7 +78,7 @@ fn open(model: &Path, fork_json: &Path, n_ctx: u32) -> Result<Bankml, String> {
     if id != before {
         return Err(format!("{} changed while it was being hashed: refused", canon.display()));
     }
-    // the name the caller gave (as serve's messages use it), and the canonical file's name (as serve's `model` field)
+    // The name as given (for messages, as serve uses it) and the canonical file name (serve's `model` field).
     let given = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let model_id = canon.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if let Err(why) = header_info(&canon).native {
@@ -97,9 +90,12 @@ fn open(model: &Path, fork_json: &Path, n_ctx: u32) -> Result<Bankml, String> {
     Ok(Bankml { engine: engine_name(&native), native, verified, model: canon, ident: id, model_id, run: Mutex::new(()) })
 }
 
-/// Verify `model_path` against the FORK.json at `fork_json_path` (the guard, then the sha256 pin) and open it in
-/// bankML's forward pass with a context of `n_ctx` tokens (0: 4096). NULL on refusal or error, with the reason in
-/// `*err` (when `err` is not NULL; free it with `bankml_free`).
+/// Verify `model_path` against the FORK.json at `fork_json_path` and open it in bankML's forward pass.
+///
+/// Verification is serve's: the guard, then the sha256 pin. The context is `n_ctx` tokens (0 means 4096). A model
+/// the native forward pass does not play is refused with serve's reason. Returns a handle for `bankml_close`, or
+/// NULL on refusal or error. `*err` (when `err` is not NULL) is set to NULL on success, or to the reason, which the
+/// caller frees with `bankml_free`; the reason is also logged at error level.
 ///
 /// # Safety
 /// `model_path` and `fork_json_path` must be NULL or NUL-terminated strings; `err` must be NULL or point to a
@@ -128,7 +124,7 @@ pub unsafe extern "C" fn bankml_open(model_path: *const c_char, fork_json_path: 
 
 fn chat(h: &Bankml, body: &[u8], cb: Option<PieceCb>, user: *mut c_void) -> Result<String, (c_int, String)> {
     let _run = h.run.lock().unwrap_or_else(|e| e.into_inner());
-    // as `serve --native` before every answer: the file must still be the one that was verified
+    // As `serve --native` before every answer: the file must still be the one that was verified.
     if ident(&h.model).ok() != Some(h.ident) {
         return Err((BANKML_E_CHANGED, format!("{} changed since bankml verified it: refused; bankml_open it again to verify it again", h.model_id)));
     }
@@ -153,16 +149,19 @@ fn chat(h: &Bankml, body: &[u8], cb: Option<PieceCb>, user: *mut c_void) -> Resu
     Ok(completion_json(created, &h.model_id, &d, &t, &h.engine, &h.verified))
 }
 
-/// One chat completion: `request_json` in the OpenAI / llama-server shape (`messages`, and `temperature`, `top_k`,
-/// `top_p`, `min_p`, `seed`, `max_tokens`/`n_predict`, `stop`, and since 0.3.3 `response_format` / `json_schema` /
-/// `grammar` as `serve --native` takes them; a sampler bankML does not reproduce is refused). The
-/// answer streams to `cb` (may be NULL) as whole UTF-8 pieces; `cb` returns 0 to stop. `*result_json` (when not NULL)
-/// receives the `/v1/chat/completions` object with `usage`, `timings.cache_n` and `bankml_receipt` — or, on an error,
-/// `{"error": {"code": …, "message": …}}`; free it with `bankml_free`. Returns `BANKML_OK` or a `BANKML_E_*` code.
+/// Run one chat completion on `h`.
+///
+/// `request_json` is an OpenAI / llama-server chat request, parsed by `serve --native`'s `NativeChat::parse`; what
+/// bankML does not reproduce (mirostat, a custom sampler order, `top_k` outside 1–128) is refused. The answer
+/// streams to `cb` (may be NULL) as whole, non-empty UTF-8 pieces, each NUL-terminated with `len` bytes before the
+/// NUL; `cb` returns 0 to stop. `*result_json` (when not NULL) is set to the `/v1/chat/completions` object (`usage`,
+/// `timings.cache_n`, `bankml_receipt`) or, on error, to `{"error": {"code": …, "message": …}}`; the caller frees
+/// it with `bankml_free`. Returns `BANKML_OK` or a `BANKML_E_*` code.
 ///
 /// # Safety
 /// `h` must be NULL or a handle from `bankml_open` not yet closed; `request_json` NULL or a NUL-terminated string;
-/// `result_json` NULL or a writable `char*`; `cb` (if any) must be callable with `user` and must not close `h`.
+/// `result_json` NULL or a writable `char*`; `cb` (if any) must be callable with `user` and must not close `h` or
+/// call `bankml_chat` on it (the handle's lock is held while `cb` runs).
 #[no_mangle]
 pub unsafe extern "C" fn bankml_chat(h: *mut Bankml, request_json: *const c_char, cb: Option<PieceCb>, user: *mut c_void, result_json: *mut *mut c_char) -> c_int {
     if !result_json.is_null() {
@@ -200,7 +199,7 @@ pub unsafe extern "C" fn bankml_close(h: *mut Bankml) {
     }
 }
 
-/// Free a string bankML returned (`err`, `result_json`). NULL is a no-op.
+/// Free a string this library returned (`err`, `result_json`). NULL is a no-op.
 ///
 /// # Safety
 /// `s` must be NULL or a string from this library, freed once.
@@ -245,21 +244,24 @@ fn from_engine(level: i32, msg: &str) {
     deliver(level, msg.as_bytes());
 }
 
-/// Send every message — `bankml_log`'s and the library's own (verification, the GPU, …) — to `cb` with `user`;
+/// Route every message, `bankml_log`'s and the library's own (verification, the GPU, …), to `cb` with `user`.
+///
 /// NULL restores standard error. The sink is process-wide.
 ///
 /// # Safety
-/// `cb` (if any) must stay callable with `user` until it is replaced; it may be called from any thread that calls
-/// into bankML, and must not call `bankml_set_log` itself.
+/// `cb` (if any) must stay callable with `user` until it is replaced; it may be called, possibly concurrently, from
+/// any thread that calls into bankML, and must not call `bankml_set_log` itself.
 #[no_mangle]
 pub unsafe extern "C" fn bankml_set_log(cb: Option<LogCb>, user: *mut c_void) {
     *SINK.lock().unwrap_or_else(|e| e.into_inner()) = Sink { cb, user: user as usize };
     engine::set_log_sink(if cb.is_some() { Some(from_engine) } else { None });
 }
 
-/// A printf-style message at `level` to the sink: `%d %i %u %x %X` (with `hh h l ll z`), `%f %F`, `%c %s %p %%`,
-/// flags `- + space # 0`, width and precision (numbers or `*`), byte-identical to glibc's `snprintf`. Anything else
-/// is written as `%<unsupported:SPEC>` and never guessed (see `printf.rs`). Defined in Rust as a C-variadic function.
+/// Format a printf-style message and send it to the log sink at `level`.
+///
+/// `%d %i %u %x %X` (with `hh h l ll z`), `%f %F`, `%c %s %p %%`, flags `- + space # 0`, and width and precision
+/// (numbers or `*`) are byte-identical to glibc's `snprintf`. Anything else is written as `%<unsupported:SPEC>`,
+/// never guessed (see `printf.rs`). If formatting panics, nothing is logged.
 ///
 /// # Safety
 /// `fmt` must be NULL (nothing is logged) or a NUL-terminated string, and the arguments must match it as for
@@ -285,7 +287,7 @@ mod tests {
     }
 
     static GOT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-    /// the sink is process-wide: the tests that log take turns
+    /// Serializes the tests that log: the sink is process-wide.
     static SERIAL: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn capture(level: c_int, msg: *const c_char, len: usize, _user: *mut c_void) {
@@ -297,8 +299,7 @@ mod tests {
         g.extend_from_slice(b);
     }
 
-    /// The same format and arguments through `bankml_log` (the Rust-defined C-variadic function) and libc's
-    /// `snprintf`: the bytes must be equal.
+    /// Formats the same arguments with `bankml_log` and libc's `snprintf` and asserts equal bytes.
     macro_rules! same {
         ($fmt:expr $(, $a:expr)*) => {{
             let fmt: &CStr = $fmt;
@@ -329,10 +330,10 @@ mod tests {
         same!(c"%c%c|%3c|%-3c|", b'o' as c_int, b'k' as c_int, b'x' as c_int, b'y' as c_int);
         same!(c"%p %p %20p %-20p|", 0x1234usize as *const c_void, std::ptr::null::<c_void>(), s.as_ptr(), s.as_ptr());
         same!(c"100%% and %hhd %hd %hhu %hx", 300 as c_int, 70000 as c_int, 511 as c_uint, 0x12345 as c_uint);
-        // an unsupported conversion: marked, and nothing read after it
+        // An unsupported conversion is marked, and nothing is read after it.
         unsafe { bankml_log(1, c"%d %e %d".as_ptr(), 5 as c_int, 2.0 as c_double, 6 as c_int) };
         assert_eq!(GOT.lock().unwrap().as_slice(), b"1:5 %<unsupported:e> %<skipped:d>");
-        // the library's own messages reach the same sink
+        // The library's own messages reach the same sink.
         engine::log(engine::LOG_WARN, "from the engine");
         assert_eq!(GOT.lock().unwrap().as_slice(), b"1:from the engine");
         unsafe { bankml_set_log(None, std::ptr::null_mut()) };
@@ -346,7 +347,7 @@ mod tests {
         assert!(unsafe { bankml_open(std::ptr::null(), std::ptr::null(), 0, &mut err) }.is_null());
         assert_eq!(unsafe { CStr::from_ptr(err) }.to_str().unwrap(), "model_path is NULL");
         unsafe { bankml_free(err) };
-        // a file that is not a pinned GGUF is refused, with the reason
+        // A file that is not a pinned GGUF is refused, with the reason.
         let dir = std::env::temp_dir().join(format!("bankml-capi-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("m.gguf"), b"GGUX").unwrap();

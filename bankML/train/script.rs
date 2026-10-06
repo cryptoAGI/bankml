@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The author stage: a persona and a few exchanges become a training *script* (OpenAI-chat JSONL), as
-//! mindXtrain's (github.com/Professor-Codephreak/mindXtrain, continued at huggingface.co/PYTHAI/mindXtrain; Apache-2.0)
-//! `mindxtrain/data/scripts.py` builds it — the same recognised keys read clean-room from any persona JSON, the same
-//! synthesised system prompt, the same voice-seed rows, and each line byte-identical to Python's
-//! `json.dumps(row, ensure_ascii=False)`.
+//! The author stage: a persona and exchanges become a training script (OpenAI-chat JSONL), as mindXtrain's
+//! `mindxtrain/data/scripts.py` builds it: the same persona keys, the same synthesised system prompt, the same
+//! voice-seed rows, and each line byte-identical to Python's `json.dumps(row, ensure_ascii=False)`.
 //!
-//! Scope: a persona's identity fields are strings (as every persona in mindX is); a number in a voice list is written
-//! as Python writes an int, so a float literal such as `3.0` would differ (bankml's JSON keeps numbers as f64).
+//! Details: docs/modules/train.md.
 
 use super::py_json_str;
 use crate::serve::Json;
@@ -15,6 +12,7 @@ const NAME_KEYS: [&str; 4] = ["name", "persona", "id", "title"];
 const SYSTEM_KEYS: [&str; 6] = ["system_prompt", "system", "description", "bio", "summary", "prompt"];
 const VOICE_KEYS: [&str; 5] = ["voice_examples", "examples", "utterances", "samples", "voice"];
 
+/// A persona as `persona_from_dict` reads it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Persona {
     pub name: String,
@@ -22,6 +20,7 @@ pub struct Persona {
     pub voice_examples: Vec<String>,
 }
 
+/// One user turn and the persona's answer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Exchange {
     pub user: String,
@@ -110,8 +109,8 @@ pub fn script_jsonl(p: &Persona, exchanges: &[Exchange], seed_voice: bool) -> St
     out
 }
 
-/// `derive_training_params`: (epochs, grad_accum, per_device) for a script of `rows` rows — small scripts must
-/// overfit to imprint.
+/// `derive_training_params`: `(epochs, grad_accum, per_device)` for a script of `rows` rows; small scripts get more
+/// epochs, since they must overfit to imprint.
 pub fn training_params(rows: usize) -> (u32, u32, u32) {
     let (e, g) = match rows.max(1) {
         0..=8 => (24, 1),

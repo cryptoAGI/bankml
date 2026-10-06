@@ -1,23 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The video-card component: find every GPU on the machine, describe it, and (in later steps) run bankml's kernels
-//! on all of them. Modular and extensible: each backend is a module with one entry point, `devices()`, listed in
-//! [`BACKENDS`]; a new one (CUDA, ROCm, Metal, …) is a new module and one line there. Nothing is linked at build
-//! time: a backend opens its driver library at run time (`dlopen`), so bankml builds and runs everywhere and a
-//! machine without the library simply has no devices from that backend.
+//! The GPU component: discovers GPUs through run-time-loaded backends, describes them, and selects those bankML
+//! may use.
 //!
-//! What bankml asks of a card, in order: it must be a real GPU (integrated or discrete; software renderers such as
-//! Mesa's llvmpipe run on the CPU and are refused), it must have a compute queue, and its Q1_0 kernel's results
-//! (0.2.13) must be the CPU kernels' bits, checked on the card before it is trusted (the oracle rule: same bits
-//! first, then speed). Several cards are used together by giving each a share of every matrix's rows, which keeps
-//! each output element one card's exact dot product.
-//!
-//! Remote cards are a separate kind. The Hugging Face backend (`hf.rs`) lists the GPU hardware Hugging Face rents
-//! by the minute — Nvidia T4 to 8× H200, provisioned on AWS, Azure and GCP — with each flavor's card count, memory
-//! and price. A remote card is never selected automatically (it costs money): using one means running bankml there
-//! (a Hugging Face Job), where the Vulkan backend finds the card like any local one.
-//!
-//! The kernel's own view (`/sys/class/drm/card*/device`: driver, VRAM, GTT, PCI address) is merged with the
-//! backend's, so a card is described by what the driver says, not only by what the API reports.
+//! Each backend is a module with one discovery function listed in [`BACKENDS`]; nothing is linked at build time
+//! (Vulkan is opened with `dlopen`). A usable card is a real integrated or discrete GPU with a compute queue, and
+//! it computes nothing until its kernels reproduce the CPU kernels' bits on the card. The kernel's sysfs view is
+//! merged into each device. Remote (rented) cards are listed on request and never selected.
+//! Details: docs/modules/gpu.md.
 
 pub mod compute;
 pub mod hf;
@@ -34,9 +23,9 @@ pub enum Kind {
     Integrated,
     Discrete,
     Virtual,
-    /// a software renderer running on the CPU (Mesa llvmpipe, lavapipe): never used
+    /// A software renderer running on the CPU (Mesa llvmpipe, lavapipe); never used.
     Cpu,
-    /// hardware rented from a provider (Hugging Face Jobs); listed, never started automatically
+    /// Hardware rented from a provider (Hugging Face Jobs); listed, never started automatically.
     Remote,
     Other,
 }
@@ -69,23 +58,23 @@ pub struct Sysfs {
 #[derive(Debug, Clone)]
 pub struct Device {
     pub backend: &'static str,
-    /// the backend's own index (Vulkan: the physical-device index)
+    /// The backend's own index (Vulkan: the physical-device index).
     pub index: usize,
     pub name: String,
     pub vendor: u32,
     pub device: u32,
     pub kind: Kind,
-    /// the API version the device supports, e.g. "1.3.255"
+    /// The API version the device supports, e.g. "1.3.255".
     pub api: String,
-    /// memory the device can address fastest (device-local heaps), in bytes
+    /// Bytes in the device-local heaps.
     pub device_local_bytes: u64,
-    /// device-local memory the CPU can map directly (integrated memory, resizable BAR): weights need no copy
+    /// Whether some device-local memory is also host-visible (integrated memory, resizable BAR).
     pub host_visible_device_local: bool,
     pub compute_queues: u32,
     pub sysfs: Option<Sysfs>,
-    /// cards in this device (a multi-card flavor such as 8× H200 is one entry with count 8); 1 for a local card
+    /// Cards in this entry (a multi-card flavor such as 8× H200 has count 8); 1 for a local card.
     pub count: u32,
-    /// the price per hour in US dollars, for rented hardware
+    /// Price per hour in US dollars, for rented hardware.
     pub usd_per_hour: Option<f64>,
 }
 
@@ -136,8 +125,9 @@ pub fn discover() -> (Vec<Device>, Vec<String>) {
     (all, notes)
 }
 
-/// The devices bankml will use, in the order it will use them: discrete cards first (largest memory first), then
-/// integrated ones. `BANKML_GPU=off` turns the component off; `BANKML_GPU=0,2` picks backend indices.
+/// The usable devices in the order bankML uses them: discrete before integrated, then largest device-local memory.
+///
+/// `BANKML_GPU=off` (or `none`, `cpu`) selects nothing; `BANKML_GPU=0,2` restricts to those backend indices.
 pub fn selected(devs: &[Device]) -> Vec<Device> {
     let env = std::env::var("BANKML_GPU").unwrap_or_default();
     if matches!(env.trim(), "off" | "none" | "cpu") {

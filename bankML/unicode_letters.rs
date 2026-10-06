@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Unicode general category L (Lu, Ll, Lt, Lm, Lo) as sorted inclusive ranges, generated from Python's unicodedata
-//! (Unicode 13.0.0) for the tokenizer's `\p{L}`. `char::is_alphabetic` is the Alphabetic property, not L.
+//! (Unicode 13.0.0), for the tokenizer's `\p{L}`. `char::is_alphabetic` is the Alphabetic property, not L.
+//!
+//! Details: docs/modules/tokenizer.md.
 pub static LETTERS: [(u32, u32); 622] = [
     (0x41, 0x5a), (0x61, 0x7a), (0xaa, 0xaa), (0xb5, 0xb5), (0xba, 0xba), (0xc0, 0xd6), (0xd8, 0xf6), (0xf8, 0x2c1),
     (0x2c6, 0x2d1), (0x2e0, 0x2e4), (0x2ec, 0x2ec), (0x2ee, 0x2ee), (0x370, 0x374), (0x376, 0x377), (0x37a, 0x37d), (0x37f, 0x37f),
@@ -82,6 +84,7 @@ pub static LETTERS: [(u32, u32); 622] = [
     (0x2a700, 0x2b734), (0x2b740, 0x2b81d), (0x2b820, 0x2cea1), (0x2ceb0, 0x2ebe0), (0x2f800, 0x2fa1d), (0x30000, 0x3134a),
 ];
 
+/// Whether `c` is in general category L (a binary search over `LETTERS`).
 pub fn is_letter(c: char) -> bool {
     let c = c as u32;
     LETTERS.binary_search_by(|&(a, b)| if c < a { std::cmp::Ordering::Greater } else if c > b { std::cmp::Ordering::Less } else { std::cmp::Ordering::Equal }).is_ok()

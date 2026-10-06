@@ -1,27 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `bankml serve`: a loopback HTTP server (std only) that answers behind the gate, in one of two modes —
-//! `--native` (0.3.0), bankML's own forward pass (`native.rs`, Ollama's API in `ollama.rs`), or the gateway described
-//! here (P0, 0.0.6), in front of llama.cpp b11192's `llama-server`:
+//! `bankml serve`: a loopback HTTP gateway (std only) that answers only for a model that passed `verify` (guard, then
+//! the sha256 pin in FORK.json). Two modes:
 //!
-//! - it does not start until the model file passes `verify` (guard, then the sha256 pin to FORK.json);
-//! - the upstream must be serving **that file**: either bankml launches it (`--spawn LLAMA_SERVER`, the model
-//!   argument is the verified path) or an already-running server's `/props` must name the same canonical path;
-//! - every `/v1/chat/completions` answer (streamed or not) carries a receipt — bankml version, engine, model
-//!   sha256, guard verdict, tokens, time to first token, wall time, and the sha256 of the answer text exactly as
-//!   the model produced it, and of the request it answered — so a client can check that the text it shows is the
-//!   text this gateway received from the engine serving the verified file, for this request. Receipts are not
-//!   signed: they prove integrity between a client and its own bankml serve, not to a third party.
-//!   Non-streamed: a top-level `bankml_receipt` object. Streamed: one extra `data: {"bankml_receipt": …}` event
-//!   before `data: [DONE]` (OpenAI clients ignore it).
+//! - P0: in front of llama.cpp b11192's `llama-server`, which must serve the verified file (launched with `--spawn`,
+//!   or a running one whose `/props` names the same canonical path); `/v1/chat/completions` is proxied.
+//! - `--native`: bankML's own forward pass (`native.rs`); it also answers llama-server b11192's endpoints and slot API
+//!   on the engine address (`--upstream`) and Ollama's `/api` (`ollama.rs`).
 //!
-//! In gateway mode the tokens come from ggml's kernels in llama-server: bankml vouches for the file, the path and the
-//! transcript, not for the arithmetic (in `--native` mode the arithmetic is bankML's own, checked by its oracles). The file is hashed at start; before
-//! every answer its identity (device, inode, size, modification time) and the engine's model path are checked
-//! again, and an answer is refused rather than receipted if either changed.
-//!
-//! Hardened for a loopback service: a bounded number of connections, read timeouts, bounded request heads, a
-//! loopback `Host` and a JSON `Content-Type` required (a web page cannot drive it by DNS rebinding or a simple
-//! cross-origin POST), and a spawned llama-server that dies is noticed at once, not after the health timeout.
+//! Every chat answer carries an unsigned receipt (`Tally::receipt`): integrity between a client and its own gateway,
+//! not proof to a third party. In P0 it vouches for the file, the path and the transcript, not ggml's arithmetic;
+//! before each P0 answer the file's identity and the engine's model path are checked again. Requests must name a
+//! loopback `Host` and POST JSON (no DNS rebinding or simple cross-origin POST); connections, heads and bodies are
+//! bounded.
+//! Details: docs/modules/serve.md.
 
 use crate::{gguf, Verified};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -42,13 +33,13 @@ pub struct Config {
     pub spawn: Option<PathBuf>,
     pub threads: usize,
     pub ctx: usize,
-    /// n-gram speculative decoding in the spawned engine (exact at temperature 0; opt-in, 0.1.8)
+    /// n-gram speculative decoding in the spawned engine (`--spec-type ngram-simple`; exact at temperature 0)
     pub spec_ngram: bool,
-    /// where the spawned engine may save and restore a slot's KV cache (`--slot-save-path`; 0.1.9)
+    /// slot KV-cache directory: `--slot-save-path` of a spawned engine, or `/slots/*` in `--native`
     pub slot_dir: Option<PathBuf>,
-    /// answer from bankML's own forward pass (`native.rs`) instead of llama-server (0.3.0)
+    /// answer from bankML's own forward pass (`native.rs`) instead of llama-server
     pub native: bool,
-    /// `--native`: every model pinned in this forks directory may be asked for by name (0.3.1)
+    /// `--native`: every model pinned in this forks directory may be asked for by name
     pub registry: Option<PathBuf>,
     /// `--native`: how long `/api/*` keeps a model resident when the request does not say (Ollama's default, 5m)
     pub keep_alive: Option<String>,
@@ -64,12 +55,12 @@ struct State {
     engine: String,
     hashed_at: u64,
     ident: FileIdent,
-    /// 0.3.8: where `/slots/{id}?action=save|restore` keeps slot files (`--slot-dir`; native mode)
+    /// where `/slots/{id}?action=save|restore` keeps slot files (`--slot-dir`; native mode)
     slot_dir: Option<PathBuf>,
 }
 
-/// What must not change between the hash and an answer: the file's identity, not its bytes (re-hashing a GB per
-/// answer is not affordable; a replaced or rewritten file changes one of these).
+/// The file identity checked before each P0 answer: device, inode, size and mtime, not the bytes (re-hashing per
+/// answer is too costly; a replaced or rewritten file changes one of these).
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FileIdent {
     dev: u64,
@@ -84,13 +75,13 @@ pub fn ident(p: &Path) -> std::io::Result<FileIdent> {
     Ok(FileIdent { dev: m.dev(), ino: m.ino(), len: m.len(), mtime_ns: m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128 })
 }
 
-/// Limits for a loopback gateway.
+/// Limits for a loopback gateway: connections, head line bytes, head lines, upstream body bytes.
 const MAX_CONNECTIONS: usize = 32;
 const HEAD_LINE_MAX: u64 = 16 << 10;
 const HEAD_LINES_MAX: usize = 100;
 const UPSTREAM_BODY_MAX: usize = 64 << 20;
 
-/// The spawned engine's pid, so a SIGTERM/SIGINT to serve stops it too (Drop does not run on a signal).
+/// The spawned engine's pid, so SIGTERM, SIGINT or SIGHUP to serve stops it too (Drop does not run on a signal).
 static CHILD_PID: AtomicI32 = AtomicI32::new(0);
 
 #[cfg(unix)]
@@ -117,7 +108,7 @@ mod sig {
     }
 }
 
-/// Verify, bind the upstream, then serve until killed.
+/// Verify the model, launch or check the upstream (or start `--native`), then serve until killed.
 pub fn run(cfg: Config) -> Result<(), String> {
     let before = ident(&cfg.model).map_err(|e| format!("{}: {e}", cfg.model.display()))?;
     let verified = crate::verify(&cfg.model, &cfg.fork_json, cfg.engine)?;
@@ -171,18 +162,18 @@ pub fn run(cfg: Config) -> Result<(), String> {
     Ok(())
 }
 
-/// `--native`: the verified file answered by bankML's own forward pass. The same gateway (guard, pin, receipts,
-/// loopback rules), and it also listens on the engine address (`--upstream`), answering llama-server's endpoints
-/// there (`/health`, `/props`, `/tokenize`, `/apply-template`, `/v1/chat/completions`), so a client written for
-/// llama-server — Savante — reaches it unchanged. Since 0.3.1 it also speaks Ollama's API (`ollama.rs`), and with
-/// `--registry` any pinned model can be asked for by name: one resident at a time, each verified as it loads.
+/// `--native`: serve bankML's own forward pass on `--listen` and on the engine address (`--upstream`).
+///
+/// Both listeners answer every route (`native_route`), so a llama-server client reaches it unchanged. With
+/// `--registry` any pinned model is served by name: one resident at a time, each verified as it loads; a reaper
+/// thread drops an expired model every second.
 fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, upstream: String) -> Result<(), String> {
     let ka = crate::ollama::keep_alive(cfg.keep_alive.as_deref().map(|s| Json::Str(s.to_string())).as_ref(), crate::ollama::KEEP_ALIVE_DEFAULT)?;
     let reg = crate::native::Registry::build(&cfg.model, &cfg.fork_json, cfg.registry.as_deref());
     eprintln!("bankml serve --native: loading {} into bankML's forward pass", model.display());
     let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let rs = crate::native::Residency::start(reg, cfg.ctx, cfg.engine, verified, model.clone(), id)?;
-    // O5: the derived models beside the pins (each verified through its base when it loads)
+    // derived models beside the pins, each verified through its base when it loads
     for e in rs.derived.open(cfg.registry.as_deref(), &rs.reg) {
         eprintln!("bankml serve --native: derived model skipped: {e}");
     }
@@ -215,8 +206,8 @@ fn accept(l: TcpListener, st: Arc<State>) {
     let live = Arc::new(AtomicUsize::new(0));
     for mut c in l.incoming().flatten() {
         if live.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
-            // off the accept thread, with one overall deadline: read what the client already sent (so the 503 is not
-            // lost to a reset), answer, close — a slow client cannot hold the accept loop
+            // off the accept thread, 200 ms deadline: drain what was sent (so the 503 is not lost to a reset), then
+            // answer; a slow client cannot hold the accept loop
             std::thread::spawn(move || {
                 let deadline = Instant::now() + Duration::from_millis(200);
                 let mut buf = [0u8; 4096];
@@ -404,8 +395,8 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
         Err(_) => return respond(&mut c, 400, "text/plain", b"request head too large"),
     };
     let n: usize = header(&h, "content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
-    // a refusal reads (and discards) the body it was sent before closing: closing with unread data makes the kernel
-    // reset the connection, and the client can lose the answer that says why it was refused
+    // a refusal drains the body first: closing with unread data makes the kernel send a reset, which can lose the
+    // refusal's reason
     let mut refuse = |code: u16, why: &[u8], r: &mut BufReader<TcpStream>| -> std::io::Result<()> {
         respond(&mut c, code, "text/plain", why)?;
         let _ = std::io::copy(&mut r.by_ref().take(n.min(16 << 20) as u64), &mut std::io::sink());
@@ -427,7 +418,7 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
     r.read_exact(&mut body)?;
     match (method.as_str(), path.as_str()) {
         ("GET", "/bankml") if st.native.is_some() => {
-            // the resident model, or the most recent verification when none is resident
+            // the most recent verification, the resident model (if any) and every pinned name
             let rs = st.native.as_ref().unwrap();
             let resident = rs.peek().map(|(l, _)| l.name);
             let last = rs.last.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -451,8 +442,8 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             respond(&mut c, 200, "application/json", j.as_bytes())
         }
         ("GET", "/bankml/usage") => {
-            // what this gateway and the engine it launched use now (sys.rs, /proc; sampled over 0.5 s)
-            // one sample per second at most, however many pollers: a poll never holds a connection for the sampling time
+            // resource use of serve and a spawned engine (sys.rs, sampled over 250 ms); at most one sample per second,
+            // shared by all pollers
             static LAST: std::sync::Mutex<Option<(Instant, String)>> = std::sync::Mutex::new(None);
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
             if last.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(1)) {
@@ -464,7 +455,7 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             drop(last);
             respond(&mut c, 200, "application/json", body.as_bytes())
         }
-        // 0.3.7: the engine's own measurements of its last answers (metrics.rs): TTFT, pp and tg tokens/s, energy
+        // the native engine's per-answer measurements (metrics.rs)
         ("GET", "/bankml/metrics") => respond(&mut c, 200, "application/json", crate::metrics::json().as_bytes()),
         _ if st.native.is_some() => native_route(&mut c, st, &method, &path, &body),
         ("GET", "/health" | "/v1/models" | "/props") => match request(&st.upstream, "GET", &path, b"") {
@@ -472,7 +463,7 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             Err(e) => respond(&mut c, 502, "text/plain", format!("upstream: {e}").as_bytes()),
         },
         ("POST", "/v1/chat/completions") => chat(&mut c, st, &body),
-        _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /bankml/usage /health /v1/models, POST /v1/chat/completions"),
+        _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /bankml/usage /bankml/metrics /health /props /v1/models, POST /v1/chat/completions"),
     }
 }
 
@@ -501,7 +492,7 @@ fn read_head_rest(r: &mut impl BufRead) -> std::io::Result<(u16, Headers)> {
     Ok((0, h))
 }
 
-/// The routes of `--native` other than `/bankml` and `/bankml/usage`.
+/// The `--native` routes other than `/bankml*`: `/` and `/api/*` go to `ollama::route`, the rest are llama-server's.
 fn native_route(c: &mut TcpStream, st: &State, method: &str, path: &str, body: &[u8]) -> std::io::Result<()> {
     let rs = st.native.as_ref().unwrap();
     if path == "/" || path.starts_with("/api/") {
@@ -545,20 +536,23 @@ fn native_route(c: &mut TcpStream, st: &State, method: &str, path: &str, body: &
             }
         }
         ("POST", "/v1/chat/completions") => native_chat(c, rs, body),
-        _ => respond(c, 404, "text/plain", b"bankml serve --native: GET /bankml /bankml/usage /health /props /v1/models /api/version /api/tags /api/ps, POST /tokenize /apply-template /v1/chat/completions /api/chat /api/generate /api/show"),
+        _ => respond(c, 404, "text/plain", b"bankml serve --native: GET /bankml /bankml/usage /bankml/metrics /health /props /v1/models /api/version /api/tags /api/ps, POST /tokenize /apply-template /v1/chat/completions /slots/0?action=save|restore|erase /api/chat /api/generate /api/show /api/create /api/copy, DELETE /api/delete"),
     }
 }
 
-/// `/v1/chat/completions` from bankML's own forward pass, streamed or not, with the receipt. The request's `model`
-/// goes through the registry (absent: the startup model), so this and `/api/chat` share one engine and one slot; the
-/// model stays resident afterwards (the OpenAI API has no keep-alive; 0.3.0 kept its one model for good).
+/// Native `/v1/chat/completions`, streamed (SSE) or not, with the receipt.
+///
+/// `model` resolves through the registry and derived models (absent: the startup model), so this and `/api/chat`
+/// share one engine and one slot. The model stays resident afterwards: the OpenAI API has no keep-alive.
+/// Errors: 404 unknown model; 400 bad JSON, `stop`, `num_ctx` or request (llama-server's JSON body for a prompt
+/// over the context); 500 a failed run.
 fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return respond(c, 400, "text/plain", b"body is not JSON") };
     let (entry, layer) = match crate::create::resolve(rs, req.get("model").and_then(Json::as_str)) {
         Ok(e) => e,
         Err(e) => return respond(c, 404, "text/plain", e.as_bytes()),
     };
-    // O5: a derived model's layer (its SYSTEM, MESSAGEs and parameters, as Ollama applies them)
+    // a derived model's layer: its SYSTEM, MESSAGEs and parameters, as Ollama applies them
     let req = match &layer {
         Some(d) => d.apply_openai(&req),
         None => req,
@@ -567,7 +561,7 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     if let Err(e) = crate::ollama::stops(req.get("stop")) {
         return respond(c, 400, "text/plain", e.as_bytes());
     }
-    // 0.3.5: a layer's num_ctx fits the conversation as Ollama does; one larger than this server holds is refused
+    // a layer's num_ctx fits the conversation as Ollama does; one above the served context is refused
     let num_ctx = layer.as_ref().and_then(|d| d.num_ctx()).map(|n| n.max(1) as usize);
     if let Some(n) = num_ctx.filter(|n| *n > rs.n_ctx) {
         return respond(c, 400, "text/plain", format!("num_ctx {n} (the model's PARAMETER) is larger than the context this server holds ({}); restart bankml serve with --ctx {n} if it fits in memory", rs.n_ctx).as_bytes());
@@ -590,8 +584,8 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     let created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let r = if stream {
         write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
-        // 0.3.8: with logprobs, llama-server's shape: the first token's partial opens with the role delta, and each
-        // token's entry rides on the last delta its partial sends (none sent: the entry is not sent either)
+        // with logprobs, llama-server's shape: the first token's partial opens with the role delta, and each token's
+        // entry rides on the last delta its partial sends (no delta, no entry)
         let logprobs = nc.params.n_probs > 0;
         let send = |c: &mut TcpStream, ch: Chunk| -> bool {
             let delta = |d: &str, lp: &str| format!("data: {{\"choices\": [{{\"index\": 0, \"delta\": {d}, \"finish_reason\": null{lp}}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\"}}\n\n",
@@ -628,26 +622,28 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     r
 }
 
-/// One native chat request, parsed (0.3.2: shared by `/v1/chat/completions` and the C API's `bankml_chat`, so both
-/// answer a request the same way): the prompt its messages become, the sampler over the model's defaults (refusing
-/// what is not reproduced), the token limit (`max_tokens`, or llama-server's `n_predict`) and the stop strings.
+/// One native chat request, parsed and checked; shared by `/v1/chat/completions` and the C API's `bankml_chat`.
+///
+/// Holds the prompt tokens, the sampler over the model's defaults, the token limit (`max_tokens` or `n_predict`),
+/// the stop strings and the output constraint.
 pub struct NativeChat {
     pub prompt: Vec<u32>,
     pub params: crate::sampler::Params,
     pub max: Option<usize>,
     pub stops: Vec<String>,
-    /// 0.3.3: `response_format` / `json_schema` / `grammar`, resolved as llama-server resolves them
+    /// `response_format` / `json_schema` / `grammar`, resolved as llama-server resolves them
     pub constraint: crate::grammar::Constraint,
 }
 
 impl NativeChat {
-    /// `text` is the request as it came (`req` is its reading): a JSON schema's numbers are read from it exactly.
+    /// Parse `req`; `text` is its raw body, from which a JSON schema's numbers are read exactly.
     pub fn parse(eng: &crate::native::Native, req: &Json, text: &str) -> Result<NativeChat, String> {
         Self::parse_ctx(eng, req, text, None)
     }
 
-    /// 0.3.5: `parse` under a derived model's `num_ctx`: the conversation fitted as Ollama fits it
-    /// (`Native::prompt_fit`; its OpenAI endpoint goes through the same chat handler).
+    /// `parse` under a derived model's `num_ctx`: the conversation is fitted as Ollama fits it (`Native::prompt_fit`).
+    ///
+    /// An `Err` that starts with `{` is llama-server's JSON error body (send it as `application/json`, status 400).
     pub fn parse_ctx(eng: &crate::native::Native, req: &Json, text: &str, num_ctx: Option<usize>) -> Result<NativeChat, String> {
         let stops = crate::ollama::stops(req.get("stop"))?;
         let constraint = crate::grammar::from_openai_text(req, text)?;
@@ -665,35 +661,35 @@ impl NativeChat {
             crate::grammar::Rules::parse(g, &|b: &[u8]| eng.tok.encode(&String::from_utf8_lossy(b), true))?;
         }
         let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt_fit(m, num_ctx))?;
-        // 0.3.8: a prompt that does not fit is refused before any work, as llama-server refuses it (no context shift):
-        // its error object, status 400 (the caller sends an `Err` that starts with `{` as JSON)
+        // a prompt that does not fit is refused before any work, as llama-server refuses it (no context shift)
         if prompt.len() >= eng.n_ctx {
             return Err(exceed_context_json(prompt.len(), eng.n_ctx));
         }
         let mut params = eng.params(req)?;
-        // 0.3.8: OpenAI's logprobs → llama-server's n_probs (top_logprobs, default 20); top_logprobs alone is refused
+        // OpenAI's logprobs → llama-server's n_probs (top_logprobs, default 20); top_logprobs alone is refused
         match (req.get("logprobs").and_then(Json::as_bool), req.get("top_logprobs")) {
             (Some(true), t) => params.n_probs = match t { Some(Json::Num(n)) if *n >= 0.0 => *n as usize, _ => 20 },
             (_, Some(t)) if *t != Json::Null => return Err("top_logprobs requires logprobs to be set to true".into()),
             _ => {}
         }
-        // O2: what the sampler refuses (a negative repeat_last_n, a repeat penalty of 0 or below) is a 400 here, with
-        // llama-server's message, not a failed run (the live penalty oracle found it answered 500)
+        // what the sampler refuses (negative repeat_last_n, repeat penalty <= 0) is a 400 with llama-server's message,
+        // not a failed run
         crate::sampler::Sampler::new(params.clone())?;
         let max = match req.get("max_tokens").or(req.get("n_predict")) { Some(Json::Num(n)) if *n >= 0.0 => Some(*n as usize), _ => None };
         Ok(NativeChat { prompt, params, max, stops, constraint })
     }
 
-    /// Run it: the answer through the stop filter, each passed-on piece to `emit` when `stream` (which also starts
-    /// the time to first token), and the text and counts into the tally the receipt is made from. `emit` returns
-    /// false to stop; it may receive empty pieces.
+    /// Generate the answer through the stop filter; when `stream`, each released piece goes to `emit`.
+    ///
+    /// The text, counts and time to first token go into `t` for the receipt. `emit` returns false to stop; it may
+    /// receive empty pieces.
     pub fn run(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(&str) -> bool) -> Result<crate::native::Done, String> {
         self.run_steps(eng, t, stream, |c| emit(&c.text))
     }
 
-    /// `run`, streaming `Chunk`s: the text and, when logprobs were asked for, the entry of the token that released it,
-    /// as llama-server's partial responses carry them (0.3.8). One chunk per whole token (and one for a last flush);
-    /// a chunk with no text is sent by llama-server only as the first, the role delta.
+    /// `run`, streaming `Chunk`s as llama-server's partial responses carry them.
+    ///
+    /// One chunk per whole token, plus a last flush; each carries the releasing token's logprob entry when asked for.
     pub fn run_steps(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(Chunk) -> bool) -> Result<crate::native::Done, String> {
         let mut stop = crate::ollama::StopFilter::new(self.stops);
         let grammar = eng.grammar(&self.constraint)?;
@@ -705,12 +701,11 @@ impl NativeChat {
             if !stream && (s.eog || s.piece.is_empty()) {
                 return true;
             }
-            // the time to first token, streamed or not (0.3.7: non-streamed receipts carried null)
+            // the time to first token, streamed or not
             if t.ttft.is_none() && !s.piece.is_empty() {
                 t.ttft = Some(t.t0.elapsed());
             }
-            // llama-server releases text a partial stop match held back with the end-of-turn token (it checks no
-            // partial match then)
+            // at end of turn llama-server releases text held for a partial stop match (no partial check then)
             let (out, go) = if s.eog { (stop.finish(), false) } else { stop.push(s.piece) };
             if !s.piece.is_empty() {
                 sent.push(out.clone());
@@ -743,17 +738,19 @@ impl NativeChat {
     }
 }
 
-/// One streamed piece of a native answer (`NativeChat::run_steps`): its text, the logprobs of the token that released
-/// it (when asked for), and whether it is the first token's (llama-server sends the role delta with it).
+/// One streamed piece of a native answer (`NativeChat::run_steps`).
+///
+/// `text`, the releasing token's logprob entry (when asked for), and `first`: the first token's chunk, which
+/// llama-server precedes with the role delta.
 pub struct Chunk {
     pub text: String,
     pub entry: Option<crate::native::TokenLogprob>,
     pub first: bool,
 }
 
-/// The non-streamed `/v1/chat/completions` answer from bankML's own engine: OpenAI's object, llama-server's
-/// `timings` (0.3.7: its prompt and generation fields, measured in the engine), and the receipt (also the C API's
-/// `result_json`).
+/// The non-streamed native `/v1/chat/completions` body; also the C API's `result_json`.
+///
+/// OpenAI's `chat.completion` object with `logprobs` when asked for, llama-server's `timings`, and `bankml_receipt`.
 pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t: &Tally, engine: &str, v: &Verified) -> String {
     let lp = if d.probs.is_empty() { String::new() } else { format!(", \"logprobs\": {{\"content\": {}}}", logprobs_json(&d.probs)) };
     format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"{lp}}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
@@ -766,9 +763,10 @@ fn error_json(code: u16, message: &str, ty: &str) -> String {
     format!("{{\"error\": {{\"code\": {code}, \"message\": {}, \"type\": \"{ty}\"}}}}", crate::gguf::jstr(message))
 }
 
-/// llama.cpp's `fs_validate_filename` (no subdirectories): a name the slot directory can hold and nothing else — no
-/// separators or reserved characters, no control or replacement characters, no surrogates or BOM, at most 255 bytes,
-/// no leading or trailing space and no trailing dot.
+/// llama.cpp's `fs_validate_filename` without subdirectories: whether `f` is a plain file name in the slot directory.
+///
+/// Refused: empty or over 255 bytes, leading or trailing space, trailing dot, control characters, U+FFFD, BOM,
+/// U+FF0E, U+2215, U+2216, and `: * ? " < > | / \`.
 pub fn slot_filename_ok(f: &str) -> bool {
     if f.is_empty() || f.len() > 255 || f.starts_with(' ') || f.ends_with(' ') || f.ends_with('.') {
         return false;
@@ -780,8 +778,10 @@ pub fn slot_filename_ok(f: &str) -> bool {
     })
 }
 
-/// 0.3.8: llama-server's slot actions on the engine address — `POST /slots/{id}?action=save|restore|erase` with
-/// `{"filename"}` — over the native engine's one slot, with llama-server's replies and errors.
+/// `POST /slots/{id}?action=save|restore|erase` with `{"filename"}`: llama-server's slot API over the one native slot.
+///
+/// Replies and errors are llama-server's: 501 without `--slot-dir`; 400 for an invalid id (only 0 exists), action
+/// or filename, or a failed restore; 500 for a failed save.
 fn slots(c: &mut TcpStream, st: &State, path: &str, body: &[u8]) -> std::io::Result<()> {
     let Some(dir) = st.slot_dir.as_ref() else {
         return respond(c, 501, "application/json", error_json(501, "This server does not support slots action. Start it with `--slot-save-path`", "not_supported_error").as_bytes());
@@ -822,18 +822,20 @@ fn slots(c: &mut TcpStream, st: &State, path: &str, body: &[u8]) -> std::io::Res
     }
 }
 
-/// llama-server b11192's refusal of a request longer than the context (`ERROR_TYPE_EXCEED_CONTEXT_SIZE`, context shift
-/// off): `{"error": {"code": 400, "message", "type": "exceed_context_size_error", "n_prompt_tokens", "n_ctx"}}`.
+/// llama-server b11192's refusal of a prompt that does not fit (`ERROR_TYPE_EXCEED_CONTEXT_SIZE`, no context shift).
+///
+/// `{"error": {"code": 400, "message", "type": "exceed_context_size_error", "n_prompt_tokens", "n_ctx"}}`.
 pub fn exceed_context_json(n_prompt: usize, n_ctx: usize) -> String {
     let msg = format!("request ({n_prompt} tokens) exceeds the available context size ({n_ctx} tokens), try increasing it");
     format!("{{\"error\": {{\"code\": 400, \"message\": {}, \"type\": \"exceed_context_size_error\", \"n_prompt_tokens\": {n_prompt}, \"n_ctx\": {n_ctx}}}}}",
             crate::gguf::jstr(&msg))
 }
 
-/// llama-server's logprob entries from the engine's per-token probabilities (`process_token`, `send_final_response`):
-/// a token gets an entry only when no incomplete UTF-8 is left after it; the entry's text is everything sent since the
-/// previous entry (what the stop filter released, `sent`, one string per emitted piece); after a stop word the last
-/// `trim` entries — the stop word's own tokens — are dropped.
+/// llama-server's logprob entries from per-token probabilities (`process_token`, `send_final_response`).
+///
+/// A token gets an entry only when no incomplete UTF-8 follows it; the entry's text is all that `sent` (one string per
+/// emitted piece, as the stop filter released it) holds since the previous entry. The last `trim` entries (a stop
+/// word's own tokens) are dropped.
 pub fn logprob_entries(raw: Vec<crate::native::TokenLogprob>, sent: &[String], trim: usize) -> Vec<crate::native::TokenLogprob> {
     let mut sent = sent.iter();
     let mut acc = String::new();
@@ -852,8 +854,9 @@ pub fn logprob_entries(raw: Vec<crate::native::TokenLogprob>, sent: &[String], t
     out
 }
 
-/// llama-server's `validate_utf8`: the length of `b` without an incomplete multi-byte character at its end (it looks
-/// at the last four bytes for a lead byte whose sequence runs past the end).
+/// llama-server's `validate_utf8`: the length of `b` without a trailing incomplete multi-byte character.
+///
+/// Only the last four bytes are examined for a lead byte whose sequence runs past the end.
 pub fn utf8_complete_len(b: &[u8]) -> usize {
     let len = b.len();
     for i in 1..=len.min(4) {
@@ -865,13 +868,13 @@ pub fn utf8_complete_len(b: &[u8]) -> usize {
     len
 }
 
-/// llama-server's `probs_vector_to_json` (pre-sampling probabilities): per token `{"id", "token", "bytes", "logprob",
-/// "top_logprobs": [{"id", "token", "bytes", "logprob"}]}` — `token` cut to valid UTF-8 (`validate_utf8`), `bytes` the
-/// whole piece, `logprob` = `logf(p)`, or the lowest float when `p` is 0 (JSON has no −∞).
+/// llama-server's `probs_vector_to_json` for pre-sampling probabilities.
+///
+/// Per token `{"id", "token", "bytes", "logprob", "top_logprobs": [{"id", "token", "bytes", "logprob"}]}`: `bytes` is
+/// the raw piece, `logprob` is `ln p`, or `f32::MIN` when `p` is 0 (JSON has no −∞).
 pub fn logprobs_json(probs: &[crate::native::TokenLogprob]) -> String {
-    // a piece that is not whole UTF-8 (a top token holding part of a character), as llama-server writes it: an
-    // incomplete trailing character is cut (`validate_utf8`), any other invalid byte becomes U+FFFD (nlohmann's `dump`
-    // with `error_handler_t::replace`); `bytes` keeps the raw bytes
+    // `token`, as llama-server writes it: an incomplete trailing character is cut (`validate_utf8`), any other
+    // invalid byte becomes U+FFFD (nlohmann's `dump` with `error_handler_t::replace`)
     fn entry(id: u32, p: f32, piece: &[u8]) -> String {
         let lp = if p == 0.0 { f32::MIN } else { p.ln() };
         let text = String::from_utf8_lossy(&piece[..utf8_complete_len(piece)]);
@@ -885,8 +888,10 @@ pub fn logprobs_json(probs: &[crate::native::TokenLogprob]) -> String {
     format!("[{}]", rows.join(", "))
 }
 
-/// llama-server's `timings` object for an answer: the prompt's uncached part and the generation, counts, milliseconds
-/// and tokens per second, as the engine measured them (`cache_n` is the reused prefix).
+/// llama-server's `timings` object, as the engine measured it.
+///
+/// `cache_n` (reused prefix), `prompt_n` (uncached prompt tokens), `prompt_ms`, `prompt_per_second`, `predicted_n`,
+/// `predicted_ms`, `predicted_per_second`; a rate is `null` when its count or time is 0.
 pub fn timings_json(d: &crate::native::Done) -> String {
     let prompt_n = d.prompt_tokens.saturating_sub(d.cached_tokens);
     let (pms, ems) = (d.prompt_ns as f64 / 1e6, d.eval_ns as f64 / 1e6);
@@ -912,7 +917,8 @@ impl Tally {
         hq.update(body);
         Tally { request_sha256: crate::sha256::hex(&hq.finish()), t0: Instant::now(), ttft: None, text: String::new(), prompt: 0, completion: 0 }
     }
-    /// The receipt, as every answer carries it (`bankml_receipt`).
+    /// The `bankml_receipt` JSON: version, engine, model sha256, guard, counts, `ttft_ms`, `wall_ms`, the sha256 of the
+    /// text and of the request body, `signed: false`.
     pub fn receipt(&self, engine: &str, v: &Verified) -> String {
         let mut h = crate::sha256::Sha256::default();
         h.update(self.text.as_bytes());
@@ -936,7 +942,7 @@ fn chat(c: &mut TcpStream, st: &State, body: &[u8]) -> std::io::Result<()> {
         return respond(c, 400, "text/plain", b"body is not JSON");
     };
     let stream = req.get("stream").and_then(Json::as_bool).unwrap_or(false);
-    // the file and the engine must still be what was verified, or there is no answer (and no receipt)
+    // the file and the engine must still be what was verified, or there is no answer and no receipt
     if ident(&st.model).ok() != Some(st.ident) {
         return respond(c, 503, "text/plain", b"the model file changed since bankml verified it; restart bankml serve to verify it again");
     }

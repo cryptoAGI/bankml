@@ -1,49 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P3, the forward pass, one verified operation at a time. Each function here reproduces the float order of the ggml
-//! operation llama.cpp b11192's Qwen3 graph uses (read from the tag's `ggml/src/ggml-cpu/ops.cpp`), and its oracle is
-//! the SHIPPED ggml computing the same graph (`testing/forward_oracle.py` → `oracle_forward_*`).
+//! The forward pass: token ids to logits, bit-exact against llama.cpp b11192.
 //!
-//! Step three (0.2.3): the token embedding (`get_rows` on a Q1_0 table → `inp_embd`) and the first RMS norm with its
-//! weight (`rms_norm` then `mul` → `attn_norm-0`).
-//!
-//! Step four (0.2.4): layer 0's attention inputs — the Q, K and V projections (`mul_mat` of a Q1_0 weight with the
-//! q8_0-quantized normed row, bankml's bit-exact kernel), the per-head RMS norms of Q and K (`attn_q_norm`,
-//! `attn_k_norm`), and RoPE (`rope_ext`, NEOX pairs, YaRN) with the parameters llama.cpp's context derives.
-//!
-//! Step five (0.2.5): attention — K and V kept in f16 as llama.cpp's cache keeps them, the causal flash attention of
-//! ggml's CPU reference path (`flash_attn_ext`, fewer than 64 query rows and fewer than 512 KV cells), then `wo` and
-//! the residual (`kqv_out`, `attn_out`, `ffn_inp`).
-//!
-//! Step six (0.2.6): the feed-forward block — `ffn_norm`, the gate and up projections, SwiGLU with ggml's own
-//! vectorized `expf` (not libm's), `ffn_down` and the residual: `l_out`, the whole of layer 0.
-//!
-//! Step seven (0.2.7): the whole model — every layer in turn with its own K/V cache, `output_norm` and the logits
-//! (`Weights::step`, `Weights::logits`). Each matmul runs on a thread pool; `mat_vec_par` has the same bits at any
-//! thread count.
-//!
-//! Step eight (0.2.8): the ternary model. The same forward pass over either weight type — Q1_0 (1-bit, 128-weight
-//! blocks) or Q2_0_g64 (ternary, 64-weight blocks) — through each type's bit-exact kernel (§III.4, §III.6).
-//!
-//! Step nine (0.2.9): long prompts. llama.cpp computes a prompt in micro-batches of up to 512 tokens, and a
-//! micro-batch of 64 rows or more takes ggml's *tiled* flash attention (f32 Q, a SIMD GEMM over 64-cell KV tiles, a
-//! vectorized softmax summed in double, an f32 accumulator) instead of the reference path. `Weights::prefill` follows
-//! the same micro-batching and kernel choice.
-//!
-//! Step ten (0.2.10): long contexts. A single-token decode whose padded KV length (multiples of 256) reaches 512
-//! takes ggml's split-KV kernel: the padded cells cut into one chunk per llama.cpp thread, a partial reference pass per
-//! chunk, then a reduction — so the bits depend on llama.cpp's thread count (`Weights::llama_threads`).
-//!
-//! 0.2.12: batched prefill. A micro-batch goes through each layer together: every matmul is one matrix–matrix
-//! product over the micro-batch's rows (`q1_0::mat_mul_act_par`, `q2_0::mat_mul_par`: each element has the bits of
-//! the per-pair dot, so the result is the token-by-token result), the micro-batch's K and V enter the cache before
-//! its attention (as llama.cpp writes them), and each row attends over the cells up to its own position.
-//!
-//! 0.3.4 (O4): tied embeddings (no `output.weight`: the logits read `token_embd`, as llama.cpp's
-//! `TENSOR_DUPLICATED` does), F16 weights (`f16.rs`: ggml's two F16 paths, chosen by the product's shape exactly
-//! as `ggml_compute_forward_mul_mat` chooses them), and the Llama graph (`llm_build_llama`: no Q/K norms, RoPE in
-//! NORM mode on adjacent pairs, GQA). On the last layer of a prompt only the rows llama.cpp outputs go through the
-//! feed-forward block (its `inp_out_ids`), which is where an F16 model's shapes, and so its bits, would differ.
-//! What the forward pass plays is decided from the header alone (`plan`); everything else is refused with the reason.
+//! Reproduces, operation by operation and in the same float order, the CPU graphs of `llm_build_qwen3` and
+//! `llm_build_llama` (`ggml/src/ggml-cpu/ops.cpp`), over Q1_0, Q2_0_g64 or F16 weights, with llama.cpp's
+//! micro-batching, attention-kernel choice and f16 or q8_0 K/V cache. The oracle is the shipped ggml, not the C
+//! source: where GCC contracts an expression into an FMA, the code writes the same `mul_add`.
+//! `plan` decides from the header alone whether a file is in scope; anything else is refused with the reason.
+//! Details: docs/modules/forward.md.
 
 use crate::gguf::{guard_file, Engine, Header, Mmap, TensorInfo, Val};
 use crate::par::Pool;
@@ -71,7 +34,7 @@ pub struct Plan {
 }
 
 /// From the header alone: the architecture, the weight type and the graph's options this forward pass reproduces.
-/// Anything outside them is refused with what it is and where it is on the road (docs/OLLAMA.md).
+/// Anything outside them is an `Err` naming the tensor or key and the reason (docs/OLLAMA.md).
 pub fn plan(h: &Header) -> Result<Plan, String> {
     let arch_s = match h.kv.get("general.architecture") {
         Some(Val::S(a)) => a.clone(),
@@ -350,7 +313,7 @@ pub fn attend_head_tiled(q: &[f32], k: &[u16], v: &[u16], n_kv: usize, stride: u
     attend_heads_tiled(&[q], &[n_kv], k, v, stride, scale, &mut [out]);
 }
 
-/// `attend_head_tiled` for several rows of one head at once (0.3.4): each 64-cell tile's keys and values are widened
+/// `attend_head_tiled` for several rows of one head at once: each 64-cell tile's keys and values are widened
 /// (and the keys transposed) once for the block, then every row that sees the tile takes its step with its own state,
 /// in the per-row order — so each row has the per-row bits. Compiled with FMA and F16C where the CPU has them.
 pub fn attend_heads_tiled(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize, scale: f32, outs: &mut [&mut [f32]]) {
@@ -533,7 +496,7 @@ pub enum KvType {
     /// f16, llama.cpp's default
     #[default]
     F16,
-    /// 0.3.9: q8_0 (blocks of 32: an f16 scale and 32 signed bytes), about half the memory of f16
+    /// q8_0 (blocks of 32: an f16 scale and 32 signed bytes), 34 bytes per 32 values against f16's 64
     Q8_0,
 }
 
@@ -555,7 +518,7 @@ impl KvType {
 
 /// One layer's K/V cache, one row of `n_head_kv · head_dim` per position (llama.cpp's `cache_k_l*`/`cache_v_l*`
 /// without the transposed-V layout, which flash attention does not use): f16 in `k`/`v`, or q8_0 blocks in
-/// `kq`/`vq` (0.3.9).
+/// `kq`/`vq`.
 #[derive(Clone)]
 pub struct KvCache {
     pub k: Vec<u16>,
@@ -613,8 +576,10 @@ impl KvCache {
                 // llama.cpp rotates K and V before they reach a quantized cache (the attention rotates Q to match)
                 let rb = self.row_bytes();
                 let (mut k, mut v) = (k.to_vec(), v.to_vec());
-                fwht(&mut k, rot_k_size(self.head_dim));
-                fwht(&mut v, ROT_V);
+                if rotates(self.head_dim) {
+                    fwht(&mut k, rot_k_size(self.head_dim));
+                    fwht(&mut v, ROT_V);
+                }
                 for (src, dst) in [(&k[..], &mut self.kq), (&v[..], &mut self.vq)] {
                     let at = dst.len();
                     dst.resize(at + rb, 0);
@@ -659,6 +624,12 @@ pub fn rot_k_size(head_dim: usize) -> usize {
     n
 }
 pub const ROT_V: usize = 64;
+
+/// Whether llama.cpp rotates a quantized cache for this head size (`attn_rot_k`/`attn_rot_v`: a multiple of 64;
+/// below that the blocks would cross heads, and llama.cpp leaves the cache unrotated).
+pub fn rotates(head_dim: usize) -> bool {
+    head_dim.is_multiple_of(64)
+}
 
 /// ggml's AVX2 `ggml_vec_dot_q8_0_q8_0`, float op for float op: per block the combined scale `dx · dy`; eight lanes,
 /// lane l the exact integer sum of elements 4l..4l+3 (`maddubs` of |x| and y signed by x, saturating to i16 per pair,
@@ -777,7 +748,7 @@ pub enum Outputs {
 pub struct Weights {
     mm: Mmap,
     tensors: Vec<TensorInfo>,
-    /// tensor name → index into `tensors` (0.3.4: a lookup per matrix per layer was a linear scan)
+    /// tensor name → index into `tensors`
     index: std::collections::HashMap<String, usize>,
     /// every F32 tensor (the norms), read once at open
     vecs: std::collections::HashMap<String, Vec<f32>>,
@@ -795,8 +766,8 @@ pub struct Weights {
     pub arch: Arch,
     /// the matrix the logits come from (`token_embd.weight` when the embeddings are tied)
     pub output: &'static str,
-    /// the thread count of the llama.cpp being matched (`-t`; Savante runs 3): its split-KV decode kernel cuts the KV
-    /// cells into one chunk per thread, so the bits depend on it. `BANKML_LLAMA_THREADS`, default 3.
+    /// the thread count of the llama.cpp being matched (`-t`); the split-KV decode kernel cuts the KV cells into one
+    /// chunk per thread, so the bits depend on it. `BANKML_LLAMA_THREADS`, default 3.
     pub llama_threads: usize,
     pool: Pool,
     /// a verified GPU taking a share of every 1-bit matrix–vector product's rows (`gpu::worker`), if one was found
@@ -967,8 +938,8 @@ impl Weights {
     }
 
     /// Layer `il`'s attention inputs for one token at position `pos`, from its normed row `xn` (`attn_norm-il`):
-    /// Q (`n_head · head_dim`), K and V (`n_head_kv · head_dim`) — projected, Q and K normed per head and roped,
-    /// as `Qcur`, `Kcur`, `Vcur` in llama.cpp's qwen3 graph.
+    /// Q (`n_head · head_dim`), K and V (`n_head_kv · head_dim`) — projected, Q and K normed per head (Qwen3 only)
+    /// and roped, as `Qcur`, `Kcur`, `Vcur` in llama.cpp's graph.
     pub fn qkv(&self, il: usize, xn: &[f32], pos: i32, q: &mut [f32], k: &mut [f32], v: &mut [f32]) -> Result<(), String> {
         let a = self.quantize(xn);
         let hd = self.head_dim;
@@ -1027,9 +998,14 @@ impl Weights {
                 // ggml takes the reference kernel whenever K is not f16/f32 (no tiled, no split-KV)
                 let (rb, ob) = (cache.row_bytes(), off / q1_0::QK8_0 * q1_0::Q8_0_BYTES);
                 let mut qr = qh.to_vec();
-                fwht(&mut qr, rot_k_size(hd));
+                if rotates(hd) {
+                    fwht(&mut qr, rot_k_size(hd));
+                }
                 attend_head_q8(&qr, &cache.kq[ob..], &cache.vq[ob..], visible, rb, scale, oh);
-                return fwht(oh, ROT_V);
+                if rotates(hd) {
+                    fwht(oh, ROT_V);
+                }
+                return;
             }
             match kernel {
                 Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
@@ -1108,14 +1084,14 @@ impl Weights {
         self.caches_of(KvType::F16)
     }
 
-    /// Empty caches of `kind` (0.3.9: q8_0 needs `head_dim` a multiple of 32, as ggml's blocks do).
+    /// Empty caches of `kind` (q8_0 needs `head_dim` a multiple of 32, as ggml's blocks do).
     pub fn caches_of(&self, kind: KvType) -> Vec<KvCache> {
         (0..self.n_layer).map(|_| KvCache { head_dim: self.head_dim, ..KvCache::of(kind, self.n_head_kv * self.head_dim) }).collect()
     }
 
     /// One token through every layer at the next position (the caches' length), appending its K and V to each
     /// layer's cache. `each_layer(il, l_out)` sees every layer's output; returns `result_norm` (`output_norm` of the
-    /// last layer's output), which `logits` turns into scores.
+    /// last layer's output), which `logits` turns into scores. Always uses the reference attention kernel.
     pub fn step(&self, caches: &mut [KvCache], token: u32, each_layer: impl FnMut(usize, &[f32])) -> Result<Vec<f32>, String> {
         self.step_with(caches, token, Kernel::Reference, each_layer)
     }
@@ -1144,8 +1120,8 @@ impl Weights {
         Ok(rn)
     }
 
-    /// One micro-batch through every layer together (see the module notes: the same bits as token by token for the
-    /// quantized types, ggml's batched bits for F16). On the last layer only the output rows go on, as llama.cpp's
+    /// One micro-batch through every layer together (the same bits as token by token for the quantized types,
+    /// ggml's batched bits for F16). On the last layer only the output rows go on, as llama.cpp's
     /// `inp_out_ids` selects them (none, the last, or all); returns their `result_norm`s.
     fn ubatch(&self, caches: &mut [KvCache], toks: &[u32], kernel: Kernel, outputs: Option<Outputs>, each: &mut impl FnMut(usize, usize, &[f32]))
               -> Result<Vec<Vec<f32>>, String> {
@@ -1303,7 +1279,7 @@ impl Weights {
 mod tests {
     use super::*;
 
-    /// 0.3.9: the q8_0 KV cache's two kernels against the shipped ggml b11192 haswell library (dlopen, no crate):
+    /// The q8_0 KV cache's two kernels against the shipped ggml b11192 haswell library (dlopen, no crate):
     /// `quantize_row_q8_0` byte for byte (the cache store and Q), and `ggml_vec_dot_q8_0_q8_0` bit for bit (the scores)
     /// — random activations with outliers, and blocks full of −128 and 127 where `maddubs` saturates.
     #[test]
@@ -1605,14 +1581,14 @@ mod tests {
         model_oracle("Ternary-Bonsai-8B-Q2_0_g64");
     }
 
-    /// 0.3.4: Bonsai-1.7B, whose logits come from its tied token table (no output.weight).
+    /// Bonsai-1.7B, whose logits come from its tied token table (no output.weight).
     #[test]
     #[ignore = "needs .models/Bonsai-1.7B-Q1_0.gguf + its model-*.tsv (testing/model_oracle.py); --release"]
     fn oracle_forward_model_bonsai_1_7b() {
         model_oracle("Bonsai-1.7B-Q1_0");
     }
 
-    /// 0.3.4: the Llama graph in F16 with tied embeddings — SmolLM2-135M-Instruct and mindX's gen 39.
+    /// The Llama graph in F16 with tied embeddings — SmolLM2-135M-Instruct and mindX's gen 39.
     #[test]
     #[ignore = "needs .models/{SmolLM2-135M-Instruct,mindx-gen39}-F16.gguf + their model-*.tsv (testing/model_oracle.py); --release"]
     fn oracle_forward_model_llama_f16() {
@@ -1806,7 +1782,7 @@ mod tests {
         sample_oracle("Bonsai-8B-Q1_0");
     }
 
-    /// 0.3.4: Bonsai-1.7B (tied embeddings) against llama-server running it: greedy and seeded.
+    /// Bonsai-1.7B (tied embeddings) against llama-server running it: greedy and seeded.
     #[test]
     #[ignore = "needs .models/Bonsai-1.7B-Q1_0.gguf + its greedy-*/sample-*.jsonl (testing/{greedy,sample}_oracle.py); --release"]
     fn oracle_llama_server_bonsai_1_7b() {
@@ -1814,7 +1790,7 @@ mod tests {
         sample_oracle("Bonsai-1.7B-Q1_0");
     }
 
-    /// 0.3.4: the Llama graph in F16 against llama-server running SmolLM2-135M-Instruct and mindx-gen39: short prompts
+    /// The Llama graph in F16 against llama-server running SmolLM2-135M-Instruct and mindx-gen39: short prompts
     /// (ggml's reference attention), long ones (the tiled kernel, and tinyBLAS over the micro-batch), continuations
     /// past 256 cells (the split-KV kernel), and seeded sampling.
     #[test]

@@ -1,6 +1,8 @@
 # Installing and configuring bankML: the complete reference
 
-This is the full reference for installing bankML 0.3.6 and the Savante UI, and for every setting they accept. For a
+This is the full reference for installing bankML 0.3.6 and the Savante UI, and for every setting they accept.
+Settings from the next release (0.3.7, 0.3.8, and 0.3.9 in progress; not yet tagged) are marked with their version;
+[CHANGELOG.md](../CHANGELOG.md) has the details. What each source module does is in [modules/](modules/README.md). For a
 first install, read [usage.md §1–§3](usage.md#1-install); the README's *Install and use* gives the short version. This
 page assumes you have read one of them. It covers every step, flag, port, path and environment variable, what each
 one is for, and what it costs.
@@ -64,7 +66,8 @@ Other catalogue models (Q8_0, Q4_K_M) are served only through llama-server, behi
 What else takes memory:
 - **The KV cache** is f16 and grows with the context. Qwen3-8B uses 147,456 bytes per token
   (`sAGI/models.py`), so a 2048-token context holds about 0.30 GB and 4096 tokens about 0.6 GB. The other models
-  need less; the guard reports each one's `kv_f16_bytes_per_token`.
+  need less; the guard reports each one's `kv_f16_bytes_per_token`. In the native engine,
+  `BANKML_CACHE_TYPE=q8_0` (0.3.9, in progress) keeps it in 53 % of those bytes, as llama.cpp's q8_0 cache does (§6).
 - **llama-server** adds about 250 MB of compute buffers and runtime beside the weights and KV (`OVERHEAD` in
   `sAGI/models.py`, an order-of-magnitude measurement).
 - **The whole stack** (8B 1-bit model, engine, UI) runs in about 2 GB of free RAM. Plan for 3 GB of free disk.
@@ -321,7 +324,7 @@ in (§8). Derived models (`bankml create`, `/api/create`) are layers over a pinn
 
 ```
 bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR] [--engine mainline|prism]
-bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR] [--engine mainline|prism]
+bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR] [--slot-dir DIR] [--engine mainline|prism]
 ```
 
 The two modes start the same way. `serve` checks the guard and the sha256 pin, refuses if the file changed while it
@@ -347,9 +350,9 @@ oracles all do this.
 | `--upstream HOST:PORT` | `127.0.0.1:18092` | both | llama.cpp mode: the llama-server to check, or where `--spawn` starts one. Native mode: a **second listening address** that answers llama-server's endpoints (`/health`, `/props`, `/tokenize`, `/apply-template`, `/v1/chat/completions`). Native mode cannot start while something else holds this port |
 | `--spawn LLAMA_SERVER` | — | llama.cpp | `serve` launches this llama-server on the verified path and on `--upstream`, waits up to 900 s for `/health`, and stops it when `serve` stops (on SIGTERM, SIGINT, SIGHUP). Refused if something already answers on `--upstream`. Without `--spawn`, an existing upstream must be healthy within 10 s |
 | `--threads N` | `3` | llama.cpp | passed as `-t N` to the spawned llama-server. Native mode ignores it; use `BANKML_THREADS` (§7) |
-| `--ctx N` | `4096` | both | the context: `-c N` for the spawned llama-server, `n_ctx` for the native engine. A prompt of `N` tokens or more is refused; an Ollama `num_ctx` above it is refused |
+| `--ctx N` | `4096` | both | the context: `-c N` for the spawned llama-server, `n_ctx` for the native engine. A prompt of `N` tokens or more is refused (0.3.8: with llama-server's `exceed_context_size_error` 400 body on `/v1`); an Ollama `num_ctx` above it is refused |
 | `--spec-ngram` | off | llama.cpp | `--spec-type ngram-simple` in the spawned engine: n-gram speculative decoding, exact at temperature 0, opt-in because it measured within noise |
-| `--slot-dir DIR` | — | llama.cpp | `--slot-save-path DIR` for the spawned engine: saved KV slots, so a restart restores the system prompt instead of computing it again |
+| `--slot-dir DIR` | — | both | llama.cpp mode: `--slot-save-path DIR` for the spawned engine. Native mode (0.3.8): `POST /slots/0?action=save\|restore\|erase` with `{"filename"}`, as llama-server's slot API; the directory is created at start. Either way, a restart restores the system prompt instead of computing it again. Without it, the slot actions answer 501 |
 | `--native` | off | — | native mode |
 | `--registry [DIR]` | off; bare: `$BANKML_FORKS`, else `~/.local/share/bankml/forks` | native | serve every model pinned in `DIR` by name, one resident at a time, each verified again when it loads; answer `/api/create`, `/api/copy`, `/api/delete` for derived models. A following argument that starts with `--` is not taken as `DIR` |
 | `--keep-alive DUR` | `5m` | native | how long an `/api/*` request that names no `keep_alive` keeps the model resident: `"5m"`, `"1h30m"`, seconds, `0` (unload after the answer), negative (for good). OpenAI and llama-server endpoints keep the model resident |
@@ -383,9 +386,9 @@ These are constants in `serve.rs`, not settings:
 
 | mode | endpoints |
 |---|---|
-| both | `GET /bankml` (what was verified, when, and what is upstream; in native mode also the resident model and every name), `GET /bankml/usage` (memory and CPU of `serve` and its engine, sampled at most once a second) |
+| both | `GET /bankml` (what was verified, when, and what is upstream; in native mode also the resident model and every name), `GET /bankml/usage` (memory and CPU of `serve` and its engine, sampled at most once a second; 0.3.7 adds package watts, each GPU's busy %, VRAM and GTT, and the GPU limiter's state), `GET /bankml/metrics` (0.3.7: the native engine's own measurements of its last 256 answers) |
 | llama.cpp | `GET /health`, `/v1/models`, `/props` (proxied); `POST /v1/chat/completions` (receipted) |
-| native | `GET /health`, `/props`, `/v1/models`; `POST /tokenize`, `/apply-template`, `/v1/chat/completions`; `GET\|HEAD /`; Ollama's `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`, `/api/generate`, `/api/create`, `/api/copy`, `DELETE /api/delete`. `/api/embed`, `/api/pull` and `/api/push` answer 400 with the reason |
+| native | `GET /health`, `/props`, `/v1/models`; `POST /tokenize`, `/apply-template`, `/v1/chat/completions`, `/slots/0?action=…` (0.3.8); `GET\|HEAD /`; Ollama's `/api/version`, `/api/tags`, `/api/ps`, `/api/show`, `/api/chat`, `/api/generate`, `/api/create`, `/api/copy`, `DELETE /api/delete`. `/api/embed`, `/api/pull` and `/api/push` answer 400 with the reason |
 
 What each request may contain, and what is refused, is in [usage.md §6](usage.md#6-by-hand-build-verify-serve),
 [§6a](usage.md#6a-ollamas-api) and [OLLAMA.md](OLLAMA.md).
@@ -398,6 +401,7 @@ What each request may contain, and what is refused, is in [usage.md §6](usage.m
 | 18093 | `bankml serve` | loopback |
 | 7873 | Savante, interact mode (Gradio) | loopback only; anything else is refused |
 | 7874 | view mode (standard library HTTP) | `0.0.0.0` by default |
+| 7875 | the bankML console, `sAGI/console.py` (0.3.7) | loopback only; anything else is refused. `./install.sh stop` does not stop it |
 | 11434 | Ollama, for embeddings (`BANKML_OLLAMA`) | loopback |
 | 8545 | anvil, the local iNFT devnet, when started from the Agents tab | loopback |
 
@@ -415,7 +419,8 @@ in `savante/resources.json`) chooses how:
 
 The two carriers are started this way:
 - **Native carrier:** `bankml serve FILE --fork F --native --upstream $BANKML_UPSTREAM --listen $BANKML_SERVE_LISTEN
-  --ctx N`, with `BANKML_THREADS` set to the chosen thread count.
+  --ctx N --slot-dir ~/.local/share/bankml/savante/slots`, with `BANKML_THREADS` set to the chosen thread count and
+  `BANKML_GPU_LIMIT` to the saved GPU limit (`BANKML_GPU=off` when it is 0).
 - **llama.cpp carrier:** `bankml serve FILE --fork F --spawn $BANKML_LLAMA_SERVER --upstream … --listen … --threads N
   --ctx N [--spec-ngram] --slot-dir ~/.local/share/bankml/savante/slots`.
 
@@ -449,6 +454,7 @@ start. Without a saved budget, the context is `BANKML_CTX` (2048) and the thread
 |---|---|
 | `python3 sAGI/savante.py` | `--mode interact\|view` (default `interact`); `--host` (default `127.0.0.1`; interact accepts only `127.0.0.1` or `localhost`); `--port` (default 7873). `--mode view` hands over to `view.py`, on `0.0.0.0:7874` unless a host and port are given |
 | `python3 sAGI/view.py` | `--host` (default `0.0.0.0`), `--port` (default 7874) |
+| `python3 sAGI/console.py` | (0.3.7) `--host` (default `127.0.0.1`; loopback only), `--port` (default 7875); reaches `bankml serve` at `BANKML_SERVE_LISTEN` |
 | `python3 sAGI/models.py` | `list`, `catalog`, `search Q`, `import ID\|URL\|ollama:NAME[:TAG]`, `use FILE`, `first-run` |
 | `python3 sAGI/agents.py` | `adopt PERSONA [--slug SLUG]` (install an existing `.persona` as its own agent), `list`, `verify SLUG` |
 | `python3 sAGI/speak.py` | renders every voice clip, then writes both exports; `--shard K/N` renders every N-th statement starting at K, for parallel renders, and skips the exports; `--prune` drops clips no current text uses |
@@ -492,6 +498,7 @@ sets a variable for the processes it starts, that is noted.
 | `INSTALL_PYTHON` | recorded in `install.env` | the previous choice of Python |
 | `SAVANTE_CANON` | `~/cryptoAGI/savante` (or `~/savante`) | the canon; passed on to the UIs |
 | `BANKML_PIPER` | `$BANKML_DATA/piper` | where `voice` installs Piper (also read by `speak.py`) |
+| `BANKML_POWER_YES` | unset | (0.3.7) `1` answers yes to the `power` step's question, for a non-interactive run |
 
 ### Model importer and carrier (`sAGI/models.py`)
 
@@ -557,6 +564,7 @@ sets a variable for the processes it starts, that is noted.
 | `BANKML_CONVERT_KEEP` | same | unset | set to keep that file after the test |
 | `BANKML_NAMES_ORACLE` | `convert.rs` (`oracle_name_heuristics`) | — | the JSONL that `convert_oracle.py --names` writes |
 | `BANKML_PENALTY_STEMS` | `native.rs` (`oracle_penalties`) | `mindx-gen39-F16,Bonsai-1.7B-Q1_0` | which models' penalty records to replay |
+| `BANKML_SAMPLER_STEMS` | `native.rs` (`oracle_samplers`, 0.3.7) | `mindx-gen39-F16,Bonsai-1.7B-Q1_0` | which models' sampler records to replay |
 | `BANKML_ORACLE_MODEL` | `schema_oracle.py` | the Bonsai and O4 models in `.models` | one GGUF to read the chat template from, instead of every reproduced template |
 | `BANKML_FORK` | `serve_oracle.py`, `json_oracle.py`, `json_schema_oracle.py` | `$BANKML_FORKS/Bonsai-8B-Q1_0.gguf.FORK.json` | the Bonsai-8B pin the live oracles serve with |
 | `BANKML_FORKS` | the live oracles (`serve_`, `json_`, `json_schema_`, `persona_`, `penalty_oracle.py`) | `~/.local/share/bankml/forks` | where they find each model's pin |
@@ -610,8 +618,11 @@ llama-server-style requests keep the model resident.
 ### Prompt cache and slots
 
 Both engines reuse the longest common prefix of the previous prompt. The UI's history window moves in steps of six
-exchanges for this reason, so each prompt extends the last one. With `--slot-dir` (the importer always sets it), a
-restarted llama-server restores the system prompt's saved KV instead of computing it again. On the laptop that took
+exchanges for this reason, so each prompt extends the last one. Both serve one request at a time on one slot (the
+spawned llama-server runs with `-np 1`). The native engine (0.3.8) also keeps llama-server's host prompt cache: when a
+request shares little with the slot, the slot's state goes to RAM and a cached state that keeps more of the prompt
+comes back, so conversations that take turns do not recompute their history. `BANKML_CACHE_RAM` bounds it (§6). With `--slot-dir` (the importer always sets it; for the native
+carrier since 0.3.8), a restarted engine restores the system prompt's saved KV instead of computing it again. On the laptop that took
 the first answer after a restart from 132 s to 15 s. Each saved slot is about 51 MB per model, context and system
 prompt.
 
@@ -622,6 +633,9 @@ tokens/s with the card, 1.96–1.97 without): the card is worth about one CPU co
 cancels the gain. A discrete card gains directly. The card's buffers come out of system RAM on an integrated GPU.
 On a memory-tight machine, `BANKML_GPU=off` frees that memory and changes no token, because the GPU path is bit-exact
 to the CPU path by its own oracle. `BANKML_GPU_SHARE` overrides the calibration if you have measured a better split.
+In the next release (0.3.7), `BANKML_GPU_LIMIT` (default 0.8) caps the card's memory and busy time, and each matrix
+shape decides by measurement whether the card pays. On the Vega 3 (Bonsai-1.7B) that measured neutral, 10.36 tokens/s
+off against 10.30–10.38 on, with card memory down from 66 MB to about 13 MB ([CHANGELOG.md](../CHANGELOG.md)).
 
 ### SHA-NI
 
@@ -769,6 +783,7 @@ The binary has no dependencies to roll back with it. The pins and models do not 
 |---|---|---|
 | `bankml serve` | loopback | it has no authentication. It requires a loopback `Host` (`127.0.0.1`, `localhost`, `[::1]`, else 403) and a JSON `Content-Type` on POST (else 415), so a web page can drive it neither by DNS rebinding nor by a simple cross-origin form POST. It caps connections, header sizes and body sizes, and times out slow clients |
 | interact mode (7873) | loopback only | the installed Gradio 3.37 has published path-traversal CVEs (CVE-2023-51449, fixed in 4.11), and interact mode runs the Verifier, devnet mints and PostgreSQL publishing. `savante.py` refuses any `--host` other than `127.0.0.1` or `localhost` and exits with the reason. It also adds a trusted-host check, so a request whose `Host` is not loopback is refused |
+| the bankML console (7875, 0.3.7) | loopback only | it can restart the engine with new CPU, RAM and GPU limits. `console.py` refuses any `--host` other than loopback |
 | view mode (7874) | `0.0.0.0` by default | the page for the LAN, built on the Python standard library, not Gradio. It has a fixed set of GET routes (`/`, `/api/state`, `/api/result?name=` for a name `testing/results/` lists, `/savante.png`, `/favicon.ico`, `/knobs.js`, `/audio/*.ogg`, `/export/*.opus`), and every POST answers 405. Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a Content-Security-Policy: `default-src 'none'`, with images, scripts, media and connections from `'self'` only and inline styles and scripts allowed; file downloads get `default-src 'none'` alone. It shows commitments, never the content of `.history` or `.memory` |
 | Ollama (embeddings) | keep it local | history text is sent to it |
 | anvil devnet | loopback | started on `127.0.0.1:8545` |
@@ -829,9 +844,10 @@ collide with a running carrier on 18092 and 18093.
 
 **Time and memory.** A full gate runs every oracle one after another (`--test-threads=1`), and takes a long time on a
 laptop: plan to leave the machine to it. Memory is the usual limit:
-- The live stages load real models. The 0.3.5 run was stopped by the development session's memory guard, because
-  the Vega 3 GPU worker's buffers come out of system RAM. The remaining stages ran with `BANKML_GPU=off` and the
-  record marks where.
+- The live stages load real models. The 0.3.5 run was stopped by the development session's memory guard, and the
+  0.3.6 run stalled at the same stage, because the Vega 3 GPU worker's buffers come out of system RAM. In both, the
+  remaining stages ran with `BANKML_GPU=off` and the record marks where. The next release adds `BANKML_GPU_LIMIT`
+  (0.3.7) for this.
 - The whole-token budgets (`decode_budget_*`) measure the disk, not the kernel, unless the model stays in the page
   cache. That needs at least 3 GB free for the ternary model.
 - Close other work and stop the carrier (`./install.sh stop`) before a gate run, and set `BANKML_GPU=off` on an
@@ -881,6 +897,8 @@ A speed counts only if every oracle passed on the same code. The full list of te
 | `400 chunked requests are not accepted` | a client that streams the request body | send `Content-Length` |
 | `413 request too large` | a body over 16 MiB | send less |
 | `503 too many connections` | 32 connections already open | fewer concurrent clients; one model answers one request at a time anyway |
+| `400 request (N tokens) exceeds the available context size (M tokens)` (0.3.8) | the prompt does not fit `--ctx` | trim the conversation, or restart with a larger `--ctx` if it fits in memory |
+| `501 This server does not support slots action` | a `/slots` request to a server started without `--slot-dir` | restart with `--slot-dir DIR` |
 | `404 model '…' not found: bankml serves pinned models only (…)` | a name that no pin has | use one of the names listed; add `--registry` to serve more than the startup model |
 | `400 num_ctx N … is larger than the context this server holds` | a request or Modelfile asks for more than `--ctx` | restart with a larger `--ctx`, if it fits in memory |
 | a 400 naming a refused option, sampler, `tools`, `images`, `think: true` or a schema | not something bankML reproduces exactly | the message says what; [usage.md §6a](usage.md#6a-ollamas-api) lists every refusal |

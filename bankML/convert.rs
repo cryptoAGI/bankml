@@ -1,45 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `bankml convert` (O5): a Hugging Face safetensors directory → a GGUF, for the **Llama architecture as SmolLM2-135M
-//! and mindX's `mindx-genN` use it**, written to be **byte-identical** to llama.cpp b11192's
-//! `convert_hf_to_gguf.py DIR --outtype f16` (read from the tag's `conversion/{base,llama}.py` and `gguf-py`):
+//! `bankml convert`: a Hugging Face safetensors directory (Llama architecture, as SmolLM2-135M and `mindx-genN` use
+//! it) to a GGUF F16 file byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py DIR --outtype f16`.
 //!
-//! - **metadata, in llama.cpp's order**: `general.architecture`; `general.type`; the sampling defaults of
-//!   `generation_config.json` (`general.sampling.*`); the name heuristics of `gguf-py/metadata.py` over `_name_or_path`
-//!   and then the directory's name (`general.name`, `organization`, `finetune`, `basename`, `version`, `size_label`, the
-//!   size label otherwise from the weights counted); `TextModel.set_gguf_parameters` with the defaults
-//!   `AutoConfig(LlamaConfig).to_dict()` supplies (`head_dim`, `rope_theta` 10000, `rms_norm_eps` 1e-6, kv heads);
-//!   `file_type` 1; Llama's `vocab_size` and `rope.dimension_count`; `quantization_version` 2; then the tokenizer;
-//! - **tensors**: every safetensors part in name order (the reader sorts by name), HF names mapped to GGUF names, the
-//!   Q and K rows permuted from HF's rotate-half layout back to GGML's pairs (`LlamaModel.permute`), 1-D tensors and
-//!   `*_norm.weight` in F32, every other matrix in F16 by round-to-nearest-even (numpy's `astype(float16)`), BF16 read
-//!   exactly as F32 first; tied embeddings write no `output.weight`;
-//! - **tokenizer**: the `gpt2` (byte-level BPE) path — tokens in id order with their types, merges, the special token
-//!   ids (`tokenizer_config.json`, then `config.json`), `add_*_token`, the chat template (`tokenizer_config.json` or
-//!   `chat_template.jinja`), and Llama's `add_bos_token = false` for 49,152-token vocabularies;
-//! - **layout**: GGUF v3, little-endian, alignment 32, tensor data in the order the tensors were added.
-//!
-//! What would make llama.cpp write something this does not reproduce is **refused, with the reason** — never
-//! approximated: another architecture, a SentencePiece / Llama-HF vocabulary, rope scaling, biases, experts, a model
-//! card (`README.md`: llama.cpp would add its licence, tags and base models), and any tokenizer whose pre-tokenizer
-//! llama.cpp would not name `smollm`. llama.cpp names it by hashing the token ids its Python tokenizer gives one fixed
-//! text (`chkhsh`); bankML has no Python, so it recognises a tokenizer by the sha256 of its vocabulary and merges and
-//! the shape of its pre-tokenizer, and the table below records the `chkhsh` each entry was measured to give
-//! (`testing/convert_oracle.py --chkhsh`).
-//!
-//! **Why it exists:** mindXtrain (github.com/Professor-Codephreak/mindXtrain, continued at
-//! huggingface.co/PYTHAI/mindXtrain; Apache-2.0) merges each generation's LoRA into safetensors
-//! (`ollama_push/merged`) and serves it with `serve --to ollama`; mindX's `promote.py` then layers the persona. This
-//! converter and `bankml create` (`create.rs`) take that merged directory instead: one pinned GGUF, the persona a
-//! verified layer. llama.cpp's converter names the model from the directory (`general.name`), so the bytes — and the
-//! pin — depend on the directory's name, exactly as they do for llama.cpp.
+//! Metadata, tensors, tokenizer and layout follow that script's order and rules (`conversion/{base,llama}.py`,
+//! `gguf-py`). Any input for which llama.cpp would write something this code does not reproduce is refused with
+//! the reason, never approximated. `general.name` comes from the directory's name, so the output bytes and the
+//! pin depend on it, as they do for llama.cpp.
+//! Details: docs/modules/convert.md.
 
 use crate::gguf::jstr;
 use crate::serve::Json;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Tokenizers bankML recognises: (the `tokenizer.ggml.pre` llama.cpp writes, sha256 of the vocabulary and merges as
-/// `vocab_merges_sha256` computes it, the `chkhsh` llama.cpp b11192's rule gave on it, where it was measured).
+/// Recognised tokenizers: (`tokenizer.ggml.pre` llama.cpp writes, `vocab_merges_sha256`, the `chkhsh` llama.cpp
+/// b11192 computed for it, where it was measured).
+///
+/// Stands in for llama.cpp's `chkhsh` lookup, which needs the Python tokenizer; measure new entries with
+/// `testing/convert_oracle.py --chkhsh`.
 pub const KNOWN_TOKENIZERS: [(&str, &str, &str, &str); 1] = [(
     "smollm",
     "60e5ec7477255109c571457df28dbbc3b15a8a3d36d35a5ae7c7c5824479dd2f",
@@ -50,9 +28,9 @@ pub const KNOWN_TOKENIZERS: [(&str, &str, &str, &str); 1] = [(
 /// Options of `bankml convert` (llama.cpp's flags of the same meaning).
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// `--model-name`: `general.name` instead of the one the heuristics find
+    /// `--model-name`: overrides the `general.name` the heuristics find.
     pub model_name: Option<String>,
-    /// `--ignore-model-card`: convert although a README.md is present (the result then differs from llama.cpp's)
+    /// `--ignore-model-card`: convert despite a README.md; the output then differs from llama.cpp's.
     pub ignore_model_card: bool,
 }
 
@@ -66,7 +44,7 @@ pub struct Report {
     pub kv: usize,
     pub params: u64,
     pub name: String,
-    /// sha256 of every input file read, by name (the provenance a FORK.json records)
+    /// (name, size, sha256) of every input file read; recorded in the FORK.json.
     pub inputs: Vec<(String, u64, String)>,
 }
 
@@ -94,7 +72,7 @@ impl KvList {
             None => self.0.push((k.to_string(), v)),
         }
     }
-    /// `add_string`: an empty string is not written
+    /// `add_string`: an empty string is not written.
     fn str(&mut self, k: &str, v: &str) {
         if !v.is_empty() {
             self.set(k, Kv::Str(v.to_string()));
@@ -175,7 +153,7 @@ pub fn id_to_title(s: &str) -> String {
     s.trim().replace('-', " ").split_whitespace().map(|w| if py_islower(w) && !versionish(w) { py_title(w) } else { w.to_string() }).collect::<Vec<_>>().join(" ")
 }
 
-/// `(v|iter)?\d+([.]\d+)*`, whole, case-insensitive
+/// `(v|iter)?\d+([.]\d+)*`, whole, case-insensitive.
 fn re_version(p: &str) -> bool {
     let l = p.to_ascii_lowercase();
     let r = l.strip_prefix("iter").or_else(|| l.strip_prefix('v')).unwrap_or(&l);
@@ -184,7 +162,7 @@ fn re_version(p: &str) -> bool {
     ok(r) || ok(&l)
 }
 
-/// `i?q\d(_\w)*|b?fp?(16|32)`, whole, case-insensitive
+/// `i?q\d(_\w)*|b?fp?(16|32)`, whole, case-insensitive.
 fn re_type(p: &str) -> bool {
     let l = p.to_ascii_lowercase();
     let q = {
@@ -206,7 +184,7 @@ fn re_type(p: &str) -> bool {
     q || f
 }
 
-/// `(([A]|\d+[x])?\d+([._]\d+)?[KMBT][\d]?|small|mini|medium|large|x?xl)`, whole, case-insensitive
+/// `(([A]|\d+[x])?\d+([._]\d+)?[KMBT][\d]?|small|mini|medium|large|x?xl)`, whole, case-insensitive.
 fn re_size(p: &str) -> bool {
     let l = p.to_ascii_lowercase();
     if ["small", "mini", "medium", "large", "xl", "xxl"].contains(&l.as_str()) {
@@ -236,7 +214,7 @@ fn re_size(p: &str) -> bool {
     (1..b.len()).any(|k| b[..k].iter().all(u8::is_ascii_digit) && b[k] == b'x' && core(&l[k + 1..]))
 }
 
-/// The six components `get_model_id_components` returns: full name, organization, basename, finetune, version, size label.
+/// `get_model_id_components`'s result: full name, organization, basename, finetune, version, size label.
 type IdParts = (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>);
 
 /// `Metadata.get_model_id_components`, ported line for line.
@@ -347,11 +325,11 @@ pub fn model_id_components(model_id: &str, total_params: i64) -> IdParts {
     (Some(full), org, basename, finetune, version, size)
 }
 
-/// `model_weight_count_rounded_notation(n, min_digits=2)`
+/// `model_weight_count_rounded_notation(n, min_digits=2)`.
 pub fn size_label(n: u64) -> String {
     let n = n as f64;
     let (v, s) = if n > 1e12 { (n * 1e-12, "T") } else if n > 1e9 { (n * 1e-9, "B") } else if n > 1e6 { (n * 1e-6, "M") } else { (n * 1e-3, "K") };
-    // Python round() is half-to-even; str(int) has no leading zeros except "0", which lstrip('0') empties
+    // Python round() is half-to-even; lstrip('0') empties str(0), so 0 counts as zero digits.
     let r = v.round_ties_even() as u64;
     let len = if r == 0 { 0 } else { r.to_string().len() };
     let fix = 2usize.saturating_sub(len);
@@ -479,7 +457,7 @@ fn to_f32(dtype: &str, b: &[u8]) -> Result<Vec<f32>, String> {
     })
 }
 
-/// `LlamaModel.permute`: rows (n_head, 2, dim/2) → (n_head, dim/2, 2), the HF rotate-half layout back to GGML's pairs.
+/// `LlamaModel.permute`: rows (n_head, 2, dim/2) → (n_head, dim/2, 2), HF's rotate-half layout to GGML's pairs.
 fn permute_rows<T: Copy>(v: &[T], rows: usize, cols: usize, n_head: usize) -> Vec<T> {
     let dim = rows / n_head;
     let half = dim / 2;
@@ -497,8 +475,9 @@ fn permute_rows<T: Copy>(v: &[T], rows: usize, cols: usize, n_head: usize) -> Ve
 
 // ---------------------------------------------------------------- the tokenizer (gpt2 path) ---------------------
 
-/// sha256 over every token in id order (each followed by `\n`), a blank line, then every merge as `a b\n` — the
-/// fingerprint `KNOWN_TOKENIZERS` is keyed on.
+/// The fingerprint `KNOWN_TOKENIZERS` is keyed on.
+///
+/// sha256 over every token in id order, each followed by `\n`, a blank line, then every merge as `a b\n`.
 pub fn vocab_merges_sha256(tokens: &[String], merges: &[String]) -> String {
     let mut h = crate::sha256::Sha256::default();
     for t in tokens {
@@ -774,15 +753,16 @@ fn vocab(dir: &Path, hp: &Json, kv: &mut KvList, inputs: &mut Vec<PathBuf>) -> R
 struct Plan {
     gguf: String,
     src: usize,
-    /// GGML type: 0 F32, 1 F16
+    /// GGML type: 0 F32, 1 F16.
     ty: u32,
-    /// numpy shape (rows first)
+    /// numpy shape, rows first.
     shape: Vec<u64>,
     permute_heads: Option<usize>,
 }
 
-/// Converts `dir` (config.json, model*.safetensors, tokenizer files) to `out`, byte-identical to llama.cpp b11192's
-/// `convert_hf_to_gguf.py DIR --outtype f16` for the Llama models in scope, or refuses with the reason.
+/// Converts `dir` (config.json, model*.safetensors, tokenizer files) to `out`, or refuses with the reason.
+///
+/// For the Llama models in scope the output is byte-identical to b11192 `convert_hf_to_gguf.py DIR --outtype f16`.
 pub fn convert(dir: &Path, out: &Path, opt: &Options) -> Result<Report, String> {
     let cfg_path = dir.join("config.json");
     let cfg = read_json(&cfg_path)?;
@@ -1022,8 +1002,9 @@ impl<W: Write> Hashed<W> {
     }
 }
 
-/// The FORK.json a conversion is pinned by: the output's sha256 and size, and every input file's, with the rule it
-/// was made by. `source` names where the directory came from (a Hub repo and revision, or a local path).
+/// The FORK.json that pins a conversion: output and input sha256 and sizes, and the rule it was made by.
+///
+/// `source` names where the directory came from (a Hub repo and revision, or a local path).
 pub fn fork_json(r: &Report, source: &str) -> String {
     let file = r.out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let ins: Vec<String> = r.inputs.iter().map(|(n, b, s)| format!("   {{\"path\": {}, \"bytes\": {b}, \"sha256\": \"{s}\"}}", jstr(n))).collect();
@@ -1094,8 +1075,9 @@ mod tests {
         for z in ["gen39", "instruct", "8", "B", "x7B", "8xB"] { assert!(!re_size(z), "{z}") }
     }
 
-    /// The name heuristics against gguf-py's own, on a corpus of Hub ids (`testing/convert_oracle.py --names OUT.jsonl`
-    /// writes one `{"id", "total", "parts", "title", "size"}` per line from llama.cpp b11192's gguf-py).
+    /// The name heuristics against b11192 gguf-py's on a corpus of Hub ids.
+    ///
+    /// Input: `testing/convert_oracle.py --names OUT.jsonl`, one `{"id", "total", "parts", "title", "size"}` per line.
     #[test]
     #[ignore = "needs testing/convert_oracle.py --names output in BANKML_NAMES_ORACLE"]
     fn oracle_name_heuristics() {
@@ -1121,9 +1103,10 @@ mod tests {
         assert_eq!(bad, 0);
     }
 
-    /// The oracle: bankml convert's GGUF against llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`, byte for byte
-    /// (testing/convert_oracle.py records it). `BANKML_CONVERT_DIR` = the safetensors directory (named as the oracle's
-    /// was, since llama.cpp names the model from it), `BANKML_CONVERT_ORACLE` = llama.cpp's GGUF.
+    /// The oracle: the output's sha256 against b11192 `convert_hf_to_gguf.py --outtype f16`'s GGUF.
+    ///
+    /// `BANKML_CONVERT_DIR`: the safetensors directory, named as the oracle's was (the name is in the bytes).
+    /// `BANKML_CONVERT_ORACLE`: llama.cpp's GGUF, recorded by `testing/convert_oracle.py`.
     #[test]
     #[ignore = "needs a safetensors directory and llama.cpp's conversion of it (testing/convert_oracle.py); --release"]
     fn oracle_convert_b11192() {

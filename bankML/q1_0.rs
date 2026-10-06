@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P2 — the Q1_0 kernel, as mainline ggml defines it at **b11192** (read from source 2026-09-25):
+//! The 1-bit `Q1_0` kernel (ggml type 41), the AVX2 q8_0 activation quantizer and exact f16 conversion,
+//! bit-exact with ggml b11192's haswell build (`libggml-cpu-haswell.so`, loaded on AVX2 CPUs without
+//! AVX-512).
 //!
-//! - `ggml-common.h`: `block_q1_0 { ggml_half d; uint8_t qs[16]; }` — 18 bytes, **scale first**.
-//! - `ggml-quants.c: dequantize_row_q1_0`: weight j of a block is bit `j % 8` of byte `j / 8`
-//!   (LSB first); bit 1 → `+d`, bit 0 → `−d`.
-//! - `ggml-cpu.c` type traits: Q1_0's `vec_dot` is `ggml_vec_dot_q1_0_q8_0` with
-//!   `vec_dot_type = Q8_0` — activations are quantized to q8_0 (32 per block, f16 scale) first, so
-//!   one Q1_0 block meets four q8_0 blocks. `repack.cpp` repacks Q1_0 only on NEON, and llamafile's
-//!   sgemm has no Q1_0 case, so on the x86 node every Q1_0 matmul goes through this vec_dot.
-//! - `arch/x86/quants.c`: the AVX2 `quantize_row_q8_0` (id = 127/amax, round-half-**even**) and the
-//!   AVX2 `ggml_vec_dot_q1_0_q8_0` (8 f32 lanes, FMA per q8 block, then per Q1_0 block, `hsum_float_8`).
+//! - Block (`ggml-common.h`): `block_q1_0 { ggml_half d; uint8_t qs[16]; }`, 18 bytes, scale first.
+//! - Decode (`dequantize_row_q1_0`): weight j is bit `j % 8` of byte `j / 8`, LSB first; 1 → `+d`,
+//!   0 → `−d`.
+//! - Dot (`ggml_vec_dot_q1_0_q8_0`, `vec_dot_type = Q8_0`): activations are quantized to q8_0 first, so
+//!   one Q1_0 block meets four q8_0 blocks. On x86 every Q1_0 matmul goes through this vec_dot (repack
+//!   is NEON-only; llamafile's sgemm has no Q1_0 case).
+//! - `arch/x86/quants.c`: AVX2 `quantize_row_q8_0` (id = 127/amax, round half to even) and AVX2
+//!   `ggml_vec_dot_q1_0_q8_0` (8 f32 lanes; mul, then FMA, per q8 block; FMA per Q1_0 block;
+//!   `hsum_float_8`).
 //!
-//! "Bit-exact against ggml" therefore means against the AVX2 build the node runs (the prebuilt
-//! `libggml-cpu-haswell.so`, chosen on AVX2-without-AVX-512 CPUs). `vec_dot_ref` is a scalar model of
-//! that exact float order; `vec_dot_avx2` must equal it bit for bit, and both must equal ggml's
-//! exported symbol on real tensors (`testing/ggml_oracle.py`). `vec_dot_generic` ports ggml's generic C
-//! (a different float order — it is *not* expected to match the AVX2 result bit for bit).
+//! `vec_dot_ref` is a scalar model of that float order; the AVX2 kernels equal it bit for bit, and both
+//! equal ggml's exported symbol on real tensors (`testing/ggml_oracle.py`). `vec_dot_generic` ports
+//! ggml's generic C, a different float order that is not expected to match the AVX2 result.
+//!
+//! Details: docs/modules/q1_0.md.
 
 pub const QK1_0: usize = 128;
 pub const QK8_0: usize = 32;
@@ -24,7 +26,7 @@ pub const Q8_0_BYTES: usize = 34;
 
 // ---------------------------------------------------------------- f16 (IEEE binary16) -----------
 
-/// Exact (every f16 is an f32).
+/// f16 → f32, exact (every f16 is representable as an f32).
 pub fn f16_to_f32(h: u16) -> f32 {
     let (s, e, m) = ((h as u32 & 0x8000) << 16, (h >> 10) as u32 & 0x1f, h as u32 & 0x3ff);
     let bits = match (e, m) {
@@ -46,7 +48,7 @@ pub fn f16_to_f32(h: u16) -> f32 {
     f32::from_bits(bits)
 }
 
-/// Round-to-nearest-even, as F16C `vcvtps2ph imm=0` (ggml's `GGML_CPU_FP32_TO_FP16` on x86).
+/// f32 → f16, round to nearest even, as F16C `vcvtps2ph imm=0` (ggml's `GGML_CPU_FP32_TO_FP16` on x86).
 pub fn f32_to_f16(f: f32) -> u16 {
     let x = f.to_bits();
     let sign = ((x >> 16) & 0x8000) as u16;
@@ -94,8 +96,10 @@ pub fn dequantize_row(blocks: &[u8], out: &mut [f32]) {
     }
 }
 
-/// Quantize activations to q8_0 exactly as ggml's **AVX2** `quantize_row_q8_0` does
-/// (id = 127/amax, round half to even, saturating packs). Not the `_ref` (1/d, round half away).
+/// Quantize activations to q8_0 exactly as ggml's AVX2 `quantize_row_q8_0`.
+///
+/// id = 127/amax, round half to even, saturating packs. Not `quantize_row_q8_0_ref` (1/d, round half
+/// away from zero).
 pub fn quantize_row_q8_0(x: &[f32], out: &mut [u8]) {
     assert_eq!(x.len() % QK8_0, 0);
     assert_eq!(out.len(), x.len() / QK8_0 * Q8_0_BYTES);
@@ -118,10 +122,10 @@ fn check(n: usize, x: &[u8], y: &[u8]) {
     assert!(x.len() >= n / QK1_0 * Q1_0_BYTES && y.len() >= n / QK8_0 * Q8_0_BYTES);
 }
 
-/// Port of `ggml_vec_dot_q1_0_q8_0_generic` (scalar C; its own float order). The shipped b11192
-/// haswell binary compiles its two accumulations to `vfmadd231ss` (GCC's default FP contraction —
-/// read from the disassembly, 2026-09-25), so they are `mul_add` here: the C text alone is not the
-/// reference, the instructions are.
+/// Port of `ggml_vec_dot_q1_0_q8_0_generic` (scalar C, its own float order).
+///
+/// Both accumulations are `mul_add`: the shipped b11192 haswell binary compiles them to `vfmadd231ss`
+/// (GCC's default FP contraction). The instructions, not the C text, are the reference.
 pub fn vec_dot_generic(n: usize, x: &[u8], y: &[u8]) -> f32 {
     check(n, x, y);
     let mut sumf = 0.0f32;
@@ -144,10 +148,11 @@ pub fn vec_dot_generic(n: usize, x: &[u8], y: &[u8]) -> f32 {
     sumf
 }
 
-/// Scalar model of ggml's AVX2 `ggml_vec_dot_q1_0_q8_0`, float op for float op: lane l of a q8
-/// block holds the exact integer sum of elements 4l..4l+3 (signs applied as `(q ^ m) − m` on i8,
-/// which wraps −128 exactly as `_mm256_sub_epi8` does); the first q8 block is a multiply, the other
-/// three FMA into it; the Q1_0 scale FMAs into the running accumulator; then `hsum_float_8`.
+/// Scalar model of ggml's AVX2 `ggml_vec_dot_q1_0_q8_0`, float op for float op.
+///
+/// Lane l of a q8 block holds the exact integer sum of elements 4l..4l+3, signs applied as
+/// `(q ^ m) − m` on i8 (−128 wraps, as `_mm256_sub_epi8` does). The first q8 block is a multiply, the
+/// other three FMA into it; the Q1_0 scale FMAs into the running accumulator; then `hsum_float_8`.
 pub fn vec_dot_ref(n: usize, x: &[u8], y: &[u8]) -> f32 {
     check(n, x, y);
     let mut acc = [0.0f32; 8];
@@ -196,7 +201,7 @@ pub fn has_avx2() -> bool {
     is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && is_x86_feature_detected!("f16c")
 }
 
-/// One f16 scale → f32 with F16C (exact; equal to `f16_to_f32`, see `f16_conversions_match_f16c_hardware`).
+/// One f16 scale → f32 with F16C; exact and equal to `f16_to_f32` (`f16_conversions_match_f16c_hardware`).
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn f16c(p: *const u8) -> f32 {
@@ -205,9 +210,10 @@ unsafe fn f16c(p: *const u8) -> f32 {
 }
 
 /// The AVX2 kernel: the same instruction sequence as ggml b11192's `ggml_vec_dot_q1_0_q8_0`.
-/// Sign expansion: broadcast 4 sign bytes, `pshufb` each to 8 lanes, AND with the bit mask,
-/// compare to zero → a −1 mask where the weight is −1; `(q ^ m) − m` negates there. No multiplies
-/// on the weights — `maddubs(1, ·)`/`madd(·, 1)` are the horizontal adds.
+///
+/// Sign expansion: broadcast 4 sign bytes, `pshufb` each to 8 lanes, AND with the bit mask, compare to
+/// zero → a −1 mask where the weight is −1; `(q ^ m) − m` negates there. `maddubs(1, ·)` and
+/// `madd(·, 1)` are the horizontal adds; there are no multiplies on the weights.
 ///
 /// # Safety
 /// Caller checks AVX2+FMA+F16C (`has_avx2`) and the slice lengths (`check`).
@@ -251,19 +257,18 @@ pub unsafe fn vec_dot_avx2(n: usize, x: &[u8], y: &[u8]) -> f32 {
     _mm_cvtss_f32(r)
 }
 
-/// A q8_0 activation prepared once per token: quants contiguous (32 per block, no 34-byte
-/// stride) and the scales already f32 (f16→f32 is exact, so no bit can move). In a GEMV every
-/// row reuses the same activation, so ggml's per-row, per-block scale conversion is paid once here.
-/// The fields are private: the AVX2 kernels read them through raw pointers sized by `n`, so they may
-/// only be built by `from_q8_0`/`quantize`, which keep them consistent (0.0.1 exposed them, which let
-/// safe code set `n` past the buffers).
+/// A q8_0 activation prepared once per token: quants contiguous (no 34-byte stride), scales already
+/// f32 (exact), and per-lane sums for the selection kernel.
+///
+/// Fields are private: the AVX2 kernels read them through raw pointers sized by `n`, so only
+/// `from_q8_0`/`quantize` may build them.
 pub struct Q8Act {
     n: usize,
     qs: Vec<i8>,
     d: Vec<f32>,
     /// Σq over each 4-element lane (8 per q8 block): the activation half of Σ±q = 2·Σ₊q − Σq.
     tot: Vec<i32>,
-    /// some q == −128: ggml's i8 negation wraps there and the Σ₊ identity would not; use the wrap kernel.
+    /// Some q == −128: ggml's i8 negation wraps there and the Σ₊ identity does not; use the wrap kernel.
     has_min: bool,
 }
 
@@ -316,6 +321,8 @@ pub fn vec_dot_act(x: &[u8], a: &Q8Act) -> f32 {
     vec_dot_ref(a.n, x, &q8)
 }
 
+/// The wrap kernel: `vec_dot_avx2` over a prepared activation; exact for any q, including −128.
+///
 /// # Safety
 /// AVX2+FMA+F16C present; `x` holds `a.n / 128` blocks.
 #[cfg(target_arch = "x86_64")]
@@ -353,10 +360,11 @@ pub unsafe fn vec_dot_act_avx2(x: &[u8], a: &Q8Act) -> f32 {
     _mm_cvtss_f32(r)
 }
 
-/// The selection kernel: per lane s = 2·Σ_{bit=1} q − Σq, with Σq from the activation. Signs of
-/// all four q8 blocks come from one 128-bit broadcast; `min(and(shuffle, bit), 1)` gives u ∈ {0,1};
-/// `maddubs(u, q)` then `madd(·, 2)` is 2·Σ₊q. The integers are exactly ggml's (for q ≠ −128), and the
-/// float ops — cvt, mul/FMA per q8 block, FMA per Q1_0 block, hsum — are ggml's, in ggml's order.
+/// The selection kernel: per lane s = 2·Σ_{bit=1} q − Σq, with Σq from the activation.
+///
+/// Signs of all four q8 blocks come from one 128-bit broadcast; `min(and(shuffle, bit), 1)` gives
+/// u ∈ {0,1}; `maddubs(u, q)` then `madd(·, 2)` is 2·Σ₊q. The integers equal ggml's for q ≠ −128, and
+/// the float ops (cvt, mul/FMA per q8 block, FMA per Q1_0 block, hsum) are ggml's, in ggml's order.
 ///
 /// # Safety
 /// AVX2+FMA+F16C present; `x` holds `a.n / 128` blocks; `!a.has_min`.
@@ -400,10 +408,11 @@ pub unsafe fn vec_dot_act_sel_avx2(x: &[u8], a: &Q8Act) -> f32 {
     _mm_cvtss_f32(r)
 }
 
-/// Prefill tile over prepared activations (0.0.4): one Q1_0 row against four `Q8Act`
-/// columns with the selection kernel. The ±1 expansion is done once per q8 block and shared by the four
-/// columns; each column reads contiguous quants, f32 scales and lane totals, so no f16 conversion is
-/// repeated per column. Requires `!has_min` on every column (the wrap case goes through `vec_dot_act`).
+/// Prefill tile: one Q1_0 row against four `Q8Act` columns with the selection kernel.
+///
+/// The sign expansion is done once per q8 block and shared by the four columns; each column keeps
+/// ggml's float order, so output c has the bits of `vec_dot_act(x, cols[c])`. The wrap case
+/// (`has_min`) goes through `vec_dot_act`.
 ///
 /// # Safety
 /// AVX2+FMA+F16C present; `x` holds `n / 128` blocks; all four columns have the same `n` and `!has_min`.
@@ -452,10 +461,9 @@ pub unsafe fn vec_dot_act_1x4_sel_avx2(x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] 
     })
 }
 
-/// out[r] = row r of `w` · `a` for `rows` rows (the decode matvec); bits of per-row `vec_dot_act`.
+/// `out[r]` = row r of `w` · `a` for `rows` rows (the decode matvec); bits of per-row `vec_dot_act`.
 pub fn mat_vec(w: &[u8], rows: usize, a: &Q8Act, out: &mut [f32]) {
-    // Measured 2026-09-25 (Ryzen 3 3200U): 2- and 4-row register tiles were 0.95–0.99x and 0.81x of
-    // this one-row loop's speed vs ggml, so the plain loop stays until a tile wins on the node.
+    // One row at a time: 2- and 4-row register tiles measured slower (docs/modules/q1_0.md).
     let rb = a.n / QK1_0 * Q1_0_BYTES;
     assert!(w.len() >= rows * rb && out.len() >= rows);
     for (r, o) in out[..rows].iter_mut().enumerate() {
@@ -463,10 +471,11 @@ pub fn mat_vec(w: &[u8], rows: usize, a: &Q8Act, out: &mut [f32]) {
     }
 }
 
-/// Prefill (P2 GEMM): one Q1_0 row against four q8_0 columns. The sign expansion (broadcast,
-/// shuffle, and, compare) is done once per weight block and reused by all four columns; each
-/// column keeps ggml's per-lane float order, so `out[c]` has the bits of `vec_dot(n, x, ys[c])`.
-/// ggml b11192 on x86 has no Q1_0 GEMM: its prefill is one vec_dot per (row, column) pair.
+/// Prefill tile: one Q1_0 row against four q8_0 columns.
+///
+/// The sign expansion (broadcast, shuffle, AND, compare) is done once per weight block and reused by
+/// all four columns; each column keeps ggml's per-lane float order, so `out[c]` has the bits of
+/// `vec_dot(n, x, ys[c])`. ggml b11192 on x86 has no Q1_0 GEMM; its prefill is one vec_dot per pair.
 ///
 /// # Safety
 /// As `vec_dot_avx2`, for every column.
@@ -515,9 +524,10 @@ pub unsafe fn vec_dot_1x4_avx2(n: usize, x: &[u8], ys: [&[u8]; 4]) -> [f32; 4] {
     out
 }
 
-/// out[c·rows + r] = row r of `w` · column c of `ys` — the Q1_0 matmul for a batch of columns
-/// (prefill). 4-column tiles where the CPU has AVX2, `vec_dot` for the rest; every element has the
-/// bits ggml's per-pair vec_dot would give.
+/// out[c·rows + r] = row r of `w` · column c of `ys`: the Q1_0 matmul for a batch of columns (prefill).
+///
+/// 1×4 tiles where the CPU has AVX2, `vec_dot` for the rest; every element has the bits of ggml's
+/// per-pair vec_dot.
 pub fn mat_mul(w: &[u8], rows: usize, n: usize, ys: &[&[u8]], out: &mut [f32]) {
     mat_mul_check(w, rows, n, ys, out);
     // SAFETY: checked above; one caller owns all of `out`
@@ -565,9 +575,10 @@ pub fn mat_vec_par(pool: &crate::par::Pool, w: &[u8], rows: usize, a: &Q8Act, ou
     pool.rows(rows, out, &|r0, o| mat_vec(&w[r0 * rb..], o.len(), a, o));
 }
 
-/// out[c·rows + r] = row r of `w` · prepared column c — the prefill matmul over `Q8Act` columns (0.0.4).
-/// 1×4 selection tiles where the CPU has AVX2 and no column holds q = −128; `vec_dot_act` otherwise. Every
-/// element has the bits of ggml's per-pair vec_dot. 1.135× the q8-byte `mat_mul` on the dev box.
+/// out[c·rows + r] = row r of `w` · prepared column c: the prefill matmul over `Q8Act` columns.
+///
+/// 1×4 selection tiles where the CPU has AVX2 and no column holds q = −128; `vec_dot_act` otherwise.
+/// Every element has the bits of ggml's per-pair vec_dot.
 pub fn mat_mul_act(w: &[u8], rows: usize, cols: &[Q8Act], out: &mut [f32]) {
     if mat_mul_act_check(w, rows, cols, out) {
         // SAFETY: checked above; one caller owns all of `out`
@@ -815,7 +826,7 @@ pub(crate) mod tests {
         assert_eq!(oracle_q1_0("Bonsai-1.7B-Q1_0.gguf", "oracle"), (197, 788, 788));
     }
 
-    /// The same oracle on the 8B 1-bit model the node serves (0.0.3; 254 tensors, 8.19 B weights).
+    /// The same oracle on the 8B 1-bit model the node serves (254 tensors, 8.19 B weights).
     #[test]
     #[ignore = "needs .models/Bonsai-8B-Q1_0.gguf + .models/oracle-8b-q1 (testing/ggml_oracle.py); run with --release"]
     fn oracle_ggml_b11192_real_bonsai_8b_q1_0() {
@@ -979,9 +990,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// 0.0.4: the Q8Act prefill tile, bit-exact first (against the scalar model of ggml), then timed
-    /// against the q8-byte tile it replaces (1024×4096 × 32 columns).
-    /// `cargo test --release -- --ignored bench_q1_0_prefill_act --nocapture --test-threads=1`
+    /// The `Q8Act` prefill tile against the scalar model of ggml, bit for bit.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn act_tile_bit_exact() {
@@ -1000,6 +1009,8 @@ pub(crate) mod tests {
         }
     }
 
+    /// The `Q8Act` prefill tile timed against the q8-byte tile it replaces (1024×4096 × 32 columns).
+    /// `cargo test --release -- --ignored bench_q1_0_prefill_act --nocapture --test-threads=1`
     #[cfg(target_arch = "x86_64")]
     #[test]
     #[ignore = "benchmark; run with --release --nocapture"]
@@ -1096,7 +1107,7 @@ pub(crate) mod tests {
     /// One token's worth of every Q1_0 matmul in Bonsai-8B (36 × q,k,v,o,gate,up,down + output), each
     /// tensor once in file order, ggml's AVX2 kernel vs bankml's `mat_vec_par`, both on the same pool and
     /// row scheduler, per thread count (`BANKML_THREADS`, default "1,2,3,4"); then every tensor's first 64
-    /// rows compared bit for bit, bankml threaded. (0.0.3)
+    /// rows compared bit for bit, bankml threaded.
     /// `BANKML_GGML_LIB=… cargo test --release -- --ignored decode_budget_q1_0 --nocapture --test-threads=1`
     #[test]
     #[ignore = "needs BANKML_GGML_LIB + .models/Bonsai-8B-Q1_0.gguf; ~1 min"]

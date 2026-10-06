@@ -1,31 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Ollama's API on `bankml serve --native` (0.3.1, phase O1 of docs/OLLAMA.md): the shape mindX and other Ollama
-//! clients speak, over bankML's own engine and its gate. **Native only**: nothing here proxies to llama-server or to
-//! Ollama; what the verified forward pass cannot do is refused with HTTP 400 `{"error": …}` that says what it does.
+//! Ollama's API (`/api/*`) on `bankml serve --native`, over bankML's own engine and its gate; nothing is proxied.
 //!
-//! - `GET /api/version`, `GET /api/tags` (every pinned model, with `"bankml": {"native", "reason"}` so a pin bankML
-//!   cannot play is listed honestly), `GET /api/ps` (the resident model and when it expires), `POST /api/show`;
-//! - `POST /api/chat` and `POST /api/generate`, streamed as NDJSON (Ollama's default) or not; the final object carries
-//!   Ollama's counts and durations (nanoseconds) and the `bankml_receipt`;
-//! - `keep_alive` as Ollama reads it (`"5m"`, `"1h"`, seconds, `0` unloads now, a negative value keeps it for good),
-//!   and an empty prompt with a `keep_alive` only loads or unloads (`done_reason` `load` / `unload`);
-//! - options: temperature, top_k, top_p, min_p, seed, num_predict, stop and (0.3.6) repeat_penalty, repeat_last_n,
-//!   presence_penalty, frequency_penalty are honoured; `num_ctx` up to the served context fits the conversation as
-//!   Ollama does (0.3.5); resource options (threads, batch, GPU, mmap) do not change an answer bankML gives and are
-//!   ignored; anything else is refused.
-//!
-//! 0.3.3: `format: "json"` (and the schemas `{}`, `{"type": "object"}`) is JSON mode, answered by the grammar llama-server
-//! uses for `response_format: json_object` (`grammar.rs`); 0.3.5: any other schema gets llama-server's grammar for it
-//! (`schema.rs`). `format` with `raw` is refused.
-//!
-//! Refused: `tools` (O6), `images` (out of scope), `suffix`, `template`,
-//! `context`, and `think: true` (the template is rendered with thinking off, as llama-server `--reasoning off`).
-//! `/api/embed` (O7), `/api/pull` and `/api/push` answer why not.
-//!
-//! O5 (`create.rs`): `/api/create` (a Modelfile, or Ollama's structured form), `/api/delete` (derived models only) and
-//! `/api/copy` write and remove **derived models** — a layer (system, parameters, stop, messages) over a pinned base;
-//! `/api/tags` lists them with `details.parent_model`, `/api/show` reconstructs their Modelfile, and chat/generate
-//! apply their layer as Ollama does.
+//! Reproduces Ollama's routes, NDJSON streaming, `keep_alive`, `options` (sampling incl. penalties, `typical_p` and
+//! `min_keep`; `num_predict`, `num_ctx`, `stop`) and `format` (JSON mode and schemas, via llama-server b11192's
+//! grammars). Derived models (`create.rs`) are listed, shown and applied as Ollama applies them. What the verified
+//! forward pass does not reproduce (tools, images, `suffix`, `template`, `context`, `think`, unknown options,
+//! embeddings, pull, push) is refused with 400 `{"error": …}` saying why. Serving is loopback-only (`serve.rs`) and
+//! every answer's final object carries the `bankml_receipt`.
+//! Details: docs/modules/ollama.md.
 
 use crate::gguf::jstr;
 use crate::native::{Entry, KeepAlive, Loaded, Residency};
@@ -70,7 +52,7 @@ fn duration_secs(s: &str) -> Option<f64> {
     Some(if neg { -total } else { total })
 }
 
-/// `keep_alive` as Ollama reads it: absent or null is `default`; 0 unloads now; negative keeps the model for good.
+/// `keep_alive` as Ollama reads it: absent, null or `""` is `default`; 0 unloads; negative keeps the model for good.
 pub fn keep_alive(v: Option<&Json>, default: KeepAlive) -> Result<KeepAlive, String> {
     let secs = match v {
         None | Some(Json::Null) => return Ok(default),
@@ -106,7 +88,7 @@ pub struct StopFilter {
     held: String,
     out: String,
     hit: bool,
-    /// the stop string that ended the answer (0.3.8: llama-server trims its tokens' logprobs)
+    /// the stop string that ended the answer (its tokens' logprobs are trimmed, as llama-server trims them)
     pub matched: Option<String>,
 }
 
@@ -149,25 +131,28 @@ impl StopFilter {
     }
 }
 
-/// Ollama's `options`, mapped onto the engine: the sampling keys as a flat object for `Native::params` (which refuses
-/// what it does not reproduce), the token limit, and the stop strings.
+/// Ollama's `options`, mapped onto the engine.
+///
+/// `flat` holds the sampling keys for `Native::params` (which refuses what it does not reproduce); `max` is the token
+/// limit (`None`: unlimited).
 #[derive(Debug)]
 pub struct Opts {
     pub flat: Json,
     pub max: Option<usize>,
     pub stops: Vec<String>,
-    /// 0.3.5: `num_ctx`, when the request (or a derived model's layer) sets it: the prompt is fitted to it as Ollama
-    /// fits it (`Native::prompt_fit`)
+    /// `num_ctx` from the request or a derived model's layer: the prompt is fitted to it as Ollama fits it
+    /// (`Native::prompt_fit`)
     pub num_ctx: Option<usize>,
 }
 
-/// Resource options: they change how the work is scheduled, not the answer bankML gives (its kernels' bits do not
-/// depend on threads or batch size), so they are accepted and ignored.
+/// Resource options, accepted and ignored: they change scheduling, not the answer (the kernels' bits do not depend on
+/// threads or batch size).
 const IGNORED: [&str; 12] = ["num_thread", "num_gpu", "main_gpu", "num_batch", "use_mmap", "use_mlock", "low_vram", "numa", "f16_kv",
                              "vocab_only", "logits_all", "num_keep"];
-/// O2: `repeat_last_n` moved here from IGNORED — with the penalties reproduced, it changes the answer.
+/// Sampling options, passed to `native::sampling`.
 const SAMPLING: [&str; 11] = ["temperature", "top_k", "top_p", "min_p", "seed", "repeat_penalty", "repeat_last_n", "presence_penalty", "frequency_penalty", "typical_p", "min_keep"];
 
+/// Read Ollama's `options` against the served context `n_ctx`; unknown keys and unreproduced samplers are refused.
 pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
     let mut flat = Vec::new();
     let (mut max, mut st, mut nctx) = (None, Vec::new(), None);
@@ -197,7 +182,7 @@ pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
                 }
             }
             "stop" => st = stops(Some(v))?,
-            "mirostat" if num(k, v)? != 0.0 => return Err("mirostat: not reproduced; bankML reproduces llama.cpp's top-k, top-p, min-p and temperature".into()),
+            "mirostat" if num(k, v)? != 0.0 => return Err("mirostat: not reproduced; bankML reproduces llama.cpp's default sampler chain (penalties, DRY, top-n-σ, top-k, typical-p, top-p, min-p, XTC, temperature), not mirostat".into()),
             "tfs_z" if num(k, v)? != 1.0 => return Err("tfs_z: tail-free sampling is not reproduced (llama.cpp removed it)".into()),
             "mirostat" | "mirostat_eta" | "mirostat_tau" | "tfs_z" | "penalize_newline" => {}
             k if IGNORED.contains(&k) => {}
@@ -216,8 +201,8 @@ pub fn refusals(req: &Json) -> Result<(), String> {
         Some(Json::Obj(o)) => !o.is_empty(),
         Some(_) => true,
     };
-    // 0.3.3: `format: "json"` is JSON mode (O6); O6b: a schema object is converted as llama-server converts it, and
-    // what b11192 refuses in it is refused here (`grammar::from_ollama`)
+    // `format`: "json" is JSON mode; a schema is converted as llama-server converts it, and what b11192 refuses in
+    // it is refused here
     let constraint = crate::grammar::from_ollama(req.get("format"))?;
     if constraint != crate::grammar::Constraint::None && req.get("raw").and_then(Json::as_bool).unwrap_or(false) {
         return Err("format with raw: JSON mode follows llama-server's chat path (the template's generation prompt is part of its grammar); a raw prompt has none — drop raw, or ask for JSON in the prompt".into());
@@ -338,8 +323,8 @@ fn ps(rs: &Residency) -> String {
     let Some(e) = rs.reg.entries.iter().find(|e| e.name == l.name) else { return "{\"models\": []}".into() };
     // resident for good: Ollama writes now + the largest duration (≈ 292 years)
     let exp = expires.unwrap_or_else(|| SystemTime::now() + Duration::from_secs(292 * 365 * 86400));
-    // 0.3.5: named as Ollama names its runner — the model whose request loaded it (a derived model's own name, its
-    // manifest digest and parent), with that request's context
+    // named as Ollama names its runner: the model whose request loaded it (a derived model's own name, its manifest
+    // digest and parent), with that request's context
     let (name, n_ctx) = rs.shown().unwrap_or_else(|| (tag(e), rs.n_ctx));
     let derived = rs.derived.find(name.trim_end_matches(":latest")).filter(|(_, de)| de.name == e.name);
     let (digest, det) = match &derived {
@@ -383,7 +368,10 @@ fn show(rs: &Residency, e: &Entry) -> Result<String, String> {
                rfc3339(std::fs::metadata(path).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH)), jstr(&e.sha256), native_json(e), rs.n_ctx))
 }
 
-/// The `/api/*` routes (and `/`). `default_ka` is the keep-alive a request that names none gets.
+/// The `/api/*` routes (and `/`); `default_ka` applies when a request names no `keep_alive`.
+///
+/// Errors are `{"error": …}`: 404 for an unknown model or route, 400 for a bad body or anything not reproduced, and
+/// a failed load's own status.
 pub fn route(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, method: &str, path: &str, body: &[u8]) -> std::io::Result<()> {
     let req = || Json::parse(&String::from_utf8_lossy(body));
     match (method, path) {
@@ -415,7 +403,7 @@ pub fn route(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, method: &
     }
 }
 
-/// `/api/chat` (`chat`) and `/api/generate`.
+/// `/api/chat` (`chat`) and `/api/generate`: refusals and option checks first, then load, answer and `keep_alive`.
 fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8], chat: bool) -> std::io::Result<()> {
     let Some(req) = Json::parse(&String::from_utf8_lossy(body)) else { return err(c, 400, "body is not JSON") };
     let (e, layer) = match crate::create::resolve(rs, req.get("model").and_then(Json::as_str)) {
@@ -423,7 +411,7 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
         Err(m) => return err(c, 404, &m),
     };
     let e = &e;
-    // O5: a derived model's layer — its SYSTEM, MESSAGEs and parameters, as Ollama applies them
+    // a derived model's layer: its SYSTEM, MESSAGEs and parameters, as Ollama applies them
     let req = match &layer {
         Some(d) => d.apply_ollama(&req, chat),
         None => req,
@@ -459,7 +447,7 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
     if let Err(m) = refusals(&req) {
         return err(c, 400, &m);
     }
-    // O6b: the schema's numbers read from the request's own text, as llama-server would read them
+    // the schema's numbers are read from the raw body, as llama-server reads them
     let constraint = match crate::grammar::from_ollama_text(&req, &String::from_utf8_lossy(body)) {
         Ok(k) => k,
         Err(m) => return err(c, 400, &m),
@@ -468,7 +456,7 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
         Ok(o) => o,
         Err(m) => return err(c, 400, &m),
     };
-    // the sampler refusals before a model is loaded for nothing
+    // sampler refusals before any model is loaded
     if let Some(d) = &e.info.defaults {
         if let Err(m) = crate::native::sampling(d.clone(), &o.flat).and_then(crate::sampler::Sampler::new) {
             return err(c, 400, &m);
@@ -496,7 +484,7 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
 #[allow(clippy::too_many_arguments)]
 fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opts, constraint: crate::grammar::Constraint, chat: bool, stream: bool, load_ns: u64, model: &str, mut t: Tally) -> std::io::Result<()> {
     let eng = &l.native;
-    // 0.3.5: under a num_ctx the conversation is fitted as Ollama's chatPrompt fits it (generate goes the same way)
+    // under a num_ctx the conversation is fitted as Ollama's chatPrompt fits it (generate too)
     let prompt = match msgs {
         Some(m) => eng.prompt_fit(m, o.num_ctx),
         None => {
@@ -612,7 +600,7 @@ mod tests {
         // num_predict -1 (until the turn ends) and no options at all
         assert_eq!(options(Json::parse(r#"{"num_predict": -1}"#).as_ref(), 4096).unwrap().max, None);
         assert_eq!(options(None, 4096).unwrap().max, None);
-        // O2: the penalties map onto the engine (the coach's repeat_penalty 1.3 included); 0.3.7: typical-p too
+        // the penalties map onto the engine (the coach's repeat_penalty 1.3 included), and typical_p
         let pen = options(Json::parse(r#"{"repeat_penalty": 1.3, "repeat_last_n": 32, "presence_penalty": 0.5, "frequency_penalty": -0.25}"#).as_ref(), 4096).unwrap();
         let p = crate::native::sampling(base.clone(), &pen.flat).unwrap();
         assert_eq!((p.penalty_repeat, p.penalty_last_n, p.penalty_present, p.penalty_freq), (1.3, 32, 0.5, -0.25));
@@ -629,7 +617,7 @@ mod tests {
     #[test]
     fn refusals_say_why() {
         let r = |j: &str| refusals(&Json::parse(j).unwrap());
-        // 0.3.3: JSON mode is answered, and format with raw is refused; O6b: a schema is answered, a bad one refused
+        // JSON mode is answered and format with raw refused; a schema is answered, a bad one refused
         assert!(r(r#"{"format": "json"}"#).is_ok());
         assert!(r(r#"{"format": {"type": "object"}}"#).is_ok());
         assert!(r(r#"{"format": {"type": "object", "required": ["a"]}}"#).is_ok());

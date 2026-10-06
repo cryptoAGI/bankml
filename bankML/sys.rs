@@ -1,21 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! System and process readings, the part of psutil (or Rust's `sysinfo`) bankml needs, with no crates: on Linux
-//! everything comes from `/proc`, which is what those libraries read too. Used by `bankml serve` (`GET
-//! /bankml/usage`) and `bankml usage`, and by the Savante UI's Resources sliders.
+//! System and process readings from `/proc` and `/sys`, with no crates: memory, cores, per-process RSS and
+//! CPU time, the CPU package's RAPL energy counter, and per-GPU load and memory. Used by `bankml usage`,
+//! `bankml serve` (`GET /bankml/usage`) and the native engine. Readings that are unavailable are `None`
+//! (`null` in JSON), never estimated.
 //!
-//! - memory: `/proc/meminfo` (MemTotal, MemAvailable, SwapTotal, SwapFree);
-//! - a process: `/proc/<pid>/status` (VmRSS) and `/proc/<pid>/stat` (utime + stime, in clock ticks);
-//! - CPU %: the change in a process's ticks over a sampling interval, divided by the ticks per second (`sysconf`),
-//!   so 100 % is one core busy and `cores × 100 %` is the machine;
-//! - energy (0.3.7): the CPU package's RAPL counter (`/sys/class/powercap/intel-rapl:0/energy_uj`, which AMD exposes
-//!   too; it includes an APU's GPU), its wrap at `max_energy_range_uj` handled; root-only unless `./install.sh power`
-//!   has run, and then `null`, never estimated;
-//! - GPUs (0.3.7): `/sys/class/drm/card*/device` — busy %, VRAM and GTT used and total, where the driver exposes them
-//!   (amdgpu does; others read as `null`).
+//! Details: docs/modules/sys.md.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// System memory and swap, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Memory {
     pub total: u64,
@@ -24,7 +18,7 @@ pub struct Memory {
     pub swap_free: u64,
 }
 
-/// One kB-valued field of a `/proc` key: value table.
+/// One kB-valued field of a `/proc` `key: value` table, in bytes.
 fn field_kb(text: &str, key: &str) -> Option<u64> {
     text.lines().find_map(|l| {
         let rest = l.strip_prefix(key)?.strip_prefix(':')?;
@@ -32,6 +26,7 @@ fn field_kb(text: &str, key: &str) -> Option<u64> {
     })
 }
 
+/// `/proc/meminfo`: MemTotal and MemAvailable required; swap fields default to 0.
 pub fn memory() -> Option<Memory> {
     let t = std::fs::read_to_string("/proc/meminfo").ok()?;
     Some(Memory {
@@ -42,17 +37,18 @@ pub fn memory() -> Option<Memory> {
     })
 }
 
+/// Available parallelism; 1 if unknown.
 pub fn cores() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
 
-/// Resident memory of a process in bytes.
+/// Resident memory of a process in bytes (`/proc/<pid>/status` VmRSS).
 pub fn rss(pid: u32) -> Option<u64> {
     field_kb(&std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?, "VmRSS")
 }
 
-/// utime + stime of a process, in clock ticks. The command name (field 2) may contain spaces and parentheses, so
-/// fields are counted after the last ')'.
+/// utime + stime of a process in clock ticks, from `/proc/<pid>/stat`. The command name (field 2) may
+/// contain spaces and parentheses, so fields are counted after the last `)`.
 pub fn cpu_ticks(pid: u32) -> Option<u64> {
     parse_ticks(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }
@@ -60,7 +56,7 @@ pub fn cpu_ticks(pid: u32) -> Option<u64> {
 fn parse_ticks(stat: &str) -> Option<u64> {
     let rest = &stat[stat.rfind(')')? + 1..];
     let f: Vec<&str> = rest.split_whitespace().collect();
-    // after ')': state(0) ppid(1) … utime is field 14 of the full line = index 11 here, stime index 12
+    // after `)`: state is index 0; utime (field 14 of the full line) is index 11, stime index 12
     Some(f.get(11)?.parse::<u64>().ok()? + f.get(12)?.parse::<u64>().ok()?)
 }
 
@@ -80,6 +76,7 @@ pub fn ticks_per_second() -> u64 {
     100
 }
 
+/// Whether `/proc/<pid>` exists.
 pub fn alive(pid: u32) -> bool {
     Path::new(&format!("/proc/{pid}")).exists()
 }
@@ -94,7 +91,8 @@ pub fn cpu_percent(pids: &[u32], interval: Duration) -> f64 {
     b.saturating_sub(a) as f64 / ticks_per_second() as f64 / secs * 100.0
 }
 
-/// The RAPL package energy counter in µJ and its wrap value, when readable.
+/// The RAPL package energy counter in µJ and its wrap value (`max_energy_range_uj`), when readable.
+/// The counter is root-only unless `./install.sh power` has run; otherwise `None`.
 pub fn energy_uj() -> Option<(u64, u64)> {
     let base = Path::new("/sys/class/powercap/intel-rapl:0");
     let read = |f: &str| std::fs::read_to_string(base.join(f)).ok()?.trim().parse::<u64>().ok();
@@ -140,13 +138,15 @@ fn opt(v: Option<u64>) -> String {
     v.map(|x| x.to_string()).unwrap_or_else(|| "null".into())
 }
 
+/// One `Gpu` as a JSON object; missing fields are `null`.
 pub fn gpu_json(g: &Gpu) -> String {
     format!("{{\"card\": {}, \"driver\": {}, \"busy_percent\": {}, \"vram_used_bytes\": {}, \"vram_total_bytes\": {}, \"gtt_used_bytes\": {}, \"gtt_total_bytes\": {}}}",
             crate::gguf::jstr(&g.card), crate::gguf::jstr(&g.driver), opt(g.busy_percent), opt(g.vram_used), opt(g.vram_total), opt(g.gtt_used), opt(g.gtt_total))
 }
 
-/// A snapshot for the named processes: JSON with memory, cores, per process rss and CPU %, the package power over the
-/// same interval (RAPL; `null` when unreadable) and each GPU's readings.
+/// A JSON snapshot for the named processes over one `interval`: memory, cores, per-process RSS and CPU %,
+/// package power (RAPL; `null` when unreadable), each GPU's readings and the GPU limiter state.
+/// Processes with pid 0 or not alive are omitted.
 pub fn usage_json(procs: &[(&str, u32)], interval: Duration) -> String {
     let live: Vec<(&str, u32)> = procs.iter().copied().filter(|&(_, p)| p > 0 && alive(p)).collect();
     let before: Vec<Option<u64>> = live.iter().map(|&(_, p)| cpu_ticks(p)).collect();

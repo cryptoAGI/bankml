@@ -1,39 +1,38 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! bankML's own measurements of its answers (0.3.7): one record per completion, taken inside the engine
-//! (`Native::complete`), kept in a bounded ring and served at `GET /bankml/metrics`. The definitions are the
-//! conventional ones, so the numbers compare with llama.cpp's: time to first token (TTFT), prompt processing in tokens
-//! per second (llama-bench's `pp`), generation in tokens per second (`tg`), and — when the RAPL counter is readable —
-//! the request's package energy and joules per generated token. Nothing is estimated: a field that was not measured
-//! is `null`.
+//! Per-completion measurements: one `Record` per completion, taken in `Native::complete_with`, kept in a bounded
+//! ring and served at `GET /bankml/metrics`. Rates follow llama-bench's definitions (`pp`, `tg`) so they compare
+//! with llama.cpp. Unmeasured fields are `null`, never estimated.
+//! Details: docs/modules/metrics.md.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-/// The records kept (the oldest goes first).
+/// Ring capacity; the oldest record is dropped first.
 pub const KEEP: usize = 256;
 
 /// One completion, as the engine measured it.
 #[derive(Debug, Clone, Default)]
 pub struct Record {
-    /// seconds since the Unix epoch when the completion ended
+    /// End of the completion, in Unix seconds.
     pub at: f64,
     pub model: String,
     pub prompt_tokens: usize,
     pub cached_tokens: usize,
     pub completion_tokens: usize,
-    /// the uncached prompt's computation, the time to the first generated token, and the generation after it
+    /// Milliseconds: uncached prompt computation (`prompt_ms`), time to the first generated token (`ttft_ms`),
+    /// generation after it (`eval_ms`).
     pub prompt_ms: f64,
     pub ttft_ms: Option<f64>,
     pub eval_ms: f64,
     pub finish: String,
     pub grammar_ms: f64,
     pub resampled: usize,
-    /// the CPU package's energy over the completion (includes an APU's GPU), when RAPL is readable
+    /// CPU package energy over the completion (an integrated GPU included); `None` without RAPL.
     pub energy_j: Option<f64>,
 }
 
 impl Record {
-    /// Prompt tokens per second over the part that was computed (`pp`).
+    /// Prompt tokens per second over the uncached part (`pp`).
     pub fn prompt_tps(&self) -> Option<f64> {
         let n = self.prompt_tokens.saturating_sub(self.cached_tokens);
         (self.prompt_ms > 0.0 && n > 0).then(|| n as f64 / (self.prompt_ms / 1e3))
@@ -61,7 +60,7 @@ impl Record {
 
 static RING: Mutex<VecDeque<Record>> = Mutex::new(VecDeque::new());
 
-/// Keep a record (the oldest is dropped past `KEEP`).
+/// Appends a record, dropping the oldest past `KEEP`.
 pub fn push(r: Record) {
     let mut q = RING.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() == KEEP {
@@ -75,7 +74,7 @@ pub fn records() -> Vec<Record> {
     RING.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
 }
 
-/// `GET /bankml/metrics`: the records and their totals (tokens in and out, energy where measured).
+/// Body of `GET /bankml/metrics`: the records and their totals; energy totals cover measured records only.
 pub fn json() -> String {
     let rs = records();
     let tin: usize = rs.iter().map(|r| r.prompt_tokens).sum();

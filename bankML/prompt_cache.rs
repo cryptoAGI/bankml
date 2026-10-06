@@ -1,21 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! llama-server's host prompt cache (b11192 `server_prompt_cache`, `--cache-ram`), for one slot.
+//! Host prompt cache for one slot, as llama-server b11192's `server_prompt_cache` (`--cache-ram`).
 //!
-//! When a request shares little of its prompt with the slot, the slot's state (its tokens and KV rows) is copied to
-//! RAM before it is overwritten, and the cached state that keeps more of the new prompt is moved back into the slot.
-//! Interleaved conversations then each find their own prefix again, and the answers equal llama-server's: the prefix
-//! reused (`cache_n`) decides where prefill starts, and with it the arithmetic.
-//!
-//! The rules, as `server_context::get_available_slot` and `server_prompt_cache::{alloc, load, update}`:
-//! - update the cache when the slot's similarity to the prompt (LCP / prompt length) is at most 0.1
-//!   (`--slot-prompt-similarity`; an empty slot included), or above it but the slot would keep under half of its
-//!   tokens (`f_keep < 0.5`);
-//! - save: skip an empty slot or one already held whole by an entry; drop entries the slot holds whole; evict the
-//!   oldest until the new entry fits the byte limit;
-//! - load: the entry with both a larger kept fraction and a larger similarity than the slot's own, among entries that
-//!   would keep at least a quarter of themselves, moves into the slot;
-//! - then evict the oldest while over the byte limit, then while over the token limit (n_ctx, raised to what the byte
-//!   limit holds at the cache's average bytes per token).
+//! The rules follow `server_context::get_available_slot` and `server_prompt_cache::{alloc, load, update}`. They
+//! decide the reused prefix (`cache_n`), hence where prefill starts and the arithmetic, so they are part of
+//! token-identity.
+//! Details: docs/modules/prompt_cache.md.
 
 use std::collections::VecDeque;
 
@@ -40,7 +29,9 @@ pub fn lcp(a: &[u32], b: &[u32]) -> usize {
 }
 
 impl<S> PromptCache<S> {
-    /// `limit_bytes` 0: no byte limit (llama-server's `--cache-ram -1`); `limit_tokens`: the context size.
+    /// Creates an empty cache.
+    ///
+    /// `limit_bytes` 0 means no byte limit (llama-server's `--cache-ram -1`); `limit_tokens` is the context size.
     pub fn new(limit_bytes: usize, limit_tokens: usize) -> Self {
         PromptCache { entries: VecDeque::new(), limit_bytes, limit_tokens }
     }
@@ -62,6 +53,9 @@ impl<S> PromptCache<S> {
     }
 
     /// Whether a request with `prompt` updates the cache, given what the slot holds (single-slot selection).
+    ///
+    /// True when the similarity (LCP / prompt length) is at most `SLOT_PROMPT_SIMILARITY`, or above it but the
+    /// slot would keep under half of its tokens (`f_keep < 0.5`).
     pub fn wants_update(slot: &[u32], prompt: &[u32]) -> bool {
         if slot.is_empty() {
             return true; // no similarity: selected by LRU, which always updates
@@ -75,7 +69,11 @@ impl<S> PromptCache<S> {
         }
     }
 
-    /// Copy the slot into the cache (`alloc`); `state` is called only when the copy is kept.
+    /// Copies the slot into the cache (`alloc`); returns whether it was stored.
+    ///
+    /// Skips an empty slot, a slot an entry already holds whole, and an entry larger than the byte limit. Drops
+    /// entries the slot holds whole, then evicts the oldest until the new entry fits. `state` is called only when
+    /// the copy is kept.
     pub fn save(&mut self, slot: &[u32], bytes: usize, state: impl FnOnce() -> S) -> bool {
         if slot.is_empty() || self.entries.iter().any(|e| lcp(&e.tokens, slot) == slot.len()) {
             return false;
@@ -93,7 +91,10 @@ impl<S> PromptCache<S> {
         true
     }
 
-    /// The cached state that serves `prompt` better than the slot does, removed from the cache (`load`).
+    /// Removes and returns the cached state that serves `prompt` better than the slot does (`load`).
+    ///
+    /// Among entries that keep at least a quarter of themselves, picks the one with both a larger kept fraction
+    /// and a larger similarity than the slot's own.
     pub fn take_better(&mut self, slot: &[u32], prompt: &[u32]) -> Option<(Vec<u32>, S)> {
         let base = lcp(slot, prompt);
         let mut f_keep_best = if slot.is_empty() { -1.0 } else { base as f32 / slot.len() as f32 };
@@ -114,7 +115,10 @@ impl<S> PromptCache<S> {
         Some((e.tokens, e.state))
     }
 
-    /// Evict the oldest entries over the limits (`update`).
+    /// Evicts the oldest entries over the limits (`update`).
+    ///
+    /// First by bytes, then by tokens; the token limit is `limit_tokens` raised to what the byte limit holds at the
+    /// cache's average bytes per token.
     pub fn update(&mut self) {
         if self.limit_bytes > 0 {
             while !self.entries.is_empty() && self.bytes() > self.limit_bytes {

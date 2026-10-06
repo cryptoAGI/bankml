@@ -27,6 +27,23 @@ decode speed, the third, is measured on an idle machine next.
   against 38.8 ms** (13×), p90 49.3 against 80.6 ms, over the oracle's 1,645 masks. The oracle now computes every
   mask both ways: **196 / 196 runs, 1,645 / 1,645 masks** identical to llama.cpp b11192 by each.
 
+### The code audit and the documentation (2026-10-06)
+- **Comments, professional and short.** Every source file's comments were cut to the contract, the invariants, the
+  safety reasoning and the exact upstream behaviour that keeps the bits; the history and rationale moved to its
+  `docs/modules/<name>.md` page (a new **Design notes** section where needed). Each header ends with
+  `Details: docs/modules/<name>.md`. A checker held every non-comment line identical; clippy and rustdoc are clean.
+- **Fixed by the audit:** `bankml create` accepts `PARAMETER typical_p` and `min_keep` (refused as "not reproduced"
+  although 0.3.7 reproduces them); the q8_0 cache rotates only for a head size that is a multiple of 64, as
+  llama.cpp's `attn_rot_k/v` (128 unchanged, so 6 / 6 stands); `bankml_log`'s `%f` honours the 65,536
+  width/precision limit like every other conversion (`%.100000000f` allocated); the 404 bodies list every route;
+  stale refusal texts (the `mirostat` message, the C API's header and docs, the train `probe` stage) and ten comments
+  that misstated the code (slot file layout, the `/bankml/usage` interval, doc blocks attached to the wrong item…).
+- **Found, recorded for 0.5.0:** the GPU worker destroys nothing on drop (a reload leaks card memory), and
+  `Sync for Buffer` is wider than it should be (TODO 0.5.0).
+- **Docs:** a full pass over every page against the code (the oracles table now lists every gate stage; TECHNICAL,
+  BUILD_HISTORY, OLLAMA, CAPI, usage and install brought to 0.3.9); `docs/thesis.md`, the bankML thesis; 48 Markdown
+  files, every link and anchor resolving.
+
 ## Unreleased (0.3.8) — the serving contract: the context limit, slots, the prompt cache, logprobs
 
 **`bankml serve --native` now behaves as llama-server b11192 at the edges a client meets in production: a prompt

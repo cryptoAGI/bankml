@@ -1,34 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! F16 weights (O3, 0.3.4), as the shipped ggml-cpu b11192 (`libggml-cpu-haswell.so`) multiplies them. Read from
-//! the tag's `ggml-cpu.c` (`ggml_compute_forward_mul_mat`), `vec.cpp` (`ggml_vec_dot_f16`) and
-//! `llamafile/sgemm.cpp` (`llamafile_sgemm`, `tinyBLAS`):
+//! F16 weight kernels, bit-identical to the shipped ggml-cpu b11192 (`libggml-cpu-haswell.so`):
+//! `ggml_compute_forward_mul_mat`, `ggml_vec_dot_f16` and `llamafile_sgemm` (`tinyBLAS`).
 //!
-//! - the activation is rounded to f16 first (F16's `vec_dot_type` is F16; `from_float` is `ggml_cpu_fp32_to_fp16`,
-//!   F16C round-to-nearest-even): `to_f16`;
-//! - **one column** (a decode step, the logits, a one-token micro-batch): `llamafile_sgemm` refuses `n < 2`, so
-//!   every element is `ggml_vec_dot_f16`: four 8-lane f32 accumulators fed by FMAs over 32-element steps, reduced
-//!   `(a0 + a2) + (a1 + a3)`, low half + high half, two horizontal adds, then any tail (`n % 32`) added in double:
-//!   `vec_dot`;
-//! - **two columns or more** (a prompt's micro-batch): the activations are converted, then `llamafile_sgemm` runs
-//!   `tinyBLAS<8, __m256, __m256, ggml_fp16_t, ggml_fp16_t, float>` whenever the weight has a multiple of 4 rows and
-//!   the row a multiple of 8 (otherwise it returns false and ggml falls back to `vec_dot`): each element is one
-//!   8-lane FMA chain over the row, `hsum`'d as `((l0 + l4) + (l2 + l6)) + ((l1 + l5) + (l3 + l7))`: `sgemm_dot`.
-//!   The tiling and the thread split decide only who computes an element, never its bits.
+//! The activation is rounded to f16 first (`to_f16`). One column uses `vec_dot`; two or more use `sgemm_dot` when
+//! `takes_sgemm` holds, else `vec_dot`. The two reductions give different bits, so the path must follow the shape.
+//! Each kernel has a scalar model (the definition) and an AVX2 + FMA + F16C path with the same bits.
 //!
-//! Each kernel has a scalar model (the definition) and an AVX2 + FMA + F16C path with the same bits; the oracle is the
-//! shipped library computing `mul_mat` graphs on the real weights (`testing/f16_oracle.py` → `oracle_ggml_b11192_f16`).
+//! Details: docs/modules/f16.md.
 
 use crate::q1_0::{f16_to_f32, f32_to_f16};
 
 /// Bytes per F16 weight.
 pub const F16_BYTES: usize = 2;
 
-/// `ggml_cpu_fp32_to_fp16`: every value rounded to f16, to nearest even (F16C `vcvtps2ph imm=0`).
+/// `ggml_cpu_fp32_to_fp16`: rounds each value to f16, to nearest even (F16C `vcvtps2ph imm=0`).
 pub fn to_f16(x: &[f32]) -> Vec<u16> {
     x.iter().map(|&v| f32_to_f16(v)).collect()
 }
 
-/// An F16 row's bytes, widened to f32 (exact): `get_rows` on an F16 table.
+/// Widens an F16 row (little-endian bytes) to f32, exactly: `get_rows` on an F16 table.
 pub fn dequantize_row(row: &[u8], out: &mut [f32]) {
     for (o, b) in out.iter_mut().zip(row.as_chunks::<2>().0) {
         *o = f16_to_f32(u16::from_le_bytes(*b));
@@ -40,7 +30,10 @@ fn w(x: &[u8], i: usize) -> f32 {
     f16_to_f32(u16::from_le_bytes([x[2 * i], x[2 * i + 1]]))
 }
 
-/// `ggml_vec_dot_f16` (the definition): `x` an F16 weight row (little-endian bytes), `y` the f16 activation.
+/// `ggml_vec_dot_f16`, scalar definition: `x` is an F16 weight row (little-endian bytes), `y` the f16 activation.
+///
+/// Float order: four 8-lane FMA accumulators over 32-element steps, reduced `(a0 + a2) + (a1 + a3)`, then low half +
+/// high half, then two horizontal adds; the tail (`n % 32`) is added in f64.
 pub fn vec_dot_ref(x: &[u8], y: &[u16]) -> f32 {
     let n = y.len();
     assert!(x.len() >= n * F16_BYTES);
@@ -63,8 +56,10 @@ pub fn vec_dot_ref(x: &[u8], y: &[u16]) -> f32 {
     sum as f32
 }
 
-/// One element of `tinyBLAS<8, __m256, …>` (the definition): one 8-lane FMA chain over the row, then `hsum`.
-/// `y.len() % 8 == 0`.
+/// One element of `tinyBLAS<8, __m256, __m256, ggml_fp16_t, ggml_fp16_t, float>`, scalar definition.
+///
+/// Requires `y.len() % 8 == 0`. Float order: one 8-lane FMA chain over the row, then `hsum` as
+/// `((l0 + l4) + (l2 + l6)) + ((l1 + l5) + (l3 + l7))`.
 pub fn sgemm_dot_ref(x: &[u8], y: &[u16]) -> f32 {
     let n = y.len();
     assert!(n.is_multiple_of(8) && x.len() >= n * F16_BYTES);
@@ -78,12 +73,12 @@ pub fn sgemm_dot_ref(x: &[u8], y: &[u16]) -> f32 {
     (h[0] + h[2]) + (h[1] + h[3])
 }
 
-/// `vec_dot_ref`'s bits on the fastest path this CPU has.
+/// `vec_dot_ref`'s bits on the fastest available path.
 pub fn vec_dot(x: &[u8], y: &[u16]) -> f32 {
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
         assert!(x.len() >= y.len() * F16_BYTES);
-        // SAFETY: AVX2 + FMA + F16C checked; lengths checked
+        // SAFETY: AVX2 + FMA + F16C detected; lengths asserted above.
         return unsafe { vec_dot_avx2(x, y) };
     }
     vec_dot_ref(x, y)
@@ -119,9 +114,9 @@ unsafe fn vec_dot_avx2(x: &[u8], y: &[u16]) -> f32 {
     sum as f32
 }
 
-/// `sgemm_dot_ref`'s bits for a block of four weight rows by `RN` columns (tinyBLAS's own register blocking: twelve
-/// accumulators for 4 × 3). The columns are already widened to f32 (exact), so each step loads four weight vectors
-/// and `RN` activation vectors; every element is still its own 8-lane FMA chain over the row, then `hsum`.
+/// `sgemm_dot_ref`'s bits for four weight rows by `RN` columns (tinyBLAS's register blocking, up to 4 × 3).
+///
+/// Columns are pre-widened to f32 (exact). Each element remains its own 8-lane FMA chain, then `hsum`.
 ///
 /// # Safety
 /// AVX2, FMA and F16C are present; each row holds `k` f16 weights and each column `k` values, `k % 8 == 0`.
@@ -153,26 +148,26 @@ unsafe fn sgemm_block_avx2<const RN: usize>(x: [&[u8]; 4], cols: [&[f32]; RN], o
     }
 }
 
-/// `vec_dot` with the weight row as f16 values (a K cache row): the same bits.
+/// `vec_dot` with the weight row given as f16 values (a K cache row); same bits.
 pub fn vec_dot_u16(x: &[u16], y: &[u16]) -> f32 {
     vec_dot(as_bytes(x), y)
 }
 
-/// An f16 slice's bytes (little-endian, as GGUF and the KV cache hold them).
+/// Views an f16 slice as its little-endian bytes, the layout of GGUF and the KV cache.
 fn as_bytes(x: &[u16]) -> &[u8] {
     #[cfg(not(target_endian = "little"))]
     compile_error!("bankML reads f16 values as little-endian bytes");
-    // SAFETY: u8 has no alignment and every byte of an initialised u16 is initialised
+    // SAFETY: u8 has alignment 1 and every byte of an initialised u16 is initialised.
     unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, std::mem::size_of_val(x)) }
 }
 
-/// f16 values widened to f32 (exact; F16C where the CPU has it).
+/// Widens f16 values to f32 exactly (F16C when available).
 pub fn widen(src: &[u16], dst: &mut [f32]) {
     let mut i0 = 0;
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
         i0 = src.len().min(dst.len()) & !7;
-        // SAFETY: F16C checked; i0 ≤ both lengths
+        // SAFETY: AVX2 + F16C detected; i0 ≤ both lengths.
         unsafe { widen_f16c(&src[..i0], &mut dst[..i0]) };
     }
     for (d, &s) in dst[i0..].iter_mut().zip(&src[i0..]) {
@@ -189,14 +184,14 @@ unsafe fn widen_f16c(src: &[u16], dst: &mut [f32]) {
     }
 }
 
-/// `ggml_vec_mad_f16` (flash attention's V accumulator): `acc[i] = f16(fma(v[i], w, acc[i]))`, each element alone.
+/// `ggml_vec_mad_f16` (flash attention's V accumulator): `acc[i] = f16(fma(v[i], w, acc[i]))` per element.
 pub fn mad(acc: &mut [u16], v: &[u16], w: f32) {
     assert!(v.len() >= acc.len());
     let mut i0 = 0;
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
         i0 = acc.len() & !7;
-        // SAFETY: AVX2 + F16C checked; i0 ≤ both lengths
+        // SAFETY: AVX2 + FMA + F16C detected; i0 ≤ both lengths.
         unsafe { mad_avx2(&mut acc[..i0], &v[..i0], w) };
     }
     for (a, &vv) in acc[i0..].iter_mut().zip(&v[i0..]) {
@@ -210,7 +205,7 @@ pub fn scale(acc: &mut [u16], s: f32) {
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
         i0 = acc.len() & !7;
-        // SAFETY: AVX2 + F16C checked
+        // SAFETY: AVX2 + FMA + F16C detected; i0 ≤ acc.len().
         unsafe { scale_avx2(&mut acc[..i0], s) };
     }
     for a in acc[i0..].iter_mut() {
@@ -241,12 +236,12 @@ unsafe fn scale_avx2(acc: &mut [u16], s: f32) {
     }
 }
 
-/// Whether ggml's `llamafile_sgemm` takes an F16 product of `rows` × `k` weights by `n` columns (else `vec_dot`).
+/// Whether ggml's `llamafile_sgemm` handles an F16 product of `rows` × `k` weights by `n` columns (else `vec_dot`).
 pub fn takes_sgemm(rows: usize, k: usize, n: usize) -> bool {
     n >= 2 && rows.is_multiple_of(4) && k.is_multiple_of(8)
 }
 
-/// `out[r] = row r of w · a` (one column: `vec_dot`), rows in chunks on the pool.
+/// `out[r] = row r of w · a` via `vec_dot`, rows split in chunks across the pool.
 pub fn mat_vec_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, a: &[u16], out: &mut [f32]) {
     let rb = a.len() * F16_BYTES;
     assert!(wb.len() >= rows * rb && out.len() >= rows);
@@ -257,8 +252,7 @@ pub fn mat_vec_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, a: &[u16], o
     });
 }
 
-/// Several matrices by one column in a single pass of the pool (Q, K and V; gate and up): each output row is still
-/// one `vec_dot`, so the bits are those of `mat_vec_par` on each matrix.
+/// Several matrices by one column in one pool pass (Q, K, V; gate, up); bits equal `mat_vec_par` per matrix.
 pub fn mat_vec_multi_par(pool: &crate::par::Pool, ws: &[(&[u8], usize)], a: &[u16], outs: &mut [&mut [f32]]) {
     let rb = a.len() * F16_BYTES;
     assert!(ws.len() == outs.len() && ws.iter().zip(outs.iter()).all(|((w, r), o)| w.len() >= r * rb && o.len() >= *r));
@@ -276,14 +270,14 @@ pub fn mat_vec_multi_par(pool: &crate::par::Pool, ws: &[(&[u8], usize)], a: &[u1
                 r -= ws[m].1;
                 m += 1;
             }
-            // SAFETY: global row g is claimed by this worker alone; r < rows of matrix m, inside its output
+            // SAFETY: row g is claimed by this worker alone; r < rows of matrix m, within its output.
             unsafe { *(bases[m] as *mut f32).add(r) = vec_dot(&ws[m].0[r * rb..(r + 1) * rb], a) };
         }
     });
 }
 
-/// `out[c·rows + r] = row r of w · column c`, as ggml computes the product for these shapes: `sgemm_dot` when
-/// `takes_sgemm`, else `vec_dot` per element. Rows in chunks on the pool; the same bits at any thread count.
+/// `out[c·rows + r] = row r of w · column c`, on ggml's path for the shape (`sgemm_dot` if `takes_sgemm`, else
+/// `vec_dot`). Same bits at any thread count.
 pub fn mat_mul_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, cols: &[Vec<u16>], out: &mut [f32]) {
     let Some(k) = cols.first().map(Vec::len) else { return };
     let rb = k * F16_BYTES;
@@ -293,7 +287,7 @@ pub fn mat_mul_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, cols: &[Vec<
     let fast = sgemm && crate::q1_0::has_avx2();
     #[cfg(not(target_arch = "x86_64"))]
     let fast = false;
-    // the tiles read the activations as f32 (f16 → f32 is exact): widened once here, not once per weight row
+    // The tiles read activations as f32 (exact); widen once per product, not per weight row.
     let wide: Vec<Vec<f32>> = if fast {
         cols.iter().map(|c| {
             let mut w = vec![0.0f32; k];
@@ -320,7 +314,7 @@ pub fn mat_mul_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, cols: &[Vec<
                 let mut c0 = 0;
                 while c0 < n {
                     let w = (n - c0).min(3);
-                    // SAFETY: AVX2 + FMA + F16C checked; four whole rows (rows % 4 == 0) and w columns of k values (k % 8 == 0)
+                    // SAFETY: AVX2 + FMA + F16C detected; four whole rows (rows % 4 == 0), w columns of k % 8 == 0 values.
                     unsafe {
                         let put = |i: usize, j: usize, v: f32| *o.add((c0 + j) * rows + r + i) = v;
                         match w {
@@ -350,7 +344,7 @@ pub fn mat_mul_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, cols: &[Vec<
             let x = &wb[r * rb..(r + 1) * rb];
             for (c, col) in cols.iter().enumerate() {
                 let v = if sgemm { sgemm_dot_ref(x, col) } else { vec_dot(x, col) };
-                // SAFETY: row r is claimed by this worker alone; c < n
+                // SAFETY: row r is claimed by this worker alone; c < n.
                 unsafe { *o.add(c * rows + r) = v };
             }
         }
@@ -366,7 +360,7 @@ mod tests {
         (0..n).flat_map(|_| f32_to_f16(rng.act() * 0.2).to_le_bytes()).collect()
     }
 
-    /// The AVX2 paths equal the scalar models on random rows of many lengths (tails included), every bit.
+    /// AVX2 paths equal the scalar models bit for bit on random rows of many lengths, tails included.
     #[test]
     fn avx2_equals_the_scalar_models() {
         let mut rng = Rng(0xf16);
@@ -395,7 +389,7 @@ mod tests {
         }
     }
 
-    /// The attention helpers' AVX2 paths equal their scalar definitions, every element (odd tails included).
+    /// Attention helpers' AVX2 paths equal their scalar definitions, odd tails included.
     #[test]
     fn mad_and_scale_match_the_scalar_definitions() {
         let mut rng = Rng(0xa77);
@@ -420,7 +414,7 @@ mod tests {
 
     #[test]
     fn the_two_reductions_differ() {
-        // the same row and column through ggml's two paths: the bits can differ, which is why the shape matters
+        // ggml's two paths can give different bits for the same inputs, so the path choice matters.
         let mut rng = Rng(7);
         let (mut differ, k) = (0, 576);
         for _ in 0..200 {
@@ -431,9 +425,8 @@ mod tests {
         assert!(differ > 0);
     }
 
-    /// The shipped ggml b11192's `mul_mat` on F16 weights (testing/f16_oracle.py): every tensor widened to f32 with
-    /// ggml's own conversion, and products of real weight matrices (and synthetic shapes for the tails and the
-    /// fallback) by 1–28 columns, every element bit for bit.
+    /// Shipped ggml b11192 `mul_mat` on F16 weights (`testing/f16_oracle.py`): tensor widening and products by 1–28
+    /// columns, real and synthetic shapes, bit for bit.
     #[test]
     #[ignore = "needs .models/SmolLM2-135M-Instruct-F16.gguf + .models/oracle-f16 (testing/f16_oracle.py); --release"]
     fn oracle_ggml_b11192_f16() {

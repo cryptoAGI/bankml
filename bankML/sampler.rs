@@ -1,27 +1,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! P3, step eleven — sampling: llama.cpp b11192's sampler chain as llama-server builds it for a chat request, token
-//! for token with the same seed. The chain (`common/sampling.cpp`) is penalties → dry → top-n-σ → top-k → typical-p
-//! → top-p → min-p → xtc → temperature → dist; with the Bonsai GGUF's own defaults (top-k 20, top-p 0.85, min-p 0,
-//! temperature 0.5) and neutral penalties, dry, top-n-σ, typical-p and xtc, the active part is top-k, top-p, min-p,
-//! temperature and the draw. Each is written from `src/llama-sampler.cpp` in its float order:
+//! Sampling: llama.cpp b11192's sampler chain as llama-server builds it for a chat request (`common/sampling.cpp`),
+//! token-identical to llama-server for the same seed. The chain is penalties → DRY → top-n-σ → top-k → typical-p →
+//! top-p → min-p → XTC → temperature (dynamic when a range is set) → dist, each step written from
+//! `src/llama-sampler.cpp` in its float order:
 //!
-//! - top-k: `std::partial_sort` of the whole vocabulary by logit (for k ≤ 128), which is libstdc++'s heap select and
-//!   heap sort — ported exactly, because logits can tie (a 1-bit model's often do) and the order of equal logits is
-//!   what that algorithm leaves;
-//! - top-p: a float softmax over the kept tokens (`expf`, a float sum, a division), a float running sum cut where it
-//!   reaches p;
-//! - min-p: a cut at `max + logf(p)` on the sorted logits;
-//! - temperature: `logit / temp` (at temp ≤ 0: every logit but the first maximum set to −∞);
-//! - dist: `expf(logit − max)` per token summed in double, one `uniform_real_distribution<double>` draw from the
-//!   request's `std::mt19937` (libstdc++'s `generate_canonical`: two 32-bit outputs), a double running sum.
+//! - penalties: for each token seen `count` times in the last `penalty_last_n` accepted tokens (every prompt token,
+//!   then each token drawn), the logit is divided by the repeat penalty when positive and multiplied otherwise,
+//!   then `count · freq + present` is subtracted; reapplied when a grammar forces a redraw.
+//! - top-k: libstdc++'s `std::partial_sort` (heap select, then heap sort), ported exactly: logits tie often on a
+//!   1-bit model, and the order it leaves equal logits in decides the draw.
+//! - typical-p: libstdc++'s `std::sort` (introsort), ported exactly for the same reason.
+//! - top-p: a float softmax (`expf`, a float sum, a division), then a float running sum cut where it reaches p.
+//! - min-p: a cut at `max + logf(p)`.
+//! - temperature: `logit / temp`; at temp ≤ 0 every logit but the first maximum becomes −∞.
+//! - dist: `expf(logit − max)` summed in double, one `uniform_real_distribution<double>` draw from the request's
+//!   `std::mt19937` (libstdc++'s `generate_canonical`: two 32-bit outputs), a double running sum.
 //!
-//! - penalties (O2): `llama_sampler_penalties`, first in the chain — over the last `penalty_last_n` tokens of the slot
-//!   (llama-server accepts every prompt token into that window before the first draw, then each token drawn), a token
-//!   seen `count` times has its logit divided by the repeat penalty when positive and multiplied by it otherwise, then
-//!   `count · freq + present` taken off; applied again on a grammar's redraw, as the chain runs again there.
+//! Refused rather than approximated: top-k outside 1–128 (llama.cpp sorts larger sets another way); mirostat and a
+//! custom sampler order (refused in `native.rs`).
 //!
-//! Anything outside that — dry, typical-p, xtc, top-n-σ, dynamic temperature, top-k 0 or above 128 — is refused rather
-//! than approximated.
+//! Details: docs/modules/sampler.md.
 
 /// `std::mt19937`, seeded as `std::mt19937(seed)`.
 pub struct Mt19937 {
@@ -55,8 +53,6 @@ impl Mt19937 {
         y ^ (y >> 18)
     }
 
-    /// `std::uniform_real_distribution<double>(0, 1)(rng)` in libstdc++: `generate_canonical<double, 53>` takes two
-    /// outputs, `(a + b·2³²) / 2⁶⁴`, kept below 1.
     /// `std::uniform_real_distribution<float>(0, 1)(rng)` in libstdc++: `generate_canonical<float, 24>` takes one
     /// output, `x / 2³²` in float, kept below 1 (XTC's draw).
     pub fn uniform_f32(&mut self) -> f32 {
@@ -64,6 +60,8 @@ impl Mt19937 {
         if r >= 1.0 { 1.0f32.next_down() } else { r }
     }
 
+    /// `std::uniform_real_distribution<double>(0, 1)(rng)` in libstdc++: `generate_canonical<double, 53>` takes two
+    /// outputs, `(a + b·2³²) / 2⁶⁴`, kept below 1.
     pub fn uniform(&mut self) -> f64 {
         let a = self.next_u32() as f64;
         let b = self.next_u32() as f64;
@@ -84,8 +82,8 @@ pub struct Cand {
     pub p: f32,
 }
 
-// libstdc++'s heap and sort algorithms (bits/stl_heap.h, stl_algo.h), generic over the comparator; llama.cpp's
-// comparator for candidates is `a.logit > b.logit`
+// libstdc++'s heap and sort algorithms (bits/stl_heap.h, bits/stl_algo.h), generic over the comparator.
+// llama.cpp's comparator for candidates is `a.logit > b.logit`.
 fn comp(a: &Cand, b: &Cand) -> bool {
     a.logit > b.logit
 }
@@ -256,27 +254,27 @@ pub struct Params {
     pub min_p: f32,
     pub min_keep: usize,
     pub seed: u32,
-    /// `repeat_last_n` (0 turns the penalties off), `repeat_penalty`, `frequency_penalty`, `presence_penalty` (0.3.6)
+    /// `repeat_last_n` (0 turns the penalties off), `repeat_penalty`, `frequency_penalty`, `presence_penalty`.
     pub penalty_last_n: i32,
     pub penalty_repeat: f32,
     pub penalty_freq: f32,
     pub penalty_present: f32,
     /// `typical_p` (1 = off), `top_n_sigma` (≤ 0 = off), `xtc_probability` (0 = off), `xtc_threshold` (> 0.5 = off),
-    /// `dynatemp_range` (0 = off), `dynatemp_exponent` (0.3.7)
+    /// `dynatemp_range` (0 = off), `dynatemp_exponent`.
     pub typical_p: f32,
     pub top_n_sigma: f32,
     pub xtc_probability: f32,
     pub xtc_threshold: f32,
     pub dynatemp_range: f32,
     pub dynatemp_exponent: f32,
-    /// DRY (0.3.7): `dry_multiplier` (0 = off), `dry_base`, `dry_allowed_length`, `dry_penalty_last_n` (0 = off) and the
-    /// sequence breakers, whose token sequences the engine supplies (`Sampler::set_dry_breakers`)
+    /// DRY: `dry_multiplier` (0 = off), `dry_base`, `dry_allowed_length`, `dry_penalty_last_n` (0 = off) and the
+    /// sequence breakers, whose token sequences the engine supplies (`Sampler::set_dry_breakers`).
     pub dry_multiplier: f32,
     pub dry_base: f32,
     pub dry_allowed_length: i32,
     pub dry_penalty_last_n: i32,
     pub dry_sequence_breakers: Vec<String>,
-    /// 0.3.8: `n_probs` — the top tokens' probabilities to report for each generated token (0 = none)
+    /// `n_probs`: how many top-token probabilities to report per generated token (0 = none).
     pub n_probs: usize,
 }
 
@@ -371,12 +369,12 @@ pub fn dry_breakers(breakers: &[String], pieces: &[Vec<u8>], encode: impl Fn(&st
 pub struct Sampler {
     p: Params,
     rng: Mt19937,
-    /// XTC's own generator (`llama_sampler_xtc`), seeded as the draw's is
+    /// XTC's own generator (`llama_sampler_xtc`), seeded as the draw's is.
     xtc_rng: Mt19937,
-    /// the penalties' window (`prev`, a ring of `penalty_last_n`) and each token's count in it (`token_count`)
+    /// The penalties' window (`prev`, a ring of `penalty_last_n`) and each token's count in it (`token_count`).
     prev: std::collections::VecDeque<u32>,
     counts: std::collections::HashMap<u32, i32>,
-    /// DRY's window (a ring of `dry_penalty_last_n`) and its breakers
+    /// DRY's window (a ring of `dry_penalty_last_n`) and its breakers.
     dry_last: std::collections::VecDeque<u32>,
     dry_breakers: std::sync::Arc<DryBreakers>,
 }
@@ -428,7 +426,7 @@ impl Sampler {
         if !(1..=128).contains(&p.top_k) {
             return Err(format!("top_k {}: only 1–128 is reproduced (llama.cpp sorts larger sets another way)", p.top_k));
         }
-        // llama-server's own refusals, word for word (server-schema.cpp's hard limits, then common_sampler_init)
+        // llama-server's refusals, word for word: server-schema.cpp's hard limits, then common_sampler_init.
         for (name, v) in [("repeat_last_n", p.penalty_last_n), ("dry_allowed_length", p.dry_allowed_length), ("dry_penalty_last_n", p.dry_penalty_last_n)] {
             if v < 0 {
                 return Err(format!("Field '{name}': Value must be between 0 <= value <= 2147483647, but got {v}"));
@@ -874,8 +872,8 @@ mod tests {
         assert_eq!(x, 4_123_659_995);
     }
 
-    /// 0.3.7: libstdc++'s own `std::sort` (testing/sort_oracle.cpp) on 876 key arrays, sizes 0–1000, heavy ties,
-    /// sorted, reversed and equal keys: `sort_by` leaves every one in the same order (typical-p depends on it).
+    /// `sort_by` leaves the same order as libstdc++'s `std::sort` (testing/sort_oracle.cpp) on 876 key arrays: sizes
+    /// 0–1000, heavy ties, sorted, reversed and equal keys. Typical-p depends on it.
     #[test]
     #[ignore = "needs .models/oracle-sort/cases.txt (g++ -O2 testing/sort_oracle.cpp, then run it)"]
     fn oracle_std_sort() {
