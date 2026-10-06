@@ -37,7 +37,7 @@ llama-server's own answers, as everything before it.
 - `BANKML_CACHE_RAM` (MiB, as `--cache-ram`: 0 off, -1 no limit); unset, 8192 MiB but at most a quarter of the memory
   available at load.
 
-### Logprobs on `/v1/chat/completions` (`testing/logprobs_oracle.py`, 9 / 9)
+### Logprobs on `/v1/chat/completions`, streamed or not (`testing/logprobs_oracle.py`, 14 / 14)
 - `logprobs: true` with `top_logprobs` (default 20) → `choices[0].logprobs.content`: per token its `id`, `token`,
   `bytes`, `logprob`, and the top tokens with theirs. Every logprob is the same 32-bit float as llama-server's:
   `get_token_probabilities` ported — a partial sort of the whole vocabulary (libstdc++'s, from 0.3.7), the softmax
@@ -46,7 +46,13 @@ llama-server's own answers, as everything before it.
   and carries the text sent since the previous entry; a stop word drops its own tokens' entries; control tokens read
   `""`; a top token holding part of a character is cut at the incomplete end (`validate_utf8`), other invalid bytes
   read U+FFFD, `bytes` raw. `top_logprobs` without `logprobs` is refused with llama-server's message.
-- Not yet: logprobs in a streamed answer (refused with a 400 that says so) and `/completion`'s `n_probs`.
+- Streamed, as llama-server's partial responses: the stream opens with the role delta, and each whole token's entry
+  rides on the chunk its text makes (a token that sends no text sends no entry: a held stop-word prefix, the
+  end-of-turn token with nothing held back). Text now waits for a whole token in every stream, as llama-server sends
+  nothing while UTF-8 is incomplete (`" 🍕"` is one chunk, not `" "` then `"🍕"`). Five streamed cases, every chunk's
+  delta and entry identical. The engine reports each step (`Native::complete_with`, `Step`); `NativeChat::run_steps`
+  makes the chunks.
+- Not served: `/completion` (llama-server's own endpoint, so also its `n_probs`); clients use `/v1`.
 
 ## Unreleased (0.3.7) — the whole sampler chain; bankML measures itself; the GPU limiter; the bankML console
 

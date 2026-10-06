@@ -202,8 +202,9 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
   over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.
 - [x] **Logprobs on `/v1/chat/completions`** (**0.3.8**): bit-exact, llama-server's entry rules (UTF-8 splits, stop
-  words), 9 / 9 (`logprobs_oracle_live`).
-- [ ] Logprobs in streamed answers, and `/completion` with `n_probs`.
+  words), 14 / 14 with five streamed (`logprobs_oracle_live`).
+- [x] **Logprobs in streamed answers** (**0.3.8**): each chunk's delta and entry as llama-server's; 14 / 14 with the
+  non-streamed cases. `/completion` (and `n_probs`) stays unserved natively: no client of bankML uses it.
 - [x] **Behaviour at the context limit exactly as llama-server's** (**0.3.8**): stop at the full context, past it
   its 400 body; 8 / 8 (`context_oracle_live`).
 - [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated

@@ -590,15 +590,26 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     let created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let r = if stream {
         write!(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
-        let send = |c: &mut TcpStream, piece: &str| -> bool {
-            if piece.is_empty() {
-                return true;
+        // 0.3.8: with logprobs, llama-server's shape: the first token's partial opens with the role delta, and each
+        // token's entry rides on the last delta its partial sends (none sent: the entry is not sent either)
+        let logprobs = nc.params.n_probs > 0;
+        let send = |c: &mut TcpStream, ch: Chunk| -> bool {
+            let delta = |d: &str, lp: &str| format!("data: {{\"choices\": [{{\"index\": 0, \"delta\": {d}, \"finish_reason\": null{lp}}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\"}}\n\n",
+                                                   crate::gguf::jstr(&model_id));
+            let lp = match &ch.entry {
+                Some(e) if logprobs => format!(", \"logprobs\": {{\"content\": {}}}", logprobs_json(std::slice::from_ref(e))),
+                _ => String::new(),
+            };
+            let mut out = String::new();
+            if logprobs && ch.first {
+                out += &delta("{\"role\": \"assistant\", \"content\": null}", if ch.text.is_empty() { &lp } else { "" });
             }
-            let chunk = format!("data: {{\"choices\": [{{\"index\": 0, \"delta\": {{\"content\": {}}}, \"finish_reason\": null}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\"}}\n\n",
-                                crate::gguf::jstr(piece), crate::gguf::jstr(&model_id));
-            c.write_all(chunk.as_bytes()).and_then(|_| c.flush()).is_ok()
+            if !ch.text.is_empty() {
+                out += &delta(&format!("{{\"content\": {}}}", crate::gguf::jstr(&ch.text)), &lp);
+            }
+            out.is_empty() || c.write_all(out.as_bytes()).and_then(|_| c.flush()).is_ok()
         };
-        let d = match nc.run(eng, &mut t, true, |piece| send(c, piece)) {
+        let d = match nc.run_steps(eng, &mut t, true, |ch| send(c, ch)) {
             Ok(d) => d,
             Err(e) => return write!(c, "data: {{\"error\": {}}}\n\n", crate::gguf::jstr(&e)),
         };
@@ -662,10 +673,6 @@ impl NativeChat {
         let mut params = eng.params(req)?;
         // 0.3.8: OpenAI's logprobs → llama-server's n_probs (top_logprobs, default 20); top_logprobs alone is refused
         match (req.get("logprobs").and_then(Json::as_bool), req.get("top_logprobs")) {
-            (Some(true), _) if req.get("stream").and_then(Json::as_bool) == Some(true) => {
-                // llama-server sends each streamed token's probabilities in its chunk; bankML has no oracle for that yet
-                return Err("logprobs with stream are not supported by bankml serve --native yet: request a non-streamed answer".into());
-            }
             (Some(true), t) => params.n_probs = match t { Some(Json::Num(n)) if *n >= 0.0 => *n as usize, _ => 20 },
             (_, Some(t)) if *t != Json::Null => return Err("top_logprobs requires logprobs to be set to true".into()),
             _ => {}
@@ -681,25 +688,48 @@ impl NativeChat {
     /// the time to first token), and the text and counts into the tally the receipt is made from. `emit` returns
     /// false to stop; it may receive empty pieces.
     pub fn run(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(&str) -> bool) -> Result<crate::native::Done, String> {
+        self.run_steps(eng, t, stream, |c| emit(&c.text))
+    }
+
+    /// `run`, streaming `Chunk`s: the text and, when logprobs were asked for, the entry of the token that released it,
+    /// as llama-server's partial responses carry them (0.3.8). One chunk per whole token (and one for a last flush);
+    /// a chunk with no text is sent by llama-server only as the first, the role delta.
+    pub fn run_steps(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(Chunk) -> bool) -> Result<crate::native::Done, String> {
         let mut stop = crate::ollama::StopFilter::new(self.stops);
         let grammar = eng.grammar(&self.constraint)?;
         let mut content = crate::grammar::ContentStream::new(&self.constraint);
         let mut sent: Vec<String> = Vec::new();
-        let done = eng.complete(&self.prompt, self.params, self.max, grammar, |piece| {
+        // streamed, text waits for a whole token, as llama-server sends nothing while UTF-8 is incomplete
+        let mut held = String::new();
+        let done = eng.complete_with(&self.prompt, self.params, self.max, grammar, |s| {
+            if !stream && (s.eog || s.piece.is_empty()) {
+                return true;
+            }
             // the time to first token, streamed or not (0.3.7: non-streamed receipts carried null)
-            if t.ttft.is_none() {
+            if t.ttft.is_none() && !s.piece.is_empty() {
                 t.ttft = Some(t.t0.elapsed());
             }
-            let (out, go) = stop.push(piece);
-            sent.push(out.clone());
+            // llama-server releases text a partial stop match held back with the end-of-turn token (it checks no
+            // partial match then)
+            let (out, go) = if s.eog { (stop.finish(), false) } else { stop.push(s.piece) };
+            if !s.piece.is_empty() {
+                sent.push(out.clone());
+            }
             if !stream {
                 return go;
             }
-            emit(&content.push(&out)) && go
+            held.push_str(&out);
+            if !s.complete {
+                return go;
+            }
+            // the entry's text is what this token sent (`text_to_send`)
+            let out = std::mem::take(&mut held);
+            let entry = s.entry.map(|e| crate::native::TokenLogprob { piece: out.clone().into_bytes(), ..e.clone() });
+            emit(Chunk { text: content.push(&out), entry, first: s.n == 1 }) && go
         });
-        let rest = stop.finish();
+        let rest = held + &stop.finish();
         if stream {
-            emit(&content.push(&rest));
+            emit(Chunk { text: content.push(&rest), entry: None, first: false });
         }
         let mut d = done?;
         if !d.probs.is_empty() {
@@ -711,6 +741,14 @@ impl NativeChat {
         t.completion = d.completion_tokens as u64;
         Ok(d)
     }
+}
+
+/// One streamed piece of a native answer (`NativeChat::run_steps`): its text, the logprobs of the token that released
+/// it (when asked for), and whether it is the first token's (llama-server sends the role delta with it).
+pub struct Chunk {
+    pub text: String,
+    pub entry: Option<crate::native::TokenLogprob>,
+    pub first: bool,
 }
 
 /// The non-streamed `/v1/chat/completions` answer from bankML's own engine: OpenAI's object, llama-server's

@@ -109,6 +109,9 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
   — an entry only after complete UTF-8, carrying the text the stop filter released since the previous entry; a stop
   word's own tokens (`tokenize(stop, add_special = false)`) dropped — and `logprobs_json` writes them, a top token's
   text cut by `utf8_complete_len` (`validate_utf8`) and otherwise U+FFFD-replaced, as nlohmann's `dump` writes it.
+  Streamed, `NativeChat::run_steps` turns the engine's steps (`Native::complete_with`) into `Chunk`s: text only at
+  whole tokens, each with that token's entry, the first behind the role delta (sent only when logprobs are asked
+  for, so plain streams are unchanged); the end-of-turn token releases what a partial stop match held.
 
 ### `Json`
 
@@ -127,9 +130,10 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
   through `/v1` and `/api/chat` on mindx-gen39, CHANGELOG 0.3.6).
 - `capi_chat_oracle`: `bankml_chat` equals `serve --native` turn by turn, receipt hashes included.
 - 0.3.8: `context_oracle_live` (8 / 8 against llama-server at `-c 256`), `slot_oracle_live` (19 / 19: answers after a
-  restore equal an empty slot's, across a restart; llama-server's refusals), `logprobs_oracle_live` (9 / 9, every
-  logprob the same float), `session_oracle_live` (14 / 14: interleaved conversations through one slot and the host
-  prompt cache, turn by turn; simultaneous requests queued); the unit test `logprob_texts_as_llama_server_writes_them`.
+  restore equal an empty slot's, across a restart; llama-server's refusals), `logprobs_oracle_live` (14 / 14, five
+  streamed; every logprob the same float), `session_oracle_live` (14 / 14: interleaved conversations through one
+  slot and the host prompt cache, turn by turn; simultaneous requests queued); the unit test
+  `logprob_texts_as_llama_server_writes_them`.
 
 ## Advantages and efficiency
 
@@ -148,7 +152,7 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
   prompt's whole prefill with one sequential read checked by sha256; logprobs cost one partial sort of the vocabulary
   per token, and nothing when not asked for.
 - **Next** (docs/TODO.md): an independent review of `serve` (loopback rules, limits, receipts) before 1.0; more than
-  one slot with continuous batching in `--native` (O8); streamed logprobs.
+  one slot with continuous batching in `--native` (O8).
 
 ## Limitations
 
@@ -157,7 +161,9 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
 - In P0 mode the tokens come from ggml's kernels in llama-server; bankML vouches for the file, the path and the
   transcript, not the arithmetic.
 - `--native` serves one slot and one resident model (see [native.md](native.md)); `/slots/{id}` accepts only id 0.
-- Logprobs in a streamed answer are refused (400) rather than left out; `/completion`'s `n_probs` is not served yet.
+- `/completion` (llama-server's own endpoint, and its `n_probs`) is not served natively; `/v1` and `/api` are.
+- A plain stream (no logprobs) has no role delta, and leftover incomplete bytes at the very end are sent replaced
+  by U+FFFD, where llama-server drops them.
 - The source's module header still describes only P0; the `--native` routes are documented in `run_native`.
 
 ## See also

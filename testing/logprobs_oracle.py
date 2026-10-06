@@ -4,6 +4,8 @@
 token its id, text, bytes, `logprob` (logf of the raw-logit softmax), and the top tokens with theirs. Record
 llama-server's answers, then replay the same requests through `bankml serve --native`: ids, texts and bytes must be
 equal and every logprob the same 32-bit float; a refused request must be refused with the same status and message.
+Streamed (`stream-*`): every chunk llama-server sends before the finish, in order — its delta (the role delta first)
+and the logprobs it carries — with the same rule for the floats.
     BANKML_GGML_LIB=<b11192 release dir> python3 testing/logprobs_oracle.py --record Bonsai-1.7B-Q1_0
     python3 testing/logprobs_oracle.py --bankml Bonsai-1.7B-Q1_0
 → .models/oracle-logprobs/logprobs-<model>.jsonl"""
@@ -40,9 +42,62 @@ def requests():
         ("top0", {"messages": q("Say yes."), "max_tokens": 6, "temperature": 0, "logprobs": True, "top_logprobs": 0}),
         ("stop-string", {"messages": q("Count from one to ten in words."), "max_tokens": 30, "temperature": 0, "logprobs": True, "top_logprobs": 3, "stop": ["five"]}),
         ("multibyte", {"messages": q("Write the word 'café' and a heart emoji."), "max_tokens": 16, "temperature": 0, "logprobs": True, "top_logprobs": 3}),
+        ("stream-greedy-top3", {"messages": q("Name three planets."), "max_tokens": 16, "temperature": 0, "logprobs": True, "top_logprobs": 3, "stream": True}),
+        ("stream-seeded-top2", {"messages": q("Invent a name for a cat."), "max_tokens": 16, "temperature": 0.9, "seed": 7, "logprobs": True, "top_logprobs": 2, "stream": True}),
+        ("stream-stop-string", {"messages": q("Count from one to ten in words."), "max_tokens": 30, "temperature": 0, "logprobs": True, "top_logprobs": 3, "stop": ["five"], "stream": True}),
+        ("stream-multibyte", {"messages": q("Write the word 'café' and a heart emoji."), "max_tokens": 16, "temperature": 0, "logprobs": True, "top_logprobs": 3, "stream": True}),
+        ("stream-to-the-end", {"messages": q("Say yes."), "max_tokens": 40, "temperature": 0, "logprobs": True, "top_logprobs": 2, "stream": True}),
         ("no-logprobs", {"messages": q("Say hi."), "max_tokens": 6, "temperature": 0}),
         ("top-without-logprobs", {"messages": q("Say hi."), "max_tokens": 6, "temperature": 0, "top_logprobs": 3}),
     ]
+
+
+def post_stream(base, path, body):
+    """A streamed answer: (status, {"chunks": [{"delta", "logprobs"}], "finish_reason"}) or the refusal."""
+    req = urllib.request.Request(base + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            chunks, finish = [], None
+            for line in r.read().decode().splitlines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                d = json.loads(line[6:])
+                for c in d.get("choices") or []:
+                    if c.get("finish_reason") is not None:
+                        finish = c["finish_reason"]
+                    else:
+                        chunks.append({"delta": c["delta"], "logprobs": (c.get("logprobs") or {}).get("content")})
+            return 200, {"chunks": chunks, "finish_reason": finish}
+    except urllib.error.HTTPError as e:
+        raw = e.read() or b"{}"
+        try:
+            return e.code, json.loads(raw)
+        except ValueError:
+            return e.code, {"raw": raw.decode("utf-8", "replace")}
+
+
+def ask(base, body):
+    if body.get("stream"):
+        code, r = post_stream(base, "/v1/chat/completions", body)
+        if code != 200:
+            return shape(code, r)
+        return {"status": 200, "finish_reason": r["finish_reason"], "chunks": r["chunks"]}
+    return shape(*post(base, "/v1/chat/completions", body))
+
+
+def same_stream(got, want):
+    if (got["status"], got.get("finish_reason")) != (want["status"], want.get("finish_reason")):
+        return False, f"status/finish {got['status']} {got.get('finish_reason')} vs {want['status']} {want.get('finish_reason')}"
+    a, b = got["chunks"], want["chunks"]
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x["delta"] != y["delta"]:
+            return False, f"chunk {i} delta {x['delta']!r} vs {y['delta']!r}"
+        ok, why = same({"status": 200, "logprobs": x["logprobs"]}, {"status": 200, "logprobs": y["logprobs"]})
+        if not ok:
+            return False, f"chunk {i}: {why}"
+    if len(a) != len(b):
+        return False, f"{len(a)} chunks vs {len(b)}"
+    return True, ""
 
 
 def shape(code, r):
@@ -90,10 +145,9 @@ def record(stem):
         wait(base, proc)
         cases = []
         for name, body in requests():
-            code, r = post(base, "/v1/chat/completions", {**body, "cache_prompt": False})
-            s = shape(code, r)
+            s = ask(base, {**body, "cache_prompt": False})
             cases.append({"name": name, "request": body, **s})
-            print(name, s["status"], len(s.get("logprobs") or []), "tokens", str(s.get("message") or s.get("content"))[:60], flush=True)
+            print(name, s["status"], len(s.get("logprobs") or s.get("chunks") or []), "tokens/chunks", str(s.get("message") or s.get("content") or "")[:60], flush=True)
         out.mkdir(parents=True, exist_ok=True)
         dest = out / f"logprobs-{stem}.jsonl"
         dest.write_text("".join(json.dumps(c) + "\n" for c in cases))
@@ -116,8 +170,8 @@ def live(stem):
         wait(base, proc)
         for c in map(json.loads, rec.read_text().splitlines()):
             post(base, "/api/generate", {"model": stem.lower(), "keep_alive": 0})
-            code, r = post(base, "/v1/chat/completions", c["request"])
-            good, why = same(shape(code, r), c)
+            got = ask(base, c["request"])
+            good, why = (same_stream if "chunks" in c else same)(got, c)
             n += 1
             ok += good
             if not good:

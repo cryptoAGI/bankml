@@ -101,6 +101,18 @@ pub struct Done {
 /// renders `top_logprobs`). `piece` is the text the entry carries: from the engine, what this token emitted; the
 /// serving layer replaces it with what was sent (`serve::logprob_entries`). `complete`: no incomplete UTF-8 was left
 /// after this token — llama-server keeps an entry only then.
+/// 0.3.8: one step of a completion as `Native::complete_with` reports it. `piece`: the text this step released (may be
+/// empty); `complete`: the token left no incomplete UTF-8 behind (llama-server sends a token only then); `entry`: its
+/// logprobs, when asked for and complete; `n`: tokens generated so far; `eog`: the end-of-turn token, which ends the
+/// answer; a last step with `n` unchanged and `complete` false flushes bytes left incomplete at the end.
+pub struct Step<'a> {
+    pub piece: &'a str,
+    pub complete: bool,
+    pub entry: Option<&'a TokenLogprob>,
+    pub n: usize,
+    pub eog: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TokenLogprob {
     pub id: u32,
@@ -206,8 +218,15 @@ impl Native {
 
     /// One completion. `emit` receives the answer as whole UTF-8 pieces as they come, and returns false to stop.
     /// With a grammar (`Native::grammar`) every token is drawn as `common_sampler_sample` draws it under one.
-    pub fn complete(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
+    pub fn complete(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, grammar: Option<crate::grammar::Grammar>,
                     mut emit: impl FnMut(&str) -> bool) -> Result<Done, String> {
+        self.complete_with(prompt, params, max_tokens, grammar, |s| s.eog || s.piece.is_empty() || emit(s.piece))
+    }
+
+    /// `complete`, reporting every step (`Step`): also the complete tokens that release no text and the end-of-turn
+    /// token, each with its logprobs — what a streamed answer needs to send them as llama-server does (0.3.8).
+    pub fn complete_with(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
+                         mut emit: impl FnMut(Step) -> bool) -> Result<Done, String> {
         if prompt.is_empty() {
             return Err("an empty prompt".into());
         }
@@ -282,6 +301,12 @@ impl Native {
             if self.eog.contains(&next) {
                 n += 1; // llama-server counts the end-of-turn token it sampled among the completion tokens
                 finish = "stop";
+                // it releases no text; it is a whole token only if nothing incomplete is pending before it
+                let complete = pending.is_empty();
+                if let Some(e) = probs.last_mut() {
+                    e.complete = complete;
+                }
+                emit(Step { piece: "", complete, entry: probs.last().filter(|_| complete), n, eog: true });
                 break;
             }
             n += 1;
@@ -294,15 +319,18 @@ impl Native {
                 Ok(s) => s.len(),
                 Err(e) => e.valid_up_to(),
             };
-            if valid > 0 {
+            // a step for every piece of text, and for every whole token even when it releases none
+            if valid > 0 || !incomplete_after {
                 let piece: String = String::from_utf8(pending.drain(..valid).collect()).unwrap();
                 text.push_str(&piece);
-                if let Some(e) = probs.last_mut() {
-                    e.emitted = true;
-                    e.piece = piece.as_bytes().to_vec();
+                if valid > 0 {
+                    if let Some(e) = probs.last_mut() {
+                        e.emitted = true;
+                        e.piece = piece.as_bytes().to_vec();
+                    }
+                    ttft_ns.get_or_insert(t0.elapsed().as_nanos() as u64);
                 }
-                ttft_ns.get_or_insert(t0.elapsed().as_nanos() as u64);
-                if !emit(&piece) {
+                if !emit(Step { piece: &piece, complete: !incomplete_after, entry: probs.last().filter(|_| !incomplete_after), n, eog: false }) {
                     finish = "stop";
                     break;
                 }
@@ -316,7 +344,7 @@ impl Native {
         if !pending.is_empty() {
             let piece = String::from_utf8_lossy(&pending).into_owned();
             text.push_str(&piece);
-            emit(&piece);
+            emit(Step { piece: &piece, complete: false, entry: None, n, eog: false });
         }
         let eval_ns = t1.elapsed().as_nanos() as u64;
         let energy_j = e0.zip(crate::sys::energy_uj()).map(|(a, b)| crate::sys::joules(a, b));

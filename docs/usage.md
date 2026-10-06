@@ -235,7 +235,7 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
   0 off; unset, up to 8 GiB but at most a quarter of the free memory), so a conversation that comes back after
   another does not recompute its whole history.
 - **Logprobs.** `"logprobs": true, "top_logprobs": 5` on `/v1/chat/completions` returns each token's log-probability
-  and the five most likely alternatives, the same floats llama-server reports. Non-streamed answers only, for now.
+  and the five most likely alternatives, the same floats llama-server reports. Streamed answers carry each token's entry in the chunk its text makes.
 
 ## 6a. Ollama's API
 
