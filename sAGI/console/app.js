@@ -103,6 +103,10 @@ async function poll() {
     $("threads").max = cores; $("threads").value = r.threads || 1;
     $("ram").max = Math.max(1, ((u.mem_total_bytes || 6 * GB) / GB)).toFixed(1); $("ram").value = r.ram_gb || 2;
     $("gpu").value = Math.round(100 * (r.gpu_limit ?? 0.8)); sync(); slidersSet = true;
+    if (s.public) {  // a public console is read-only: the controls show the settings, they do not change them
+      ["threads", "ram", "gpu", "apply"].forEach((id) => { $(id).disabled = true; });
+      $("apply").textContent = "read-only: this is a public console";
+    }
   }
   $("job").textContent = s.job.busy ? s.job.what : (s.job.error ? "failed: " + s.job.error : (s.job.done ? "done: the engine restarted, verified" : ""));
   const t = Date.now() / 1000; const g = (u.gpus || [])[0] || {};

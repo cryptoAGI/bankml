@@ -71,6 +71,17 @@ try:
     check("Infotags: ERC-721 shape (name, description, attributes) and CIDs", info["name"] and info["description"] and info["bankml"]["persona_cid"].startswith("b"))
     log = json.loads(req("/api/log")[1])
     check("/api/log returns the exchanges", len(log["exchanges"]) == 2)
+    # public mode (a hosted demo): its one host name is served, read-only, and no visitor's question is shown
+    C.PUBLIC = "demo.example"
+    pub = {"Host": "demo.example"}
+    code, body, _ = req("/api/state", headers=pub)
+    check("public: the named host is served and says it is public", code == 200 and json.loads(body)["public"] is True)
+    check("public: any other host is still refused", req("/api/state", headers={"Host": "evil.example"})[0] == 403)
+    check("public: the resource controls are refused (read-only)",
+          req("/api/resources", b'{"threads": 1, "ram_gb": 1, "gpu_limit": 0}', {**pub, "Content-Type": "application/json", "Origin": "https://demo.example"})[0] == 403)
+    check("public: no exchange is shown, though a log exists", json.loads(req("/api/log", headers=pub)[1])["exchanges"] == []
+          and {a["trait_type"]: a["value"] for a in json.loads(req("/api/infotags", headers=pub)[1])["attributes"]}["exchanges"] == 0)
+    C.PUBLIC = None
 finally:
     srv.shutdown()
 

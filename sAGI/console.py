@@ -13,7 +13,12 @@ from `GET /bankml/usage` and `GET /bankml/metrics` at that moment; a value that 
 The Python standard library only, loopback only (it refuses another host), a fixed set of routes, a strict CSP
 (no network but itself), and every POST must be JSON from this page's own origin.
 
+Public mode (`--public HOST`, for a hosted demo such as a Hugging Face Space): it also answers as HOST and may bind any
+address, but it is read-only — the resource controls are refused — and it keeps no record of visitors' questions:
+nothing is logged, and the Logging and Infotags tabs show only the engine's measurements.
+
   python3 sAGI/console.py                 # http://127.0.0.1:7875 — bankml serve on 127.0.0.1:18093
+  python3 sAGI/console.py --public bankml.example --host 0.0.0.0 --port 7860
 """
 from __future__ import annotations
 
@@ -45,6 +50,10 @@ FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", 
          "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8")}
 LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
+# --public HOST: the one extra host name the console answers as; None = loopback only
+PUBLIC: str | None = None
+# public mode bounds each answer, as the hosted machine is shared
+PUBLIC_MAX_TOKENS = 384
 _LOCK = threading.Lock()
 
 
@@ -97,7 +106,8 @@ def self_text(sb: dict) -> str:
 def state() -> dict:
     p = persona()
     return {"serve": _get("/bankml"), "usage": _get("/bankml/usage"), "metrics": _get("/bankml/metrics"), "resources": models.resources(),
-            "persona": {"name": p["name"], "mantra": p["mantra"], "doctrine_root": _doctrine_root(p)}, "job": JOB, "self": self_block()}
+            "persona": {"name": p["name"], "mantra": p["mantra"], "doctrine_root": _doctrine_root(p)}, "job": JOB, "self": self_block(),
+            "public": PUBLIC is not None}
 
 
 def _doctrine_root(p: dict) -> str | None:
@@ -118,7 +128,7 @@ def log_lines() -> list:
 def infotags() -> dict:
     """The metadata an iNFT publication of this session carries (ERC-721 metadata shape, `attributes`), with the
     commitments that let a holder check any one exchange: an RFC 6962 Merkle root over the log's lines and its CIDv1."""
-    st, p, lines = state(), persona(), log_lines()
+    st, p, lines = state(), persona(), ([] if PUBLIC else log_lines())
     v = (st["serve"] or {}).get("verified") or {}
     root = S.merkle_root([S._leaf(l) for l in lines])
     m = st["metrics"] or {}
@@ -158,7 +168,7 @@ class H(BaseHTTPRequestHandler):
 
     def _host_ok(self) -> bool:
         h = (self.headers.get("Host") or "").rsplit(":", 1)[0]
-        return h in LOOPBACK
+        return h in LOOPBACK or (PUBLIC is not None and h == PUBLIC)
 
     def _send(self, code: int, body: bytes, ctype: str):
         self.send_response(code)
@@ -184,7 +194,7 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/state":
             return self._json(state())
         if path == "/api/log":
-            rows = [json.loads(l) for l in log_lines()[-200:]]
+            rows = [] if PUBLIC else [json.loads(l) for l in log_lines()[-200:]]
             tail = []
             try:
                 tail = models.LOG.read_text(errors="replace").splitlines()[-60:]
@@ -199,7 +209,7 @@ class H(BaseHTTPRequestHandler):
         if not self._host_ok():
             return None, "loopback only"
         origin = self.headers.get("Origin")
-        if origin and origin.split("://", 1)[-1].rsplit(":", 1)[0] not in LOOPBACK:
+        if origin and origin.split("://", 1)[-1].rsplit(":", 1)[0] not in (*LOOPBACK, *([PUBLIC] if PUBLIC else [])):
             return None, "cross-origin"
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
             return None, "POST bodies must be application/json"
@@ -217,6 +227,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(403 if err in ("loopback only", "cross-origin") else 400, err.encode(), "text/plain")
         path = self.path.split("?", 1)[0]
         if path == "/api/resources":
+            if PUBLIC:
+                return self._send(403, b"read-only: this is a public console", "text/plain")
             try:
                 apply(int(req["threads"]), float(req["ram_gb"]), float(req["gpu_limit"]))
                 return self._json({"ok": True, "job": JOB})
@@ -235,7 +247,7 @@ class H(BaseHTTPRequestHandler):
         system = persona()["system_prompt"] + "\n\nSELF (measured by bankML just now):\n" + self_text(sb)
         hist = [m for m in (req.get("history") or [])[-12:] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
         body = {"messages": [{"role": "system", "content": system}, *hist, {"role": "user", "content": q}], "stream": True,
-                "max_tokens": int(req.get("max_tokens") or 256)}
+                "max_tokens": min(int(req.get("max_tokens") or 256), PUBLIC_MAX_TOKENS if PUBLIC else 1 << 30)}
         for k in ("temperature", "top_k", "top_p", "min_p", "repeat_penalty", "seed"):
             if req.get(k) is not None:
                 body[k] = req[k]
@@ -265,10 +277,11 @@ class H(BaseHTTPRequestHandler):
         except (OSError, ValueError) as e:
             err = str(e)
         last = ((_get("/bankml/metrics") or {}).get("records") or [{}])[-1]
-        rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb}
-        STATE.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if not PUBLIC:  # a public console keeps no record of its visitors' questions
+            rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb}
+            STATE.mkdir(parents=True, exist_ok=True)
+            with LOG.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self.wfile.write((json.dumps({"done": True, "error": err, "receipt": receipt, "metrics": last,
                                       "answer_sha256_ok": receipt is not None and hashlib.sha256(text.encode()).hexdigest() == receipt.get("response_sha256")}) + "\n").encode())
         self.wfile.flush()
@@ -278,9 +291,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7875)
+    ap.add_argument("--public", metavar="HOST", help="also answer as HOST, read-only and keeping no questions (a hosted demo)")
     a = ap.parse_args()
-    if a.host not in ("127.0.0.1", "localhost", "::1"):
-        sys.exit("the console is loopback only: it can restart the engine (use view.py for the LAN)")
+    global PUBLIC
+    PUBLIC = a.public
+    if a.host not in ("127.0.0.1", "localhost", "::1") and not PUBLIC:
+        sys.exit("the console is loopback only: it can restart the engine (use view.py for the LAN, --public for a hosted demo)")
     print(f"bankML console on http://{a.host}:{a.port} — bankml serve at {SERVE}")
     ThreadingHTTPServer((a.host, a.port), H).serve_forever()
 
