@@ -230,6 +230,10 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
   The file is checked when it is read (the model's sha256 and a sha256 trailer): a file from another model or a
   damaged one is refused and the slot emptied (never half-filled), so the next answer simply recomputes. Filenames
   are plain names inside the directory; a path is refused.
+- **Conversations that take turns.** The native engine has one slot and serves requests one at a time, as
+  llama-server `-np 1`. Like llama-server, it keeps the states of other conversations in RAM (`BANKML_CACHE_RAM`, MiB;
+  0 off; unset, up to 8 GiB but at most a quarter of the free memory), so a conversation that comes back after
+  another does not recompute its whole history.
 - **Logprobs.** `"logprobs": true, "top_logprobs": 5` on `/v1/chat/completions` returns each token's log-probability
   and the five most likely alternatives, the same floats llama-server reports. Non-streamed answers only, for now.
 

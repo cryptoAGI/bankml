@@ -529,6 +529,7 @@ fn swiglu_body(gate: &[f32], up: &[f32], out: &mut [f32]) {
 
 /// One layer's K/V cache, f16, one row of `n_head_kv · head_dim` per position (llama.cpp's `cache_k_l*`/`cache_v_l*`
 /// without the transposed-V layout, which flash attention does not use).
+#[derive(Clone)]
 pub struct KvCache {
     pub k: Vec<u16>,
     pub v: Vec<u16>,

@@ -20,6 +20,7 @@
 
 use crate::chat::{self, Message};
 use crate::forward::{KvCache, Weights};
+use crate::prompt_cache::PromptCache;
 use crate::sampler::{Params, Sampler};
 use crate::serve::{ident, FileIdent, Json};
 use crate::tokenizer::Tokenizer;
@@ -34,6 +35,24 @@ const SLOT_MAGIC: &[u8] = b"bankML slot v1\n";
 struct Slot {
     tokens: Vec<u32>,
     caches: Vec<KvCache>,
+    /// 0.3.8: llama-server's host prompt cache (`prompt_cache.rs`); `None` with `BANKML_CACHE_RAM=0`
+    saved: Option<PromptCache<Vec<KvCache>>>,
+}
+
+/// The prompt cache's byte limit: `BANKML_CACHE_RAM` in MiB as llama-server's `--cache-ram` (0 off, -1 no limit);
+/// unset, llama-server's 8192 MiB, but at most a quarter of the memory available when the model loads, so the cache
+/// cannot push a small machine into swap or past a service's memory ceiling.
+fn cache_ram_limit() -> Option<usize> {
+    const MIB: usize = 1 << 20;
+    match std::env::var("BANKML_CACHE_RAM").ok().and_then(|v| v.trim().parse::<i64>().ok()) {
+        Some(0) => None,
+        Some(n) if n < 0 => Some(0),
+        Some(n) => Some(n as usize * MIB),
+        None => {
+            let quarter = crate::sys::memory().map(|m| (m.available / 4) as usize).unwrap_or(usize::MAX);
+            Some((8192 * MIB).min(quarter).max(MIB))
+        }
+    }
 }
 
 pub struct Native {
@@ -100,7 +119,7 @@ impl Native {
         let defaults = Params::from_gguf(model)?;
         let eog = eog_from_gguf(model, &tok)?;
         let caches = w.caches();
-        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches }),
+        Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches, saved: cache_ram_limit().map(|b| PromptCache::new(b, n_ctx)) }),
                     gvocab: Default::default(), json_rules: Default::default(), dry_cache: Default::default() })
     }
 
@@ -209,7 +228,18 @@ impl Native {
         let t0 = Instant::now();
         let e0 = crate::sys::energy_uj();
         let mut ttft_ns = None;
-        // llama-server's prompt cache: the longest common prefix, less one when the whole prompt is cached
+        // llama-server's host prompt cache: when the slot serves this prompt poorly, keep the slot's state in RAM and
+        // take back a cached one that serves it better (another conversation's turn came in between)
+        let Slot { tokens, caches, saved } = &mut *slot;
+        if let Some(pc) = saved.as_mut().filter(|_| PromptCache::<Vec<KvCache>>::wants_update(tokens, prompt)) {
+            let bytes = caches.iter().map(|c| (c.k.len() + c.v.len()) * 2).sum();
+            pc.save(tokens, bytes, || caches.clone());
+            if let Some((t, c)) = pc.take_better(tokens, prompt) {
+                (*tokens, *caches) = (t, c);
+            }
+            pc.update();
+        }
+        // the slot's prefix: the longest common prefix, less one when the whole prompt is cached
         let mut n_past = slot.tokens.iter().zip(prompt).take_while(|(a, b)| a == b).count();
         if n_past == prompt.len() {
             n_past -= 1;
@@ -218,7 +248,7 @@ impl Native {
         for c in slot.caches.iter_mut() {
             c.truncate(n_past);
         }
-        let Slot { tokens, caches } = &mut *slot;
+        let Slot { tokens, caches, .. } = &mut *slot;
         let mut rn = self.w.prefill(caches, &prompt[n_past..], |_, _, _| {})?;
         tokens.extend_from_slice(&prompt[n_past..]);
         let prompt_ns = t0.elapsed().as_nanos() as u64;
@@ -393,7 +423,7 @@ impl Native {
         match r {
             Ok((tokens, caches, n)) => {
                 let len = tokens.len();
-                *slot = Slot { tokens, caches };
+                (slot.tokens, slot.caches) = (tokens, caches);
                 Ok((len, n))
             }
             Err(e) => {

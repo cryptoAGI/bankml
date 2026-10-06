@@ -36,6 +36,8 @@ grammar, `grammar_ns` and `resampled`.
 
 `complete` reproduces llama-server's slot reuse (`server-context.cpp`):
 
+- first, llama-server's host prompt cache (`prompt_cache.rs`, 0.3.8): when the slot serves the prompt poorly, its
+  state goes to RAM and a cached state that serves it better comes back;
 - the longest common prefix of the tokens already in the slot and the new prompt is kept;
 - when the whole prompt is cached, one token less is kept (llama-server evaluates at least one);
 - the KV cache is truncated there, and the rest is computed in micro-batches of 512 (`Weights::prefill`).
@@ -124,15 +126,14 @@ two models in memory. `cur` is held only briefly.
 - **Rust practice visible here.** No external crates (Cargo.toml has an empty `[dependencies]`); errors are
   `Result<_, String>` that carry a reason, or `(u16, String)` with the HTTP status; poisoned mutexes are recovered
   with `unwrap_or_else(|e| e.into_inner())`; the toolchain is pinned to 1.99.0 in `rust-toolchain.toml`.
-- **Next** (docs/TODO.md, 0.4.0): slot save and restore in `--native`; more than one slot with llama-server's
-  queueing, then continuous batching across slots (O8); behaviour at the context limit as llama-server's; Ollama's
-  ContextShift past `num_ctx` (O2).
+- **Next** (docs/TODO.md): more than one slot with continuous batching (O8); Ollama's ContextShift past `num_ctx` (O2).
 
 ## Limitations
 
-- One slot. Requests are served one at a time; the slot holds one conversation's prefix.
+- One slot, as llama-server `-np 1`. Requests are served one at a time; other conversations' states wait in the
+  host prompt cache (`testing/session_oracle.py`).
 - One resident model. A request for another model unloads the current one.
-- Not reproduced, so refused with a reason: typical-p, xtc, dry, dynamic temperature, top-n-σ.
+- Not reproduced, so refused with a reason: mirostat, a custom sampler order, top-k above 128.
 - A prompt that does not fit `num_ctx` after Ollama's message truncation is refused; Ollama would cut tokens out of
   its middle. Tokens past `num_ctx` during an answer are not shifted out (ContextShift); the answer runs within the
   served `--ctx` (docs/OLLAMA.md, "Still open").

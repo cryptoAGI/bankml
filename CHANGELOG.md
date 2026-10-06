@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased (0.3.8) — the serving contract: the context limit, slots, logprobs
+## Unreleased (0.3.8) — the serving contract: the context limit, slots, the prompt cache, logprobs
 
 **`bankml serve --native` now behaves as llama-server b11192 at the edges a client meets in production: a prompt
-that does not fit, a slot saved and restored, and the probabilities behind each token.** Each is checked against
+that does not fit, a slot saved and restored, conversations that take turns, and the probabilities behind each
+token.** Each is checked against
 llama-server's own answers, as everything before it.
 
 ### The context limit (`testing/context_oracle.py`, 8 / 8)
@@ -25,6 +26,16 @@ llama-server's own answers, as everything before it.
   answer from an empty slot, and the restore skips the prompt (`cache_n` > 0). `n_saved` counts as llama-server
   counts: the prompt and every generated token but the last.
 - Savante and the console pass `--slot-dir` to the native engine, so a warm start survives a restart.
+
+### One slot, and llama-server's host prompt cache (`testing/session_oracle.py`, 14 / 14)
+- The single-slot contract, stated and checked: requests are served one at a time, as llama-server `-np 1` (Savante's
+  flags). Four requests sent at once are all answered, none refused or mixed, each with the text it gets alone.
+- `bankML/prompt_cache.rs`: llama-server's `--cache-ram` cache (on by default there). When a request shares little
+  with the slot, the slot's tokens and KV rows go to RAM, and a cached state that keeps more of the prompt comes back.
+  Three conversations taking turns (A1 B1 C1 A2 …) now match llama-server turn by turn: text, counts and `cache_n`.
+  Before, each turn found only the system prompt in the slot, so prefill started elsewhere and the answers differed.
+- `BANKML_CACHE_RAM` (MiB, as `--cache-ram`: 0 off, -1 no limit); unset, 8192 MiB but at most a quarter of the memory
+  available at load.
 
 ### Logprobs on `/v1/chat/completions` (`testing/logprobs_oracle.py`, 9 / 9)
 - `logprobs: true` with `top_logprobs` (default 20) → `choices[0].logprobs.content`: per token its `id`, `token`,

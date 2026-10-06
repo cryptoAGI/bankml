@@ -72,6 +72,9 @@ out=testing/results/$v.txt
     # 0.3.8: slot save/restore on the native engine — answers after a restore identical to an empty slot's, across a restart
     echo "## slot_oracle_live"
     python3 -B testing/slot_oracle.py Bonsai-1.7B-Q1_0 || { echo "FAILED: slot_oracle_live"; exit 1; }
+    # 0.3.8: one slot, interleaved conversations through llama-server's host prompt cache; simultaneous requests queued
+    echo "## session_oracle_live"
+    python3 -B testing/session_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: session_oracle_live"; exit 1; }
     # 0.3.8: /v1 logprobs — ids, texts, bytes and every logprob the same float as llama-server's; stop words, UTF-8 splits
     echo "## logprobs_oracle_live"
     python3 -B testing/logprobs_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: logprobs_oracle_live"; exit 1; }

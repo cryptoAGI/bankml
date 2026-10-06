@@ -175,10 +175,11 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
 Each milestone ends with a gated release, and nothing counts until its oracle passes.
 
 ### 0.4.0 — native serve complete (everything Savante and mindX ask of llama-server)
-- [ ] Slot save and restore in `--native` (Savante's warm start); oracle: the tokens after a restore equal the
-  tokens without one.
-- [ ] More than one slot (`-np N`) with llama-server's queueing, or a stated single-slot contract; the conversation
-  oracle extended to interleaved sessions. (O2; then continuous batching across slots, O8.)
+- [x] **Slot save and restore in `--native`** (**0.3.8**): the answer after a restore equals an empty slot's, across a
+  restart; 19 / 19 (`slot_oracle_live`).
+- [x] **A stated single-slot contract** (**0.3.8**), as llama-server `-np 1`, with its host prompt cache
+  (`prompt_cache.rs`): interleaved conversations identical turn by turn, simultaneous requests queued; 14 / 14
+  (`session_oracle_live`). More than one slot waits for continuous batching (O8).
 - [x] The rest of llama-server's sampler chain, each with a seeded oracle: **repetition, presence and frequency
   penalties (`last_n`) — done (O2 first cut, `oracle_penalties`), retiring the refusal of the coach's
   `repeat_penalty: 1.3`**; **typical-p, DRY, XTC, top-n-σ and dynamic temperature — done (0.3.7, `oracle_samplers`,

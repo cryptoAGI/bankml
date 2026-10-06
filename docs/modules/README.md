@@ -36,6 +36,7 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [sys.md](sys.md) | `sys.rs` | machine facts and the process's usage (`bankml usage`, `/bankml/usage`): CPU, memory, GPU busy and memory, package power |
 | [metrics.md](metrics.md) | `metrics.rs` | bankML's own measurements of its answers: TTFT, pp and tg tokens/s, energy per token (`/bankml/metrics`) |
 | **The model** | | |
+| [prompt_cache.md](prompt_cache.md) | `prompt_cache.rs` | llama-server's host prompt cache: interleaved conversations each find their prefix again (0.3.8) |
 | [forward.md](forward.md) | `forward.rs` | the Qwen3 and Llama graphs, the KV cache, ggml's three attention kernels |
 | [tokenizer.md](tokenizer.md) | `tokenizer.rs`, `unicode_letters.rs` | llama.cpp's tokenizer and pre-tokenizers |
 | [chat.md](chat.md) | `chat.rs` | the chat templates, byte-identical, chosen by the template's sha |

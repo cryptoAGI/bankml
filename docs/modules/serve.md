@@ -128,7 +128,8 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
 - `capi_chat_oracle`: `bankml_chat` equals `serve --native` turn by turn, receipt hashes included.
 - 0.3.8: `context_oracle_live` (8 / 8 against llama-server at `-c 256`), `slot_oracle_live` (19 / 19: answers after a
   restore equal an empty slot's, across a restart; llama-server's refusals), `logprobs_oracle_live` (9 / 9, every
-  logprob the same float); the unit test `logprob_texts_as_llama_server_writes_them`.
+  logprob the same float), `session_oracle_live` (14 / 14: interleaved conversations through one slot and the host
+  prompt cache, turn by turn; simultaneous requests queued); the unit test `logprob_texts_as_llama_server_writes_them`.
 
 ## Advantages and efficiency
 
@@ -147,7 +148,7 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
   prompt's whole prefill with one sequential read checked by sha256; logprobs cost one partial sort of the vocabulary
   per token, and nothing when not asked for.
 - **Next** (docs/TODO.md): an independent review of `serve` (loopback rules, limits, receipts) before 1.0; more than
-  one slot in `--native`, or a stated single-slot contract (0.4.0); streamed logprobs.
+  one slot with continuous batching in `--native` (O8); streamed logprobs.
 
 ## Limitations
 

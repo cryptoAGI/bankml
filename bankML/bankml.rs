@@ -46,6 +46,7 @@ pub mod gpu;
 pub mod native;
 pub mod ollama;
 pub mod par;
+pub mod prompt_cache;
 pub mod serve;
 pub mod q1_0;
 pub mod q2_0;
