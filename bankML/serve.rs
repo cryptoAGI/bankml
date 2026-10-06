@@ -576,6 +576,7 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
     let eng = &l.native;
     let nc = match NativeChat::parse_ctx(eng, &req, &String::from_utf8_lossy(body), num_ctx) {
         Ok(nc) => nc,
+        Err(e) if e.starts_with('{') => return respond(c, 400, "application/json", e.as_bytes()),
         Err(e) => return respond(c, 400, "text/plain", e.as_bytes()),
     };
     let mut t = Tally::new(body);
@@ -647,6 +648,11 @@ impl NativeChat {
             crate::grammar::Rules::parse(g, &|b: &[u8]| eng.tok.encode(&String::from_utf8_lossy(b), true))?;
         }
         let prompt = req.get("messages").ok_or("no messages".to_string()).and_then(|m| eng.prompt_fit(m, num_ctx))?;
+        // 0.3.8: a prompt that does not fit is refused before any work, as llama-server refuses it (no context shift):
+        // its error object, status 400 (the caller sends an `Err` that starts with `{` as JSON)
+        if prompt.len() >= eng.n_ctx {
+            return Err(exceed_context_json(prompt.len(), eng.n_ctx));
+        }
         let params = eng.params(req)?;
         // O2: what the sampler refuses (a negative repeat_last_n, a repeat penalty of 0 or below) is a 400 here, with
         // llama-server's message, not a failed run (the live penalty oracle found it answered 500)
@@ -692,6 +698,14 @@ pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t:
     format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
             crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(model_id), d.completion_tokens, d.prompt_tokens,
             d.completion_tokens + d.prompt_tokens, timings_json(d), t.receipt(engine, v))
+}
+
+/// llama-server b11192's refusal of a request longer than the context (`ERROR_TYPE_EXCEED_CONTEXT_SIZE`, context shift
+/// off): `{"error": {"code": 400, "message", "type": "exceed_context_size_error", "n_prompt_tokens", "n_ctx"}}`.
+pub fn exceed_context_json(n_prompt: usize, n_ctx: usize) -> String {
+    let msg = format!("request ({n_prompt} tokens) exceeds the available context size ({n_ctx} tokens), try increasing it");
+    format!("{{\"error\": {{\"code\": 400, \"message\": {}, \"type\": \"exceed_context_size_error\", \"n_prompt_tokens\": {n_prompt}, \"n_ctx\": {n_ctx}}}}}",
+            crate::gguf::jstr(&msg))
 }
 
 /// llama-server's `timings` object for an answer: the prompt's uncached part and the generation, counts, milliseconds
