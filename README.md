@@ -16,9 +16,28 @@
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
   <img src="https://img.shields.io/badge/status-0.3.6%20%C2%B7%20verified%20native%20engine%3A%20JSON%20schemas%2C%20penalties%2C%20Ollama%27s%20API%2C%20mindX%27s%20default-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
+  <a href="https://deltaverse.pythai.net/bankml"><img src="https://img.shields.io/badge/read-why%20bankML-22D3EE?style=flat-square" alt="why bankML, on the web"></a>
+</p>
+
+<p align="center">
+  <a href="https://deltaverse.pythai.net/bankml"><b>Why bankML</b></a> (the short version, on the web) &middot;
+  <a href="docs/thesis.md"><b>the thesis</b></a> &middot; <a href="docs/usage.md"><b>usage</b></a> &middot;
+  <a href="CHANGELOG.md"><b>changelog</b></a>
 </p>
 
 ---
+
+## Where it stands (2026-10-06)
+
+**v0.3.6 is the latest release.** Three more are on their way, each passing its oracles as it is built; each ships
+once its full release gate passes ([CHANGELOG.md](CHANGELOG.md), *Unreleased*):
+
+| release | state | what it brings |
+|---|---|---|
+| **0.3.7** | in its release gate | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
+| **0.3.8** | built | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
+| **0.3.9** | in progress | a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
+| **0.4.0** | next milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)) |
 
 ## Why
 
@@ -30,6 +49,9 @@ bankml found why and fixed it at the kernel: **llama.cpp b11192 has no vectorise
 at all** — it runs scalar C with 64 integer multiplies per block. bankml's kernel computes the **same bits**, verified
 against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.4–10.0× faster** per matrix
 (the 0.2.2 gate record; every gate since 0.0.1 has measured 9.4–10.8×).
+
+The argument in full — exactness first, then speed, and why the discipline finds speed rather than costing it — is
+**[docs/thesis.md](docs/thesis.md)**.
 
 ## Install and use
 
@@ -96,8 +118,10 @@ llama.cpp b11192:
   and whole Savante-style conversations through llama-server's own chat endpoint are **identical turn by turn**:
   the text, the token counts and the prompt-cache reuse (9 of 9 turns);
 - **faster where llama.cpp is weakest:** on the ternary model, 2.3–2.4 tokens/s against llama-server's 0.30, about
-  8×, with the same tokens. On the 1-bit model llama-server is still faster (2.8 against 1.9–2.0), so Savante's
-  default engine setting, `auto`, uses bankML for the ternary files and llama-server for the rest;
+  8×, with the same tokens. On the 1-bit model llama-server was still faster at 0.3.0 (2.8 against 1.9–2.0), so
+  Savante's default engine setting, `auto`, uses bankML for the ternary files and llama-server for the rest. After
+  0.3.4's attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48; the pinned, idle measurement
+  (`testing/decode_ab.py`) decides whether `auto` takes the 1-bit files too (0.4.0);
 - **the video card, when there is one:** a GPU found through Vulkan works inside the forward pass after it proves on
   the card that it gives the CPU's bits (`bankml gpu --verify`), and changes no token;
 - **verified, with receipts:** the same guard, sha256 pin and receipt as before, now naming the engine that did the
@@ -115,7 +139,7 @@ Start here, then go where your question is. The same documents read as a website
 
 | if you want to… | read |
 |---|---|
-| get the short, plain-language version: what bankML is good for, how Rust makes it fast, and where it is going | **[docs/why-bankml.md](docs/why-bankml.md)** |
+| get the short, plain-language version: what bankML is good for, how Rust makes it fast, and where it is going | **[docs/why-bankml.md](docs/why-bankml.md)**, also on the web at [deltaverse.pythai.net/bankml](https://deltaverse.pythai.net/bankml) |
 | install and start everything with one command | **`./install.sh`** ([usage.md §1](docs/usage.md#1-install)) |
 | install, run and use bankml and Savante (both modes, models, `.history`, receipts, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
 | install for production or a server: every `install.sh` option, every flag and environment variable, tuning, a systemd unit, security | **[docs/install.md](docs/install.md)** |
@@ -197,6 +221,8 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | models | import without friction: Bonsai-8B on first run; a pinned open-source catalogue, any Hugging Face GGUF, Ollama; open-source licences only; carrier switch with rollback | **0.1.5**, hardened 0.1.6 |
 | memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](docs/embedding.md)) |
 | audits | two full audits, every finding fixed with a test; RFC 6962 commitments; a hardened gateway | **0.1.6, 0.1.7** |
+| code audit | every source file's comments made short and exact, the narrative moved to its [module page](docs/modules/README.md); four bugs fixed, two GPU findings recorded | **2026-10-06** (0.3.9, unreleased) |
+| KV and grammar | a q8_0 KV cache with llama.cpp's Hadamard rotation; the grammar mask through a trie | **0.3.9** (unreleased): 6 / 6 answers, 13× median mask |
 | iNFT | mint an agent from its THOT bundle (prepared, simulated, signed by the owner), load one from a token | **0.1.0** — full path tested on a local devnet; the contract is not on a public chain yet |
 | P5 | ARM / NEON, handheld | planned |
 
