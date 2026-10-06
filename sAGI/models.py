@@ -661,6 +661,15 @@ def usage() -> dict:
             "mem_total_gb": round(mem_total() / 1e9, 1), "mem_available_gb": round(avail / 1e9, 2), "source": "sAGI/models.py (/proc)"}
 
 
+def allow_origin() -> str | None:
+    """The one web page bankml serve lets in (`--allow-origin`): BANKML_ALLOW_ORIGIN, else what `./install.sh --space`
+    recorded; None (this computer only) when neither is set."""
+    o = os.environ.get("BANKML_ALLOW_ORIGIN")
+    if o is None:
+        o = _install_env(DATA).get("INSTALL_ALLOW_ORIGIN", "")
+    return o.strip() or None
+
+
 def native_for(model: Path, engine: str | None = None) -> bool:
     """Whether the carrier answers from bankML's own forward pass (`bankml serve --native`, 0.3.0) for this model:
     "native" always (bankml refuses a model its forward pass does not run), "llama.cpp" never, "auto" for the
@@ -734,6 +743,9 @@ def _start_carrier(model: Path, fork: Path, want_sha: str | None = None, threads
             cmd = ([str(BANKML), "serve", str(model), "--fork", str(fork), "--spawn", str(LLAMA), "--upstream", UPSTREAM, "--listen", LISTEN,
                     "--threads", n_threads, "--ctx", n_ctx] + (["--spec-ngram"] if resources().get("spec_ngram") else []) + ["--slot-dir", str(SLOTS)])
             env = None
+        if allow_origin():
+            # ./install.sh --space: bankML's Hugging Face page may talk to this serve from the browser (CORS for it alone)
+            cmd += ["--allow-origin", allow_origin()]
         proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, cwd=str(REPO), env=env)
     t0 = time.time()
     why = "timed out"  # ctx: per model — the saved RAM budget is re-planned for this model's weights and KV size

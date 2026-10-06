@@ -31,7 +31,8 @@ decode speed, the third, is measured on an idle machine next.
 - `bankml serve … --allow-origin ORIGIN` lets one named web page call the gateway from a browser: its CORS preflight
   is answered (with Chrome's private-network grant, as a public page reaching a loopback address requires) and its
   answers, streamed or not, carry `Access-Control-Allow-Origin`; any other origin gets none and a 403 preflight. The
-  loopback `Host` and JSON-POST rules are unchanged. It is what lets the bankML Space's page
+  loopback `Host` and JSON-POST rules are unchanged. `./install.sh start --space` turns it on for the Space (remembered
+  in `install.env`, applied to the carrier `sAGI/models.py` starts; `--no-space` turns it off). It is what lets the bankML Space's page
   ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml)) talk to a visitor's own bankML, free, on their own
   CPU — the way Savante's page reaches a local engine. Checked live: the preflight, plain and streamed answers with
   the receipt, and another origin refused.

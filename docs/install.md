@@ -135,6 +135,7 @@ alone brings the whole stack back. Use `./install.sh model start` to wait for th
 | `--no-start` | the default run ends after `model` (or `voice`): everything installed, Savante not started. `bankml serve` is still started by `model` |
 | `--view` | `start` also starts view mode on `0.0.0.0:7874`. It works with named steps too: `./install.sh start --view` |
 | `--voice` | the default run includes `voice`. With named steps, name it instead: `./install.sh voice` |
+| `--space` / `--no-space` | 0.3.9: let bankML's Hugging Face page ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml)) talk to your `bankml serve` from your browser — its *Your own bankML* mode: your CPU, your verified model, a receipt the page checks. Serve starts with `--allow-origin https://pythai-bankml.static.hf.space` (that one page, nothing else); the choice is remembered in `install.env` (`INSTALL_ALLOW_ORIGIN`; `BANKML_ALLOW_ORIGIN` overrides it). `./install.sh start --space` applies it at once (the running services stop first); `--no-space` forgets it. `./install.sh status` says which page is allowed |
 | `-h`, `--help` | prints the header of `install.sh` and exits |
 
 Any other argument stops the installer with exit code 2.

@@ -11,6 +11,10 @@
 #   --no-start     install everything, start nothing
 #   --view         also start view mode for the LAN (0.0.0.0:7874)
 #   --voice        also install Savante's Piper voice (step `voice`)
+#   --space        let bankML's Hugging Face page (huggingface.co/spaces/PYTHAI/bankml) talk to your bankml serve from
+#                  your browser ("Your own bankML": your CPU, your verified model, a receipt): serve starts with
+#                  --allow-origin for that one page; remembered; `./install.sh start --space` applies it now
+#   --no-space     forget it (serve answers this computer only, no web page)
 #   power [--remove]  opt-in, sudo: let your user read the CPU package energy counter (RAPL), so bankML can measure
 #                  watts and joules per token; it asks first (PLATYPUS, CVE-2020-8694), and --remove undoes it
 #   -h, --help     this text
@@ -72,7 +76,9 @@ else CANON="$HOME/cryptoAGI/savante"; fi
 LOGS="$DATA/logs"
 
 # ── options ──────────────────────────────────────────────────────────────────────────────────────────────────
-SKIP_TESTS=0 NO_START=0 WITH_VIEW=0 WITH_VOICE=0 POWER_REMOVE=0
+SKIP_TESTS=0 NO_START=0 WITH_VIEW=0 WITH_VOICE=0 POWER_REMOVE=0 SPACE_CHOICE=""
+# the one web page --space lets reach bankml serve: bankML's static Hugging Face Space
+SPACE_ORIGIN="https://pythai-bankml.static.hf.space"
 STEPS=()
 for a in "$@"; do
   case "$a" in
@@ -81,7 +87,9 @@ for a in "$@"; do
     --view)       WITH_VIEW=1;;
     --voice)      WITH_VOICE=1;;
     --remove)     POWER_REMOVE=1;;
-    -h|--help)    sed -n '3,19p' "$HERE/install.sh" | sed 's/^# \{0,1\}//'; exit 0;;
+    --space)      SPACE_CHOICE=on;;
+    --no-space)   SPACE_CHOICE=off;;
+    -h|--help)    sed -n '3,21p' "$HERE/install.sh" | sed 's/^# \{0,1\}//'; exit 0;;
     check|build|engine|python|canon|model|voice|start|stop|status|power) STEPS+=("$a");;
     *) bm_die "unknown argument: $a (see ./install.sh --help)" 2;;
   esac
@@ -103,6 +111,13 @@ save_env() {  # save_env KEY VALUE: remember a choice in $ENV_FILE
 }
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+# --space / --no-space: remembered for sAGI/models.py, which starts serve; given with `start`, the running services
+# stop first, so the carrier comes back with (or without) --allow-origin
+if [ -n "$SPACE_CHOICE" ]; then
+  if [ "$SPACE_CHOICE" = on ]; then INSTALL_ALLOW_ORIGIN="$SPACE_ORIGIN"; else INSTALL_ALLOW_ORIGIN=""; fi
+  save_env INSTALL_ALLOW_ORIGIN "$INSTALL_ALLOW_ORIGIN"
+  if printf '%s\n' "${STEPS[@]}" | grep -qx start && ! printf '%s\n' "${STEPS[@]}" | grep -qx stop; then STEPS=(stop "${STEPS[@]}"); fi
+fi
 sha256_of() { if have sha256sum; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 fetch() {  # fetch URL FILE: resumable download
   local bar=--silent; [ -t 2 ] && bar=--progress-bar
@@ -281,6 +296,9 @@ step_start() {
   bm_sub "talk:   $(bm_link http://127.0.0.1:7873)   (this computer only)"
   [ "$WITH_VIEW" = 1 ] && bm_sub "watch:  http://<this computer's LAN address>:7874"
   bm_sub "check:  curl -s 127.0.0.1:18093/bankml"
+  if [ -n "${INSTALL_ALLOW_ORIGIN:-}" ]; then
+    bm_sub "web:    huggingface.co/spaces/PYTHAI/bankml → \"Your own bankML\" reaches this bankml serve (./install.sh start --no-space to stop it)"
+  fi
   bm_sub "docs:   $(bm_link https://cryptoagi.github.io/bankml/)"
 }
 
@@ -310,6 +328,7 @@ print("   verified:", s.get("verified"), "·", s.get("model", "?").rsplit("/", 1
 PY
   fi
   [ -x "$BIN" ] && bm_info "$("$BIN" version)"
+  bm_info "web page allowed (--space): ${INSTALL_ALLOW_ORIGIN:-none — this computer only}"
   bm_info "engine: ${LLAMA_SERVER:-not installed} · python: $PY"
 }
 
