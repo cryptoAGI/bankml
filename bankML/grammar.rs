@@ -887,6 +887,64 @@ pub struct Vocab {
     pieces: Vec<Vec<u8>>,
     decoded: Vec<(Vec<u32>, Partial)>,
     eog: Vec<bool>,
+    /// 0.3.9: the candidates' code points as a trie, built on the first whole-vocabulary mask
+    trie: std::sync::OnceLock<Trie>,
+}
+
+/// 0.3.9: the vocabulary's grammar candidates (not end-of-generation, a piece that does not start with NUL) in a trie
+/// over their decoded code points, so a mask walks each stack over a shared prefix once instead of once per token.
+/// Tokens are sorted by their code points, so each node's subtree is one range of `order` and the tokens that end at
+/// the node come first in it.
+struct Trie {
+    nodes: Vec<TNode>,
+    /// each node's children, sorted by code point: (code point, child)
+    edges: Vec<(u32, u32)>,
+    order: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TNode {
+    edges: (u32, u32),
+    ends: (u32, u32),
+    sub: (u32, u32),
+}
+
+impl Trie {
+    fn new(v: &Vocab) -> Trie {
+        let key = |id: u32| -> &[u32] {
+            let c = &v.decoded[id as usize].0;
+            &c[..c.iter().position(|&x| x == 0).unwrap_or(c.len())]
+        };
+        let mut order: Vec<u32> = (0..v.len() as u32).filter(|&id| !v.is_eog(id) && v.piece(id).first().is_some_and(|&b| b != 0)).collect();
+        order.sort_by(|&a, &b| key(a).cmp(key(b)));
+        let mut t = Trie { nodes: Vec::new(), edges: Vec::new(), order };
+        t.node(&key, 0, t.order.len(), 0);
+        t
+    }
+
+    fn node<'v>(&mut self, key: &dyn Fn(u32) -> &'v [u32], lo: usize, hi: usize, depth: usize) -> u32 {
+        let me = self.nodes.len();
+        self.nodes.push(TNode::default());
+        let mut i = lo;
+        while i < hi && key(self.order[i]).len() == depth {
+            i += 1;
+        }
+        let ends = (lo as u32, i as u32);
+        let mut kids = Vec::new();
+        while i < hi {
+            let cp = key(self.order[i])[depth];
+            let mut j = i;
+            while j < hi && key(self.order[j])[depth] == cp {
+                j += 1;
+            }
+            kids.push((cp, self.node(key, i, j, depth + 1)));
+            i = j;
+        }
+        let e0 = self.edges.len() as u32;
+        self.edges.extend(kids);
+        self.nodes[me] = TNode { edges: (e0, self.edges.len() as u32), ends, sub: (lo as u32, hi as u32) };
+        me as u32
+    }
 }
 
 impl Vocab {
@@ -903,7 +961,7 @@ impl Vocab {
                 *e = true;
             }
         }
-        Vocab { pieces, decoded, eog }
+        Vocab { pieces, decoded, eog, trie: Default::default() }
     }
     pub fn piece(&self, id: u32) -> &[u8] {
         self.pieces.get(id as usize).map(Vec::as_slice).unwrap_or(&[])
@@ -922,6 +980,9 @@ impl Vocab {
 // ---------------------------------------------------------------- the pushdown automaton ----------
 
 type Stack = Vec<u32>;
+
+/// From this many candidates a mask walks the vocabulary's trie rather than each candidate.
+const TRIE_MIN: usize = 1024;
 
 /// A grammar's state: the rules, the set of stacks, and a UTF-8 sequence a token may have left open.
 pub struct Grammar {
@@ -1141,6 +1202,94 @@ impl Grammar {
     /// `llama_grammar_apply_impl`: every candidate the grammar rejects gets a logit of −∞. An end-of-generation token
     /// passes only when a stack is empty (the grammar is complete); an empty piece never does.
     pub fn apply(&self, v: &Vocab, cands: &mut [Cand]) {
+        // 0.3.9: a long candidate list with no UTF-8 left open walks the trie; the same mask (oracle_grammar_masks)
+        if self.partial.n_remain == 0 && cands.len() >= TRIE_MIN {
+            self.apply_trie(v, cands)
+        } else {
+            self.apply_each(v, cands)
+        }
+    }
+
+    /// `apply` through the vocabulary's trie (no UTF-8 left open by the last token).
+    fn apply_trie(&self, v: &Vocab, cands: &mut [Cand]) {
+        debug_assert_eq!(self.partial.n_remain, 0);
+        let allow_eog = self.stacks.iter().any(Vec::is_empty);
+        let t = v.trie.get_or_init(|| Trie::new(v));
+        let mut ok = vec![false; v.len()];
+        let mut after = Default::default();
+        for s in &self.stacks {
+            self.walk(t, v, s, 0, &mut ok, &mut after);
+        }
+        for c in cands.iter_mut() {
+            let pass = if v.is_eog(c.id) { allow_eog } else { ok.get(c.id as usize).copied().unwrap_or(false) };
+            if !pass {
+                c.logit = f32::NEG_INFINITY;
+            }
+        }
+    }
+
+    /// The tokens under trie node `node` that `stack` accepts, marked in `ok` — `reject_for_stack` over a whole
+    /// subtree at once: a token ending here is judged by its open UTF-8, a deeper one by the next code point.
+    /// `after` memoizes, per stack, the stacks that follow its terminal (`advance` of the rest): they depend on the
+    /// stack alone, not on the node, so each is computed once per mask rather than once per node. Keyed by the
+    /// stack's address and length: every stack walked lives in `self.stacks` or in an `Rc` the memo keeps until the
+    /// mask is done, so an address is never reused for another stack meanwhile.
+    fn walk(&self, t: &Trie, v: &Vocab, stack: &[u32], node: u32, ok: &mut [bool], after: &mut std::collections::HashMap<(usize, usize), std::rc::Rc<Vec<Stack>>>) {
+        let n = t.nodes[node as usize];
+        let ends = &t.order[n.ends.0 as usize..n.ends.1 as usize];
+        let partial = |id: u32| v.decoded[id as usize].1;
+        let Some(&sp) = stack.last() else {
+            for &id in ends {
+                if partial(id).n_remain == 0 {
+                    ok[id as usize] = true;
+                }
+            }
+            return;
+        };
+        if matches!(self.e(sp).t, T::Token | T::TokenNot) {
+            for &id in ends {
+                if partial(id).n_remain == 0 {
+                    ok[id as usize] = true;
+                }
+            }
+            for &id in &t.order[n.ends.1 as usize..n.sub.1 as usize] {
+                if self.match_token(sp, id) {
+                    ok[id as usize] = true;
+                }
+            }
+            return;
+        }
+        for &id in ends {
+            let pu = partial(id);
+            if pu.n_remain == 0 || self.match_partial_char(sp, pu) {
+                ok[id as usize] = true;
+            }
+        }
+        let mut next: Option<std::rc::Rc<Vec<Stack>>> = None;
+        for &(cp, child) in &t.edges[n.edges.0 as usize..n.edges.1 as usize] {
+            if !self.match_char(sp, cp).0 {
+                continue;
+            }
+            let stacks = next.get_or_insert_with(|| {
+                after.entry((stack.as_ptr() as usize, stack.len())).or_insert_with(|| {
+                    let end = self.match_char(sp, 0).1;
+                    let mut st: Stack = stack[..stack.len() - 1].to_vec();
+                    if !is_eos(self.e(end)) {
+                        st.push(end);
+                    }
+                    let mut out = Vec::new();
+                    self.advance(st, &mut out);
+                    std::rc::Rc::new(out)
+                }).clone()
+            }).clone();
+            for s in stacks.iter() {
+                self.walk(t, v, s, child, ok, after);
+            }
+        }
+    }
+
+    /// `apply`, one candidate at a time, as llama.cpp writes it (short lists, and UTF-8 left open by the last token).
+    fn apply_each(&self, v: &Vocab, cands: &mut [Cand]) {
         let allow_eog = self.stacks.iter().any(Vec::is_empty);
         let fresh: Vec<(usize, (Vec<u32>, Partial))> = if self.partial.n_remain > 0 {
             cands.iter().enumerate().filter(|(_, c)| !v.is_eog(c.id) && v.piece(c.id).first().is_some_and(|&b| b != 0))
@@ -1322,10 +1471,18 @@ mod tests {
         (Vocab::new(pieces, &eog), names)
     }
 
+    /// The allowed tokens; with no UTF-8 open, the trie's mask must equal the one-by-one mask (0.3.9).
     fn allowed(g: &Grammar, v: &Vocab) -> Vec<u32> {
-        let mut c: Vec<Cand> = (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect();
-        g.apply(v, &mut c);
-        c.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id).collect()
+        let all = || (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect::<Vec<Cand>>();
+        let pass = |c: &[Cand]| c.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id).collect::<Vec<u32>>();
+        let mut c = all();
+        g.apply_each(v, &mut c);
+        if g.partial.n_remain == 0 {
+            let mut t = all();
+            g.apply_trie(v, &mut t);
+            assert_eq!(pass(&t), pass(&c), "the trie's mask");
+        }
+        pass(&c)
     }
 
     fn id(names: &[String], s: &str) -> u32 {
@@ -1510,7 +1667,7 @@ mod tests {
         let cases = std::fs::read_to_string(dir.join("oracle-grammar/masks-Bonsai-8B-Q1_0.jsonl")).unwrap();
         let ids = |x: &Json| match x { Json::Arr(a) => a.iter().map(|n| match n { Json::Num(n) => *n as u64, _ => panic!() }).collect::<Vec<u64>>(), _ => panic!() };
         let (mut runs, mut masks, mut rejections, mut fails) = (0, 0, 0, 0);
-        let mut times = Vec::new();
+        let (mut times, mut trie_times) = (Vec::new(), Vec::new());
         let mut rules: std::collections::HashMap<String, Arc<Rules>> = Default::default();
         for line in cases.lines() {
             let c = Json::parse(line).unwrap();
@@ -1528,11 +1685,23 @@ mod tests {
             let want_rej = match c.get("rejected_at") { Some(Json::Num(n)) => Some(*n as usize), _ => None };
             let (mut got_rej, mut ok) = (None, true);
             for step in 0..=toks.len() {
+                // 0.3.9: both paths, each against llama.cpp's mask: one candidate at a time, and the trie's walk
+                let all = || (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect::<Vec<Cand>>();
                 let t0 = std::time::Instant::now();
-                let mut cs: Vec<Cand> = (0..v.len() as u32).map(|id| Cand { id, logit: 0.0, p: 0.0 }).collect();
-                g.apply(&v, &mut cs);
+                let mut each = all();
+                g.apply_each(&v, &mut each);
                 times.push(t0.elapsed().as_secs_f64() * 1e3);
-                let (n, h) = mask_hash(cs.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id));
+                let t1 = std::time::Instant::now();
+                let mut cs = all();
+                g.apply(&v, &mut cs);
+                trie_times.push(t1.elapsed().as_secs_f64() * 1e3);
+                let mask = |c: &[Cand]| mask_hash(c.iter().filter(|c| c.logit != f32::NEG_INFINITY).map(|c| c.id));
+                if mask(&each) != mask(&cs) {
+                    ok = false;
+                    eprintln!("  {name} step {step}: the trie's mask differs from the one-by-one mask");
+                    break;
+                }
+                let (n, h) = mask(&cs);
                 masks += 1;
                 if want.get(step) != Some(&format!("{n} {h:016x}")) {
                     ok = false;
@@ -1558,10 +1727,14 @@ mod tests {
             rejections += got_rej.is_some() as usize;
             fails += !ok as usize;
         }
-        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        eprintln!("grammar oracle: {} of {runs} runs identical to llama.cpp b11192 ({masks} whole-vocabulary masks, {rejections} rejections); \
-                   one mask over {} tokens: median {:.1} ms, p90 {:.1} ms, max {:.1} ms", runs - fails, v.len(),
-                  times[times.len() / 2], times[times.len() * 9 / 10], times[times.len() - 1]);
+        let q = |t: &mut Vec<f64>| {
+            t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (t[t.len() / 2], t[t.len() * 9 / 10], t[t.len() - 1])
+        };
+        let (a, b) = (q(&mut times), q(&mut trie_times));
+        eprintln!("grammar oracle: {} of {runs} runs identical to llama.cpp b11192 ({masks} whole-vocabulary masks, {rejections} rejections, \
+                   each by both paths); one mask over {} tokens: one by one median {:.1} ms, p90 {:.1}, max {:.1}; \
+                   the trie median {:.2} ms, p90 {:.2}, max {:.2} (the first builds it)", runs - fails, v.len(), a.0, a.1, a.2, b.0, b.1, b.2);
         assert_eq!(fails, 0);
     }
 

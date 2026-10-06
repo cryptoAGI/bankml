@@ -49,6 +49,14 @@ pub fn logits_rows(&self, result_norms: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, St
 - `caches()` gives one empty `KvCache` per layer. A `KvCache` holds K and V as f16 (`set_rows` rounding), one row of
   `n_head_kv · head_dim` per position. `truncate(n)` keeps the first `n` positions, as llama.cpp's `seq_rm` does for
   its prompt cache.
+- 0.3.9: `caches_of(KvType::Q8_0)` keeps them as q8_0 blocks instead (`kq`/`vq`), as llama.cpp's `--cache-type-k/v
+  q8_0`. llama.cpp b11192 rotates around a quantized cache (`attn_rot_k`/`attn_rot_v`): K and Q by a Hadamard
+  transform over 128 values (the head), V over 64, the attention output back by the same 64-wide transform; ggml
+  computes it as a fast Walsh–Hadamard transform (`fwht`: scale by `1/sqrtf(n)`, then `u + v`, `u − v` butterflies).
+  K and V are rotated and quantized with ggml's AVX2 `quantize_row_q8_0` as they are stored. Attention over a q8_0
+  cache always takes ggml's reference kernel, as ggml does whenever K is not f16 (`attend_head_q8`: Q rotated and
+  quantized, scores by the AVX2 `vec_dot_q8_0_q8_0`, V dequantized into an f32 accumulator). 53 % of the f16
+  cache's bytes (34 bytes per 32 values against 64).
 - `prefill` computes a prompt in micro-batches of up to `N_UBATCH` (512) tokens, each through every layer together.
   It returns the last token's `result_norm` (`output_norm` of the last layer's output). `prefill_with(…,
   Outputs::All, …)` returns every token's, which is what the model oracle's graph computes.
@@ -167,7 +175,8 @@ Rows are compared by the sha256 of their f32 bytes, not within a tolerance. Figu
 - Refused tensors: biases, fused QKV, rope factors, experts, and Q/K norms on Llama. On Llama, any RoPE scaling
   other than `none`, an attention scale, or experts are refused. Llama 3.x is therefore refused (docs/TODO.md).
 - Partial RoPE, a value head of another width, and a head width that is not a multiple of 32 are refused.
-- The K/V cache is f16 only. The split-KV bits are correct only when `BANKML_LLAMA_THREADS` equals the matched
+- The K/V cache is f16 or q8_0 (both K and V the same type; llama.cpp also allows them to differ, and q4/q5 types).
+  A q8_0 cache has no tiled or split-KV kernel, as in ggml, so its long prefills are slower than f16's. The split-KV bits are correct only when `BANKML_LLAMA_THREADS` equals the matched
   llama.cpp's `-t`.
 - The GPU worker takes part only in 1-bit matrix–vector products; the ternary GPU kernel is next.
 

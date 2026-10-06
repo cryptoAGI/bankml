@@ -130,7 +130,12 @@ impl Native {
         let w = Weights::open(model)?;
         let defaults = Params::from_gguf(model)?;
         let eog = eog_from_gguf(model, &tok)?;
-        let caches = w.caches();
+        // 0.3.9: BANKML_CACHE_TYPE=q8_0 as llama.cpp's `--cache-type-k q8_0 --cache-type-v q8_0` (flash attention)
+        let kind = crate::forward::KvType::parse(std::env::var("BANKML_CACHE_TYPE").as_deref().unwrap_or("f16"))?;
+        if kind == crate::forward::KvType::Q8_0 && w.head_dim % crate::q1_0::QK8_0 != 0 {
+            return Err(format!("a q8_0 cache needs a head size that is a multiple of 32; this model's is {}", w.head_dim));
+        }
+        let caches = w.caches_of(kind);
         Ok(Native { w, tok, defaults, n_ctx, model: model.to_path_buf(), template, eog, slot: Mutex::new(Slot { tokens: Vec::new(), caches, saved: cache_ram_limit().map(|b| PromptCache::new(b, n_ctx)) }),
                     gvocab: Default::default(), json_rules: Default::default(), dry_cache: Default::default() })
     }
@@ -251,7 +256,7 @@ impl Native {
         // take back a cached one that serves it better (another conversation's turn came in between)
         let Slot { tokens, caches, saved } = &mut *slot;
         if let Some(pc) = saved.as_mut().filter(|_| PromptCache::<Vec<KvCache>>::wants_update(tokens, prompt)) {
-            let bytes = caches.iter().map(|c| (c.k.len() + c.v.len()) * 2).sum();
+            let bytes = caches.iter().map(KvCache::bytes).sum();
             pc.save(tokens, bytes, || caches.clone());
             if let Some((t, c)) = pc.take_better(tokens, prompt) {
                 (*tokens, *caches) = (t, c);
@@ -371,7 +376,13 @@ impl Native {
             b.extend_from_slice(&v.to_le_bytes());
         }
         for c in &slot.caches {
-            b.extend_from_slice(&(c.width as u64).to_le_bytes());
+            // 0.3.9: a q8_0 cache marks its width with the top bit and stores its blocks as they are
+            let q8 = c.kind == crate::forward::KvType::Q8_0;
+            b.extend_from_slice(&(c.width as u64 | (q8 as u64) << 63).to_le_bytes());
+            if q8 {
+                b.extend_from_slice(&c.kq);
+                b.extend_from_slice(&c.vq);
+            }
             for x in c.k.iter().chain(&c.v) {
                 b.extend_from_slice(&x.to_le_bytes());
             }
@@ -425,9 +436,23 @@ impl Native {
             }
             let mut caches = Vec::with_capacity(n_layers);
             for c in slot.caches.iter() {
-                let width = u64_at(&mut at)? as usize;
+                let w = u64_at(&mut at)?;
+                let (width, q8) = ((w & !(1 << 63)) as usize, w >> 63 == 1);
+                if q8 != (c.kind == crate::forward::KvType::Q8_0) {
+                    return Err(format!("the slot was saved with a {} cache, this engine keeps {}",
+                                       if q8 { "q8_0" } else { "f16" }, c.kind.name()));
+                }
                 if width != c.width {
                     return Err("the slot's cache shape does not match this model".into());
+                }
+                if q8 {
+                    let mut k = KvCache { head_dim: c.head_dim, ..KvCache::of(c.kind, width) };
+                    let nb = n_tok * k.row_bytes();
+                    k.kq = body.get(at..at + nb).ok_or("truncated")?.to_vec();
+                    k.vq = body.get(at + nb..at + 2 * nb).ok_or("truncated")?.to_vec();
+                    at += 2 * nb;
+                    caches.push(k);
+                    continue;
                 }
                 let n = n_tok * width;
                 let mut read = |n: usize| -> Result<Vec<u16>, String> {
@@ -436,7 +461,7 @@ impl Native {
                     Ok(raw.as_chunks::<2>().0.iter().map(|p| u16::from_le_bytes(*p)).collect())
                 };
                 let (k, v) = (read(n)?, read(n)?);
-                caches.push(KvCache { k, v, width });
+                caches.push(KvCache { k, v, ..KvCache::new(width) });
             }
             let raw = body.get(at..at + 4 * n_tok).ok_or("truncated")?;
             let tokens: Vec<u32> = raw.as_chunks::<4>().0.iter().map(|p| u32::from_le_bytes(*p)).collect();

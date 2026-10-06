@@ -198,17 +198,19 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   `format: {schema}`, `response_format.json_schema`, `json_object` + `schema`, top-level `json_schema`, `bankml_chat`.
 - [x] **JSON schemas, the answers** (**0.3.5**): llama-server's answers token-identical on both 8B models and the
   three O4 models (`oracle_json_schema*`, live in the gate). Next: tool calls.
-- [ ] A faster whole-vocabulary mask: a byte trie over the token pieces, so each grammar stack walks shared prefixes
-  once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
-  over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.
+- [x] **A faster whole-vocabulary mask** (**0.3.9**): a trie over the vocabulary's code points, each grammar stack
+  walking a shared prefix once; median 2.94 ms against 38.8 ms per mask (13×), p90 49 against 81. The oracle is
+  unchanged and now checks both paths: 196 / 196 runs, 1,645 masks identical to llama.cpp.
 - [x] **Logprobs on `/v1/chat/completions`** (**0.3.8**): bit-exact, llama-server's entry rules (UTF-8 splits, stop
   words), 14 / 14 with five streamed (`logprobs_oracle_live`).
 - [x] **Logprobs in streamed answers** (**0.3.8**): each chunk's delta and entry as llama-server's; 14 / 14 with the
   non-streamed cases. `/completion` (and `n_probs`) stays unserved natively: no client of bankML uses it.
 - [x] **Behaviour at the context limit exactly as llama-server's** (**0.3.8**): stop at the full context, past it
   its 400 body; 8 / 8 (`context_oracle_live`).
-- [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated
-  4-bit KV (O8: what makes the boardroom's `num_ctx 8192` affordable).
+- [x] **A `q8_0` KV cache** (**0.3.9**), llama.cpp's `--cache-type-k/v q8_0` with its Hadamard rotation (b11192
+  rotates K/Q and V around any quantized cache): 6 / 6 answers token-identical to llama-server so configured
+  (`kv_oracle_live`), the kernels bit-exact against the shipped ggml (`oracle_ggml_b11192_q8_0_kv_kernels`). Next: a
+  4-bit KV (`q4_0`, the same rotation; O8: what makes the boardroom's `num_ctx 8192` affordable).
 - [ ] **1-bit decode at least at llama-server's speed**: 1.9–2.0 tokens/s against 2.8 before 0.3.4; after 0.3.4's
   attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48 (PERFORMANCE.md) — re-measure pinned and idle. Cache the norm
   weights, cut per-token allocations, share one quantized activation across Q/K/V and gate/up, and compute logits

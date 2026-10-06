@@ -469,6 +469,8 @@ sets a variable for the processes it starts, that is noted.
 | `BANKML_NO_SHANI` | `bankML/sha256.rs` | unset | set to any value to hash with the portable SHA-256 instead of the CPU's SHA extensions |
 | `BANKML_FORKS` | `bankML/main.rs` | `~/.local/share/bankml/forks` | the registry directory for `serve --registry` without a `DIR`, and for `bankml create` without `--registry` |
 | `HOME` | `bankML/main.rs` | — | the base of the default forks directory |
+| `BANKML_CACHE_TYPE` | `bankML/native.rs` (0.3.9) | `f16` | `q8_0` keeps the native engine's KV cache as llama.cpp's `--cache-type-k q8_0 --cache-type-v q8_0` does, Hadamard rotation included: 53 % of the f16 cache's memory, the same tokens as llama-server so configured |
+| `BANKML_CACHE_RAM` | `bankML/native.rs` (0.3.8) | 8192 MiB, at most a quarter of the memory available at load | the host prompt cache's limit in MiB, as llama-server's `--cache-ram` (0 off, -1 no limit) |
 
 ### GPU (Rust)
 

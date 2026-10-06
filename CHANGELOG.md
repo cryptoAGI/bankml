@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased (0.3.9) — a q8_0 conversation memory, a faster grammar mask
+
+**Two of 0.3.9's three pieces: the KV cache in half the memory, as llama.cpp keeps it with `--cache-type-k/v q8_0`,
+and the JSON/grammar mask 13× faster at the median.** Each is checked against llama.cpp b11192 as before; 1-bit
+decode speed, the third, is measured on an idle machine next.
+
+### The q8_0 KV cache (`BANKML_CACHE_TYPE=q8_0`; `testing/kv_oracle.py`, 6 / 6)
+- K and V stored as q8_0 blocks (`KvType::Q8_0`), 53 % of the f16 cache's bytes. Attention over it is ggml's
+  reference kernel for a non-f16 K (`attend_head_q8`): Q quantized with the AVX2 `quantize_row_q8_0`, scores by
+  `vec_dot_q8_0_q8_0`, V dequantized into an f32 accumulator (`vec_mad_f32`, `vec_scale_f32`).
+- **llama.cpp b11192 rotates around a quantized cache**, which the first replay found (2 / 6, the answers drifting
+  after dozens of tokens): Q and K through a Hadamard transform over the head (128), V over 64, and the attention
+  output back (`attn_rot_k`/`attn_rot_v`, `llama_mul_mat_hadamard`, which ggml's CPU computes as a fast
+  Walsh–Hadamard transform). bankML's `fwht` does the same arithmetic: scale by `1/sqrtf(n)`, then `u + v`, `u − v`.
+- `oracle_ggml_b11192_q8_0_kv_kernels`: against the shipped haswell library (dlopen), 4,000 rows quantized
+  byte-exact and 4,000 dot products bit-exact, saturating `maddubs` cases included.
+- `kv_oracle_live`: llama-server b11192 with `--cache-type-k q8_0 --cache-type-v q8_0` and bankML with
+  `BANKML_CACHE_TYPE=q8_0` give the same answers, 6 of 6 (greedy, seeded, a 2,244-token prompt, a 320-token answer,
+  a two-turn conversation; text, counts and `cache_n`; 567 tokens).
+- A slot file records its cache type; one saved with the other type is refused with the reason.
+
+### The grammar mask, through a trie (`oracle_grammar_masks`, both paths)
+- A whole-vocabulary mask walks a trie of the vocabulary's code points, built once: each grammar stack meets a
+  shared prefix once, and the stacks after a terminal are computed once per stack and mask. Median **2.94 ms
+  against 38.8 ms** (13×), p90 49.3 against 80.6 ms, over the oracle's 1,645 masks. The oracle now computes every
+  mask both ways: **196 / 196 runs, 1,645 / 1,645 masks** identical to llama.cpp b11192 by each.
+
 ## Unreleased (0.3.8) — the serving contract: the context limit, slots, the prompt cache, logprobs
 
 **`bankml serve --native` now behaves as llama-server b11192 at the edges a client meets in production: a prompt

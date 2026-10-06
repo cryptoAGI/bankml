@@ -136,11 +136,16 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
   **24.2 ms** (p90 47.0, max 101.0). Grammar time per generated token, everything included: **3.90 ms** (Bonsai-8B
   Q1_0) and **3.95 ms** (ternary), about 1 % of a 1-bit step and 1.4 % of a ternary step. An answer written as valid
   JSON on its own spent 0.4 ms of grammar per token.
+- **The trie (0.3.9).** A whole-vocabulary mask with no UTF-8 left open walks a trie of the vocabulary's code
+  points (`Trie`, built once per vocabulary, tokens sorted so each subtree is one range): each grammar stack meets a
+  shared prefix once instead of once per token, and the stacks after a terminal are computed once per stack and mask.
+  Measured over the oracle's 1,645 masks (laptop, gate load): median **2.94 ms against 38.8 ms** one by one (13×),
+  p90 49.3 against 80.6, the worst 762 ms (the first, which builds the trie) against 1,085. Short candidate lists
+  (under 1,024) and a token that left UTF-8 open keep the one-by-one path (`apply_each`).
 - **Rust practice.** Zero crates; no `unsafe`. Parse errors say where (`expecting name at …`). Where llama.cpp
   would loop practically forever (`{m,n}` with n below m) or throw (an empty stack after accept), bankml returns an
   `Err`. The repetition limits of llama.cpp (2,000) are kept.
-- **Next** (docs/TODO.md 0.4.0): a byte trie over the token pieces, so each grammar stack walks shared prefixes once;
-  the oracle stays the same masks. Then tool calls through the template (O6).
+- **Next**: tool calls through the template (O6).
 
 ## Limitations
 
@@ -148,7 +153,7 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
   (llama-server would keep only the format's grammar).
 - A top-level `json_schema` that is `null` or not an object is refused (llama-server fails the request).
 - Ollama's `format` accepts only `"json"`, `""` or a schema object.
-- The mask is a straight port of `reject_candidates` (cost above).
+- With UTF-8 left open by the last token, the mask is still the straight port of `reject_candidates`.
 - Tool calls are not supported yet.
 
 ## See also

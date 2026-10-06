@@ -527,35 +527,204 @@ fn swiglu_body(gate: &[f32], up: &[f32], out: &mut [f32]) {
     }
 }
 
-/// One layer's K/V cache, f16, one row of `n_head_kv · head_dim` per position (llama.cpp's `cache_k_l*`/`cache_v_l*`
-/// without the transposed-V layout, which flash attention does not use).
+/// The type of the KV cache's cells: llama.cpp's `--cache-type-k/-v` (both the same here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KvType {
+    /// f16, llama.cpp's default
+    #[default]
+    F16,
+    /// 0.3.9: q8_0 (blocks of 32: an f16 scale and 32 signed bytes), about half the memory of f16
+    Q8_0,
+}
+
+impl KvType {
+    pub fn parse(s: &str) -> Result<KvType, String> {
+        match s {
+            "f16" => Ok(KvType::F16),
+            "q8_0" => Ok(KvType::Q8_0),
+            _ => Err(format!("cache type {s:?}: bankML keeps f16 or q8_0")),
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            KvType::F16 => "f16",
+            KvType::Q8_0 => "q8_0",
+        }
+    }
+}
+
+/// One layer's K/V cache, one row of `n_head_kv · head_dim` per position (llama.cpp's `cache_k_l*`/`cache_v_l*`
+/// without the transposed-V layout, which flash attention does not use): f16 in `k`/`v`, or q8_0 blocks in
+/// `kq`/`vq` (0.3.9).
 #[derive(Clone)]
 pub struct KvCache {
     pub k: Vec<u16>,
     pub v: Vec<u16>,
     pub width: usize,
+    pub kind: KvType,
+    /// one head's width: the K rotation's block (q8_0 only)
+    pub head_dim: usize,
+    pub kq: Vec<u8>,
+    pub vq: Vec<u8>,
 }
 
 impl KvCache {
     pub fn new(width: usize) -> Self {
-        KvCache { k: Vec::new(), v: Vec::new(), width }
+        Self::of(KvType::F16, width)
+    }
+    pub fn of(kind: KvType, width: usize) -> Self {
+        KvCache { k: Vec::new(), v: Vec::new(), width, kind, head_dim: 128, kq: Vec::new(), vq: Vec::new() }
+    }
+    /// A q8_0 row's bytes.
+    pub fn row_bytes(&self) -> usize {
+        self.width / q1_0::QK8_0 * q1_0::Q8_0_BYTES
     }
     pub fn len(&self) -> usize {
-        self.k.len() / self.width
+        match self.kind {
+            KvType::F16 => self.k.len() / self.width,
+            KvType::Q8_0 => self.kq.len() / self.row_bytes(),
+        }
     }
     pub fn is_empty(&self) -> bool {
-        self.k.is_empty()
+        self.len() == 0
+    }
+    /// The memory the cells hold, in bytes.
+    pub fn bytes(&self) -> usize {
+        (self.k.len() + self.v.len()) * 2 + self.kq.len() + self.vq.len()
     }
     /// Keep the first `n` positions (llama.cpp's `seq_rm` of the tail, as its prompt cache does).
     pub fn truncate(&mut self, n: usize) {
+        let rb = self.row_bytes();
         self.k.truncate(n * self.width);
         self.v.truncate(n * self.width);
+        self.kq.truncate(n * rb);
+        self.vq.truncate(n * rb);
     }
 
-    /// Store a position's K and V as the cache stores them (`set_rows` f32 → f16, round to nearest even).
+    /// Store a position's K and V as the cache stores them: `set_rows` f32 → f16 (round to nearest even), or f32 →
+    /// q8_0 with the CPU's `from_float` (ggml's AVX2 `quantize_row_q8_0`).
     pub fn push(&mut self, k: &[f32], v: &[f32]) {
-        self.k.extend(k.iter().map(|&x| f32_to_f16(x)));
-        self.v.extend(v.iter().map(|&x| f32_to_f16(x)));
+        match self.kind {
+            KvType::F16 => {
+                self.k.extend(k.iter().map(|&x| f32_to_f16(x)));
+                self.v.extend(v.iter().map(|&x| f32_to_f16(x)));
+            }
+            KvType::Q8_0 => {
+                // llama.cpp rotates K and V before they reach a quantized cache (the attention rotates Q to match)
+                let rb = self.row_bytes();
+                let (mut k, mut v) = (k.to_vec(), v.to_vec());
+                fwht(&mut k, rot_k_size(self.head_dim));
+                fwht(&mut v, ROT_V);
+                for (src, dst) in [(&k[..], &mut self.kq), (&v[..], &mut self.vq)] {
+                    let at = dst.len();
+                    dst.resize(at + rb, 0);
+                    q1_0::quantize_row_q8_0(src, &mut dst[at..]);
+                }
+            }
+        }
+    }
+}
+
+/// The Hadamard rotation llama.cpp b11192 applies around a quantized KV cache (`attn_rot_k`/`attn_rot_v`,
+/// `llama_mul_mat_hadamard`, computed by ggml's CPU as `ggml_compute_forward_fwht`): each `n`-wide block scaled by
+/// `1/sqrtf(n)`, then the butterflies `(u + v, u − v)` with the span doubling from 1 (Sylvester order; ggml's SIMD
+/// passes write `u − v` as `fma(v, −1, u)`, the same single rounding). The rotation is its own inverse.
+pub fn fwht(x: &mut [f32], n: usize) {
+    let scale = 1.0f32 / (n as f32).sqrt();
+    for row in x.chunks_exact_mut(n) {
+        for v in row.iter_mut() {
+            *v *= scale;
+        }
+        let mut len = 1;
+        while len < n {
+            for i in (0..n).step_by(2 * len) {
+                for j in i..i + len {
+                    let (u, v) = (row[j], row[j + len]);
+                    row[j] = u + v;
+                    row[j + len] = u - v;
+                }
+            }
+            len <<= 1;
+        }
+    }
+}
+
+/// llama.cpp's rotation sizes: K (and Q) by the largest power of two from 128 that divides the head size (`nrot`
+/// doubled from 64 while it divides), V by 64.
+pub fn rot_k_size(head_dim: usize) -> usize {
+    let mut n = 64;
+    while head_dim.is_multiple_of(n * 2) {
+        n *= 2;
+    }
+    n
+}
+pub const ROT_V: usize = 64;
+
+/// ggml's AVX2 `ggml_vec_dot_q8_0_q8_0`, float op for float op: per block the combined scale `dx · dy`; eight lanes,
+/// lane l the exact integer sum of elements 4l..4l+3 (`maddubs` of |x| and y signed by x, saturating to i16 per pair,
+/// then `madd`); `acc = fma(d, lane, acc)`; then `hsum_float_8`.
+pub fn vec_dot_q8_0_q8_0(n: usize, x: &[u8], y: &[u8]) -> f32 {
+    use q1_0::{Q8_0_BYTES, QK8_0};
+    let mut acc = [0.0f32; 8];
+    for ib in 0..n / QK8_0 {
+        let (xb, yb) = (&x[ib * Q8_0_BYTES..(ib + 1) * Q8_0_BYTES], &y[ib * Q8_0_BYTES..(ib + 1) * Q8_0_BYTES]);
+        let d = f16_to_f32(u16::from_le_bytes([xb[0], xb[1]])) * f16_to_f32(u16::from_le_bytes([yb[0], yb[1]]));
+        for (l, a) in acc.iter_mut().enumerate() {
+            let mut s = 0i32;
+            for p in 0..2 {
+                let mut pair = 0i32;
+                for e in [4 * l + 2 * p, 4 * l + 2 * p + 1] {
+                    let (xi, yi) = (xb[2 + e] as i8, yb[2 + e] as i8);
+                    let ax = xi.unsigned_abs() as i32; // _mm256_sign_epi8(x, x) read unsigned: |−128| = 128
+                    let sy = if xi < 0 { yi.wrapping_neg() } else if xi == 0 { 0 } else { yi } as i32; // _mm256_sign_epi8(y, x)
+                    pair += ax * sy;
+                }
+                s += pair.clamp(i16::MIN as i32, i16::MAX as i32); // maddubs saturates each pair to i16
+            }
+            *a = d.mul_add(s as f32, *a);
+        }
+    }
+    ((acc[0] + acc[4]) + (acc[2] + acc[6])) + ((acc[1] + acc[5]) + (acc[3] + acc[7]))
+}
+
+/// One query head against a causal run of q8_0 cached keys and values (`rb` bytes a row, the head's blocks at the
+/// start of each slice), as ggml's `flash_attn_ext_f16_one_chunk` computes it for a q8_0 cache: Q quantized to q8_0
+/// (`from_float`); each score `vec_dot_q8_0_q8_0 · scale`; an f32 accumulator (`vec_scale_f32`: `acc · ms`; V
+/// dequantized as `qs · d`, then `vec_mad_f32`: `fma(v, vs, acc)`); finally `acc · (1/S)`.
+pub fn attend_head_q8(q: &[f32], k: &[u8], v: &[u8], n_kv: usize, rb: usize, scale: f32, out: &mut [f32]) {
+    let hd = q.len();
+    let hb = hd / q1_0::QK8_0 * q1_0::Q8_0_BYTES;
+    let mut qq = vec![0u8; hb];
+    q1_0::quantize_row_q8_0(q, &mut qq);
+    let (mut acc, mut vrow) = (vec![0.0f32; hd], vec![0.0f32; hd]);
+    let (mut sum, mut max) = (0.0f32, f32::NEG_INFINITY);
+    for ic in 0..n_kv {
+        let s = vec_dot_q8_0_q8_0(hd, &k[ic * rb..ic * rb + hb], &qq) * scale;
+        let (mut ms, mut vs) = (1.0f32, 1.0f32);
+        if s > max {
+            let old = max;
+            max = s;
+            ms = (old - max).exp();
+            for a in acc.iter_mut() {
+                *a *= ms;
+            }
+        } else {
+            vs = (s - max).exp();
+        }
+        for (blk, vb) in vrow.as_chunks_mut::<{ q1_0::QK8_0 }>().0.iter_mut().zip(v[ic * rb..ic * rb + hb].as_chunks::<{ q1_0::Q8_0_BYTES }>().0) {
+            let d = f16_to_f32(u16::from_le_bytes([vb[0], vb[1]]));
+            for (y, &b) in blk.iter_mut().zip(&vb[2..]) {
+                *y = (b as i8) as f32 * d;
+            }
+        }
+        for (a, &x) in acc.iter_mut().zip(&vrow) {
+            *a = x.mul_add(vs, *a);
+        }
+        sum = sum * ms + vs;
+    }
+    let inv = if sum == 0.0 { 0.0 } else { 1.0 / sum };
+    for (o, &a) in out.iter_mut().zip(&acc) {
+        *o = a * inv;
     }
 }
 
@@ -854,13 +1023,21 @@ impl Weights {
         let one = |j: usize, oh: &mut [f32]| {
             let (i, h) = (j / nh, j % nh);
             let (qh, off, visible) = (&qs[i][h * hd..(h + 1) * hd], (h / group) * hd, p0 + i + 1);
+            if cache.kind == KvType::Q8_0 {
+                // ggml takes the reference kernel whenever K is not f16/f32 (no tiled, no split-KV)
+                let (rb, ob) = (cache.row_bytes(), off / q1_0::QK8_0 * q1_0::Q8_0_BYTES);
+                let mut qr = qh.to_vec();
+                fwht(&mut qr, rot_k_size(hd));
+                attend_head_q8(&qr, &cache.kq[ob..], &cache.vq[ob..], visible, rb, scale, oh);
+                return fwht(oh, ROT_V);
+            }
             match kernel {
                 Kernel::Reference => attend_head(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
                 Kernel::Tiled => attend_head_tiled(qh, &cache.k[off..], &cache.v[off..], visible, cache.width, scale, oh),
                 Kernel::Split { padded, nth } => attend_head_split(qh, &cache.k[off..], &cache.v[off..], visible, padded, nth, cache.width, scale, oh),
             }
         };
-        if kernel == Kernel::Tiled {
+        if kernel == Kernel::Tiled && cache.kind == KvType::F16 {
             // ggml's tiled kernel: a job is one head over a block of 16 rows, so each tile is widened once per block
             const B: usize = 16;
             let blocks = qs.len().div_ceil(B);
@@ -928,7 +1105,12 @@ impl Weights {
 
     /// Empty K/V caches, one per layer.
     pub fn caches(&self) -> Vec<KvCache> {
-        (0..self.n_layer).map(|_| KvCache::new(self.n_head_kv * self.head_dim)).collect()
+        self.caches_of(KvType::F16)
+    }
+
+    /// Empty caches of `kind` (0.3.9: q8_0 needs `head_dim` a multiple of 32, as ggml's blocks do).
+    pub fn caches_of(&self, kind: KvType) -> Vec<KvCache> {
+        (0..self.n_layer).map(|_| KvCache { head_dim: self.head_dim, ..KvCache::of(kind, self.n_head_kv * self.head_dim) }).collect()
     }
 
     /// One token through every layer at the next position (the caches' length), appending its K and V to each
@@ -1120,6 +1302,64 @@ impl Weights {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.3.9: the q8_0 KV cache's two kernels against the shipped ggml b11192 haswell library (dlopen, no crate):
+    /// `quantize_row_q8_0` byte for byte (the cache store and Q), and `ggml_vec_dot_q8_0_q8_0` bit for bit (the scores)
+    /// — random activations with outliers, and blocks full of −128 and 127 where `maddubs` saturates.
+    #[test]
+    #[ignore = "needs BANKML_GGML_LIB (llama.cpp b11192 ubuntu-x64 release dir)"]
+    fn oracle_ggml_b11192_q8_0_kv_kernels() {
+        use std::ffi::{c_char, c_int, c_void, CString};
+        extern "C" {
+            fn dlopen(f: *const c_char, flag: c_int) -> *mut c_void;
+            fn dlsym(h: *mut c_void, s: *const c_char) -> *mut c_void;
+        }
+        type Dot = unsafe extern "C" fn(i32, *mut f32, usize, *const u8, usize, *const u8, usize, i32);
+        type Quant = unsafe extern "C" fn(*const f32, *mut u8, i64);
+        let dir = std::env::var("BANKML_GGML_LIB").expect("BANKML_GGML_LIB");
+        let (base, cpu) = (CString::new(format!("{dir}/libggml-base.so")).unwrap(), CString::new(format!("{dir}/libggml-cpu-haswell.so")).unwrap());
+        let (dot, quant) = unsafe {
+            assert!(!dlopen(base.as_ptr(), 0x102).is_null());
+            let h = dlopen(cpu.as_ptr(), 0x102);
+            assert!(!h.is_null());
+            std::mem::transmute::<*mut c_void, unsafe extern "C" fn()>(dlsym(h, c"ggml_cpu_init".as_ptr()))();
+            (std::mem::transmute::<*mut c_void, Dot>(dlsym(h, c"ggml_vec_dot_q8_0_q8_0".as_ptr())),
+             std::mem::transmute::<*mut c_void, Quant>(dlsym(h, c"quantize_row_q8_0".as_ptr())))
+        };
+        let mut r = crate::q1_0::tests::Rng(0x9e37_79b9_7f4a_7c15);
+        let (mut rows, mut dots) = (0, 0);
+        for case in 0..4000 {
+            let n = [32, 64, 128, 256][case % 4];
+            let nb = n / q1_0::QK8_0 * q1_0::Q8_0_BYTES;
+            let x: Vec<f32> = (0..n).map(|_| r.act()).collect();
+            let y: Vec<f32> = (0..n).map(|_| r.act()).collect();
+            let (mut qx, mut qy, mut gx) = (vec![0u8; nb], vec![0u8; nb], vec![0u8; nb]);
+            q1_0::quantize_row_q8_0(&x, &mut qx);
+            q1_0::quantize_row_q8_0(&y, &mut qy);
+            unsafe { quant(x.as_ptr(), gx.as_mut_ptr(), n as i64) };
+            assert_eq!(qx, gx, "quantize_row_q8_0, case {case}");
+            rows += 1;
+            if case % 3 == 0 {
+                // saturation: whole blocks of −128 against −128 and 127 (|−128|·−128 pairs overflow i16)
+                for (i, b) in qx.iter_mut().enumerate() {
+                    if i % q1_0::Q8_0_BYTES >= 2 && r.next().is_multiple_of(2) {
+                        *b = 0x80;
+                    }
+                }
+                for (i, b) in qy.iter_mut().enumerate() {
+                    if i % q1_0::Q8_0_BYTES >= 2 && r.next().is_multiple_of(3) {
+                        *b = if r.next().is_multiple_of(2) { 0x80 } else { 0x7f };
+                    }
+                }
+            }
+            let mut want = 0.0f32;
+            unsafe { dot(n as i32, &mut want, 0, qx.as_ptr(), 0, qy.as_ptr(), 0, 1) };
+            let got = vec_dot_q8_0_q8_0(n, &qx, &qy);
+            assert_eq!(got.to_bits(), want.to_bits(), "vec_dot_q8_0_q8_0, case {case}: {got} vs {want}");
+            dots += 1;
+        }
+        eprintln!("q8_0 KV kernels: {rows} rows quantized byte-exact, {dots} dot products bit-exact against ggml b11192 haswell");
+    }
 
     #[test]
     fn rms_norm_of_a_constant_row() {
@@ -1621,7 +1861,7 @@ mod tests {
                 prefilled = Some((prompt.clone(), caches, rn));
             }
             let (_, c0, rn0) = prefilled.as_ref().unwrap();
-            let mut caches: Vec<KvCache> = c0.iter().map(|c| KvCache { k: c.k.clone(), v: c.v.clone(), width: c.width }).collect();
+            let mut caches: Vec<KvCache> = c0.to_vec();
             let mut rn = rn0.clone();
             let mut got = Vec::new();
             while got.len() < want.len() {

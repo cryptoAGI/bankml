@@ -234,6 +234,11 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
   llama-server `-np 1`. Like llama-server, it keeps the states of other conversations in RAM (`BANKML_CACHE_RAM`, MiB;
   0 off; unset, up to 8 GiB but at most a quarter of the free memory), so a conversation that comes back after
   another does not recompute its whole history.
+- **A smaller conversation memory (0.3.9).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
+  about half the memory, so a long context fits on a small machine. It is llama.cpp's `--cache-type-k q8_0
+  --cache-type-v q8_0` exactly, with the Hadamard rotation llama.cpp applies around a quantized cache, and gives the
+  same tokens as llama-server so configured (`testing/kv_oracle.py`). A slot saved with one cache type is refused by
+  an engine with the other.
 - **Logprobs.** `"logprobs": true, "top_logprobs": 5` on `/v1/chat/completions` returns each token's log-probability
   and the five most likely alternatives, the same floats llama-server reports. Streamed answers carry each token's entry in the chunk its text makes.
 
