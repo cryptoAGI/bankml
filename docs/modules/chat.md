@@ -98,8 +98,8 @@ The oracle found one server behaviour the template alone would not predict: an e
 - **Cheap.** Rendering is string concatenation over the messages; the template is identified once, when the engine
   opens the model.
 - **Rust practice.** Zero dependencies, no `unsafe`; out-of-scope input is an `Err` with the reason, not a guess.
-- **Next** (docs/TODO.md, docs/OLLAMA.md): tool calls through the template (O6, after JSON schemas), and the Llama 3.x
-  template with that architecture (0.6.0).
+- **Next** (docs/TODO.md, docs/OLLAMA.md): tool calls through the template (O6; JSON schemas, its first step, came in
+  0.3.5), and the Llama 3.x template with that architecture (0.6.0).
 
 ## Limitations
 
@@ -110,6 +110,19 @@ The oracle found one server behaviour the template alone would not predict: an e
 - On Qwen3, a role other than system, user, assistant and tool renders nothing, as in the template.
 - Ollama's persona `SYSTEM` for `mindx-genN` lives in its Modelfile, not in the GGUF: here it is the caller's system
   message (`bankml create` handles the Modelfile).
+
+## Design notes
+
+- History: the chat template was step two of P3 (the Bonsai / Qwen3 template only). 0.3.4 (O4) mapped templates
+  per model, each pinned by the sha256 of its text, adding SmolLM2-Instruct's and the plain ChatML of `mindx-genN`.
+- The SmolLM2-Instruct default system message, inserted when the first message is not a system message, is
+  `You are a helpful AI assistant named SmolLM, trained by Hugging Face`.
+- `mindx-genN` is SmolLM2-135M fine-tuned by mindXtrain; its GGUF carries plain ChatML.
+- Each template's oracle is llama-server's `/apply-template` on a GGUF that carries that template
+  (`testing/template_oracle.py`); the oracle shows both ChatML templates render a tool result like any other role
+  and drop `reasoning_content`.
+- Why an empty `reasoning_content` is dropped: llama-server removes it before templating, so the assistant
+  content's own `<think>` block is split out; a present-but-empty string would have prevented that split.
 
 ## See also
 

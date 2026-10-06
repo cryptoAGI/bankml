@@ -16,9 +16,28 @@
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
   <img src="https://img.shields.io/badge/status-0.3.6%20%C2%B7%20verified%20native%20engine%3A%20JSON%20schemas%2C%20penalties%2C%20Ollama%27s%20API%2C%20mindX%27s%20default-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
+  <a href="https://deltaverse.pythai.net/bankml"><img src="https://img.shields.io/badge/read-why%20bankML-22D3EE?style=flat-square" alt="why bankML, on the web"></a>
+</p>
+
+<p align="center">
+  <a href="https://deltaverse.pythai.net/bankml"><b>Why bankML</b></a> (the short version, on the web) &middot;
+  <a href="docs/thesis.md"><b>the thesis</b></a> &middot; <a href="docs/usage.md"><b>usage</b></a> &middot;
+  <a href="CHANGELOG.md"><b>changelog</b></a>
 </p>
 
 ---
+
+## Where it stands (2026-10-06)
+
+**v0.3.6 is the latest release.** Three more are on their way, each passing its oracles as it is built; each ships
+once its full release gate passes ([CHANGELOG.md](CHANGELOG.md), *Unreleased*):
+
+| release | state | what it brings |
+|---|---|---|
+| **0.3.7** | in its release gate | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
+| **0.3.8** | built | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
+| **0.3.9** | in progress | a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
+| **0.4.0** | next milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)) |
 
 ## Why
 
@@ -30,6 +49,9 @@ bankml found why and fixed it at the kernel: **llama.cpp b11192 has no vectorise
 at all** — it runs scalar C with 64 integer multiplies per block. bankml's kernel computes the **same bits**, verified
 against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.4–10.0× faster** per matrix
 (the 0.2.2 gate record; every gate since 0.0.1 has measured 9.4–10.8×).
+
+The argument in full — exactness first, then speed, and why the discipline finds speed rather than costing it — is
+**[docs/thesis.md](docs/thesis.md)**.
 
 ## Install and use
 
@@ -96,15 +118,20 @@ llama.cpp b11192:
   and whole Savante-style conversations through llama-server's own chat endpoint are **identical turn by turn**:
   the text, the token counts and the prompt-cache reuse (9 of 9 turns);
 - **faster where llama.cpp is weakest:** on the ternary model, 2.3–2.4 tokens/s against llama-server's 0.30, about
-  8×, with the same tokens. On the 1-bit model llama-server is still faster (2.8 against 1.9–2.0), so Savante's
-  default engine setting, `auto`, uses bankML for the ternary files and llama-server for the rest;
+  8×, with the same tokens. On the 1-bit model llama-server was still faster at 0.3.0 (2.8 against 1.9–2.0), so
+  Savante's default engine setting, `auto`, uses bankML for the ternary files and llama-server for the rest. After
+  0.3.4's attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48; the pinned, idle measurement
+  (`testing/decode_ab.py`) decides whether `auto` takes the 1-bit files too (0.4.0);
 - **the video card, when there is one:** a GPU found through Vulkan works inside the forward pass after it proves on
   the card that it gives the CPU's bits (`bankml gpu --verify`), and changes no token;
 - **verified, with receipts:** the same guard, sha256 pin and receipt as before, now naming the engine that did the
   arithmetic.
 
-Limits, stated: the Qwen3 1-bit and ternary models; one conversation slot; top-k, top-p, min-p and temperature (the
-samplers Savante uses), refusing the others rather than approximating them.
+Limits at 0.3.0: the Qwen3 1-bit and ternary models; one conversation slot; top-k, top-p, min-p and temperature (the
+samplers Savante uses), refusing the others rather than approximating them. Since then: the Llama architecture in F16
+(0.3.4) and the penalties (0.3.6). Still one slot, requests answered one at a time, and top-k only from 1 to 128;
+anything not reproduced is refused with the reason. The next release (0.3.7, not yet tagged) adds the rest of
+llama-server's default sampler chain; see [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 
@@ -112,6 +139,7 @@ Start here, then go where your question is. The same documents read as a website
 
 | if you want to… | read |
 |---|---|
+| get the short, plain-language version: what bankML is good for, how Rust makes it fast, and where it is going | **[docs/why-bankml.md](docs/why-bankml.md)**, also on the web at [deltaverse.pythai.net/bankml](https://deltaverse.pythai.net/bankml) |
 | install and start everything with one command | **`./install.sh`** ([usage.md §1](docs/usage.md#1-install)) |
 | install, run and use bankml and Savante (both modes, models, `.history`, receipts, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
 | install for production or a server: every `install.sh` option, every flag and environment variable, tuning, a systemd unit, security | **[docs/install.md](docs/install.md)** |
@@ -120,6 +148,7 @@ Start here, then go where your question is. The same documents read as a website
 | meet Savante's page for the first time: asking, her card, listening to her | **[docs/playback.md](docs/playback.md)** |
 | understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
 | read the thesis: the design intent of bankml's authors, in their own words | **[the Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson)**, in TECHNICAL.md (Savante reads it aloud: `Savante-reading.opus`) |
+| read the argument in full: exactness before speed, assembled from the code, the changelog and the oracles | **[docs/thesis.md](docs/thesis.md)** |
 | meet Savante, the agent bankml runs | **[Using Savante](#using-savante)**, with her public places (Hugging Face, canon, sAGI) |
 | see every speed number, the machines and the commands that produced them | **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** |
 | know what bankml is checked against, and how | **[docs/oracles.md](docs/oracles.md)** |
@@ -129,6 +158,7 @@ Start here, then go where your question is. The same documents read as a website
 | use bankML as an Ollama (the `/api/*` endpoints, the model registry, `keep_alive`, `format: "json"`), and see what mindX asks of Ollama that bankML does not do yet | **[docs/OLLAMA.md](docs/OLLAMA.md)** (the gap matrix and the O1–O8 track) · [usage.md §6a](docs/usage.md#6a-ollamas-api) |
 | embed bankML in a C, C++, Python, Go or Swift program (`libbankml`, `bankml.h`: open with the gate, chat with the receipt, a printf-style log) | **[docs/CAPI.md](docs/CAPI.md)** (0.3.2) · [usage.md §6b](docs/usage.md#6b-the-c-api) |
 | see what comes next and what was rejected, and why | **[docs/TODO.md](docs/TODO.md)** |
+| talk to bankML as itself, set its CPU, RAM and GPU limits, and watch what it measures (tokens/s, TTFT, power), with iNFT infotags (in the next release, 0.3.7) | **`python3 sAGI/console.py`** ([usage.md §6c](docs/usage.md#6c-the-bankml-console-bankml-as-itself-037), [modules/console.md](docs/modules/console.md)) |
 | check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
 | install and use bankML as a language model or agent (a tested, step-by-step method from a fresh clone) | **[llms.txt](llms.txt)** (also at [cryptoagi.github.io/bankml/llms.txt](https://cryptoagi.github.io/bankml/llms.txt)) |
 | know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |
@@ -186,11 +216,13 @@ inference (with the papers) is in **[research.md](docs/research.md)**; every ora
 | P3 | Qwen3 forward pass (tokenizer, template, YaRN RoPE, GQA, f16 KV cache, flash attention, SwiGLU, sampling) | **done (0.2.1–0.2.11)**: token-identical to llama.cpp for the 1-bit and ternary models, including seeded sampling and every CPU attention kernel; the whole model bit-exact (1,064 of 1,064 rows each); about 8× llama-server on the ternary model |
 | O4 | the Llama architecture, F16 weights, tied embeddings, SmolLM2's tokenizer and templates | **done (0.3.4)**: SmolLM2-135M-Instruct, mindX's own `mindx-gen39` and Bonsai-1.7B token-identical to llama-server b11192 (whole model 800 / 800 / 840 rows bit-exact; greedy, seeded, conversations, JSON mode, `/v1`, `/api`, C API); F16 at about 0.9× llama-server's speed |
 | P0 | serve answers now through the reference, behind guard + pin + receipts | **done (0.0.6)**: `bankml serve`, receipt with the answer's sha256; Savante UI (view / interact) |
-| P4 | OpenAI-compatible endpoint; bankML's own engine behind it; mindX provider | **0.3.0: `bankml serve --native`**, Savante answered by bankML's own forward pass, conversations identical to llama-server's (9 of 9 turns); **0.3.1: Ollama's API** (`/api/chat`, `/api/generate`, `/api/tags`, `/api/ps`, `/api/show`), a registry of pinned models with one resident and `keep_alive`, native only ([OLLAMA.md](docs/OLLAMA.md)); **0.3.2: a C API** (`libbankml`, [CAPI.md](docs/CAPI.md)) giving `serve --native`'s answers and receipts to an embedding program; **0.3.3: JSON mode** (`format: "json"`, `response_format: json_object`, GBNF `grammar`), token-identical to llama-server; **0.3.4: mindX's own lineage model** (`mindx-gen39`, asked for by its Ollama tag) answered natively; **0.3.5: JSON schemas** (any schema, llama-server's grammar on the model's template, answers token-identical) **and `bankml create`/`convert`** (mindXtrain's merged output plus promote.py's persona layer, token-identical end to end); **0.3.6: the penalties** (repeat, frequency and presence over `repeat_last_n`, the prompt in the window, token-identical to llama-server); mindX's default engine on its VPS since 2026-10-04 |
+| P4 | OpenAI-compatible endpoint; bankML's own engine behind it; mindX provider | **0.3.0: `bankml serve --native`**, Savante answered by bankML's own forward pass, conversations identical to llama-server's (9 of 9 turns); **0.3.1: Ollama's API** (`/api/chat`, `/api/generate`, `/api/tags`, `/api/ps`, `/api/show`), a registry of pinned models with one resident and `keep_alive`, native only ([OLLAMA.md](docs/OLLAMA.md)); **0.3.2: a C API** (`libbankml`, [CAPI.md](docs/CAPI.md)) giving `serve --native`'s answers and receipts to an embedding program; **0.3.3: JSON mode** (`format: "json"`, `response_format: json_object`, GBNF `grammar`), token-identical to llama-server; **0.3.4: mindX's own lineage model** (`mindx-gen39`, asked for by its Ollama tag) answered natively; **0.3.5: JSON schemas** (any schema, llama-server's grammar on the model's template, answers token-identical) **and `bankml create`/`convert`** (mindXtrain's merged output plus promote.py's persona layer, token-identical end to end); **0.3.6: the penalties** (repeat, frequency and presence over `repeat_last_n`, the prompt in the window, token-identical to llama-server); mindX's default engine on its VPS since 2026-10-04. **Next, not yet released** ([CHANGELOG.md](CHANGELOG.md)): llama-server's whole default sampler chain and self-measurement (0.3.7); the context limit, slot save/restore, the host prompt cache and logprobs (0.3.8); a q8_0 KV cache and a faster grammar mask (0.3.9, in progress) |
 | UI | Savante: interact (chat, `.prompt`, `.history`, `.memory`, Responses, Metrics, RAGE search, custom agents, THOT, PostgreSQL) · view (LAN, read-only) · proof of data by commitments | **0.0.6–0.0.9**; aivatar card, her own voice, DreamKnobs 0.1.1–0.1.5 |
 | models | import without friction: Bonsai-8B on first run; a pinned open-source catalogue, any Hugging Face GGUF, Ollama; open-source licences only; carrier switch with rollback | **0.1.5**, hardened 0.1.6 |
 | memory | bge-m3 embeddings (the model mindX uses): meaning search fused with BM25, pgvector publishing | **0.1.7** ([embedding.md](docs/embedding.md)) |
 | audits | two full audits, every finding fixed with a test; RFC 6962 commitments; a hardened gateway | **0.1.6, 0.1.7** |
+| code audit | every source file's comments made short and exact, the narrative moved to its [module page](docs/modules/README.md); four bugs fixed, two GPU findings recorded | **2026-10-06** (0.3.9, unreleased) |
+| KV and grammar | a q8_0 KV cache with llama.cpp's Hadamard rotation; the grammar mask through a trie | **0.3.9** (unreleased): 6 / 6 answers, 13× median mask |
 | iNFT | mint an agent from its THOT bundle (prepared, simulated, signed by the owner), load one from a token | **0.1.0** — full path tested on a local devnet; the contract is not on a public chain yet |
 | P5 | ARM / NEON, handheld | planned |
 
@@ -207,7 +239,8 @@ the 1-bit kernel is at the core's instruction limit (TECHNICAL §IV.5).
 
 Every release passed the full gate (build, tests, clippy, every suite, every oracle, the A/Bs and the decode budgets)
 before it was tagged; its record is `testing/results/<version>.txt`, and the details are in
-**[CHANGELOG.md](CHANGELOG.md)**.
+**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.3.6. What comes next (0.3.7, 0.3.8 and 0.3.9 in progress) is
+in the changelog's *Unreleased* sections until its gate passes and it is tagged.
 
 | version | what it brought |
 |---|---|
@@ -297,9 +330,10 @@ refuses any file but the verified one.
 
 **Talk to Savante**: open **http://127.0.0.1:7873** (`./install.sh start` if it is not running).
 Type a question and press **Send**. A timer runs from the press of Send until the answer is complete: the first turn on
-a laptop spends about 2 minutes reading Savante's system prompt, then writes a few tokens a second. Under each answer
-you see when it was sent, the time to the first token, the total time, and the receipt: the verified model's sha256
-and the sha256 of the answer, checked ✓. To ask for a review, start with *"review:"*.
+a laptop spends about 2 minutes reading Savante's system prompt, then writes a few tokens a second. The chat shows the
+answer alone. When it was sent, the time to the first token, the total time and the receipt (the verified model's
+sha256 and the sha256 of the answer, checked ✓) are on the **Admin** tab under *the last answer*, and in `.history`.
+To ask for a review, start with *"review:"*.
 - **`.prompt`** chooses what carries the conversation: the persona's own system prompt (default), the `sAGI.prompt`
   facet, or the Hugging Face Space's template.
 - **`.history`** (`~/.local/share/bankml/savante/savante.history`) records every exchange with its timestamps,
@@ -333,7 +367,7 @@ and the sha256 of the answer, checked ✓. To ask for a review, start with *"rev
   (hashes, doctrine root, THOT) and its ledgered files. Choose the portrait, or upload one for a derived agent.
 - Panels resize from a refined corner handle. The side panel drags to either side (drop zones appear) or swaps with ⇄.
 
-**4. Let others watch**: `python3 sAGI/view.py --host 0.0.0.0` gives a read-only page at
+**Let others watch**: `python3 sAGI/view.py --host 0.0.0.0` gives a read-only page at
 **http://&lt;your LAN address&gt;:7874**. It shows the live testing, the release records, CI, the machine's load and
 Savante's ledger, and the commitments of `.history` and `.memory` (never their content), in draggable, resizable
 panels. It is the standard library, not Gradio, so it is safe to put on a network.
@@ -351,7 +385,7 @@ bankml/
 ├── sAGI/        Savante's UI (interact and view) and the model importer
 ├── docs/        usage, playback, technical report, performance, oracles, research
 ├── testing/     the release gate, the oracles and their records
-├── tools/       bashmoji and the card renderer
+├── tools/       bashmoji, the card renderers and the page audit (seo.py)
 └── upstream/    the Q2_0 kernel offered to llama.cpp
 ```
 
@@ -368,6 +402,10 @@ bankml/
 | `bankML/serve.rs` | P0: the verified loopback gateway with receipts (0.0.6) |
 | `bankML/grammar.rs` | O6 (0.3.3): llama.cpp's GBNF grammar engine, ported; llama-server's JSON-mode grammar and prefill (per template since 0.3.4); how a request's `response_format` / `grammar` / Ollama `format` resolve; JSON mode's content |
 | `bankML/f16.rs` | O3/O4 (0.3.4): F16 weights as ggml multiplies them — `ggml_vec_dot_f16` for one column, llamafile's tinyBLAS for two or more — scalar definitions and AVX2 + FMA + F16C paths with the same bits; the f16 helpers of flash attention |
+| `bankML/native.rs`, `bankML/sampler.rs` | the native engine behind `serve --native` and the C API, and llama-server's sampler chain (0.2.11; the penalties 0.3.6) |
+| `bankML/metrics.rs`, `bankML/prompt_cache.rs` | unreleased: bankML's own measurements at `GET /bankml/metrics` (0.3.7); llama-server's host prompt cache (0.3.8) |
+| `sAGI/console.py` | unreleased (0.3.7): the bankML console, port 7875, loopback only — see [usage.md §6c](docs/usage.md#6c-the-bankml-console-bankml-as-itself-037) |
+| each module | one page each in [docs/modules/](docs/modules/README.md): usage, why it is fast, limits |
 | `capi/` | the C API (0.3.2): `src/lib.rs` (open, chat, close, free, the log), `src/printf.rs` (the formatter behind the C-variadic `bankml_log`), `include/bankml.h` — see [CAPI.md](docs/CAPI.md) |
 | `rust-toolchain.toml` | the pinned toolchain, Rust 1.99.0 (C-variadic function definitions); rustup fetches it |
 | `sAGI/savante.py` | the Savante UI, interact mode (Gradio, loopback) |

@@ -2,6 +2,9 @@
 
 Every number in this file was measured, on the hardware named beside it, and can be reproduced with the command
 given. Nothing is quoted from upstream. Where a result is a lower bound, an estimate or a single run, it says so.
+The per-release records are in [CHANGELOG.md](../CHANGELOG.md) and `testing/results/<version>.txt`; the kernels'
+own pages are [q1_0.rs](modules/q1_0.md), [q2_0.rs](modules/q2_0.md), [f16.rs](modules/f16.md), [par.rs](modules/par.md)
+and [forward.rs](modules/forward.md).
 
 - **Reference engine:** llama.cpp **b11192**, the ubuntu-x64 release checked against its sha256
   (`34cf6fa5de9da0db3932c78fe15fed2fbca17451e665dac0a4f6a3c8fc881ec7`). Kernel comparisons call that release's own
@@ -133,7 +136,7 @@ with kernel. Laptop, two runs, min s/token; the full output is in `testing/resul
 | 3 | 2.27–2.36 | **0.23–0.25** | 0.34–0.35 | 0.34–0.35 |
 | 4 | 2.11 | **0.23** | 0.34–0.35 | 0.36 |
 
-*These whole-token figures were measured with the model resident in memory, and reproduced on 2026-09-29 on current code: 0.231 s at three threads, 9.45× the reference (docs/PERFORMANCE.md). When other applications leave too little memory to keep the 2.31 GB file cached, the gates measure the disk instead (4.5–5.2 s).*
+*These whole-token figures were measured with the model resident in memory, and reproduced on 2026-09-29 on current code: 0.231 s at three threads, 9.45× the reference ([below](#re-measured-with-the-model-resident-2026-09-29-after-021)). When other applications leave too little memory to keep the 2.31 GB file cached, the gates measure the disk instead (4.5–5.2 s).*
 
 - **Ternary is now cheaper than 1-bit.** At 3 threads bankml's ternary matmuls (0.23–0.25 s) take less time than ggml's
   1-bit ones (0.34–0.35 s), although the ternary weights are twice the bytes. The ternary matmul-only ceiling is
@@ -220,7 +223,8 @@ three threads for bankml, and 1.1–1.5× the reference, not the 0.23–0.25 s o
 measured on 2026-09-29. With the chat engine resident and other applications holding memory, the 2.31 GB ternary file
 does not stay in the page cache: 0.49 GB was resident, and after a full read 1.04 GB. Every token then re-reads most of
 the weights from disk, and both runtimes wait on it. The per-matmul A/B on cached tensors still shows 9.8× (0.1.8
-gate). The whole-token figure needs a machine with at least 3 GB free to be re-measured (docs/TODO.md).
+gate). The whole-token figure needs a machine with at least 3 GB free to be re-measured; that was done on
+2026-09-29 ([below](#re-measured-with-the-model-resident-2026-09-29-after-021)).
 
 **0.2.1 gate, with the chat engine stopped (2.0 GB free):** bankml 1.42 s per ternary token at one and three threads,
 against llama.cpp's 5.15 s (one thread) and 2.99 s (three threads): 3.6× and 2.1×. The more of the model stays cached,
@@ -267,9 +271,9 @@ redrawn, that step costs one mask more, about 6 % of a 1-bit step at the median.
 JSON on its own costs almost nothing: `bankml generate --json` on the cat prompt redrew no token and spent 0.4 ms of
 grammar per token.
 
-The mask is a straight port of llama.cpp's `reject_candidates`, which walks every candidate's code points per grammar
-stack. A byte trie over the pieces would share their prefixes (TODO.md). It would need the same oracle, and it is not
-worth much at today's cost.
+The mask was a straight port of llama.cpp's `reject_candidates`, which walks every candidate's code points per grammar
+stack. 0.3.9 replaced it with a trie over the vocabulary's code points, under the same oracle: see
+[the next section](#the-grammar-mask-through-a-trie-039-unreleased).
 
 ## F16 and the Llama graph (0.3.4) — laptop, against llama-server b11192
 
@@ -284,7 +288,7 @@ not single numbers.
 | SmolLM2-135M-Instruct F16, 45-token prompt, 128 tokens decoded | decode **38.0–38.9 tok/s** (3 runs) | 40.4–42.7 tok/s | ≈ 0.93× |
 | the same, prompt | 0.3–0.4 s | 0.4 s (115–119 tok/s) | ≈ 1× |
 | SmolLM2-135M-Instruct F16, 858-token prompt (docs/OLLAMA.md's first 2,400 characters), 64 decoded | prompt **8.6–9.6 s**, decode at ~900 cells 27.2–30.1 tok/s | prompt 7.8–8.6 s (100–110 tok/s), decode 20.2–29.9 tok/s | prompt ≈ 0.9×, decode ≈ 1× |
-| Bonsai-1.7B Q1_0, 29-token prompt, 64 decoded | 8.4–8.6 tok/s (2 runs) | 10.6–10.9 tok/s | ≈ 0.8× (the 1-bit decode gap of TODO 0.4.0, O8) |
+| Bonsai-1.7B Q1_0, 29-token prompt, 64 decoded | 8.4–8.6 tok/s (2 runs) | 10.6–10.9 tok/s | ≈ 0.8× (the 1-bit decode gap of [TODO 0.4.0](TODO.md#040--native-serve-complete-everything-savante-and-mindx-ask-of-llama-server), O8) |
 
 `mindx-gen39` has SmolLM2-135M's shapes, so it runs at SmolLM2's speed. Reproduce: `bankml generate
 .models/SmolLM2-135M-Instruct-F16.gguf --max 128 < messages.json` with `BANKML_THREADS=3`, beside a llama-server on the
@@ -327,4 +331,46 @@ One paired check after the gate, end to end, Bonsai-8B Q1_0, the same 29-token p
 (`bench.sh`-style pairs as above; load average 2.9–3.7, so read it as a hint, not a result): bankML decode
 **2.59 and 2.30 tok/s**, llama-server **2.33 and 2.48 tok/s**; prompts 8.7 / 10.5 s against 10.9 / 10.1 s. TODO 0.4.0
 recorded 1.9–2.0 against 2.8 before. Whether 1-bit decode is now at parity needs the pinned, idle-machine
-measurement (`testing/pinned.sh`); it is not claimed here.
+measurement (`testing/pinned.sh`); it is not claimed here. The method is in
+[1-bit decode against llama-server](#1-bit-decode-against-llama-server-039-pending).
+
+## The grammar mask, through a trie (0.3.9, unreleased)
+
+A whole-vocabulary mask now walks a trie of the vocabulary's code points, built once: each grammar stack meets a
+shared prefix once ([grammar.rs](modules/grammar.md)). `oracle_grammar_masks`, over the same 1,645 masks as the 0.3.3
+table above (CHANGELOG 0.3.9):
+
+| one whole-vocabulary mask, 151,669 tokens | trie (0.3.9) | the port of `reject_candidates` |
+|---|---:|---:|
+| median | **2.94 ms** | 38.8 ms |
+| p90 | **49.3 ms** | 80.6 ms |
+
+The median is 13× faster. The oracle computes every mask both ways: 196 / 196 runs and 1,645 / 1,645 masks are
+identical to llama.cpp b11192 by each. The port's median here (38.8 ms) is higher than the 0.3.3 gate's 24.2 ms. They
+are different runs on the same laptop; compare the two columns of one run, not runs with each other.
+
+## The q8_0 KV cache (0.3.9, unreleased): memory
+
+`BANKML_CACHE_TYPE=q8_0` keeps K and V as q8_0 blocks, as llama.cpp's `--cache-type-k/v q8_0`: **53 % of the f16
+cache's bytes** (q8_0 stores 34 bytes per 32 values, f16 64). Its answers are token-identical to llama-server so
+configured (`kv_oracle_live`, 6 / 6; CHANGELOG 0.3.9). Its speed is not measured yet. A q8_0 cache has no tiled or
+split-KV attention kernel, as in ggml, so long prefills are expected to be slower than with f16
+([forward.rs](modules/forward.md)).
+
+## 1-bit decode against llama-server (0.3.9, pending)
+
+The open question of 0.4.0 is whether 1-bit decode is at least at llama-server's speed. The paired checks above were
+taken on a loaded laptop and are hints. The method for the answer is `testing/decode_ab.py`:
+
+```sh
+BANKML_GGML_LIB=<b11192 release dir> BANKML_PIN_CPUS=1,2,3 BANKML_PIN_MEM=3000M \
+    testing/pinned.sh python3 testing/decode_ab.py Bonsai-8B-Q1_0 [rounds] [threads]
+```
+
+- Each round starts a fresh llama-server b11192 and a fresh `bankml serve --native`, alternating which goes first.
+- Both get the same greedy request with the prompt cache off, and each side's own `timings` are read
+  (`prompt_per_second`, `predicted_per_second`).
+- The answers must be token-identical, or the round is refused.
+- It prints every round and the medians; the ratio is bankML ÷ llama-server (above 1: bankML faster).
+
+No result is recorded here yet. It will be, with the machine's load, when it is run on an idle machine.

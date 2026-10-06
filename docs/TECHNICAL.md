@@ -1,7 +1,10 @@
 # bankml: verified low-bit inference on commodity CPUs — a technical report
 
-*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · bankml v0.2.0 · 2026. Companion to [PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited
-here with the command that reproduces it.*
+*Professor Codephreak and Gregory L. Magnusson · cryptoAGI · 2026. Written at bankml v0.2.0 (2026-09-29); its status
+sections (§IV.4, §VI) brought up to date on 2026-10-06, when v0.3.6 is the latest release and 0.3.7–0.3.9 are
+unreleased on the development branch ([CHANGELOG.md](../CHANGELOG.md) is the source of truth for both). Companion to
+[PERFORMANCE.md](PERFORMANCE.md), which holds every measurement cited here with the command that reproduces it;
+[oracles.md](oracles.md) lists every oracle in the release gate, and [BUILD_HISTORY.md](BUILD_HISTORY.md) the phases.*
 
 ## Abstract
 
@@ -22,8 +25,9 @@ are about 98 % of the reference's time per token, the gap between the better ter
 a kernel gap, now closed at the kernel level: with a zero-dependency thread pool, one ternary token's products take
 0.23–0.25 s on three threads of a laptop (0.0.3–0.0.6, with the model resident in memory), less than the reference needs for the *1-bit* model's (0.34 s). A measured
 memory floor (15–17 GB/s) shows both kernels are compute-bound, and five further bit-exact variants measured no reliable
-gain, which places them at the instruction-throughput limit of the test core (§IV.5). Since 0.0.6 the runtime answers
-through the reference behind its gates (phase P0). Every answer carries a receipt with the sha256 of its text, and the
+gain, which places them at the instruction-throughput limit of the test core (§IV.5). From 0.0.6 the runtime answered
+through the reference behind its gates (phase P0). Since 0.3.0 it answers from its own forward pass (phase P3),
+token-identical to llama-server b11192 wherever the release gate compares the two (§IV.4). Every answer carries a receipt with the sha256 of its text, and the
 conversation's history is committed by a Merkle root and a CID, so it can be proven without being disclosed (§III.6).
 Custom agents derived from Savante's template are bundled as THOT manifests and minted as iNFTs, the mint prepared and
 simulated by the runtime and signed by the owner, and loaded back from a token with their lineage verified (§III.7).
@@ -33,7 +37,8 @@ Every cryptographic construction is checked against a published value.
 
 *The design intent this report tests is that of bankml's authors, Professor Codephreak and Gregory L. Magnusson,
 stated in their own words over the course of the project (Codephreak and Magnusson 2026). It is recorded here as
-their thesis; the sections that follow measure the work against it.*
+their thesis; the sections that follow measure the work against it. The thesis also stands alone, with its
+argument, in [thesis.md](thesis.md).*
 
 **Port what works, and only what works.** "We prototyped in python and we switch to rust from working architecture"
 (2026-07-04). bankml was not begun from a design document. It was begun, on the instruction to "create llama.cpp rust
@@ -140,6 +145,18 @@ and the measurements (PERFORMANCE.md).
     `sagi.thot_manifest/1` reproduces the spec's three test vectors. A PostgreSQL connector loads an agent only if
     every byte matches its manifest. The iNFT path mints from the manifest's contentRoot, loads a token back, and
     walks the THOT lineage to the minted generation, tested end to end on a local EVM (§III.7).
+15. **A forward pass of its own, token-identical to the reference** (0.2.1–0.3.0). The tokenizer, the chat template,
+    each operation of a Qwen3 layer, the whole model, all three of ggml's CPU attention kernels and the sampler were
+    each checked against the shipped b11192 binaries or llama-server before the next was built. Since 0.3.0
+    `bankml serve --native` answers whole conversations with llama-server's text, counts and cache reuse
+    (`native.rs`, `forward.rs`; [oracles.md](oracles.md) §1b–§1d).
+16. **llama-server's request surface, reproduced rather than approximated** (0.3.1–0.3.6 released; 0.3.7–0.3.9
+    unreleased). Ollama's API, a C API, JSON mode and JSON schemas (llama.cpp's grammar engine and schema converter
+    ported), the penalties, then the rest of the default sampler chain, the context limit, slots, the host prompt
+    cache, logprobs and a `q8_0` KV cache. Each was added with a check against llama.cpp's own code or
+    llama-server's answers; where the reference does not fix a result (a restored slot, the order of simultaneous
+    requests), the check is against bankml's own empty-slot answer, and [oracles.md](oracles.md) §5g says so. What has
+    no check yet is refused with the reason (§IV.4).
 
 ## I. The problem
 
@@ -240,8 +257,9 @@ names the same file). It attaches a receipt to each answer: model hash, guard ve
 token, wall time, the sha256 of the answer text (which the client re-computes) and, since 0.1.7, the sha256 of the
 request it answered and `"signed": false`. Before every answer it re-checks that the model file is still the one it
 verified (device, inode, size, modification time) and that the engine still serves it, and refuses otherwise. A
-receipt proves integrity between a client and its own gateway, not to a third party (it is not signed). The arithmetic
-in P0 is still the reference's; P3 replaces it with bankml's kernels behind the same receipt.
+receipt proves integrity between a client and its own gateway, not to a third party (it is not signed). In P0 the
+arithmetic was the reference's. Since 0.3.0 `serve --native` puts bankml's own forward pass behind the same receipt,
+whose `engine` field names it ([modules/serve.md](modules/serve.md), [modules/native.md](modules/native.md)).
 
 ### III.2 The Q1_0 format and its arithmetic
 
@@ -323,8 +341,8 @@ of the root and the count can check that exchange (and detect a changed byte in 
 without the rest of the history. The browser's local storage plays the same part on the client side: the viewer's
 layout stays in their own browser. The tests (`testing/test_ui.py`) check that every proof verifies, that a changed byte
 or a proof for another record fails, that the CID equals the house implementation's, and that the view's state carries
-the commitment and none of the content. These commitments are what a THOT dataset bundle and an iNFT's storage
-reference will point to (§VI).
+the commitment and none of the content. These commitments are what a THOT dataset bundle carries (§III.7) and what
+an iNFT's storage reference will point to (§VI).
 
 ### III.7 From a template to a token
 
@@ -425,32 +443,78 @@ a matmul-bound ceiling of about 2.8 tokens per second against the reference's 0.
 4.2–4.4 s against 0.49 s. With the persistent thread pool of 0.0.3 (both engines on the same scheduler), the three-thread
 figure is 0.23–0.25 s against the reference's 2.18–2.36 s (9.2–9.9×), a ceiling of about 4 tokens per second — measured with the model resident in memory, and reproduced on 2026-09-29 on current code: 0.231 s at three threads, 9.45× the reference (docs/PERFORMANCE.md). When other applications leave too little memory to keep the 2.31 GB file cached, the gates measure the disk instead (4.5–5.2 s). That
 is less time than the reference spends on the *1-bit* model's products (0.34–0.37 s). What remains — attention with a
-key–value cache, normalisation, rotary embedding, sampling — is the forward pass (§IV.4), and the ceiling stands until
-it exists.
+key–value cache, normalisation, rotary embedding, sampling — is the forward pass. When this section was written it did
+not exist; since 0.2.8 it does, and the ternary model decodes end to end at 2.32–2.41 tokens per second against
+llama-server's 0.30 on this laptop (three threads, CHANGELOG 0.2.8; §IV.4).
 
 ### IV.4 What bankml answers with today, and what remains
 
-Since 0.0.6 bankml answers, through the reference (phase P0). `bankml serve` verifies the file and binds the reference
-engine to it, and every answer carries a receipt. Its own transformer forward pass (normalization, rotary embedding,
-attention with a quantized key–value cache, the feed-forward block, sampling) is phase P3. On the laptop a Savante
-turn under her roughly 300-token system prompt took 125 s, 113 s of it prefill at 2.8 tokens per second in the
-reference. That is the wall P3 and the prefill kernels are aimed at.
+*Status on 2026-10-06. "Released" means a tagged version up to 0.3.6; "unreleased" means 0.3.7–0.3.9 on the
+development branch, whose figures come from [CHANGELOG.md](../CHANGELOG.md) and become a gate record in
+[`testing/results/`](../testing/results/) when the version is cut.*
+
+**Where it started.** From 0.0.6 bankml answered through the reference (phase P0): `bankml serve` verified the file,
+bound the reference engine to it, and put a receipt on every answer. On the laptop a Savante turn under her roughly
+300-token system prompt took 125 s, 113 s of it prefill at 2.8 tokens per second in the reference. That was the wall
+phase P3, bankml's own forward pass, was aimed at.
+
+**Released (0.2.1–0.3.6).**
+
+| version | what bankml answers with | evidence ([oracles.md](oracles.md)) |
+|---|---|---|
+| 0.2.1–0.2.11 | its own Qwen3 forward pass, built op by op: tokenizer, template, layer 0, the whole model, the ternary model, the tiled and split-KV attention kernels, seeded sampling | each step bit-exact against the shipped ggml or token-identical to llama-server |
+| 0.2.8 | the ternary model end to end: 2.32–2.41 tokens/s decode against llama-server's 0.30 (laptop, 3 threads) | 6 of 6 prompts token-identical |
+| 0.2.12–0.2.14 | batched prefill; a GPU worker (Vulkan, bankml's own SPIR-V) that takes a share of each 1-bit product | bit-exact on the Vega 3; decode unchanged within noise there |
+| **0.3.0** | `bankml serve --native`: Savante answered by bankml's own forward pass | 9 of 9 conversation turns identical to llama-server (text, counts, cache reuse) |
+| 0.3.1 | Ollama's API, a registry of pinned models, one resident | `/api/chat` = `/v1` = llama-server's record |
+| 0.3.2 | a C API (`libbankml`) with the same verification, answers and receipts | [CAPI.md](CAPI.md); 9 of 9 turns each way |
+| 0.3.3 | JSON mode and GBNF grammars (llama.cpp's grammar engine, ported) | 1,645 of 1,645 masks; 23 of 23 and 13 of 13 answers |
+| 0.3.4 | the Llama graph, F16 weights, tied embeddings: Bonsai-1.7B, SmolLM2-135M-Instruct, `mindx-gen39` | 552,268 of 552,268 F16 elements; whole models bit-exact |
+| 0.3.5 | any JSON schema; `bankml convert` and `bankml create` | 148 grammars byte-identical per template; answers token-identical on five models |
+| 0.3.6 | the repeat, frequency and presence penalties | 56 of 56 answers on each of three models |
+
+Natively, bankml plays the `qwen3` and `llama` architectures in `Q1_0`, `Q2_0_g64` and F16; `forward::plan` refuses
+everything else from the header, with the reason ([modules/forward.md](modules/forward.md)). Since 2026-10-04 it is
+the default engine of mindX on its VPS ([BUILD_HISTORY.md](BUILD_HISTORY.md)). On the 1-bit 8B model llama-server was
+still faster at 0.3.0 (2.8 tokens/s against 1.9–2.0); one paired check after 0.3.4, on a loaded machine, read 2.30–2.59
+against 2.33–2.48, which [PERFORMANCE.md](PERFORMANCE.md) records as a hint, not a result.
+
+**Unreleased (0.3.7–0.3.9), from the CHANGELOG.**
+
+- **0.3.7.** The rest of llama-server's default sampler chain (typical-p, top-n-σ, XTC, dynamic temperature, DRY):
+  76 of 76 answers token-identical on `mindx-gen39` and on Bonsai-1.7B, 16 of 16 refusals with llama-server's message;
+  Bonsai-8B still to be recorded ([modules/sampler.md](modules/sampler.md)). Mirostat and a custom sampler order are
+  now refused, not ignored. Also: measurement of itself (`/bankml/metrics`, [modules/metrics.md](modules/metrics.md)),
+  a GPU limiter with per-shape calibration ([modules/gpu.md](modules/gpu.md)), and the bankML console
+  ([modules/console.md](modules/console.md)).
+- **0.3.8.** The serving contract at its edges: the context limit (8 of 8), slot save, restore and erase (19 of 19),
+  one slot with llama-server's host prompt cache (14 of 14, [modules/prompt_cache.md](modules/prompt_cache.md)), and
+  logprobs, streamed or not (14 of 14).
+- **0.3.9, in progress.** A `q8_0` KV cache with llama.cpp's Hadamard rotation (6 of 6 answers against llama-server
+  with `--cache-type-k/v q8_0`), and the grammar mask through a trie (median 2.94 ms against 38.8 ms per mask, the same
+  1,645 masks). 1-bit decode speed is still to be measured on an idle machine.
+
+**What remains** ([TODO.md](TODO.md)): 1-bit decode at llama-server's speed, measured pinned and idle; tool calls;
+more than one slot (continuous batching); context shift past `num_ctx`; `Q8_0` weights and Qwen's own template;
+NEON and AVX-512 kernels; signed receipts.
 
 The gate does not depend on the format. The guard reads any mainline type (it names all of ggml's standard types,
 from `Q4_0` and the K-quants to the `IQ` family and `MXFP4`), and no architecture is allow-listed. So a standard
 Qwen3, SmolLM or Granite GGUF at `Q4_K_M` or `Q8_0` is served on exactly the terms of a 1-bit Bonsai: it is guarded,
 pinned to its publisher's sha256, and carries a receipt. Since 0.1.5 the verification reports the architecture and the
 weight types it checked. The importer (`sAGI/models.py`) brings such files in, and admits only open-source licences.
-Only `Q1_0` and `Q2_0_g64` have bankml kernels proven against the oracle; other formats are answered by the reference
-engine alone, which is what P0 means. The propositions this report makes testable are
-stated at the kernel level:
+`Q1_0`, `Q2_0_g64` and F16 have bankml kernels proven against the oracle; other formats are answered by the reference
+engine alone, behind the same gate and receipt (`bankml serve` without `--native`), which is what P0 means. The
+propositions this report makes testable are stated at the kernel level, with their status:
 
 - **P1.** A low-bit kernel proven bit-exact against the compiled reference can match its speed without giving up
   exactness (supported for `Q1_0`, §IV.1).
 - **P2.** The reference runtime's ternary slowdown relative to 1-bit exceeds the ratio of their file sizes, so part of
   it is recoverable in the kernel (§IV.2–IV.3).
 - **P3.** An end-to-end bankml answer will be token-identical to the reference's at temperature zero on the same
-  prompts, because every kernel it uses is bit-exact — the criterion for phase P3.
+  prompts, because every kernel it uses is bit-exact — the criterion for phase P3 (supported since 0.2.7 for the 1-bit
+  model and 0.2.8 for the ternary one, greedy; since 0.2.11 also under seeded sampling; since 0.3.0 for whole
+  conversations through the server).
 
 ### IV.5 The floor, and the limit of the test core
 
@@ -485,7 +549,7 @@ end-to-end numbers beside the kernel numbers, and why §IV.3 measures how much o
 products account for. A kernel win that is invisible end to end is reported as such.
 
 **"One machine proves little."** The kernel results are from one laptop core; the deciding measurement for the
-production server (a Zen3 core) is named as open in the crate's checklist. Relative results between two kernels on
+production server (a Zen3 core) is named as open in [TODO.md](TODO.md). Relative results between two kernels on
 the same core are less sensitive to the machine than absolute rates, but they are not independent of it.
 
 **"Why not adopt the reference and contribute upstream?"** The oracle makes that path easy: every bankml kernel is,
@@ -494,16 +558,22 @@ second goal — a small, single-binary player with receipts — which upstream d
 
 ## VI. Future work
 
-The plan continues the phases in `bankml.rs`; each step ends in a measured, reproducible row or is not done.
+The plan continues the phases first written in `bankml.rs` (now [BUILD_HISTORY.md](BUILD_HISTORY.md)); each step
+ends in a measured, reproducible row or is not done. The live list is [TODO.md](TODO.md). Items written here at 0.2.0
+that are done since are marked with the version that did them; "unreleased" means 0.3.7–0.3.9.
 
-- **P3 — the forward pass, token-identical.** A Qwen3 forward in Rust: reading GGUF arrays (the tokenizer's
-  vocabulary and merges), a byte-pair tokenizer and chat template, the embedding lookup, RMSNorm including Qwen3's
-  query/key norms, rotary embedding — with the file's YaRN scaling (factor 4, original context 16,384) reproduced
-  exactly as the reference applies it — grouped-query attention (32 query heads, 8 key/value heads, head size 128)
-  over a `q8_0` key–value cache, SwiGLU, greedy sampling. The acceptance test is proposition P3: token-identical
-  output to the reference at temperature zero on fixed prompts.
-- **P0, done (0.0.6).** `bankml serve` puts the reference behind bankml's guard, pin and receipts. Next: swap bankml's
-  own kernels in behind the same interface, one tensor type at a time, verified by the oracle.
+- **P3 — the forward pass, token-identical: done (0.2.1–0.3.0).** A Qwen3 forward in Rust: the GGUF arrays, a
+  byte-pair tokenizer and the chat template, RMSNorm with Qwen3's query/key norms, rotary embedding with the file's
+  YaRN scaling as the reference applies it, grouped-query attention over an f16 key–value cache in all three of ggml's
+  CPU kernels, SwiGLU and llama-server's sampler. Proposition P3 holds (§IV.4). The Llama graph and F16 weights
+  followed (0.3.4). The `q8_0` key–value cache this item first named is unreleased (0.3.9), with llama.cpp's Hadamard
+  rotation, opt-in through `BANKML_CACHE_TYPE=q8_0`.
+- **P0, done (0.0.6); the swap, done (0.3.0).** `bankml serve` put the reference behind bankml's guard, pin and
+  receipts; `serve --native` put bankml's own kernels behind the same interface.
+- **The rest of llama-server's request surface.** Released: Ollama's API (0.3.1), the C API (0.3.2), JSON mode
+  (0.3.3), JSON schemas (0.3.5), the penalties (0.3.6). Unreleased: the rest of the sampler chain (0.3.7); the context
+  limit, slots, the host prompt cache and logprobs (0.3.8). Next: tool calls, more than one slot, context shift
+  ([OLLAMA.md](OLLAMA.md), [TODO.md](TODO.md)).
 - **Commitments on chain.** Receipts carry the answer's sha256 today, and the history is committed by a Merkle root
   and a CID (§III.6). Next: an optional THOT8 ternary commitment of each output, whose Keccak-256 leaf matches the
   on-chain `THOTLib.sol`; and signed receipts (an operator key, in a `GPL-3.0-only` module — LICENSING.md). THOT
@@ -515,12 +585,19 @@ The plan continues the phases in `bankml.rs`; each step ends in a measured, repr
 - **Faster 1-bit, if a core allows it.** On the test core every bit-exact 1-bit variant tried (§IV.5) ran at the
   reference's speed or slower. A core with AVX-512 VNNI (a single-instruction byte dot product) is where the next
   measurement belongs.
-- **Real activations in the oracle.** Dump activations from the reference's own forward pass and verify against them,
-  replacing today's real-weights × synthetic-activations cases.
+- **GPUs, under the same rule.** A Vulkan worker with bankml's own SPIR-V takes a share of each 1-bit product, and a
+  card is used only after `bankml gpu --verify` finds it bit-exact on layer-shaped data (0.2.12–0.2.14). A limit on
+  its memory and time, and per-shape calibration, are unreleased (0.3.7). Next: F16 and ternary kernels on the card,
+  and cards from other vendors, each proven the same way (0.5.0 in [TODO.md](TODO.md); [modules/gpu.md](modules/gpu.md)).
+- **Real activations in the kernel oracle.** Dump activations from the reference's own forward pass and verify the
+  kernels against them, replacing the kernel oracle's real-weights × synthetic-activations cases. (The whole-model
+  oracles of 0.2.7 on already carry real activations through every layer, against the shipped ggml graph.)
 - **The production machine and other CPUs.** A Zen3 row on the one-core server — it loads the same haswell build of the
   reference, so the same scalar ternary path is expected there, which the row will confirm or refute — NEON for ARM (P5, handheld devices), and AVX-512 where present.
-- **The mindX seam (P4).** The OpenAI-compatible endpoint on loopback exists (`bankml serve`). Next: register it as a
-  provider so mindX's inference budget records real usage, and run the sAGI engine and the improve.skill loop on it.
+- **The mindX seam (P4).** The OpenAI-compatible endpoint exists (`bankml serve`, 0.0.6; native since 0.3.0), and so
+  does Ollama's API (0.3.1). Since 2026-10-04 `serve --native` is mindX's default model server on its VPS, in place of
+  Ollama. Next: mindX's inference discovery using it as a provider with receipts, so its inference budget records real
+  usage, and the sAGI engine and the improve.skill loop on it (0.9.0 in [TODO.md](TODO.md)).
 - **Upstream (prepared in 0.2.0).** Because every bankml kernel is, by construction, a bit-exact drop-in for a
   reference function, the ternary kernel is offered back to llama.cpp. `upstream/q2_0_avx2.c` is the drop-in in ggml's
   C, bit-exact against the shipped library on 200,000 of 200,000 random cases and 3.4× its scalar path per row; the
@@ -534,7 +611,7 @@ Ainslie, J., Lee-Thorp, J., de Jong, M., Zemlyanskiy, Y., Lebrón, F. and Sangha
 Generalized Multi-Query Transformer Models from Multi-Head Checkpoints." *Proceedings of EMNLP 2023*.
 
 Codephreak, Professor and Magnusson, G. L. (2026). Design directives for bankml and the mindX runtime, recorded in
-the project (personal communication and project record, 2026-07-04 to 2026-09-26).
+the project (personal communication and project record, 2026-07-04 to 2026-09-28).
 
 Courbariaux, M., Bengio, Y. and David, J.-P. (2015). "BinaryConnect: Training Deep Neural Networks with binary weights
 during propagations." *Advances in Neural Information Processing Systems 28*.

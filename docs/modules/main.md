@@ -31,7 +31,9 @@ The usage string, as the source states it, one line per subcommand:
 | `bankml gpu [--remote \| --verify]` | every video card found and which bankml will use; `--remote` adds Hugging Face's rented GPUs, listed only; `--verify` runs the bit-exact kernel oracle on each card |
 | `bankml version` | `bankml <version>` (also `--version`, `-V`) |
 
-Depth for each is in [../usage.md §13](../usage.md#13-reference-commands-ports-environment).
+`--slot-dir DIR` also works with `--native` (0.3.8: llama-server's slot save, restore and erase on the engine
+address, [serve.md](serve.md)); the usage string lists it on both `serve` lines. Depth for each is in
+[../usage.md §13](../usage.md#13-reference-commands-ports-environment).
 
 ### Defaults and environment read here
 
@@ -41,6 +43,10 @@ Depth for each is in [../usage.md §13](../usage.md#13-reference-commands-ports-
 - `generate`: `--max` defaults to 256. With `--sample`, the model's GGUF defaults are the base, and the flags override
   them. `--json` opens the native engine with a 4096-token context and runs greedy unless `--sample` is given.
 - `--engine prism` selects the guard's Prism rules; anything else is mainline.
+- `serve --native` does not use `--threads` (that is llama-server's `-t` when spawned); the engine reads
+  `BANKML_THREADS`, `BANKML_LLAMA_THREADS`, `BANKML_CACHE_TYPE` (`f16` or `q8_0`, 0.3.9), `BANKML_CACHE_RAM` (the host
+  prompt cache in MiB, 0.3.8) and `BANKML_GPU`, `BANKML_GPU_SHARE`, `BANKML_GPU_LIMIT` from the environment
+  ([forward.md](forward.md), [prompt_cache.md](prompt_cache.md), [gpu.md](gpu.md)).
 
 ### Exit codes by command
 
@@ -85,7 +91,24 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
   `general.sampling.penalty_last_n` and `penalty_repeat` when a model sets them (sampler.rs), and the prompt fills the
   penalties' window; none of the five native models sets them (CHANGELOG 0.3.6).
 - `convert --outtype` accepts `f16` only.
-- The header comment ("Today: the guard, the pin, and `verify` … Later: `serve`") predates the later subcommands.
+
+## Design notes
+
+- **Where each command comes from.** `tokenize` is phase P3 step one and `chat-template` P3 step two of
+  [../BUILD_HISTORY.md](../BUILD_HISTORY.md); `generate` is P3's forward pass. `create` (the native `ollama create`)
+  and `convert` are phase O5 of [../OLLAMA.md](../OLLAMA.md). `generate --json` (JSON mode through the native engine)
+  arrived in 0.3.3.
+- **What each stage is checked against.** `tokenize` is token-identical to llama.cpp b11192 on its oracle;
+  `chat-template` is byte-identical to `/apply-template`; greedy `generate` is token-identical to llama-server b11192
+  on its oracle (prompts under 64 tokens, contexts under 512 cells). `generate --json` applies the grammar, its
+  prefill and the redraw exactly as llama-server answers `response_format: {"type": "json_object"}`, greedy being its
+  temperature 0, and prints only the content. With `--sample`, the prompt fills the penalties' window first, as
+  llama-server's does (O2).
+- **`gpu`.** The listing merges every Vulkan device with the kernel's sysfs view and shows the selection. `--verify`
+  is the on-card oracle: each selected card runs bankML's kernels and must give the CPU kernels' bits, or bankML does
+  not use it.
+- **`usage`** is bankML's equivalent of psutil.
+- **Exit code 1 for an unreadable FORK.json.** Version 0.0.1 reported it as "unpinned" (2); the two are now distinct.
 
 ## See also
 

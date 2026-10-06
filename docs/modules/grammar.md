@@ -22,8 +22,8 @@ Where the grammar sits in sampling: the unconstrained chain draws first; if the 
 Otherwise every rejected token is set to −∞ and the chain draws again from the same generator
 (`Sampler::sample_constrained`, see [sampler.md](sampler.md)).
 
-Callers: the native engine (`native.rs`: `Native::grammar` builds and prefills a `Grammar`, `complete` checks, masks
-and accepts per token); `serve.rs` (`NativeChat::parse` resolves `from_openai_text`; the stream uses
+Callers: the native engine (`native.rs`: `Native::grammar` builds and prefills a `Grammar`, `complete_with` (and
+`complete`, which wraps it) checks, masks and accepts per token); `serve.rs` (`NativeChat::parse` resolves `from_openai_text`; the stream uses
 `ContentStream`); `ollama.rs` (`from_ollama`, `from_ollama_text`); `bankml generate --json`; and `schema.rs`, whose
 grammars this engine parses.
 
@@ -58,6 +58,8 @@ impl Vocab {
     pub fn new(pieces: Vec<Vec<u8>>, eog_ids: &[u32]) -> Vocab
     pub fn piece(&self, id: u32) -> &[u8]
     pub fn is_eog(&self, id: u32) -> bool
+    pub fn pieces(&self) -> &[Vec<u8>]
+    pub fn len(&self) -> usize                     // and is_empty()
 }
 impl Grammar {
     pub fn new(r: std::sync::Arc<Rules>) -> Grammar
@@ -74,7 +76,7 @@ pub fn mask_hash(allowed: impl Iterator<Item = u32>) -> (usize, u64)
 - `Rules::parse` is `llama_grammar_init_impl(vocab, text, "root")`: parse, check every rule reference, refuse left
   recursion. `tokenize` resolves `<token>` terminals (special tokens parsed); `<[id]>` and `!<…>` are supported.
 - `Vocab` holds every token's piece as the grammar reads it (`Tokenizer::piece`), decoded to code points once, and
-  the end-of-generation set.
+  the end-of-generation set. Its trie (0.3.9) is built on the first whole-vocabulary mask and kept (`OnceLock`).
 - `apply` sets every rejected candidate to −∞. An end-of-generation token passes only when a stack is empty (the
   grammar is complete); an empty piece never passes. `allows` is the single-candidate check.
 - `accept` advances the stacks. A token that leaves no stack is an `Err` (llama.cpp throws).
@@ -135,12 +137,57 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
 - **Measured** (docs/PERFORMANCE.md, gate 0.3.3, laptop): one whole-vocabulary mask over 151,669 tokens, median
   **24.2 ms** (p90 47.0, max 101.0). Grammar time per generated token, everything included: **3.90 ms** (Bonsai-8B
   Q1_0) and **3.95 ms** (ternary), about 1 % of a 1-bit step and 1.4 % of a ternary step. An answer written as valid
-  JSON on its own spent 0.4 ms of grammar per token.
+  JSON on its own spent 0.4 ms of grammar per token. These 0.3.3 figures predate the trie and were not re-measured
+  with it.
+- **The trie (0.3.9).** A whole-vocabulary mask with no UTF-8 left open walks a trie of the vocabulary's code
+  points (`Trie`, built once per vocabulary, tokens sorted so each subtree is one range): each grammar stack meets a
+  shared prefix once instead of once per token, and the stacks after a terminal are computed once per stack and mask.
+  Measured over the oracle's 1,645 masks (laptop, gate load): median **2.94 ms against 38.8 ms** one by one (13×),
+  p90 49.3 against 80.6, the worst 762 ms (the first, which builds the trie) against 1,085. Short candidate lists
+  (under 1,024, `TRIE_MIN`) and a token that left UTF-8 open keep the one-by-one path (`apply_each`).
 - **Rust practice.** Zero crates; no `unsafe`. Parse errors say where (`expecting name at …`). Where llama.cpp
   would loop practically forever (`{m,n}` with n below m) or throw (an empty stack after accept), bankml returns an
   `Err`. The repetition limits of llama.cpp (2,000) are kept.
-- **Next** (docs/TODO.md 0.4.0): a byte trie over the token pieces, so each grammar stack walks shared prefixes once;
-  the oracle stays the same masks. Then tool calls through the template (O6).
+- **Next**: tool calls through the template (O6).
+
+## Design notes
+
+- **History.** O6's first cut (0.3.3) was JSON mode. 0.3.4 added the ChatML templates' JSON-mode grammar
+  (`JSON_OBJECT_GRAMMAR_CHATML`, SmolLM2-Instruct and `mindx-genN`). O6b added every other JSON schema
+  (`Constraint::Schema`). 0.3.5 fixed the content rule for a cut inside an escape and added `json_message`'s
+  fallback. 0.3.9 added the trie.
+- **Source.** The port follows llama.cpp b11192 at commit `171e8846b` (github.com/ggml-org/llama.cpp). llama.cpp's
+  MIT notice is reproduced in the module header, as its licence asks (LICENSING.md). A stack element is an index
+  into one flat element array where llama.cpp uses a pointer; indices compare the same way, so semantics are kept.
+- **The redraw.** `common_sampler_sample` runs with `grammar_first = false`: the whole chain (top-k … temperature →
+  dist) makes one RNG draw; if that token passes the grammar it is taken. Otherwise the logits are reset, rejected
+  tokens set to −∞, and the whole chain runs again, a second draw from the same `mt19937`. A seeded run therefore
+  consumes the generator exactly as llama-server's does.
+- **JSON mode's grammar.** llama-server's chat layer converts `{"type": "object"}` to a PEG parser and then to GBNF
+  (`common/chat-auto-parser-generator.cpp`); the sampler then accepts the generation prompt's tokens into the
+  grammar (`common_grammar_needs_prefill`). `JSON_OBJECT_GRAMMAR` equals what b11192 reports in
+  `generation_settings.grammar`; the JSON-mode oracle checks this on every recorded request. A schema whose
+  conversion equals that grammar resolves to `Constraint::JsonObject`.
+- **Schemas.** `schema.rs` reproduces `json_schema_to_grammar` and the chat parser's wrapping, byte-identical over
+  llama.cpp's own test cases and a mindX-shaped corpus. A schema b11192 refuses is refused with its reason.
+  Refusals and conversion warnings do not depend on the template (checked against b11192's output), so
+  `schema_constraint` converts with the Qwen3 template for all.
+- **`json_schema: null`.** llama-server converts it to a bare `{"type": "object"}` grammar that rejects the chat
+  template's generation prompt, and the request fails; a non-object top-level `json_schema` fails conversion. bankml
+  refuses both with the reason.
+- **Content of an open value.** While the answer is still open (a length-limited answer), the content is the value
+  from its first byte to the end of the text.
+- **`json_message`'s fallback.** When the parse gives an empty message, for example an answer cut inside or right
+  after the opening fence, llama-server answers a non-streamed request with the raw text
+  (`server_task_result_cmpl_final::to_json_oaicompat_chat`). A stream never sends that fallback, because the server's
+  final parse adds no difference, so `ContentStream` keeps `json_content`.
+- **Content oracle refusals.** llama.cpp's parser refuses only an answer containing a reasoning block, which no
+  JSON-mode or schema grammar admits after its prefill; bankml's answers never contain one.
+- **Trie details.** Candidates exclude end-of-generation tokens and pieces starting with NUL. Tokens are sorted by
+  code points so each node's subtree is one range, with tokens ending at the node first. The walk memoizes, per
+  stack, the stacks after its terminal, keyed by the stack's address and length; this is sound because every
+  walked stack lives in the grammar's stack set or in an `Rc` the memo holds until the mask is done.
+- `Vocab::pieces` is also read by the DRY sampler's sequence breakers.
 
 ## Limitations
 
@@ -148,7 +195,7 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
   (llama-server would keep only the format's grammar).
 - A top-level `json_schema` that is `null` or not an object is refused (llama-server fails the request).
 - Ollama's `format` accepts only `"json"`, `""` or a schema object.
-- The mask is a straight port of `reject_candidates` (cost above).
+- With UTF-8 left open by the last token, the mask is still the straight port of `reject_candidates`.
 - Tool calls are not supported yet.
 
 ## See also
@@ -156,7 +203,7 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
 - [../oracles.md](../oracles.md) §5c, §5d, §5e
 - [../PERFORMANCE.md](../PERFORMANCE.md) — JSON mode's cost
 - [../OLLAMA.md](../OLLAMA.md) — O6, what llama-server does with `response_format`
-- [../TODO.md](../TODO.md) — 0.4.0, the byte-trie mask
+- [../TODO.md](../TODO.md) — 0.4.0, the faster whole-vocabulary mask (done in 0.3.9)
 - [../usage.md](../usage.md) — `bankml generate --json`, the `/v1` and `/api` fields
 - Sibling pages: [schema.md](schema.md), [sampler.md](sampler.md), [tokenizer.md](tokenizer.md),
   [chat.md](chat.md), [native.md](native.md), [serve.md](serve.md), [ollama.md](ollama.md)

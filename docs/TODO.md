@@ -1,7 +1,10 @@
 # TODO
 
 What comes next, and where each item came from. Every item ends in a measured, reproducible result, or it is recorded
-as rejected with its numbers (the house rule: the same bits first, then the speed). Sources:
+as rejected with its numbers (the house rule: the same bits first, then the speed). What has shipped, and its records,
+is in [CHANGELOG.md](../CHANGELOG.md); v0.3.6 is the latest public release, and 0.3.7–0.3.9 are on the branch,
+unreleased. **The current plan is [0.4.0](#040--native-serve-complete-everything-savante-and-mindx-ask-of-llama-server).**
+The argument for the method is [thesis.md](thesis.md). Sources:
 **R** = [research.md](research.md) (the field, 2026-09-29) · **K** = the clean-room study of KoboldCpp (docs only) ·
 **V** = the vLLM code review (main @ `36768d1`, Apache-2.0) · **Rs** = the Rust 1.95 study (the `rust` skill) ·
 **A** = the audits of 0.1.5, 0.1.6, 0.1.7–0.1.8 and 0.1.9.
@@ -29,7 +32,8 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
   drains the declared body first; the suite passes 10/10 in a row.
 - [ ] **Measure the prefill/decode knobs** (K, V): `-t 2/3/4` with `-tb 4`; `-ub 128/256/512`; `-fa on`;
   `-ctv q8_0` (then `-ctk q8_0`) with RSS and exactness recorded. Adopt only what is faster *and* token-identical,
-  or clearly label what is not exact.
+  or clearly label what is not exact. (A `q8_0` K and V cache is exact in bankML since 0.3.9, at 53 % of the f16
+  bytes; its speed is not yet measured.)
 - [ ] **Is batched verification cheap here?** (V) `llama-bench -p 1,2,4,8,16`: speculation can only pay if a
   k-token verify costs much less than k single steps on this CPU.
 
@@ -40,7 +44,8 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 - **vLLM's CPU backend as an engine** (V): no GGUF on x86, fast paths need AVX-512/AMX, ~2.9× slower than llama.cpp
   on CPU (arXiv:2608.23841).
 - **KoboldCpp code** (K): AGPL-3.0; ideas only, from its documentation.
-- **fp8 KV cache** (V): needs AVX-512/AMX on vLLM's CPU backend; q8_0 via llama.cpp is the equivalent to measure.
+- **fp8 KV cache** (V): needs AVX-512/AMX on vLLM's CPU backend; q8_0 via llama.cpp is the equivalent to measure
+  (bankML's `q8_0` KV cache, token-identical to llama-server's: 0.3.9).
 
 ## 0.1.9 — done
 
@@ -64,9 +69,11 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
 
 ## The production server (and any machine with ≥ 3 GB free)
 
-- [x] **Re-measure the whole-token ternary budget** with the 2.31 GB model resident (done 2026-09-29: 0.231 s at three threads, 9.45×; browser and chat engine closed, 2.25 of 2.31 GB cached) in the page cache (on this laptop
-  it no longer fits: 1.04 GB stayed resident after a full read). The 0.0.3–0.0.6 records say 0.23–0.25 s per token at
-  three threads; the gates since 0.1.0, disk-bound, say 4.5–5.2 s.
+- [x] **Re-measure the whole-token ternary budget** with the 2.31 GB model resident in the page cache. Done
+  2026-09-29 with the browser and chat engine closed (2.25 of 2.31 GB cached): 0.231 s at three threads, 9.45×
+  ([PERFORMANCE.md](PERFORMANCE.md#re-measured-with-the-model-resident-2026-09-29-after-021)). This matches the
+  0.0.3–0.0.6 records (0.23–0.25 s); the gates since 0.1.0 measured the disk (4.5–5.2 s), because with other
+  applications open only 1.04 GB stayed resident after a full read.
 - [ ] Re-measure n-gram speculation on an idle machine (ahead in 5 of 6 pairs here, within the noise).
 
 ## After 0.2.0 — P3 and beyond
@@ -80,7 +87,9 @@ as rejected with its numbers (the house rule: the same bits first, then the spee
   own forward pass, with conversations identical to llama-server's (9 of 9 turns). The per-release record is in
   CHANGELOG.md; the road on from here is the next section.
 - [ ] **A block-hashed prefix cache in P3** (V: `hash(parent, tokens[16], extra)`, a HashMap to blocks, ref counts,
-  an intrusive LRU free list, ~300 lines). Exact by construction: only the unchanged prefix is reused.
+  an intrusive LRU free list, ~300 lines). Exact by construction: only the unchanged prefix is reused. 0.3.8 took
+  llama-server's own host prompt cache instead (`prompt_cache.rs`, whole slot states, not blocks), because that is
+  what makes the answers match llama-server's; a block cache would need more than one slot to pay.
 - [ ] **Prompt-lookup speculation in P3** (V: the n-gram proposer, a KMP scan over the reversed history, ~60 lines,
   no model memory) with greedy verification (accept until the first mismatch, plus the bonus token). Exact only with
   batch-invariant kernels.
@@ -116,7 +125,7 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
   `bankml_log` defined in Rust as a C-variadic function (1.99), byte-identical to libc `snprintf`, marking what it
   does not support. Oracles in the gate. **This is the llama.h-shaped seam for embedding**: what an application that
   links llama.cpp would link instead, and the way into P5 (an NDK or iOS app embeds a C library).
-- [ ] The C API's next surface, each with an oracle: tokenize/detokenize (against `/tokenize`), logits and
+- [ ] The C API's next surface ([CAPI.md](CAPI.md#why-it-exists)), each with an oracle: tokenize/detokenize (against `/tokenize`), logits and
   `n_probs` (bit-exact), the slot's save/restore, more than one handle sharing one mapping, and a semver promise for
   the ABI (1.0.0).
 
@@ -136,7 +145,8 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
 - [ ] **Q8_0** (the Qwen3-0.6B pin): the kernels (read, not built), and an oracle for Qwen's own template, which differs
   from the Bonsai template on 4 of 317 conversations.
 - [ ] Decode on the F16 models at llama-server's speed: 38 vs 41 tok/s on SmolLM2 (the pool's condvar hand-off is the
-  suspect; a spin was measured and rejected on this SMT laptop, PERFORMANCE.md).
+  suspect; a spin was measured and rejected on this SMT laptop,
+  [PERFORMANCE.md](PERFORMANCE.md#f16-and-the-llama-graph-034--laptop-against-llama-server-b11192)).
 - [x] mindX's seam for its lineage: convert-and-pin each new generation (O5's Rust converter and `bankml create`, with
   the persona `SYSTEM` as a derived model's layer) — **0.3.5**. Next, in mindX: `promote.py --to bankml`.
 
@@ -152,10 +162,10 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
   derived model.
 - [ ] Tokens past `num_ctx` during an answer: Ollama's ContextShift (O2).
 - [ ] `ADAPTER` in a Modelfile (LoRA merge in Rust, against PEFT's merge) — today: merge first, `FROM` the directory.
-- [x] **O2's penalties (unreleased, branch `o2-penalties`)**: repeat, frequency and presence over `repeat_last_n`, the
+- [x] **O2's penalties (released in 0.3.6)**: repeat, frequency and presence over `repeat_last_n`, the
   prompt in the window, token-identical to llama-server b11192 (`oracle_penalties`: mindx-gen39 56/56, Bonsai-1.7B
   56/56, Bonsai-8B 56/56, 12/12 refusals each; live 85/85). `no_repeat_ngram_size` is still transformers', not llama.cpp's.
-- [ ] mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1): `serve --to bankml`, `imprint-bankml`) needed **O2 first** (now there):
+- [ ] mindXtrain's bankml backend ([proposed](https://huggingface.co/PYTHAI/mindXtrain/discussions/1): `serve --to bankml`, `imprint-bankml`) needed **O2 first** (there since 0.3.6):
   `mindx-gen39` degenerates into repetition without a penalty, and the imprint gate uses `repetition_penalty 1.3` and
   `no_repeat_ngram_size 3` (the latter's oracle is transformers' `generate`).
 
@@ -175,13 +185,21 @@ of what mindX asks of Ollama, with the evidence, is in [OLLAMA.md](OLLAMA.md).
 Each milestone ends with a gated release, and nothing counts until its oracle passes.
 
 ### 0.4.0 — native serve complete (everything Savante and mindX ask of llama-server)
-- [ ] Slot save and restore in `--native` (Savante's warm start); oracle: the tokens after a restore equal the
-  tokens without one.
-- [ ] More than one slot (`-np N`) with llama-server's queueing, or a stated single-slot contract; the conversation
-  oracle extended to interleaved sessions. (O2; then continuous batching across slots, O8.)
-- [~] The rest of llama-server's sampler chain, each with a seeded oracle: **repetition, presence and frequency
-  penalties (`last_n`) — done (O2 first cut, `oracle_penalties`), retiring the refusal of the coach's
-  `repeat_penalty: 1.3`**; still to come: typical-p, DRY, XTC, top-n-σ, dynamic temperature.
+
+**The current plan.** The serving items below are done (0.3.3–0.3.9; 0.3.7–0.3.9 unreleased). What remains for the
+milestone is three items: 1-bit decode at least at llama-server's speed, measured; the engine setting's `auto`
+choosing native for both the 1-bit and the ternary files; and the milestone's release gate. The same list is in
+[thesis.md](thesis.md) §VII.
+
+- [x] **Slot save and restore in `--native`** (**0.3.8**): the answer after a restore equals an empty slot's, across a
+  restart; 19 / 19 (`slot_oracle_live`).
+- [x] **A stated single-slot contract** (**0.3.8**), as llama-server `-np 1`, with its host prompt cache
+  (`prompt_cache.rs`): interleaved conversations identical turn by turn, simultaneous requests queued; 14 / 14
+  (`session_oracle_live`). More than one slot waits for continuous batching (O8).
+- [x] The rest of llama-server's sampler chain, each with a seeded oracle: **repetition, presence and frequency
+  penalties (`last_n`) — done (0.3.6, `oracle_penalties`), retiring the refusal of the coach's
+  `repeat_penalty: 1.3`**; **typical-p, DRY, XTC, top-n-σ and dynamic temperature — done (0.3.7, `oracle_samplers`,
+  76 / 76 on mindx-gen39 and Bonsai-1.7B; Bonsai-8B still to be recorded)**. Not reproduced: mirostat, a custom sampler order, top-k above 128.
 - [x] **JSON mode** (O6, first cut; **0.3.3**). It is not a JSON-only mask: the request turned out to need
   llama-server's own grammar. That grammar is generated from the chat template's parser, its root starts with the
   generation prompt, and it is prefilled. So llama.cpp's whole GBNF engine is ported (`grammar.rs`), with the
@@ -196,23 +214,52 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
   `format: {schema}`, `response_format.json_schema`, `json_object` + `schema`, top-level `json_schema`, `bankml_chat`.
 - [x] **JSON schemas, the answers** (**0.3.5**): llama-server's answers token-identical on both 8B models and the
   three O4 models (`oracle_json_schema*`, live in the gate). Next: tool calls.
-- [ ] A faster whole-vocabulary mask: a byte trie over the token pieces, so each grammar stack walks shared prefixes
-  once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
-  over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.
-- [ ] `/completion` with `n_probs`, and logprobs on `/v1/chat/completions`, bit-exact probabilities.
-- [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle. (O2)
-- [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated
-  4-bit KV (O8: what makes the boardroom's `num_ctx 8192` affordable).
-- [ ] **1-bit decode at least at llama-server's speed**: 1.9–2.0 tokens/s against 2.8 before 0.3.4; after 0.3.4's
-  attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48 (PERFORMANCE.md) — re-measure pinned and idle. Cache the norm
-  weights, cut per-token allocations, share one quantized activation across Q/K/V and gate/up, and compute logits
-  only where sampled. (O8)
-- [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files.
+- [x] **A faster whole-vocabulary mask** (**0.3.9**): a trie over the vocabulary's code points, each grammar stack
+  walking a shared prefix once; median 2.94 ms against 38.8 ms per mask (13×), p90 49 against 81. The oracle is
+  unchanged and now checks both paths: 196 / 196 runs, 1,645 masks identical to llama.cpp.
+- [x] **Logprobs on `/v1/chat/completions`** (**0.3.8**): bit-exact, llama-server's entry rules (UTF-8 splits, stop
+  words), 14 / 14 with five streamed (`logprobs_oracle_live`).
+- [x] **Logprobs in streamed answers** (**0.3.8**): each chunk's delta and entry as llama-server's; 14 / 14 with the
+  non-streamed cases. `/completion` (and `n_probs`) stays unserved natively: no client of bankML uses it.
+- [x] **Behaviour at the context limit exactly as llama-server's** (**0.3.8**): stop at the full context, past it
+  its 400 body; 8 / 8 (`context_oracle_live`).
+- [x] **A `q8_0` KV cache** (**0.3.9**), llama.cpp's `--cache-type-k/v q8_0` with its Hadamard rotation (b11192
+  rotates K/Q and V around any quantized cache): 6 / 6 answers token-identical to llama-server so configured
+  (`kv_oracle_live`), the kernels bit-exact against the shipped ggml (`oracle_ggml_b11192_q8_0_kv_kernels`). Next: a
+  4-bit KV (`q4_0`, the same rotation; O8: what makes the boardroom's `num_ctx 8192` affordable).
+- [ ] **1-bit decode at least at llama-server's speed** (0.3.9's third piece; O8): 1.9–2.0 tokens/s against 2.8
+  before 0.3.4; after 0.3.4's attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48
+  ([PERFORMANCE.md](PERFORMANCE.md#f16-and-the-llama-graph-034--laptop-against-llama-server-b11192)). The method is
+  `testing/decode_ab.py` under `testing/pinned.sh` on an idle machine: fresh processes each round, alternating order,
+  identical answers or the round is refused. If bankML is behind: cache the norm weights, cut per-token allocations,
+  share one quantized activation across Q/K/V and gate/up, and compute logits only where sampled.
+- [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files (today it picks native for
+  the ternary files only: `sAGI/models.py`, `native_for`). It depends on the item above.
+- [ ] **The milestone gate**: `testing/release_gate.sh` for 0.4.0, every oracle above in it, recorded in
+  `testing/results/0.4.0.txt`.
 
 ### 0.5.0 — hardware
+
+- [ ] **GPU object lifetimes** (found by the 2026-10-06 code audit): `Gpu` destroys nothing on drop — device, buffers
+  and pipelines stay until the process exits — so a worker dropped and reopened (a model reload) leaks its card
+  memory; give `Gpu`, `Buffer` and the pipelines real `Drop`s. And `unsafe impl Sync for Buffer` lets two `Gpu`s on
+  two threads write one `&Buffer` through safe `write`: unreachable today, to be closed with the lifetimes
+  ([modules/gpu.md](modules/gpu.md)).
+
+**Direction (operator, 2026-10-05): bankML must be GPU-ready across vendors — AMD and NVIDIA, Hugging Face's rented
+NVIDIA cards included — because the models it is heading for (Qwen3.8, then IBM Granite and GLM) run on GPUs.** The
+backend is already vendor-neutral (Vulkan through `dlopen`, bankML's own SPIR-V, no SDK); what it lacks is kernels
+beyond Q1_0 and a verified run on anything but the integrated Vega 3. A vendor counts as supported only when its card
+passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a driver may not fuse `Fma`).
+
+- [ ] **The vendor matrix, each proven by `--verify` and recorded in PERFORMANCE.md**: AMD integrated (Vega 3, done),
+  AMD discrete (RDNA), NVIDIA (the first rented T4 or L4 through Hugging Face, **only on the owner's go-ahead and
+  budget**), Intel. Per-vendor float behaviour (fused or unfused `Fma`, denormals) is detected by the verify step, as
+  `spirv.rs fma_exact` already does for RADV.
+- [ ] The F16 and Q2_0 (ternary) GPU kernels, bit-exact on the card, in `--verify`: the formats Qwen3.8 imprints and
+  the ternary line need.
 - [ ] Batched GPU submissions: Q/K/V and gate/up in one command buffer, one wait per group, persistent descriptor
   sets. Goal: a measured gain on the Vega 3.
-- [ ] The Q2_0 (ternary) GPU kernel, bit-exact on the card, in `--verify`.
 - [ ] Several cards: each takes a share of every matrix's rows, still one card's exact dot per element. Proven on a
   multi-card machine; a Hugging Face Job (`l4x4`, `a10g-largex2`) is the candidate, **only on the owner's go-ahead
   and budget**.
@@ -224,6 +271,18 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] CI builds and unit-tests across the x86 variants and aarch64.
 
 ### 0.6.0 — more models
+
+**Direction (operator, 2026-10-05): SmolLM2 and `mindx-genN` stay as the *example* of the imprint (they prove the
+dream → weights → proof-of-recall loop and that bankML serves it token-identically); their language is not the goal.
+The imprint work moves to **Qwen3.8** and the **ternary** line, and from successful runs graduates to **IBM Granite**
+and **GLM** models, on GPU.**
+
+- [ ] **Qwen3.8** (`qwen3_5`, mindX `docs/QWEN38_IMPRINT_AGENDA.md`): Gated DeltaNet layers interleaved with gated
+  attention, multi-token prediction; a new graph, oracle-exact against llama.cpp's own support for it before any
+  imprint is served.
+- [ ] The ternary line beyond Bonsai-8B: each new ternary model gets the full oracle set; imprints in ternary.
+- [ ] **IBM Granite** (Granite 4.x; mindX already serves `granite4.1:3b` through Ollama) and **GLM**, on GPU, once
+  the vendor matrix above stands.
 - [x] The **Llama architecture** for SmolLM2 (O4, **0.3.4**): tied embeddings (Bonsai-1.7B too), SmolLM2's tokenizer
   and templates, `mindx-genN` served natively. Still open: Llama 3.x (rope factors, the `llama3` pre-tokenizer, its
   template), which are refused today.
@@ -285,8 +344,9 @@ as llama.cpp, a pinned model and a receipt, on a phone as on a laptop. Then many
 - [ ] bankML on aarch64 (Android and Linux phones, the Raspberry Pi): Rust's own aarch64 targets, still no crates;
   NEON kernels bit-exact (0.5.0); the oracle run on the device against llama.cpp's ARM build (MIT; minaiml's
   research fork of it).
-- [ ] bankML as a library for apps: a small C ABI (verify, load, generate, receipt), so brobot plays pinned models
-  through bankML. The core stays standalone and agnostic and imports no extension, per brobot's layering.
+- [ ] bankML as a library for apps, so brobot plays pinned models through bankML. The C ABI exists since 0.3.2
+  ([CAPI.md](CAPI.md): open with verification, chat with the receipt); left: building it for aarch64 and Android,
+  and brobot linking it. The core stays standalone and agnostic and imports no extension, per brobot's layering.
 - [ ] Phone GPUs (Adreno, Mali, Apple through MoltenVK) through the same `gpu/` Vulkan backend, each card verified
   bit-exact on the device before it computes anything (`bankml gpu --verify`).
 - [ ] Delivery rules on the handheld exactly as on the laptop: pin by sha256, OSI licences only, the guard before

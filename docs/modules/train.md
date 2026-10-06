@@ -27,9 +27,11 @@ pub fn py_json_str(s: &str, out: &mut String)
 ```
 
 - `STAGES` lists each stage of the proof loop as (stage, module, status). Today: `author` → `script` (ported),
-  `imprint` (not yet: LoRA SFT needs a backward pass), `probe` (not yet: needs the Llama architecture and adapter
-  loading in the forward pass), `score` → `imprint` (ported), `classroom` and `boardroom` (not yet). A new stage is a
-  new module and one line there.
+  `imprint` (not yet: LoRA SFT needs a backward pass), `probe` (not yet: needs adapter loading in the forward pass;
+  the Llama graph runs since 0.3.4), `score` → `imprint` (ported), `classroom` and `boardroom` (not yet). A new stage is a
+  new module and one line there. The probe's status string predates 0.3.4: the forward pass has played the Llama
+  architecture since then (SmolLM2, `mindx-genN`; [forward.md](forward.md)), so what the probe still lacks is
+  adapter loading and transformers' decoding rules (TODO 0.7.0).
 - `py_json_str` writes a JSON string as Python's `json.dumps(…, ensure_ascii=False)` does: `\"`, `\\`, `\n`, `\r`,
   `\t`, `\b`, `\f` escaped, other control characters as `\u00XX`, everything else as is.
 
@@ -135,6 +137,7 @@ pub fn score(before: &[String], after: &[String], baseline: &[String]) -> Imprin
 - A persona's identity fields are expected to be strings. A number in a voice list is written as Python writes an
   int, so a float literal such as `3.0` would differ, because bankML's JSON keeps numbers as f64.
 - No CLI command; the module is reached through the library.
+- The probe waits for adapter loading and transformers' decoding rules (TODO 0.7.0).
 
 ## See also
 
@@ -142,3 +145,5 @@ pub fn score(before: &[String], after: &[String], baseline: &[String]) -> Imprin
 - [TODO.md](../TODO.md) — 0.7.0, mindXtrain in Rust end to end
 - [usage.md](../usage.md) — testing and the release gate
 - [forward.md](forward.md) — the forward pass the probe stage will run on
+- [convert.md](convert.md), [create.md](create.md) — `bankml convert` and `bankml create` (0.3.5), which replace
+  mindXtrain's `serve --to ollama` step: merged safetensors to a pinned GGUF and a persona layer over it

@@ -14,6 +14,11 @@ way.
 The embedding model is **optional**. Everything in bankml works without it. With it, the `.history` ragebar also
 understands paraphrase, and a published agent's history becomes searchable by meaning in PostgreSQL.
 
+**bankML does not compute embeddings itself yet.** bge-m3 is an XLM-R encoder, and bankML has no encoder graph:
+`bankml serve --native` refuses `/api/embed` with HTTP 400 and the reason. The encoder graph, with `/api/embed`,
+`/v1/embeddings` and an oracle against llama.cpp's bge-m3 output, is phase O7 of [OLLAMA.md](OLLAMA.md), planned for
+0.6.0 ([TODO.md](TODO.md#060--more-models)). Until then Savante asks the local Ollama, as described below.
+
 ## Summary
 
 | | |
@@ -169,5 +174,5 @@ run (not pulled, Ollama down, not enough free memory), the status line names BM2
 | `BANKML_EMBED_KEEP_ALIVE` | `60s` | how long Ollama keeps it loaded after a call |
 | `BANKML_EMBED_NEED_GB` | `1.3` | free memory required before loading it |
 
-**Check it.** `python3 -B -c "import sys; sys.path.insert(0, 'ui'); import embed; print(embed.status())"` prints
-the model, its digest and licence, and whether it is ready.
+**Check it.** From the repository root, `python3 -B -c "import sys; sys.path.insert(0, 'sAGI'); import embed;
+print(embed.status())"` prints the model, its digest and licence, and whether it is ready.

@@ -12,7 +12,7 @@ computer, on a model bankml has verified. Her answers are drafts, never verdicts
 After `./install.sh`, open **http://127.0.0.1:7873**. The page only works on this computer.
 
 - **The chat** is in the middle. Type a question and press **Send**.
-- **The side panel** holds her portrait and the settings. Drag its grip (**⠿ panel**) to put it on the other side, or
+- **The side panel** holds her portrait. The settings are on the **Admin** tab. Drag its grip (**⠿ panel**) to put it on the other side, or
   press **⇄**. Drag the small corner handles to resize. The page remembers your layout.
 
 ## Your first question
@@ -20,8 +20,8 @@ After `./install.sh`, open **http://127.0.0.1:7873**. The page only works on thi
 1. Type something short, like *"Who are you?"*, and press **Send**.
 2. A timer starts. It first says *reading the prompt*: the model is reading Savante's instructions. On a laptop this
    takes about **2 minutes** the first time. Then it says *writing*, and the answer appears a few words at a time.
-3. Under the answer you see when you sent it, how long it took, and a **receipt**: proof that this machine's verified
-   model wrote it.
+3. The chat shows the answer alone. When you sent it, how long it took, and its **receipt** (which ties the answer to
+   the model this machine verified; [usage.md §9](usage.md#9-receipts-and-how-to-check-an-answer)) are on the **Admin** tab under *the last answer*, and in the **.history** tab.
 
 **Stop** cancels an answer. **New session** starts over. Your last conversation comes back when you reopen the page.
 
@@ -31,8 +31,8 @@ form: findings, verdict, reasons, conditions and risks. Treat it as a draft.
 ## Her card
 
 Click her **portrait** to open her card: her name, mantra and description, her oath and beliefs, and the checks that
-prove this is really her (each file's fingerprint and whether it matches the ledger). Close it with **✕** or by
-clicking outside it.
+prove this is really her (each file's fingerprint and whether it matches the ledger). Close it with **✕**,
+**← back to Interaction** or Esc.
 
 ## Listening to her
 
@@ -82,11 +82,13 @@ Without it, a simpler stand-in voice is used. Her voice is her own, built from o
 
 | tab | what it holds |
 |---|---|
+| **Admin** | the settings: her system prompt, `.memory`, answer length, temperature, the model's CPU threads and RAM, and the last answer's clock and receipt |
 | **.history** | every question and answer, newest first, with a search bar |
 | **Responses** | one answer at a time; copy it, save it as a note, or get a proof that it is in your history |
 | **.memory** | your own notes; Savante reads them as your notes, not as evidence |
 | **Metrics** | how fast she answers, over time |
 | **Models** | add a model or switch to another ([usage.md §5](usage.md#5-models)) |
 | **Integrity** and **Verifier** | re-check that she is who her ledger says |
+| **Agents** | make your own agent from her template ([usage.md §8b](usage.md#8b-custom-agents-from-the-savante-template)) |
 
 More detail on any of these: [usage.md](usage.md), from §8 on.

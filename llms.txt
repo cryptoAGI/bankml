@@ -58,12 +58,19 @@ Rust 1.99 (pinned by `rust-toolchain.toml`; rustup installs it), Python 3.10+ fo
 7. Check an answer: `bankml_receipt.response_sha256` is the sha256 of the answer text exactly as the model produced it,
    and `model_sha256` names the weights that answered. Recompute the first to confirm the text you hold is the text
    the engine produced.
+8. Read what bankML measured (0.3.7, the next release, not yet tagged; on 0.3.6 skip steps 8 and 9): `GET /bankml/metrics` (each answer's time to first token, prompt and generation
+   tokens per second, energy per token when measured) and `GET /bankml/usage` (CPU, memory, each GPU's busy share and
+   memory, package watts when measured). A value that was not measured is `null`; do not substitute an estimate.
+9. Talk to bankML as itself, with its measurements in view: `python3 sAGI/console.py`, then http://127.0.0.1:7875.
 
 ## What bankML refuses, and why
 
 - A model file that fails the guard or whose sha256 differs from its pin: it never loads.
-- A sampler or option it does not reproduce exactly (e.g. mirostat, a custom sampler order, top-k above 128): a 400
-  with the reason, never an approximation. Everything in llama-server's default sampler chain is reproduced.
+- A sampler or option it does not reproduce exactly (e.g. mirostat, a custom sampler order, top-k outside 1–128): a
+  400 with the reason, never an approximation. 0.3.6 reproduces top-k, top-p, min-p, temperature and the penalties;
+  0.3.7 (next) the whole of llama-server's default sampler chain.
+- A prompt longer than the context (`--ctx`): from 0.3.8 (next), a 400 with llama-server's
+  `exceed_context_size_error` body, which names both counts.
 - A non-loopback `Host`, a POST without a JSON `Content-Type`: 403 and 415.
 
 ## Documentation
@@ -74,6 +81,7 @@ Rust 1.99 (pinned by `rust-toolchain.toml`; rustup installs it), Python 3.10+ fo
 - [Modules](https://github.com/cryptoAGI/bankml/blob/main/docs/modules/README.md): each source module's usage, advantages and limits
 - [Oracles](https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md): what each claim is checked against
 - [Ollama gap matrix](https://github.com/cryptoAGI/bankml/blob/main/docs/OLLAMA.md): what Ollama clients ask, and what bankML does
+- [Why bankML](https://github.com/cryptoAGI/bankml/blob/main/docs/why-bankml.md): the plain-language version: uses, advantages, the road ahead
 
 ## Optional
 
@@ -81,4 +89,5 @@ Rust 1.99 (pinned by `rust-toolchain.toml`; rustup installs it), Python 3.10+ fo
 - [C API](https://github.com/cryptoAGI/bankml/blob/main/docs/CAPI.md): libbankml and bankml.h
 - [Changelog](https://github.com/cryptoAGI/bankml/blob/main/CHANGELOG.md) and [releases](https://github.com/cryptoAGI/bankml/releases), each with its gate record
 - [Build history](https://github.com/cryptoAGI/bankml/blob/main/docs/BUILD_HISTORY.md): how each phase was reached, with its evidence
+- [Thesis](https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md): the design intent, in the authors' words
 - [Documentation reader](https://cryptoagi.github.io/bankml/)

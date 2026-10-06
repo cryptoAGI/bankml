@@ -6,6 +6,11 @@ checked to resolve on those dates unless marked. bankml's own numbers are its ow
 ([TECHNICAL.md](TECHNICAL.md), [PERFORMANCE.md](PERFORMANCE.md), [`testing/results/`](../testing/results/)); no third
 party has benchmarked bankml.*
 
+*Updated 2026-10-06 for bankml's own status only: v0.3.6 is the latest release, and 0.3.7–0.3.9 are unreleased
+([CHANGELOG.md](../CHANGELOG.md)). The survey of other projects is as found on 2026-09-28/29 and has not been redone;
+their state may have moved since. Where bankml's status changed, the original statement is kept and the change is
+marked.*
+
 ## The answer in brief
 
 **Where bankml is at or near the edge**
@@ -44,13 +49,24 @@ party has benchmarked bankml.*
   [mistral.rs](https://github.com/EricLBuehler/mistral.rs), [Frink](https://github.com/antonellof/frink),
   [OxiLLaMa](https://github.com/cool-japan/oxillama) and [bitnet-rs](https://github.com/lilyco-42/bitnet-rs) run
   whole models natively. bankml answers through llama-server; its own Qwen3 forward pass is phase P3.
+  *Since then:* bankml's own forward pass generates llama.cpp's tokens since 0.2.7 (1-bit) and 0.2.8 (ternary), and
+  `bankml serve --native` answers from it since 0.3.0; the Llama graph followed in 0.3.4
+  ([TECHNICAL.md](TECHNICAL.md) §IV.4). Unlike the engines above, it is token-identical to llama-server b11192 in the
+  release gate ([oracles.md](oracles.md)).
 - **GPUs.** mistral.rs, Frink and PrismML's fork run on CUDA and/or Metal; bankml is CPU-only by design.
+  *Since then:* a Vulkan worker with bankml's own SPIR-V takes a share of each 1-bit product, used only after it is
+  bit-exact on the card (0.2.12–0.2.14). On the one integrated card measured (a Radeon Vega 3) decode did not change
+  within noise ([modules/gpu.md](modules/gpu.md)). The engines above remain far ahead on GPUs.
 - **Breadth of formats.** OxiLLaMa lists K, IQ, TQ1_0, TQ2_0 and Q1_0_G128 (all "Alpha"); bankml has its own kernels
-  for two formats and serves the rest through the reference.
+  for two formats and serves the rest through the reference. *Since then:* a third, F16 (0.3.4); every other format
+  is still served only through the reference.
 - **ARM.** Upstream `Q1_0`/`Q2_0` have NEON; bankml's kernels are x86 AVX2 only.
 - **End-to-end speed leadership.** It is not shown: bankml's gains are per kernel, and at the whole-token level
   the decode-budget ratio against the reference ranges from 0.87× to 1.62× across thread counts in the 0.1.5 gate
   record, measured on a laptop that was also serving a model, so it is noisy and not a claim of end-to-end leadership.
+  *Since then:* with its own forward pass bankml decodes the ternary model at 2.32–2.41 tokens/s against
+  llama-server's 0.30 on the same laptop (CHANGELOG 0.2.8). On the 1-bit model llama-server was still faster at 0.3.0
+  (2.8 against 1.9–2.0 tokens/s), and parity there is not yet claimed ([PERFORMANCE.md](PERFORMANCE.md)).
 - **Attestation.** [EigenAI](https://arxiv.org/abs/2602.00182) (bit-exact GPU inference on a modified llama.cpp,
   re-executed in a TEE) and TEE serving stacks give receipts a third party can trust. bankml's receipts do not.
 
@@ -121,9 +137,10 @@ No Rust engine other than bankml was found with `Q2_0_g64`; OxiLLaMa lists `Q1_0
 
 - **P3 (its own forward pass) is where the field already is**, so it is not optional if bankml is to stand beside
   candle and OxiLLaMa. Its distinct contribution would be a forward pass *bit-exact against the compiled reference*,
-  which nobody else claims.
+  which nobody else claims. *Done since:* 0.2.1–0.3.0 ([BUILD_HISTORY.md](BUILD_HISTORY.md)).
 - **A plain-AVX2 `Q2_0` kernel is worth upstreaming** (or offering to PrismML): the gap is real, current and
-  documented upstream.
+  documented upstream. *Prepared since:* `upstream/q2_0_avx2.c` (0.2.0), bit-exact against the shipped library on
+  200,000 of 200,000 random cases; submitting it is the authors' decision, and nothing has been submitted.
 - **Receipts:** signing them (an operator key) and binding them to a re-executable bit-exact run would move them
   from integrity toward verifiability, the direction EigenAI shows.
 - **NEON** would bring the kernels to ARM, where upstream `Q1_0`/`Q2_0` already are.

@@ -1,5 +1,184 @@
 # Changelog
 
+## Unreleased (0.3.9) — a q8_0 conversation memory, a faster grammar mask
+
+**Two of 0.3.9's three pieces: the KV cache in half the memory, as llama.cpp keeps it with `--cache-type-k/v q8_0`,
+and the JSON/grammar mask 13× faster at the median.** Each is checked against llama.cpp b11192 as before; 1-bit
+decode speed, the third, is measured on an idle machine next.
+
+### The q8_0 KV cache (`BANKML_CACHE_TYPE=q8_0`; `testing/kv_oracle.py`, 6 / 6)
+- K and V stored as q8_0 blocks (`KvType::Q8_0`), 53 % of the f16 cache's bytes. Attention over it is ggml's
+  reference kernel for a non-f16 K (`attend_head_q8`): Q quantized with the AVX2 `quantize_row_q8_0`, scores by
+  `vec_dot_q8_0_q8_0`, V dequantized into an f32 accumulator (`vec_mad_f32`, `vec_scale_f32`).
+- **llama.cpp b11192 rotates around a quantized cache**, which the first replay found (2 / 6, the answers drifting
+  after dozens of tokens): Q and K through a Hadamard transform over the head (128), V over 64, and the attention
+  output back (`attn_rot_k`/`attn_rot_v`, `llama_mul_mat_hadamard`, which ggml's CPU computes as a fast
+  Walsh–Hadamard transform). bankML's `fwht` does the same arithmetic: scale by `1/sqrtf(n)`, then `u + v`, `u − v`.
+- `oracle_ggml_b11192_q8_0_kv_kernels`: against the shipped haswell library (dlopen), 4,000 rows quantized
+  byte-exact and 4,000 dot products bit-exact, saturating `maddubs` cases included.
+- `kv_oracle_live`: llama-server b11192 with `--cache-type-k q8_0 --cache-type-v q8_0` and bankML with
+  `BANKML_CACHE_TYPE=q8_0` give the same answers, 6 of 6 (greedy, seeded, a 2,244-token prompt, a 320-token answer,
+  a two-turn conversation; text, counts and `cache_n`; 567 tokens).
+- A slot file records its cache type; one saved with the other type is refused with the reason.
+
+### The grammar mask, through a trie (`oracle_grammar_masks`, both paths)
+- A whole-vocabulary mask walks a trie of the vocabulary's code points, built once: each grammar stack meets a
+  shared prefix once, and the stacks after a terminal are computed once per stack and mask. Median **2.94 ms
+  against 38.8 ms** (13×), p90 49.3 against 80.6 ms, over the oracle's 1,645 masks. The oracle now computes every
+  mask both ways: **196 / 196 runs, 1,645 / 1,645 masks** identical to llama.cpp b11192 by each.
+
+### The code audit and the documentation (2026-10-06)
+- **Comments, professional and short.** Every source file's comments were cut to the contract, the invariants, the
+  safety reasoning and the exact upstream behaviour that keeps the bits; the history and rationale moved to its
+  `docs/modules/<name>.md` page (a new **Design notes** section where needed). Each header ends with
+  `Details: docs/modules/<name>.md`. A checker held every non-comment line identical; clippy and rustdoc are clean.
+- **Fixed by the audit:** `bankml create` accepts `PARAMETER typical_p` and `min_keep` (refused as "not reproduced"
+  although 0.3.7 reproduces them); the q8_0 cache rotates only for a head size that is a multiple of 64, as
+  llama.cpp's `attn_rot_k/v` (128 unchanged, so 6 / 6 stands); `bankml_log`'s `%f` honours the 65,536
+  width/precision limit like every other conversion (`%.100000000f` allocated); the 404 bodies list every route;
+  stale refusal texts (the `mirostat` message, the C API's header and docs, the train `probe` stage) and ten comments
+  that misstated the code (slot file layout, the `/bankml/usage` interval, doc blocks attached to the wrong item…).
+- **Found, recorded for 0.5.0:** the GPU worker destroys nothing on drop (a reload leaks card memory), and
+  `Sync for Buffer` is wider than it should be (TODO 0.5.0).
+- **Docs:** a full pass over every page against the code (the oracles table now lists every gate stage; TECHNICAL,
+  BUILD_HISTORY, OLLAMA, CAPI, usage and install brought to 0.3.9); `docs/thesis.md`, the bankML thesis; 48 Markdown
+  files, every link and anchor resolving.
+
+## Unreleased (0.3.8) — the serving contract: the context limit, slots, the prompt cache, logprobs
+
+**`bankml serve --native` now behaves as llama-server b11192 at the edges a client meets in production: a prompt
+that does not fit, a slot saved and restored, conversations that take turns, and the probabilities behind each
+token.** Each is checked against
+llama-server's own answers, as everything before it.
+
+### The context limit (`testing/context_oracle.py`, 8 / 8)
+- With context shift off (llama-server's default), a generation that fills the context stops there with
+  `finish_reason` `"length"`, and a prompt that does not fit is refused before any work with llama-server's 400 body:
+  `{"error": {"code": 400, "message": "request (N tokens) exceeds the available context size (M tokens), try increasing
+  it", "type": "exceed_context_size_error", "n_prompt_tokens": N, "n_ctx": M}}`. Eight requests from a few tokens to
+  past the context, at `--ctx 256`: the same text, counts, finish and refusal bodies.
+
+### Slots: save, restore, erase (`testing/slot_oracle.py`, 19 / 19)
+- `POST /slots/0?action=save|restore|erase` on the engine address, as llama-server's slot API, with `--slot-dir DIR`
+  (created at start). Replies carry `n_saved` / `n_written` / `timings.save_ms`, `n_restored` / `n_read` /
+  `timings.restore_ms`, `n_erased`; refusals are llama-server's (501 without a slot directory, "Invalid slot ID",
+  "Invalid action", "Invalid filename" by its `fs_validate_filename` rules, "Unable to restore slot: …").
+- The file: a magic line, the model's sha256, the context and token counts, each layer's K and V (f16) and the tokens,
+  then a sha256 of all of it; written to a temporary name and renamed. A file from another model, or damaged by one
+  bit, is refused and the slot emptied — never half-filled; the next answer recomputes its prompt.
+- The oracle is the engine itself: the answer after a restore — in the same server and after a restart — equals the
+  answer from an empty slot, and the restore skips the prompt (`cache_n` > 0). `n_saved` counts as llama-server
+  counts: the prompt and every generated token but the last.
+- Savante and the console pass `--slot-dir` to the native engine, so a warm start survives a restart.
+
+### One slot, and llama-server's host prompt cache (`testing/session_oracle.py`, 14 / 14)
+- The single-slot contract, stated and checked: requests are served one at a time, as llama-server `-np 1` (Savante's
+  flags). Four requests sent at once are all answered, none refused or mixed, each with the text it gets alone.
+- `bankML/prompt_cache.rs`: llama-server's `--cache-ram` cache (on by default there). When a request shares little
+  with the slot, the slot's tokens and KV rows go to RAM, and a cached state that keeps more of the prompt comes back.
+  Three conversations taking turns (A1 B1 C1 A2 …) now match llama-server turn by turn: text, counts and `cache_n`.
+  Before, each turn found only the system prompt in the slot, so prefill started elsewhere and the answers differed.
+- `BANKML_CACHE_RAM` (MiB, as `--cache-ram`: 0 off, -1 no limit); unset, 8192 MiB but at most a quarter of the memory
+  available at load.
+
+### Docs and tools
+- `docs/why-bankml.md`: the plain-language version (advantages, uses, how Rust helps, the road ahead), dated
+  2026-10-06; published as a web page over the DeltaVerse substrate at
+  [deltaverse.pythai.net/bankml](https://deltaverse.pythai.net/bankml).
+- `tools/makecards.py`: a page's share cards (1200×630, 1200×1200, a 180 px touch icon) with the DeltaVerse $.
+  `tools/seo.py`: audits a page or URL as a crawler and a link preview read it — the meta set, a canonical that must
+  not redirect, JSON-LD, and each card's real size against its declared one (standard library only). The bankML page:
+  47 / 47.
+
+### Logprobs on `/v1/chat/completions`, streamed or not (`testing/logprobs_oracle.py`, 14 / 14)
+- `logprobs: true` with `top_logprobs` (default 20) → `choices[0].logprobs.content`: per token its `id`, `token`,
+  `bytes`, `logprob`, and the top tokens with theirs. Every logprob is the same 32-bit float as llama-server's:
+  `get_token_probabilities` ported — a partial sort of the whole vocabulary (libstdc++'s, from 0.3.7), the softmax
+  in that order, `logf`.
+- llama-server's entry rules, reproduced: a token gets an entry only once the text has no incomplete UTF-8 after it,
+  and carries the text sent since the previous entry; a stop word drops its own tokens' entries; control tokens read
+  `""`; a top token holding part of a character is cut at the incomplete end (`validate_utf8`), other invalid bytes
+  read U+FFFD, `bytes` raw. `top_logprobs` without `logprobs` is refused with llama-server's message.
+- Streamed, as llama-server's partial responses: the stream opens with the role delta, and each whole token's entry
+  rides on the chunk its text makes (a token that sends no text sends no entry: a held stop-word prefix, the
+  end-of-turn token with nothing held back). Text now waits for a whole token in every stream, as llama-server sends
+  nothing while UTF-8 is incomplete (`" 🍕"` is one chunk, not `" "` then `"🍕"`). Five streamed cases, every chunk's
+  delta and entry identical. The engine reports each step (`Native::complete_with`, `Step`); `NativeChat::run_steps`
+  makes the chunks.
+- Not served: `/completion` (llama-server's own endpoint, so also its `n_probs`); clients use `/v1`.
+
+## Unreleased (0.3.7) — the whole sampler chain; bankML measures itself; the GPU limiter; the bankML console
+
+**Every sampler in llama-server b11192's default chain is now reproduced, token for token: after 0.3.6's penalties,
+typical-p, top-n-σ, XTC, dynamic temperature and DRY.** A request that sets any of them gets llama-server's answer
+instead of a refusal; what llama-server clamps is clamped, what it refuses is refused with its message. **bankML now
+measures itself** — time to first token on every answer, prompt and generation speed, CPU, memory, the GPU and, where
+the operator allows it, power and joules per token — **limits its GPU** to a share of the card's memory and time and
+lets each matrix shape decide whether the card pays, and has **a console** in which it answers as itself, from those
+measurements.
+
+### Measurement: what bankML knows of itself
+- `bankML/metrics.rs`: one record per completion, taken inside the engine — TTFT, prompt and generation tokens per second
+  (llama-bench's `pp` and `tg`), grammar time, and the CPU package's energy and joules per generated token when RAPL is
+  readable; `null`, never estimated. A ring of 256 at `GET /bankml/metrics`, with totals.
+- The receipt's `ttft_ms` is set for non-streamed answers too (it was `null`); `/v1` answers carry llama-server's
+  `timings` fields (`prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_ms`,
+  `predicted_per_second`, `cache_n`).
+- `GET /bankml/usage` adds `package_watts` (RAPL over the sampling interval, its wrap handled), each GPU's busy %, VRAM and
+  GTT from sysfs, and the GPU limiter's state.
+- `./install.sh power` (opt-in, the only step that uses sudo): a udev rule lets a `rapl` group that the user joins read
+  the energy counter, which the kernel has kept root-only since PLATYPUS (CVE-2020-8694); it says so and asks first;
+  `--remove` undoes it.
+
+### The GPU: a limit, and per-shape calibration
+- `BANKML_GPU_LIMIT` (default 0.8): bankML's GPU buffers stay within that share of the heap they come from — on an
+  integrated card, of the RAM they could use — and after a dispatch of `d` the card rests `d·(1−L)/L`; a matrix that does
+  not fit, or a product arriving while the card rests, runs whole on the CPU. Never a wait, the same bits.
+- Per-shape calibration: each matrix shape's first products alternate between the card's share and the CPU alone, timed
+  in the real pipeline; the faster median is kept and a shape decided for the CPU frees its buffers. Measured on the Vega
+  3 (Bonsai-1.7B, interleaved A/B, 4 rounds, the same answer every time): with one global share the card cost 18 %
+  (10.40 → 8.51–8.58 tok/s); per shape, 10.36 off against 10.30–10.38 on — neutral, as an integrated card that shares
+  decode's memory bandwidth can be; card memory 66 → ~13 MB.
+
+### bankML as itself: the persona and the console
+- `sAGI/personas/bankml.persona`: bankML speaking as itself, projected from the README, the Thesis and the oracles
+  (doctrine root `0x4d5ef2d9…`; adopts and verifies). Its knowledge of its own use comes only from a measured SELF block,
+  rendered as sentences with units (a bare key was read as seconds in testing).
+- `sAGI/console.py` (port 7875, loopback only): Interaction (the streamed answer and its receipt checked against the
+  text), Admin (CPU threads, RAM budget and GPU limit sliders — one verified restart with rollback — and D3 charts of
+  what bankML measured), Logging (every exchange with its timings and receipt), Infotags (ERC-721 metadata for an iNFT
+  publication: the model, the persona and its doctrine root, an RFC 6962 root over the exchanges, CIDs). Standard library
+  only, a strict CSP, same-origin JSON POSTs; D3 v7.9.0 vendored with its ISC licence. `testing/test_console.py`.
+
+### Measured
+- `oracle_samplers` (`testing/penalty_oracle.py --kind sampler`, llama-server b11192 from an empty cache; 23 variants
+  × 4 prompts: each sampler alone, typical-p before top-p and min-p's unsorted path, XTC with a clamped probability and
+  a disabling threshold, dynamic temperature at 0, DRY with defaults, custom breakers and with the repeat penalty, all
+  five at once): mindx-gen39 **76 / 76** answers token-identical (3,576 tokens), Bonsai-1.7B **76 / 76** (2,587
+  tokens), Bonsai-8B **76 / 76** (2,361 tokens, `oracle_samplers_8b`); **16 / 16** refusals on each, with
+  llama-server's message.
+- `oracle_std_sort` (`testing/sort_oracle.cpp`, libstdc++'s own `std::sort`): **876 / 876** orders identical — sizes 0
+  to 1,000, heavy ties, sorted, reversed and equal keys — the order typical-p's unstable sort leaves equal scores in.
+
+### Added
+- `sampler.rs`: each sampler as `src/llama-sampler.cpp` writes it, in the default order (penalties, DRY, top-n-σ,
+  top-k, typical-p, top-p, min-p, XTC, temperature, dist), with llama.cpp's `sorted` state tracked through the chain
+  (typical-p leaves the set unsorted, so top-p sorts after its softmax and min-p takes its unsorted path); XTC's own
+  `mt19937` and its float draw (`generate_canonical<float, 24>`: one 32-bit output); top-n-σ's squares in double
+  (C++'s `pow(float, 2)`); dynamic temperature's float entropy; DRY's restart sequences, reverse Z-algorithm and libm
+  `pow`; libstdc++'s `std::sort` (introsort) and generic heaps; `Params::default` = `common.h`.
+- `native.rs`: the request fields `typical_p`, `top_n_sigma`, `xtc_probability`, `xtc_threshold`, `dynatemp_range`,
+  `dynatemp_exponent`, `dry_multiplier`, `dry_base`, `dry_allowed_length`, `dry_penalty_last_n`,
+  `dry_sequence_breakers`; llama-server's soft limits clamp (`top_p`, `min_p`, the XTC fields to [0, 1], temperature
+  to ≥ 0), a `dry_base` below 1 falls back to 1.75; DRY's breakers are built from the vocabulary's pieces once per
+  breaker list and cached on the engine.
+- On Ollama's API `typical_p` is honoured; DRY, XTC, top-n-σ and dynamic temperature are not Ollama options, so they
+  come through `/v1` (and the C API).
+
+### Changed
+- **Refused instead of ignored:** `mirostat` on `/v1` (the Ollama path already refused it) and a custom `samplers`
+  order — llama-server would act on either, so answering without them would not be its answer.
+
 ## 0.3.6 — 2026-10-04 — the penalties: llama-server's repeat, frequency and presence penalties (O2)
 
 **`repeat_penalty`, `repeat_last_n`, `presence_penalty` and `frequency_penalty` are no longer refused: bankML applies

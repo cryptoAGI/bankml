@@ -1,5 +1,9 @@
 # The C API (0.3.2)
 
+*Written for 0.3.2, updated for 0.3.9 (unreleased; v0.3.6 is the latest public release). The functions are the same
+seven since 0.3.2; what `bankml_chat` takes has grown with the engine, release by release ([CHANGELOG.md](../CHANGELOG.md)).
+The module page is [modules/capi.md](modules/capi.md).*
+
 bankML as a library a C, C++, Python (`ctypes`), Go (`cgo`) or Swift program links: **`libbankml.so`** and
 **`libbankml.a`**, declared in one hand-written header, [`capi/include/bankml.h`](../capi/include/bankml.h). The
 shape is llama.h's (open a model, run a chat, close it), with bankML's gate in front of it:
@@ -69,8 +73,11 @@ On a refusal it returns NULL, with the reason in `*err` in `serve`'s words. Two 
 
 `request_json` is the chat request that `/v1/chat/completions` takes on `serve --native`:
 - `messages`;
-- the sampling keys: `temperature`, `top_k`, `top_p`, `min_p`, `min_keep` and `seed`. A key that is not set takes
-  the model's GGUF default;
+- the sampling keys: `temperature`, `top_k` (1 to 128), `top_p`, `min_p`, `min_keep` and `seed`; since 0.3.6 the
+  penalties `repeat_penalty`, `repeat_last_n`, `presence_penalty`, `frequency_penalty`; since 0.3.7 `typical_p`,
+  `top_n_sigma`, `xtc_probability`, `xtc_threshold`, `dynatemp_range`, `dynatemp_exponent` and the `dry_*` keys. A
+  key that is not set takes the model's GGUF default. The request is read by the same code as `/v1`
+  (`serve::NativeChat::parse`), so each key behaves as it does there, token-identical to llama-server b11192;
 - `max_tokens` (or llama-server's `n_predict`);
 - `stop`;
 - since 0.3.3, `response_format` (`{"type": "json_object"}`, or the schemas `{}` / `{"type": "object"}`), `json_schema`
@@ -80,10 +87,15 @@ On a refusal it returns NULL, with the reason in `*err` in `serve`'s words. Two 
   request's own text. In JSON mode and under a schema the callback receives the content's growth, and `result_json`'s
   `content` is the value as llama-server answers it (the raw text when nothing of the value came, as the server does).
 
-A sampler bankML does not reproduce is refused with a reason (`BANKML_E_REQUEST`), never approximated: the penalties,
-DRY, typical-p, XTC, top-n-σ and dynamic temperature. So is a JSON schema llama.cpp b11192 itself refuses (with
-its message; 0.3.5: every other schema is converted as llama-server converts it), or a grammar llama.cpp would not parse. `model` and `stream` are ignored: the handle names the model,
-and the callback is the stream.
+- since 0.3.8, `logprobs` and `top_logprobs`: `result_json` then carries `choices[0].logprobs.content` as the
+  non-streamed `/v1` answer does. The live logprobs oracle checks `/v1`; the C API's chat oracle does not check
+  logprobs.
+
+A sampler bankML does not reproduce is refused with a reason (`BANKML_E_REQUEST`), never approximated: `mirostat`
+(other than 0), a custom `samplers` order, and `top_k` outside 1 to 128. So is a JSON schema llama.cpp b11192 itself
+refuses (with its message; 0.3.5: every other schema is converted as llama-server converts it), a grammar llama.cpp
+would not parse, and (0.3.8) a prompt that does not fit the context, whose message is llama-server's 400 body.
+`model` and `stream` are ignored: the handle names the model, and the callback is the stream.
 
 The answer streams to `cb` as whole UTF-8 pieces, each `len` bytes long and NUL-terminated. To stop, return 0. A NULL
 `cb` is allowed.
@@ -102,14 +114,17 @@ The return code is one of these:
 |---|---|
 | `BANKML_OK` (0) | answered |
 | `BANKML_E_ARG` (−1) | a NULL handle or request, or a request that is not UTF-8 |
-| `BANKML_E_REQUEST` (−2) | the request is refused: not JSON, no messages, a sampler that is not reproduced, a bad `stop`, a schema or grammar that is not taken |
+| `BANKML_E_REQUEST` (−2) | the request is refused: not JSON, no messages, a sampler that is not reproduced, a bad `stop`, a schema or grammar that is not taken, a prompt that does not fit the context (0.3.8) |
 | `BANKML_E_CHANGED` (−3) | the model file changed since it was verified. There is no answer; open it again to verify it again |
-| `BANKML_E_ENGINE` (−4) | the engine failed, for example because the prompt does not fit the context |
+| `BANKML_E_ENGINE` (−4) | the engine failed while answering |
 | `BANKML_E_PANIC` (−5) | a panic was caught (unwinding builds only; see below) |
 
 The handle keeps one slot, as llama-server's `-np 1` does. The next request reuses the longest common prefix of the
 tokens already in its KV cache. A conversation sent turn by turn therefore pays only for its new tokens, and
-`timings.cache_n` says how many were reused.
+`timings.cache_n` says how many were reused. Since 0.3.8 the slot also has llama-server's host prompt cache
+(`BANKML_CACHE_RAM`), so conversations that take turns on one handle get llama-server's answers
+([modules/prompt_cache.md](modules/prompt_cache.md)). The engine reads its environment when the handle opens, so
+`BANKML_CACHE_TYPE=q8_0` (0.3.9) gives the handle a `q8_0` KV cache. Slot save and restore are on `serve` only.
 
 ### Ownership
 
@@ -222,5 +237,6 @@ width means `-`, and a negative precision means none).
 This C API is the llama.h-shaped seam for embedding: a program that today links llama.cpp's `llama.h` can link
 bankML instead and get the same answers (the oracles above), with the verification and the receipt built in. It is
 also the path to the handheld targets (P5): an Android NDK or iOS app embeds a C library, not an HTTP server. What it
-does not have yet is listed in [TODO.md](TODO.md): tokenizer and logits access, more than one slot, and a stable ABI
-promise (semver for the C API comes with 1.0.0).
+does not have yet is listed in [TODO.md](TODO.md#032--toolchain-and-the-c-api-done): tokenizer access, raw logits,
+slot save and restore, more than one handle sharing one mapping, and a stable ABI promise (semver for the C API comes
+with 1.0.0).

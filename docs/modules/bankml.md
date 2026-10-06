@@ -18,8 +18,9 @@ reachable on its own as `bankml pin`.
 
 ### Modules declared
 
-`chat`, `f16`, `convert`, `create`, `forward`, `gguf`, `grammar`, `gpu`, `native`, `ollama`, `par`, `serve`,
-`q1_0`, `q2_0`, `sampler`, `schema`, `sha256`, `sys`, `train`, `tokenizer`, `unicode_letters`.
+`chat`, `f16`, `convert`, `create`, `forward`, `gguf`, `grammar`, `gpu`, `native`, `ollama`, `par`,
+`prompt_cache`, `serve`, `q1_0`, `q2_0`, `sampler`, `schema`, `sha256`, `sys`, `metrics`, `train`, `tokenizer`,
+`unicode_letters`. The root's doc comment holds a table of their roles.
 The crate has `#![allow(dead_code)]` at its root.
 
 ### The gate
@@ -59,8 +60,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 - `Verified::to_json()` prints `verdict`, `guard`, `engine`, `model_sha256`, `bankml` (the version), `arch`,
   `name` and `types`. Header strings are escaped with `gguf::jstr`. `bankml serve`'s `GET /bankml` includes it.
 - `Receipt` is the receipt shape fixed at design time (model sha256, guard verdict, token counts, timings, an
-  optional THOT8 leaf). Answers actually served carry `serve.rs`'s `bankml_receipt` object.
-- `VERSION` is printed by `bankml version` (currently `0.3.6`).
+  optional THOT8 leaf). Answers actually served carry `serve.rs`'s `bankml_receipt` object; the type is kept for
+  the signed receipts planned for 0.8.0 ([../TODO.md](../TODO.md)).
+- `VERSION` is printed by `bankml version`. `Cargo.toml` says `0.3.6`, the last release; 0.3.7 to 0.3.9 are
+  unreleased ([../../CHANGELOG.md](../../CHANGELOG.md)).
 
 ### Logging
 
@@ -120,8 +123,28 @@ With `--json`, a refusal prints `{"verdict": "refuse", "reason": …, "bankml": 
 - `Receipt` is not what answers carry; see `serve.rs`'s `bankml_receipt` and [../usage.md](../usage.md) §9.
 - The pin needs a `FORK.json` record for the file's name. A model without one is refused as unpinned.
 
+## Design notes
+
+- **The rule: the same bits first, then the speed.** A result counts only when an external oracle confirms it; a
+  speed-up counts only on code that passed every oracle in the same gate run (`testing/release_gate.sh`).
+- **The gate in build-history terms.** The guard and the pin are phase P1 of [../BUILD_HISTORY.md](../BUILD_HISTORY.md);
+  `verify` is P1 as one gate, the check phase P0 puts in front of every answer. A refused file never loads, and
+  served answers carry a `bankml_receipt` (model, request and response sha256; tokens; timings). `Receipt` is the
+  design-time shape of goal 3 in the same ledger, which the crate root's doc comment held until 0.3.5.
+- **Provenance of the type ids.** `GgmlType`'s values are the mainline ids, read on 2026-09-24; Q2_0 was re-read
+  from b11192 `ggml.h` on 2026-09-26. `Verdict`'s three cases are those of minaiml's `gguf_guard.py`.
+- **Logging.** The sink exists since 0.3.2; before it, every message went to standard error, one line each, which
+  remains the default.
+- **The module table in more detail.** `sha256` is FIPS 180-4 and uses SHA-NI when present. The weight-format
+  modules choose their SIMD path at run time, with scalar code as the reference. `par`'s results are bit-identical
+  whatever the thread count. `gpu` gives a verified card its share of each 1-bit matrix. `forward` carries ggml's
+  three attention kernels. `sampler` includes llama-server's penalties.
+- **Where the rest is.** Usage: [../usage.md](../usage.md), [../install.md](../install.md). The checks:
+  [../oracles.md](../oracles.md). Speed: [../PERFORMANCE.md](../PERFORMANCE.md). Releases:
+  [../../CHANGELOG.md](../../CHANGELOG.md). How it was built, phase by phase: [../BUILD_HISTORY.md](../BUILD_HISTORY.md).
+
 ## See also
 
-- [gguf.md](gguf.md), [sha256.md](sha256.md), [par.md](par.md), [sys.md](sys.md)
+- [gguf.md](gguf.md), [sha256.md](sha256.md), [par.md](par.md), [sys.md](sys.md), [metrics.md](metrics.md)
 - [../usage.md](../usage.md) §6 and §9, [../CAPI.md](../CAPI.md), [../OLLAMA.md](../OLLAMA.md)
 - [../TECHNICAL.md](../TECHNICAL.md) §III.1, [../oracles.md](../oracles.md), [../TODO.md](../TODO.md)

@@ -159,17 +159,21 @@ article p[align="center"] { text-align: center; }
   const GROUPS = [
     ["Start", [
       ["readme", "README.md", "Overview", "what bankml is, results, releases"],
+      ["why", "docs/why-bankml.md", "Why bankML", "the short version: uses, Rust, the road ahead"],
       ["usage", "docs/usage.md", "Usage guide", "install, run, models, settings"],
       ["install", "docs/install.md", "Install and configure", "every option, variable, service and tuning"],
       ["playback", "docs/playback.md", "New to Savante", "her page, her card, listening to her"],
     ]],
     ["Understand", [
       ["technical", "docs/TECHNICAL.md", "Technical report", "design, method, proofs, thesis"],
+      ["thesis", "docs/thesis.md", "Thesis", "exactness before speed: the argument and its evidence"],
       ["oracles", "docs/oracles.md", "Oracles", "what bankml is checked against"],
       ["performance", "docs/PERFORMANCE.md", "Performance", "every number, how it was measured"],
       ["research", "docs/research.md", "Research", "the field, with papers"],
       ["embedding", "docs/embedding.md", "Embedding", "bge-m3 meaning search"],
       ["capi", "docs/CAPI.md", "C API", "embed bankML: libbankml and bankml.h"],
+      ["ollama", "docs/OLLAMA.md", "Ollama and mindX", "the gap matrix against mindX, phases O1–O8"],
+      ["huggingface", "docs/huggingface.md", "Hugging Face GPUs", "the Hub's rented GPUs as bankML devices"],
     ]],
     ["Source", [
       ["modules", "docs/modules/README.md", "Modules", "each source module: usage, advantages, limits"],
@@ -180,7 +184,10 @@ article p[align="center"] { text-align: center; }
       ["mod-q2_0", "docs/modules/q2_0.md", "bankML/q2_0.rs", "the ternary Q2_0_g64 kernel"],
       ["mod-f16", "docs/modules/f16.md", "bankML/f16.rs", "F16 weights, multiplied as the shipped ggml b11192…"],
       ["mod-par", "docs/modules/par.md", "bankML/par.rs", "the persistent thread pool and row scheduler for the matmuls"],
+      ["mod-prompt_cache", "docs/modules/prompt_cache.md", "bankML/prompt_cache.rs", "llama-server's host prompt cache for the one slot"],
       ["mod-gpu", "docs/modules/gpu.md", "bankML/gpu/", "the video-card component: find GPUs, verify them, and…"],
+      ["mod-metrics", "docs/modules/metrics.md", "bankML/metrics.rs", "bankML's own measurements of its answers"],
+      ["mod-console", "docs/modules/console.md", "sAGI/console.py", "bankML as itself: four tabs, the measured SELF block"],
       ["mod-sys", "docs/modules/sys.md", "bankML/sys.rs", "memory, cores and per-process usage from /proc"],
       ["mod-forward", "docs/modules/forward.md", "bankML/forward.rs", "the forward pass, bit-exact against llama.cpp b11192's…"],
       ["mod-tokenizer", "docs/modules/tokenizer.md", "bankML/tokenizer.rs", "byte-level BPE, token-identical to llama.cpp b11192"],
