@@ -276,6 +276,8 @@ pub struct Params {
     pub dry_allowed_length: i32,
     pub dry_penalty_last_n: i32,
     pub dry_sequence_breakers: Vec<String>,
+    /// 0.3.8: `n_probs` — the top tokens' probabilities to report for each generated token (0 = none)
+    pub n_probs: usize,
 }
 
 impl Default for Params {
@@ -285,7 +287,7 @@ impl Default for Params {
                  penalty_last_n: 64, penalty_repeat: 1.0, penalty_freq: 0.0, penalty_present: 0.0,
                  typical_p: 1.0, top_n_sigma: -1.0, xtc_probability: 0.0, xtc_threshold: 0.1, dynatemp_range: 0.0, dynatemp_exponent: 1.0,
                  dry_multiplier: 0.0, dry_base: 1.75, dry_allowed_length: 2, dry_penalty_last_n: 64,
-                 dry_sequence_breakers: ["\n", ":", "\"", "*"].map(String::from).to_vec() }
+                 dry_sequence_breakers: ["\n", ":", "\"", "*"].map(String::from).to_vec(), n_probs: 0 }
     }
 }
 
@@ -377,6 +379,38 @@ pub struct Sampler {
     /// DRY's window (a ring of `dry_penalty_last_n`) and its breakers
     dry_last: std::collections::VecDeque<u32>,
     dry_breakers: std::sync::Arc<DryBreakers>,
+}
+
+/// One token's probability, as llama-server reports it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TokenProb {
+    pub id: u32,
+    pub p: f32,
+}
+
+/// llama-server's `get_token_probabilities` on raw logits (before any sampler): `std::partial_sort` of the whole
+/// vocabulary for the top `n_top`, the maximum at index 0, then `expf(logit − max)` summed in float **in the order the
+/// partial sort left the array**, and each divided by the sum. Returns the sampled token's probability and the top
+/// `n_top` in order.
+pub fn token_probs(logits: &[f32], sampled: u32, n_top: usize) -> (f32, Vec<TokenProb>) {
+    let mut cur = cands(logits);
+    let n = n_top.min(cur.len());
+    let max_l = if n > 0 {
+        partial_sort(&mut cur, n);
+        cur[0].logit
+    } else {
+        cur.iter().fold(f32::NEG_INFINITY, |m, x| m.max(x.logit))
+    };
+    let mut cum = 0.0f32;
+    for x in cur.iter_mut() {
+        x.p = (x.logit - max_l).exp();
+        cum += x.p;
+    }
+    for x in cur.iter_mut() {
+        x.p /= cum;
+    }
+    let p = cur.iter().find(|x| x.id == sampled).map(|x| x.p).unwrap_or(0.0);
+    (p, cur[..n].iter().map(|x| TokenProb { id: x.id, p: x.p }).collect())
 }
 
 /// `get_rng_seed`: the seed, or one from the clock and process when it is `LLAMA_DEFAULT_SEED`.

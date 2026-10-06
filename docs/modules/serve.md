@@ -47,6 +47,7 @@ Defaults (from `main.rs`): `--listen 127.0.0.1:18093`, `--upstream 127.0.0.1:180
 | `GET /health` | proxied | `{"status": "ok"}` |
 | `GET /props`, `GET /v1/models` | proxied | from the resident model (or the startup model, loaded) |
 | `POST /tokenize`, `POST /apply-template` | — | as llama-server's |
+| `POST /slots/0?action=save\|restore\|erase` (engine address) | proxied to llama-server's own | KV cache to and from `--slot-dir` (0.3.8) |
 | `POST /v1/chat/completions` | proxied, receipt added | `native_chat`, receipt added |
 | `/` and `/api/*` | — | `ollama::route` (see [ollama.md](ollama.md)) |
 
@@ -94,6 +95,21 @@ or `n_predict`. Since 0.3.6 it also builds the sampler once, so a negative `repe
 or below is a 400 with llama-server's message. `NativeChat::run` passes the answer through the stop filter and the
 JSON content stream. The response carries OpenAI's object, llama-server's `timings.cache_n`, and the receipt.
 
+### At the edges: the context limit, slots, logprobs (0.3.8)
+
+- **Context limit.** `parse_ctx` refuses a prompt of `n_ctx` tokens or more with `exceed_context_json(n_prompt,
+  n_ctx)`, llama-server's `exceed_context_size_error` body; an `Err` that starts with `{` is sent as that JSON with
+  status 400. A generation stops when prompt and completion fill the context, `finish_reason` `"length"`.
+- **Slots.** `slots()` answers `POST /slots/{id}?action=…` on the engine address. `slot_filename_ok` is llama.cpp's
+  `fs_validate_filename` (no separators, no `..`, no leading or trailing dot or space, no control characters, at most
+  255 bytes); `error_json` writes llama-server's error object. The KV file itself is `Native::save_slot` /
+  `restore_slot` (see [native.md](native.md)).
+- **Logprobs.** `logprobs` + `top_logprobs` set `Params::n_probs`; the engine returns per token its probability and the
+  top `n` (`sampler::token_probs`) with whether its UTF-8 was complete. `logprob_entries` applies llama-server's rules
+  — an entry only after complete UTF-8, carrying the text the stop filter released since the previous entry; a stop
+  word's own tokens (`tokenize(stop, add_special = false)`) dropped — and `logprobs_json` writes them, a top token's
+  text cut by `utf8_complete_len` (`validate_utf8`) and otherwise U+FFFD-replaced, as nlohmann's `dump` writes it.
+
 ### `Json`
 
 `pub enum Json { Null, Bool, Num(f64), Str, Arr, Obj(Vec<(String, Json)>) }` with `parse`, `get` (the last key wins),
@@ -110,6 +126,9 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
   `json_oracle_live`, `json_schema_oracle_live`, `o4_live`, `persona_oracle_live`, `penalty_oracle_live` (85 / 85
   through `/v1` and `/api/chat` on mindx-gen39, CHANGELOG 0.3.6).
 - `capi_chat_oracle`: `bankml_chat` equals `serve --native` turn by turn, receipt hashes included.
+- 0.3.8: `context_oracle_live` (8 / 8 against llama-server at `-c 256`), `slot_oracle_live` (19 / 19: answers after a
+  restore equal an empty slot's, across a restart; llama-server's refusals), `logprobs_oracle_live` (9 / 9, every
+  logprob the same float); the unit test `logprob_texts_as_llama_server_writes_them`.
 
 ## Advantages and efficiency
 
@@ -124,8 +143,11 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
   flushed as they form.
 - **Bounded by construction.** Fixed limits on connections, head size, body size and upstream bodies; no panic paths
   on request input (`Json::parse` returns `Option`, errors are `Result`); std-only HTTP and no external crates.
-- **Next** (docs/TODO.md): an independent review of `serve` (loopback rules, limits, receipts) before 1.0; slot
-  save/restore and more than one slot in `--native` (0.4.0).
+- **Cheap edges.** A prompt past the context is refused before any computation; a slot restore replaces the
+  prompt's whole prefill with one sequential read checked by sha256; logprobs cost one partial sort of the vocabulary
+  per token, and nothing when not asked for.
+- **Next** (docs/TODO.md): an independent review of `serve` (loopback rules, limits, receipts) before 1.0; more than
+  one slot in `--native`, or a stated single-slot contract (0.4.0); streamed logprobs.
 
 ## Limitations
 
@@ -133,7 +155,8 @@ JSON content stream. The response carries OpenAI's object, llama-server's `timin
 - Receipts are unsigned.
 - In P0 mode the tokens come from ggml's kernels in llama-server; bankML vouches for the file, the path and the
   transcript, not the arithmetic.
-- `--native` serves one slot and one resident model (see [native.md](native.md)).
+- `--native` serves one slot and one resident model (see [native.md](native.md)); `/slots/{id}` accepts only id 0.
+- Logprobs in a streamed answer are refused (400) rather than left out; `/completion`'s `n_probs` is not served yet.
 - The source's module header still describes only P0; the `--native` routes are documented in `run_native`.
 
 ## See also

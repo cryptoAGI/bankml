@@ -106,11 +106,13 @@ pub struct StopFilter {
     held: String,
     out: String,
     hit: bool,
+    /// the stop string that ended the answer (0.3.8: llama-server trims its tokens' logprobs)
+    pub matched: Option<String>,
 }
 
 impl StopFilter {
     pub fn new(stops: Vec<String>) -> Self {
-        StopFilter { stops, held: String::new(), out: String::new(), hit: false }
+        StopFilter { stops, held: String::new(), out: String::new(), hit: false, matched: None }
     }
     /// The text to pass on now, and whether generation should go on.
     pub fn push(&mut self, piece: &str) -> (String, bool) {
@@ -118,7 +120,8 @@ impl StopFilter {
             return (String::new(), false);
         }
         self.held.push_str(piece);
-        if let Some(at) = self.stops.iter().filter_map(|s| self.held.find(s.as_str())).min() {
+        if let Some((at, s)) = self.stops.iter().filter_map(|s| self.held.find(s.as_str()).map(|a| (a, s))).min_by_key(|(a, _)| *a) {
+            self.matched = Some(s.clone());
             let pass: String = self.held[..at].to_string();
             self.held.clear();
             self.hit = true;

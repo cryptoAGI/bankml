@@ -200,8 +200,11 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 - [ ] A faster whole-vocabulary mask: a byte trie over the token pieces, so each grammar stack walks shared prefixes
   once. Today's mask is a straight port: 24.2 ms (median) per redrawn token, 3.9 ms per token on average
   over real answers, about 1 % of a 1-bit decode step (PERFORMANCE.md). The oracle is unchanged: the same masks.
-- [ ] `/completion` with `n_probs`, and logprobs on `/v1/chat/completions`, bit-exact probabilities.
-- [ ] Behaviour at the context limit exactly as llama-server's (truncation or refusal), with an oracle. (O2)
+- [x] **Logprobs on `/v1/chat/completions`** (**0.3.8**): bit-exact, llama-server's entry rules (UTF-8 splits, stop
+  words), 9 / 9 (`logprobs_oracle_live`).
+- [ ] Logprobs in streamed answers, and `/completion` with `n_probs`.
+- [x] **Behaviour at the context limit exactly as llama-server's** (**0.3.8**): stop at the full context, past it
+  its 400 body; 8 / 8 (`context_oracle_live`).
 - [ ] A `q8_0` KV cache, matching llama.cpp's `--cache-type-k/v q8_0` so the oracle exists; then a Hadamard-rotated
   4-bit KV (O8: what makes the boardroom's `num_ctx 8192` affordable).
 - [ ] **1-bit decode at least at llama-server's speed**: 1.9–2.0 tokens/s against 2.8 before 0.3.4; after 0.3.4's

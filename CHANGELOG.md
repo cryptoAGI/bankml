@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased (0.3.8) — the serving contract: the context limit, slots, logprobs
+
+**`bankml serve --native` now behaves as llama-server b11192 at the edges a client meets in production: a prompt
+that does not fit, a slot saved and restored, and the probabilities behind each token.** Each is checked against
+llama-server's own answers, as everything before it.
+
+### The context limit (`testing/context_oracle.py`, 8 / 8)
+- With context shift off (llama-server's default), a generation that fills the context stops there with
+  `finish_reason` `"length"`, and a prompt that does not fit is refused before any work with llama-server's 400 body:
+  `{"error": {"code": 400, "message": "request (N tokens) exceeds the available context size (M tokens), try increasing
+  it", "type": "exceed_context_size_error", "n_prompt_tokens": N, "n_ctx": M}}`. Eight requests from a few tokens to
+  past the context, at `--ctx 256`: the same text, counts, finish and refusal bodies.
+
+### Slots: save, restore, erase (`testing/slot_oracle.py`, 19 / 19)
+- `POST /slots/0?action=save|restore|erase` on the engine address, as llama-server's slot API, with `--slot-dir DIR`
+  (created at start). Replies carry `n_saved` / `n_written` / `timings.save_ms`, `n_restored` / `n_read` /
+  `timings.restore_ms`, `n_erased`; refusals are llama-server's (501 without a slot directory, "Invalid slot ID",
+  "Invalid action", "Invalid filename" by its `fs_validate_filename` rules, "Unable to restore slot: …").
+- The file: a magic line, the model's sha256, the context and token counts, each layer's K and V (f16) and the tokens,
+  then a sha256 of all of it; written to a temporary name and renamed. A file from another model, or damaged by one
+  bit, is refused and the slot emptied — never half-filled; the next answer recomputes its prompt.
+- The oracle is the engine itself: the answer after a restore — in the same server and after a restart — equals the
+  answer from an empty slot, and the restore skips the prompt (`cache_n` > 0). `n_saved` counts as llama-server
+  counts: the prompt and every generated token but the last.
+- Savante and the console pass `--slot-dir` to the native engine, so a warm start survives a restart.
+
+### Logprobs on `/v1/chat/completions` (`testing/logprobs_oracle.py`, 9 / 9)
+- `logprobs: true` with `top_logprobs` (default 20) → `choices[0].logprobs.content`: per token its `id`, `token`,
+  `bytes`, `logprob`, and the top tokens with theirs. Every logprob is the same 32-bit float as llama-server's:
+  `get_token_probabilities` ported — a partial sort of the whole vocabulary (libstdc++'s, from 0.3.7), the softmax
+  in that order, `logf`.
+- llama-server's entry rules, reproduced: a token gets an entry only once the text has no incomplete UTF-8 after it,
+  and carries the text sent since the previous entry; a stop word drops its own tokens' entries; control tokens read
+  `""`; a top token holding part of a character is cut at the incomplete end (`validate_utf8`), other invalid bytes
+  read U+FFFD, `bytes` raw. `top_logprobs` without `logprobs` is refused with llama-server's message.
+- Not yet: logprobs in a streamed answer (refused with a 400 that says so) and `/completion`'s `n_probs`.
+
 ## Unreleased (0.3.7) — the whole sampler chain; bankML measures itself; the GPU limiter; the bankML console
 
 **Every sampler in llama-server b11192's default chain is now reproduced, token for token: after 0.3.6's penalties,

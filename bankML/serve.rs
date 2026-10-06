@@ -659,7 +659,17 @@ impl NativeChat {
         if prompt.len() >= eng.n_ctx {
             return Err(exceed_context_json(prompt.len(), eng.n_ctx));
         }
-        let params = eng.params(req)?;
+        let mut params = eng.params(req)?;
+        // 0.3.8: OpenAI's logprobs → llama-server's n_probs (top_logprobs, default 20); top_logprobs alone is refused
+        match (req.get("logprobs").and_then(Json::as_bool), req.get("top_logprobs")) {
+            (Some(true), _) if req.get("stream").and_then(Json::as_bool) == Some(true) => {
+                // llama-server sends each streamed token's probabilities in its chunk; bankML has no oracle for that yet
+                return Err("logprobs with stream are not supported by bankml serve --native yet: request a non-streamed answer".into());
+            }
+            (Some(true), t) => params.n_probs = match t { Some(Json::Num(n)) if *n >= 0.0 => *n as usize, _ => 20 },
+            (_, Some(t)) if *t != Json::Null => return Err("top_logprobs requires logprobs to be set to true".into()),
+            _ => {}
+        }
         // O2: what the sampler refuses (a negative repeat_last_n, a repeat penalty of 0 or below) is a 400 here, with
         // llama-server's message, not a failed run (the live penalty oracle found it answered 500)
         crate::sampler::Sampler::new(params.clone())?;
@@ -674,22 +684,28 @@ impl NativeChat {
         let mut stop = crate::ollama::StopFilter::new(self.stops);
         let grammar = eng.grammar(&self.constraint)?;
         let mut content = crate::grammar::ContentStream::new(&self.constraint);
+        let mut sent: Vec<String> = Vec::new();
         let done = eng.complete(&self.prompt, self.params, self.max, grammar, |piece| {
             // the time to first token, streamed or not (0.3.7: non-streamed receipts carried null)
             if t.ttft.is_none() {
                 t.ttft = Some(t.t0.elapsed());
             }
-            if !stream {
-                return stop.push(piece).1;
-            }
             let (out, go) = stop.push(piece);
+            sent.push(out.clone());
+            if !stream {
+                return go;
+            }
             emit(&content.push(&out)) && go
         });
         let rest = stop.finish();
         if stream {
             emit(&content.push(&rest));
         }
-        let d = done?;
+        let mut d = done?;
+        if !d.probs.is_empty() {
+            let trim = match (&stop.matched, stream) { (Some(w), false) => eng.tok.encode(w, false).len(), _ => 0 };
+            d.probs = logprob_entries(std::mem::take(&mut d.probs), &sent, trim);
+        }
         t.text = content.content(stop.text(), stream);
         t.prompt = d.prompt_tokens as u64;
         t.completion = d.completion_tokens as u64;
@@ -701,7 +717,8 @@ impl NativeChat {
 /// `timings` (0.3.7: its prompt and generation fields, measured in the engine), and the receipt (also the C API's
 /// `result_json`).
 pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t: &Tally, engine: &str, v: &Verified) -> String {
-    format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
+    let lp = if d.probs.is_empty() { String::new() } else { format!(", \"logprobs\": {{\"content\": {}}}", logprobs_json(&d.probs)) };
+    format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"{lp}}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
             crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(model_id), d.completion_tokens, d.prompt_tokens,
             d.completion_tokens + d.prompt_tokens, timings_json(d), t.receipt(engine, v))
 }
@@ -773,6 +790,61 @@ pub fn exceed_context_json(n_prompt: usize, n_ctx: usize) -> String {
     let msg = format!("request ({n_prompt} tokens) exceeds the available context size ({n_ctx} tokens), try increasing it");
     format!("{{\"error\": {{\"code\": 400, \"message\": {}, \"type\": \"exceed_context_size_error\", \"n_prompt_tokens\": {n_prompt}, \"n_ctx\": {n_ctx}}}}}",
             crate::gguf::jstr(&msg))
+}
+
+/// llama-server's logprob entries from the engine's per-token probabilities (`process_token`, `send_final_response`):
+/// a token gets an entry only when no incomplete UTF-8 is left after it; the entry's text is everything sent since the
+/// previous entry (what the stop filter released, `sent`, one string per emitted piece); after a stop word the last
+/// `trim` entries — the stop word's own tokens — are dropped.
+pub fn logprob_entries(raw: Vec<crate::native::TokenLogprob>, sent: &[String], trim: usize) -> Vec<crate::native::TokenLogprob> {
+    let mut sent = sent.iter();
+    let mut acc = String::new();
+    let mut out = Vec::new();
+    for mut e in raw {
+        if e.emitted {
+            acc.push_str(sent.next().map(String::as_str).unwrap_or(""));
+        }
+        if e.complete {
+            e.piece = std::mem::take(&mut acc).into_bytes();
+            out.push(e);
+        }
+    }
+    let keep = out.len().saturating_sub(trim);
+    out.truncate(keep);
+    out
+}
+
+/// llama-server's `validate_utf8`: the length of `b` without an incomplete multi-byte character at its end (it looks
+/// at the last four bytes for a lead byte whose sequence runs past the end).
+pub fn utf8_complete_len(b: &[u8]) -> usize {
+    let len = b.len();
+    for i in 1..=len.min(4) {
+        let c = b[len - i];
+        if (c & 0xE0 == 0xC0 && i < 2) || (c & 0xF0 == 0xE0 && i < 3) || (c & 0xF8 == 0xF0 && i < 4) {
+            return len - i;
+        }
+    }
+    len
+}
+
+/// llama-server's `probs_vector_to_json` (pre-sampling probabilities): per token `{"id", "token", "bytes", "logprob",
+/// "top_logprobs": [{"id", "token", "bytes", "logprob"}]}` — `token` cut to valid UTF-8 (`validate_utf8`), `bytes` the
+/// whole piece, `logprob` = `logf(p)`, or the lowest float when `p` is 0 (JSON has no −∞).
+pub fn logprobs_json(probs: &[crate::native::TokenLogprob]) -> String {
+    // a piece that is not whole UTF-8 (a top token holding part of a character), as llama-server writes it: an
+    // incomplete trailing character is cut (`validate_utf8`), any other invalid byte becomes U+FFFD (nlohmann's `dump`
+    // with `error_handler_t::replace`); `bytes` keeps the raw bytes
+    fn entry(id: u32, p: f32, piece: &[u8]) -> String {
+        let lp = if p == 0.0 { f32::MIN } else { p.ln() };
+        let text = String::from_utf8_lossy(&piece[..utf8_complete_len(piece)]);
+        format!("\"id\": {id}, \"token\": {}, \"bytes\": [{}], \"logprob\": {}", crate::gguf::jstr(&text),
+                piece.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", "), lp as f64)
+    }
+    let rows: Vec<String> = probs.iter().map(|t| {
+        let top: Vec<String> = t.top.iter().map(|(id, p, piece)| format!("{{{}}}", entry(*id, *p, piece))).collect();
+        format!("{{{}, \"top_logprobs\": [{}]}}", entry(t.id, t.p, &t.piece), top.join(", "))
+    }).collect();
+    format!("[{}]", rows.join(", "))
 }
 
 /// llama-server's `timings` object for an answer: the prompt's uncached part and the generation, counts, milliseconds
@@ -1093,6 +1165,22 @@ impl P<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logprob_texts_as_llama_server_writes_them() {
+        assert_eq!(utf8_complete_len(b" \xF0\x9F\x91"), 1); // an emoji cut short: its start is dropped
+        assert_eq!(utf8_complete_len(b"\x95"), 1); // a lone continuation byte is kept (written as U+FFFD)
+        assert_eq!(utf8_complete_len("café".as_bytes()), 5);
+        use crate::native::TokenLogprob;
+        let t = |id, emitted, complete| TokenLogprob { id, emitted, complete, ..Default::default() };
+        // "é" split over tokens 1 and 2: one entry, at token 2, carrying the whole character; token 3 ends in a stop
+        let raw = vec![t(0, true, true), t(1, false, false), t(2, true, true), t(3, true, true), t(4, false, true)];
+        let sent: Vec<String> = ["a", "é", "", ""].map(String::from).to_vec();
+        let e = logprob_entries(raw.clone(), &sent, 0);
+        assert_eq!(e.iter().map(|e| (e.id, e.piece.clone())).collect::<Vec<_>>(),
+                   vec![(0, b"a".to_vec()), (2, "é".as_bytes().to_vec()), (3, vec![]), (4, vec![])]);
+        assert_eq!(logprob_entries(raw, &sent, 2).len(), 2); // a stop word of two tokens drops two entries
+    }
 
     #[test]
     fn json_parses_what_llama_server_sends() {

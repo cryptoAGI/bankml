@@ -74,6 +74,22 @@ pub struct Done {
     /// the CPU package's energy over the completion when RAPL is readable
     pub ttft_ns: Option<u64>,
     pub energy_j: Option<f64>,
+    /// 0.3.8: with `n_probs`, each generated token's probability and the top `n_probs`, from the raw logits
+    pub probs: Vec<TokenLogprob>,
+}
+
+/// One generated token's probability and the top tokens with theirs (their text without specials, as llama-server
+/// renders `top_logprobs`). `piece` is the text the entry carries: from the engine, what this token emitted; the
+/// serving layer replaces it with what was sent (`serve::logprob_entries`). `complete`: no incomplete UTF-8 was left
+/// after this token — llama-server keeps an entry only then.
+#[derive(Debug, Clone, Default)]
+pub struct TokenLogprob {
+    pub id: u32,
+    pub p: f32,
+    pub piece: Vec<u8>,
+    pub top: Vec<(u32, f32, Vec<u8>)>,
+    pub emitted: bool,
+    pub complete: bool,
 }
 
 impl Native {
@@ -179,6 +195,8 @@ impl Native {
         if prompt.len() >= self.n_ctx {
             return Err(format!("the prompt has {} tokens; the context is {}", prompt.len(), self.n_ctx));
         }
+        let n_probs = params.n_probs;
+        let mut probs = Vec::new();
         let mut sampler = Sampler::new(params)?;
         if sampler.wants_dry_breakers() {
             sampler.set_dry_breakers(self.dry_breakers(sampler.dry_sequence_breakers())?);
@@ -226,6 +244,11 @@ impl Native {
             };
             out.push(next);
             sampler.accept(next);
+            if n_probs > 0 {
+                let (p, top) = crate::sampler::token_probs(&logits, next, n_probs);
+                probs.push(TokenLogprob { id: next, p, piece: Vec::new(), complete: true, emitted: false,
+                                          top: top.into_iter().map(|t| (t.id, t.p, self.tok.token_bytes(t.id))).collect() });
+            }
             if self.eog.contains(&next) {
                 n += 1; // llama-server counts the end-of-turn token it sampled among the completion tokens
                 finish = "stop";
@@ -233,6 +256,10 @@ impl Native {
             }
             n += 1;
             pending.extend(self.tok.token_bytes(next));
+            let incomplete_after = std::str::from_utf8(&pending).is_err();
+            if let Some(e) = probs.last_mut() {
+                e.complete = !incomplete_after;
+            }
             let valid = match std::str::from_utf8(&pending) {
                 Ok(s) => s.len(),
                 Err(e) => e.valid_up_to(),
@@ -240,6 +267,10 @@ impl Native {
             if valid > 0 {
                 let piece: String = String::from_utf8(pending.drain(..valid).collect()).unwrap();
                 text.push_str(&piece);
+                if let Some(e) = probs.last_mut() {
+                    e.emitted = true;
+                    e.piece = piece.as_bytes().to_vec();
+                }
                 ttft_ns.get_or_insert(t0.elapsed().as_nanos() as u64);
                 if !emit(&piece) {
                     finish = "stop";
@@ -266,7 +297,7 @@ impl Native {
             eval_ms: eval_ns as f64 / 1e6, finish: finish.to_string(), grammar_ms: grammar_ns as f64 / 1e6, resampled, energy_j,
         });
         Ok(Done { prompt_tokens: prompt.len(), cached_tokens: n_past, completion_tokens: n, finish_reason: finish, text, prompt_ns,
-                  eval_ns, tokens: out, grammar_ns, resampled, ttft_ns, energy_j })
+                  eval_ns, tokens: out, grammar_ns, resampled, ttft_ns, energy_j, probs })
     }
 
     /// 0.3.8: save the slot — its tokens and every layer's K and V — to `path`, for `model_sha256`, as llama-server's
@@ -429,6 +460,7 @@ pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
     if let Some(v) = num("min_p") { p.min_p = unit(v) }
     if let Some(v) = num("min_keep") { p.min_keep = v as usize }
     if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
+    if let Some(v) = num("n_probs") { p.n_probs = v.max(0.0) as usize }
     if let Some(v) = num("repeat_last_n") { p.penalty_last_n = v as i64 as i32 }
     if let Some(v) = num("repeat_penalty") { p.penalty_repeat = v as f32 }
     if let Some(v) = num("frequency_penalty") { p.penalty_freq = v as f32 }

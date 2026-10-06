@@ -213,6 +213,26 @@ echo 'Describe a cat.' | target/release/bankml generate .models/Bonsai-8B-Q1_0.g
   `response_format` together with `grammar`; `json_schema` together with `grammar`; a `response_format` type other
   than `text`, `json_object` or `json_schema`.
 
+### The context limit, slots and logprobs (0.3.8)
+
+- **At the context limit** the native engine answers as llama-server does with context shift off: a generation that
+  reaches `--ctx` stops with `finish_reason: "length"`; a prompt that does not fit is refused at once with HTTP 400
+  and llama-server's `exceed_context_size_error` body, which names both counts — so a client can trim and retry.
+- **Slots.** Start with `--slot-dir DIR` and save the conversation's KV cache by name, restore it later — in another
+  process too — and skip recomputing the prompt:
+
+  ```sh
+  curl -s 127.0.0.1:18092/slots/0?action=save    -H 'Content-Type: application/json' -d '{"filename":"warm.bin"}'
+  curl -s 127.0.0.1:18092/slots/0?action=restore -H 'Content-Type: application/json' -d '{"filename":"warm.bin"}'
+  curl -s 127.0.0.1:18092/slots/0?action=erase   -H 'Content-Type: application/json' -d '{}'
+  ```
+
+  The file is checked when it is read (the model's sha256 and a sha256 trailer): a file from another model or a
+  damaged one is refused and the slot emptied (never half-filled), so the next answer simply recomputes. Filenames
+  are plain names inside the directory; a path is refused.
+- **Logprobs.** `"logprobs": true, "top_logprobs": 5` on `/v1/chat/completions` returns each token's log-probability
+  and the five most likely alternatives, the same floats llama-server reports. Non-streamed answers only, for now.
+
 ## 6a. Ollama's API
 
 Since 0.3.1 `bankml serve --native` also speaks Ollama's API, over the same engine, gate and receipts. **Native
