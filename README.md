@@ -129,6 +129,7 @@ Start here, then go where your question is. The same documents read as a website
 | use bankML as an Ollama (the `/api/*` endpoints, the model registry, `keep_alive`, `format: "json"`), and see what mindX asks of Ollama that bankML does not do yet | **[docs/OLLAMA.md](docs/OLLAMA.md)** (the gap matrix and the O1–O8 track) · [usage.md §6a](docs/usage.md#6a-ollamas-api) |
 | embed bankML in a C, C++, Python, Go or Swift program (`libbankml`, `bankml.h`: open with the gate, chat with the receipt, a printf-style log) | **[docs/CAPI.md](docs/CAPI.md)** (0.3.2) · [usage.md §6b](docs/usage.md#6b-the-c-api) |
 | see what comes next and what was rejected, and why | **[docs/TODO.md](docs/TODO.md)** |
+| talk to bankML as itself, set its CPU, RAM and GPU limits, and watch what it measures (tokens/s, TTFT, power), with iNFT infotags | **`python3 sAGI/console.py`** ([usage.md §6c](docs/usage.md#6c-the-bankml-console-bankml-as-itself-037)) |
 | check what changed in each release | **[CHANGELOG.md](CHANGELOG.md)** and the [Releases](#releases) table below |
 | install and use bankML as a language model or agent (a tested, step-by-step method from a fresh clone) | **[llms.txt](llms.txt)** (also at [cryptoagi.github.io/bankml/llms.txt](https://cryptoagi.github.io/bankml/llms.txt)) |
 | know what you may do with the code | **[LICENSING.md](LICENSING.md)**: `MIT OR Apache-2.0`; key handling `GPL-3.0-only` |

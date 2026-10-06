@@ -33,7 +33,8 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [f16.md](f16.md) | `f16.rs` | ggml's two F16 products, chosen by shape as ggml chooses them |
 | [par.md](par.md) | `par.rs` | the zero-dependency thread pool; bits independent of thread count |
 | [gpu.md](gpu.md) | `gpu/` | Vulkan through dlopen, bankML's own SPIR-V, a verified card's share of the rows |
-| [sys.md](sys.md) | `sys.rs` | machine facts and the process's usage (`bankml usage`, `/bankml/usage`) |
+| [sys.md](sys.md) | `sys.rs` | machine facts and the process's usage (`bankml usage`, `/bankml/usage`): CPU, memory, GPU busy and memory, package power |
+| [metrics.md](metrics.md) | `metrics.rs` | bankML's own measurements of its answers: TTFT, pp and tg tokens/s, energy per token (`/bankml/metrics`) |
 | **The model** | | |
 | [forward.md](forward.md) | `forward.rs` | the Qwen3 and Llama graphs, the KV cache, ggml's three attention kernels |
 | [tokenizer.md](tokenizer.md) | `tokenizer.rs`, `unicode_letters.rs` | llama.cpp's tokenizer and pre-tokenizers |
@@ -52,6 +53,8 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [capi.md](capi.md) | `capi/` | `libbankml` and the printf-style log; the full reference is [../CAPI.md](../CAPI.md) |
 | **Training** | | |
 | [train.md](train.md) | `train/` | mindXtrain's author and score stages, identical to its Python |
+| **The console** | | |
+| [console.md](console.md) | `sAGI/console.py` | bankML as itself: four tabs (Interaction, Admin, Logging, Infotags), the measured SELF block |
 
 Install and configure: [../install.md](../install.md). Use: [../usage.md](../usage.md). The checks:
 [../oracles.md](../oracles.md). Speed: [../PERFORMANCE.md](../PERFORMANCE.md).

@@ -385,6 +385,29 @@ int main(void) {
 `serve --native` gives (the gate's C API oracle compares them, turn by turn). `bankml_set_log` and the printf-style
 `bankml_log` send the library's messages to your own callback.
 
+## 6c. The bankML console: bankML as itself (0.3.7)
+
+```sh
+python3 sAGI/console.py          # http://127.0.0.1:7875 — talks to bankml serve on 127.0.0.1:18093
+```
+
+A simple page with four tabs, loopback only:
+
+- **Interaction**: ask; the answer streams, and under it the receipt — `✓ answer = receipt` when the sha256 of the text
+  you received is the receipt's, the model, the tokens, the time to first token, the generation speed. bankML answers as
+  itself (`sAGI/personas/bankml.persona`): each question carries a SELF block measured at that moment from
+  `/bankml/usage` and `/bankml/metrics`, so "how many tokens have you used, how fast, how much power" is answered from
+  measurement, and "not measured" where it was not.
+- **Admin**: three sliders — CPU threads, the RAM budget (weights plus KV cache, which sets the context) and the GPU
+  limit (0 = off) — applied as one verified restart of the engine, rolled back if it fails; and D3 charts of what bankML
+  measures: tokens per second, TTFT, CPU, memory, GPU busy against its limit, power.
+- **Logging**: every exchange with its timings and receipt, refusals included, and the engine's log.
+- **Infotags**: the metadata an iNFT publication of the session carries (ERC-721 shape): the engine, the model and its
+  sha256, the persona and its doctrine root, the token totals, and an RFC 6962 Merkle root over the exchanges with their
+  CID. The exchanges stay on this machine; the root lets a holder check any one of them. Download it as JSON.
+
+Power appears only after `./install.sh power` (opt-in; see [install.md](install.md)); until then it reads "not measured".
+
 ## 7. Let others watch (view mode, on the LAN)
 
 ```sh
@@ -679,6 +702,7 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml serve FILE --fork FORK.json [--upstream H:P \| --spawn BIN] [--listen H:P] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]` | the gate in front of llama-server (n-gram speculation opt-in; slot save/restore directory) |
 | `bankml chat-template MODEL.gguf < messages.json` | the prompt a conversation becomes, as llama.cpp's `/apply-template` (P3; byte-identical on its oracle; tools and assistant prefills refused) |
 | `BANKML_GPU=off` · `BANKML_GPU_SHARE=0.3` | the GPU worker (0.2.14): a verified card takes a calibrated share of every 1-bit matrix's rows; `off` disables it, a number overrides the share |
+| `BANKML_GPU_LIMIT=0.8` | the GPU limiter (0.3.7): bankML's GPU buffers stay within this share of the card's heap (of the RAM they could use, on an integrated card) and the card rests so it is busy at most this share of the time; what does not fit or arrives while it rests runs on the CPU, the same bits. Each matrix shape also decides, measured in the pipeline, whether the card's share pays (on the Vega 3 most shapes choose the CPU) |
 | `bankml serve FILE --fork FORK.json --native [--listen H:P] [--upstream H:P] [--ctx N] [--registry [DIR]] [--keep-alive DUR]` | answers from bankML's own forward pass (0.3.0); since 0.3.1 also Ollama's API (§6a) and, with `--registry`, any pinned model by name, one resident at a time; token-identical to llama-server on its oracle; also serves llama-server's endpoints on the engine address, so Savante reaches it unchanged. Savante's Models → Resources **engine** setting chooses it: `auto` (bankML for the ternary files), `native`, `llama.cpp` |
 | `bankml create NAME -f Modelfile [--registry DIR] [--models DIR]` | O5 (0.3.5): a derived model, a layer (SYSTEM, PARAMETER, stop, MESSAGE, LICENSE) over a pinned base, `FROM` a name, a pinned GGUF or a safetensors directory (converted); written as `DIR/NAME.MODEL.json`, no weights copied (§6a) |
 | `bankml convert DIR -o OUT.gguf [--model-name N] [--fork F --source S] [--ignore-model-card]` | O5 (0.3.5): Llama safetensors → GGUF F16, byte-identical to llama.cpp b11192's `convert_hf_to_gguf.py --outtype f16`; `--fork` writes the pin with every input's sha256 |
@@ -686,7 +710,8 @@ A speed counts only if every oracle passed on the same code. See `testing/README
 | `bankml gpu [--remote]` | every video card found (Vulkan, merged with `/sys/class/drm`) and which bankml will use; `--remote` adds the GPUs Hugging Face rents (22 NVIDIA flavors with card counts and prices; listed, never started); `BANKML_GPU=off` turns the component off, `BANKML_GPU=0,2` picks cards (0.2.12; the GPU kernels are the next steps) |
 | `bankml generate MODEL.gguf [--max N] [--sample [--temp T] [--top-k K] [--top-p P] [--min-p P] [--seed S]] < messages.json` (or plain text) | bankml's own forward pass, greedy, or with `--sample` llama-server's sampler chain (the model's defaults unless given; same seed, same tokens as llama-server, 0.2.11), streamed (P3, 0.2.7): token-identical to llama-server b11192 on its oracle for the 1-bit and ternary models, prompts of any length and contexts of any length (all three of ggml's CPU attention kernels, since 0.2.10); `BANKML_LLAMA_THREADS` (default 3) must equal the `-t` of the llama.cpp being matched, because its long-context decode kernel chunks by thread; `BANKML_THREADS` sets the threads. Ternary: 2.3–2.4 tokens/s against llama-server's 0.30; 1-bit: 1.8 against 2.8 |
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
-| `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage` |
+| `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage`, with (0.3.7) package watts when RAPL is readable (`./install.sh power`), each GPU's busy %, VRAM and GTT, and the GPU limiter's state |
+| `GET /bankml/metrics` | (0.3.7) bankML's own measurements of its last 256 answers: TTFT, prompt and generation tokens per second, grammar time, energy and joules per token where measured; totals |
 | `python3 sAGI/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 sAGI/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
 | `python3 sAGI/models.py list \| catalog \| search Q \| import ID\|URL\|ollama:NAME:TAG \| use FILE \| first-run` | the model importer and carrier switch |

@@ -118,6 +118,7 @@ Nothing in it needs sudo. Unless steps are named, it runs `check build engine py
 | `start` | starts interact mode (`sAGI/savante.py --mode interact --port 7873`), and with `--view` also view mode (`sAGI/view.py --host 0.0.0.0 --port 7874`), each detached (`setsid nohup`), waiting up to 60 s for its port. A port that already listens is left as it is | `logs/interact.log`, `logs/view.log` |
 | `stop` | for ports 7874, 7873, 18093 and 18092, finds the process listening there (by `ss`, never by matching command lines) and sends it SIGTERM | nothing |
 | `status` | which of the four ports listen; `GET /bankml` (verified, model, sha256 prefix); `bankml version`; the engine and Python in use | `~/.local/share/bankml/.status.json` |
+| `power` (0.3.7, opt-in, **sudo**) | lets a `rapl` group your user joins read the CPU package energy counter, so bankML can report watts and joules per token; explains the side channel (PLATYPUS, CVE-2020-8694) and asks first (`BANKML_POWER_YES=1` to agree non-interactively); `./install.sh power --remove` restores root-only | `/etc/udev/rules.d/60-bankml-rapl.rules` |
 
 `start` does not start `bankml serve`; `model` does. Interact mode also starts the first-run carrier in the
 background when `bankml serve` does not answer, unless `BANKML_FIRST_RUN=0`. So after a reboot `./install.sh start`
@@ -475,6 +476,7 @@ sets a variable for the processes it starts, that is noted.
 |---|---|---|---|
 | `BANKML_GPU` | `bankML/gpu/mod.rs` | unset: every usable card, discrete first, largest memory first | `off`, `none` or `cpu` turn the GPU component off. A comma list (`0,2`) picks cards by backend index (as `bankml gpu` lists them). The worker uses the first selected card |
 | `BANKML_GPU_SHARE` | `bankML/gpu/worker.rs` | calibrated at open: card rate ÷ combined rate (26–35 % on a Vega 3) | the fraction of each 1-bit matrix's rows the card computes, clamped to 0–0.95. A share under 0.02, set or calibrated, leaves the card unused |
+| `BANKML_GPU_LIMIT` | `bankML/gpu/worker.rs` (0.3.7) | `0.8` | the share of the card's memory (its heap; on an integrated card, the RAM it could use) and of its time bankML may take; clamped 0.05–1. The console's GPU slider and `models.resources()["gpu_limit"]` set it (0 there means `BANKML_GPU=off`) |
 
 ### Installer (`install.sh`)
 

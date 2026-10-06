@@ -58,6 +58,10 @@ Rust 1.99 (pinned by `rust-toolchain.toml`; rustup installs it), Python 3.10+ fo
 7. Check an answer: `bankml_receipt.response_sha256` is the sha256 of the answer text exactly as the model produced it,
    and `model_sha256` names the weights that answered. Recompute the first to confirm the text you hold is the text
    the engine produced.
+8. Read what bankML measured (0.3.7): `GET /bankml/metrics` (each answer's time to first token, prompt and generation
+   tokens per second, energy per token when measured) and `GET /bankml/usage` (CPU, memory, each GPU's busy share and
+   memory, package watts when measured). A value that was not measured is `null`; do not substitute an estimate.
+9. Talk to bankML as itself, with its measurements in view: `python3 sAGI/console.py`, then http://127.0.0.1:7875.
 
 ## What bankML refuses, and why
 

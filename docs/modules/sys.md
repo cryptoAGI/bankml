@@ -80,3 +80,10 @@ second however many clients poll, so a poll never holds a connection for the sam
 - [bankml.md](bankml.md), [par.md](par.md)
 - [../usage.md](../usage.md) §13 (commands, ports, environment), [../PERFORMANCE.md](../PERFORMANCE.md),
   [../TODO.md](../TODO.md) (Resources sliders)
+
+## Power and GPUs (0.3.7)
+
+- `energy_uj() -> Option<(u64, u64)>` reads `/sys/class/powercap/intel-rapl:0/energy_uj` and its wrap value;
+  `joules(a, b)` takes the difference across one wrap. Root-only unless `./install.sh power` has run; then `null`.
+- `gpus() -> Vec<Gpu>` reads each DRM card's `gpu_busy_percent`, `mem_info_vram_*` and `mem_info_gtt_*` (amdgpu exposes
+  them; other drivers read as `null`). `usage_json` adds `package_watts` over its interval, `gpus` and `gpu_limiter`.

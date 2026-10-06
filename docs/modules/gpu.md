@@ -249,3 +249,14 @@ like any local card. See [huggingface.md](../huggingface.md).
 - [TODO.md](../TODO.md) — 0.5.0, hardware
 - [forward.md](forward.md) — `Weights::open` and `Weights::mv`
 - [q1_0.md](q1_0.md) — the CPU kernel the GPU reproduces
+
+## The limiter and per-shape calibration (0.3.7)
+
+- **`BANKML_GPU_LIMIT`** (default 0.8, clamped 0.05–1): bankML's buffers stay within L of the heap they come from
+  (`Gpu::heap_bytes`, counted by `Gpu::allocated`), and on an integrated card within L of the RAM they could use; after a
+  dispatch of `d` the card rests `d·(1−L)/L`. A matrix that does not fit, or a product arriving while the card rests, runs
+  whole on the CPU — never a wait. The state is in `GET /bankml/usage` as `gpu_limiter` (`worker::status_json`).
+- **Per-shape calibration**: each matrix shape's first products alternate between the calibrated share and the CPU
+  alone, timed `begin` → `finish` in the real pipeline; after a warm-up and 6 timings each the faster median is kept, and
+  a shape decided for the CPU frees its buffers. On the Vega 3 a single global share cost decode 18 %; per shape, the card
+  is neutral (10.36 tok/s off, 10.30–10.38 on, Bonsai-1.7B), with ~13 MB on the card instead of 66 MB.

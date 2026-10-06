@@ -1,10 +1,47 @@
 # Changelog
 
-## Unreleased (0.3.7) — llama-server's whole default sampler chain: typical-p, top-n-σ, XTC, dynamic temperature, DRY
+## Unreleased (0.3.7) — the whole sampler chain; bankML measures itself; the GPU limiter; the bankML console
 
 **Every sampler in llama-server b11192's default chain is now reproduced, token for token: after 0.3.6's penalties,
 typical-p, top-n-σ, XTC, dynamic temperature and DRY.** A request that sets any of them gets llama-server's answer
-instead of a refusal; what llama-server clamps is clamped, what it refuses is refused with its message.
+instead of a refusal; what llama-server clamps is clamped, what it refuses is refused with its message. **bankML now
+measures itself** — time to first token on every answer, prompt and generation speed, CPU, memory, the GPU and, where
+the operator allows it, power and joules per token — **limits its GPU** to a share of the card's memory and time and
+lets each matrix shape decide whether the card pays, and has **a console** in which it answers as itself, from those
+measurements.
+
+### Measurement: what bankML knows of itself
+- `bankML/metrics.rs`: one record per completion, taken inside the engine — TTFT, prompt and generation tokens per second
+  (llama-bench's `pp` and `tg`), grammar time, and the CPU package's energy and joules per generated token when RAPL is
+  readable; `null`, never estimated. A ring of 256 at `GET /bankml/metrics`, with totals.
+- The receipt's `ttft_ms` is set for non-streamed answers too (it was `null`); `/v1` answers carry llama-server's
+  `timings` fields (`prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_ms`,
+  `predicted_per_second`, `cache_n`).
+- `GET /bankml/usage` adds `package_watts` (RAPL over the sampling interval, its wrap handled), each GPU's busy %, VRAM and
+  GTT from sysfs, and the GPU limiter's state.
+- `./install.sh power` (opt-in, the only step that uses sudo): a udev rule lets a `rapl` group that the user joins read
+  the energy counter, which the kernel has kept root-only since PLATYPUS (CVE-2020-8694); it says so and asks first;
+  `--remove` undoes it.
+
+### The GPU: a limit, and per-shape calibration
+- `BANKML_GPU_LIMIT` (default 0.8): bankML's GPU buffers stay within that share of the heap they come from — on an
+  integrated card, of the RAM they could use — and after a dispatch of `d` the card rests `d·(1−L)/L`; a matrix that does
+  not fit, or a product arriving while the card rests, runs whole on the CPU. Never a wait, the same bits.
+- Per-shape calibration: each matrix shape's first products alternate between the card's share and the CPU alone, timed
+  in the real pipeline; the faster median is kept and a shape decided for the CPU frees its buffers. Measured on the Vega
+  3 (Bonsai-1.7B, interleaved A/B, 4 rounds, the same answer every time): with one global share the card cost 18 %
+  (10.40 → 8.51–8.58 tok/s); per shape, 10.36 off against 10.30–10.38 on — neutral, as an integrated card that shares
+  decode's memory bandwidth can be; card memory 66 → ~13 MB.
+
+### bankML as itself: the persona and the console
+- `sAGI/personas/bankml.persona`: bankML speaking as itself, projected from the README, the Thesis and the oracles
+  (doctrine root `0x4d5ef2d9…`; adopts and verifies). Its knowledge of its own use comes only from a measured SELF block,
+  rendered as sentences with units (a bare key was read as seconds in testing).
+- `sAGI/console.py` (port 7875, loopback only): Interaction (the streamed answer and its receipt checked against the
+  text), Admin (CPU threads, RAM budget and GPU limit sliders — one verified restart with rollback — and D3 charts of
+  what bankML measured), Logging (every exchange with its timings and receipt), Infotags (ERC-721 metadata for an iNFT
+  publication: the model, the persona and its doctrine root, an RFC 6962 root over the exchanges, CIDs). Standard library
+  only, a strict CSP, same-origin JSON POSTs; D3 v7.9.0 vendored with its ISC licence. `testing/test_console.py`.
 
 ### Measured
 - `oracle_samplers` (`testing/penalty_oracle.py --kind sampler`, llama-server b11192 from an empty cache; 23 variants
