@@ -22,7 +22,8 @@
 <p align="center">
   <a href="https://deltaverse.pythai.net/bankml"><b>Why bankML</b></a> (the short version, on the web) &middot;
   <a href="docs/thesis.md"><b>the thesis</b></a> &middot; <a href="docs/usage.md"><b>usage</b></a> &middot;
-  <a href="CHANGELOG.md"><b>changelog</b></a>
+  <a href="CHANGELOG.md"><b>changelog</b></a> &middot;
+  <a href="https://huggingface.co/spaces/PYTHAI/bankml"><b>on Hugging Face</b></a>
 </p>
 
 ---
