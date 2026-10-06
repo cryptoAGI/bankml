@@ -112,6 +112,7 @@ Start here, then go where your question is. The same documents read as a website
 
 | if you want to… | read |
 |---|---|
+| get the short, plain-language version: what bankML is good for, how Rust makes it fast, and where it is going | **[docs/why-bankml.md](docs/why-bankml.md)** |
 | install and start everything with one command | **`./install.sh`** ([usage.md §1](docs/usage.md#1-install)) |
 | install, run and use bankml and Savante (both modes, models, `.history`, receipts, settings, troubleshooting) | **[docs/usage.md](docs/usage.md)** |
 | install for production or a server: every `install.sh` option, every flag and environment variable, tuning, a systemd unit, security | **[docs/install.md](docs/install.md)** |
