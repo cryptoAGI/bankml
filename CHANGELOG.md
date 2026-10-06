@@ -37,6 +37,15 @@ llama-server's own answers, as everything before it.
 - `BANKML_CACHE_RAM` (MiB, as `--cache-ram`: 0 off, -1 no limit); unset, 8192 MiB but at most a quarter of the memory
   available at load.
 
+### Docs and tools
+- `docs/why-bankml.md`: the plain-language version (advantages, uses, how Rust helps, the road ahead), dated
+  2026-10-06; published as a web page over the DeltaVerse substrate at
+  [deltaverse.pythai.net/bankml](https://deltaverse.pythai.net/bankml).
+- `tools/makecards.py`: a page's share cards (1200×630, 1200×1200, a 180 px touch icon) with the DeltaVerse $.
+  `tools/seo.py`: audits a page or URL as a crawler and a link preview read it — the meta set, a canonical that must
+  not redirect, JSON-LD, and each card's real size against its declared one (standard library only). The bankML page:
+  47 / 47.
+
 ### Logprobs on `/v1/chat/completions`, streamed or not (`testing/logprobs_oracle.py`, 14 / 14)
 - `logprobs: true` with `top_logprobs` (default 20) → `choices[0].logprobs.content`: per token its `id`, `token`,
   `bytes`, `logprob`, and the top tokens with theirs. Every logprob is the same 32-bit float as llama-server's:

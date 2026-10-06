@@ -3,7 +3,8 @@
 *Written 2026-10-06, while bankML 0.3.6 is the latest release, 0.3.7 is in its release gate, and 0.3.8 and 0.3.9
 are being built on the way to the 0.4.0 milestone.*
 
-This page is the short version. Each idea links to the page that explains it in full, and to the code that does it,
+This page is the short version; it also reads as a web page, over the DeltaVerse substrate, at
+**[deltaverse.pythai.net/bankml](https://deltaverse.pythai.net/bankml)**. Each idea links to the page that explains it in full, and to the code that does it,
 for when you want to go deeper.
 
 ---
