@@ -290,10 +290,12 @@ start_ui() {  # start_ui NAME PORT ARGS…: a detached UI with its own log
 
 step_start() {
   start_ui interact 7873 sAGI/savante.py --mode interact --port 7873
+  start_ui console 7875 sAGI/console.py --port 7875
   [ "$WITH_VIEW" = 1 ] && start_ui view 7874 sAGI/view.py --host 0.0.0.0 --port 7874
   echo
   bm_say "Savante is ready"
   bm_sub "talk:   $(bm_link http://127.0.0.1:7873)   (this computer only)"
+  bm_sub "bankML: $(bm_link http://127.0.0.1:7875)   (the engine itself: Ask · Admin · Receipts · Logs)"
   [ "$WITH_VIEW" = 1 ] && bm_sub "watch:  http://<this computer's LAN address>:7874"
   bm_sub "check:  curl -s 127.0.0.1:18093/bankml"
   if [ -n "${INSTALL_ALLOW_ORIGIN:-}" ]; then
@@ -304,7 +306,7 @@ step_start() {
 
 step_stop() {
   local port pid
-  for port in 7874 7873 18093 18092; do
+  for port in 7875 7874 7873 18093 18092; do
     pid="$(pid_on "$port")"
     if [ -n "$pid" ]; then
       kill "$pid" 2>/dev/null && bm_ok "stopped :$port (pid $pid)"
@@ -316,7 +318,7 @@ step_stop() {
 
 step_status() {
   local port name
-  for port in 18092:llama-server 18093:"bankml serve" 7873:interact 7874:view; do
+  for port in 18092:llama-server 18093:"bankml serve" 7873:interact 7874:view 7875:"bankML console"; do
     name="${port#*:}"; port="${port%%:*}"
     if listening "$port"; then bm_ok "$name on :$port"; else bm_info "$name not running (:$port)"; fi
   done

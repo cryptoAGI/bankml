@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """bankML · console — talk to bankML as itself (sAGI/personas/bankml.persona), and watch what it measures.
 
-Four tabs: **Interaction** (a question and its streamed answer, with the receipt), **Admin** (the CPU threads, the RAM
-budget and the GPU limit as sliders, and D3 charts of what bankml measures), **Logging** (every exchange with its
-timings and receipt, refusals, the engine's log) and **Infotags** (the metadata an iNFT publication of this session
-carries: the model and persona it ran, and a Merkle root over its exchanges).
+Four tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
+GPU limit as sliders; D3 charts of what bankml measures), **Receipts** (every exchange's receipt, and the iNFT
+commitments: a Merkle root over the exchanges) and **Logs** (the engine's log). A Savante | bankML switch links to
+Savante's page on :7873.
 
 The persona knows its own use only from measurement: each question goes to `bankml serve` with a SELF block built
 from `GET /bankml/usage` and `GET /bankml/metrics` at that moment; a value that was not measured is null.
@@ -15,7 +15,7 @@ The Python standard library only, loopback only (it refuses another host), a fix
 
 Public mode (`--public HOST`, for a hosted demo such as a Hugging Face Space): it also answers as HOST and may bind any
 address, but it is read-only — the resource controls are refused — and it keeps no record of visitors' questions:
-nothing is logged, and the Logging and Infotags tabs show only the engine's measurements.
+nothing is logged, and the Receipts tab shows no exchange.
 
   python3 sAGI/console.py                 # http://127.0.0.1:7875 — bankml serve on 127.0.0.1:18093
   python3 sAGI/console.py --public bankml.example --host 0.0.0.0 --port 7860

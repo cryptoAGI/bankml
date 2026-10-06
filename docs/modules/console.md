@@ -2,9 +2,12 @@
 
 ## Summary
 
-The console (0.3.7) is a small page with four tabs over `bankml serve`: **Interaction** (ask; the streamed answer and its
-receipt), **Admin** (CPU, RAM and GPU sliders and D3 charts of measured use), **Logging** (every exchange) and
-**Infotags** (iNFT publication metadata). It talks to bankML as itself — `sAGI/personas/bankml.persona` — and gives that
+The console (0.3.7; redesigned 2026-10-06) is bankML's own interface, deliberately unlike Savante's: a quiet, typographic
+page, light or dark with the system, with four tabs over `bankml serve` — **Ask** (the landing: one question, one
+streamed answer, its receipt checked in the browser), **Admin** (CPU, RAM and GPU sliders, the measured "now", and D3
+charts), **Receipts** (every answer's receipt, newest first, each re-checked and expandable to its JSON; the
+commitments an iNFT of the session carries) and **Logs** (the engine's log). A **Savante | bankML** switch in its bar
+and a **bankML ↗** link in Savante's header move between the two interfaces. It talks to bankML as itself — `sAGI/personas/bankml.persona` — and gives that
 persona a SELF block measured at each question, so what bankML says about its own tokens, speed, load and power is
 measurement, not invention.
 

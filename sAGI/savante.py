@@ -2024,9 +2024,11 @@ def build(canon: Canon, mode: str):
     theme = gr.themes.Base(primary_hue="teal", secondary_hue="amber", neutral_hue="slate") if hasattr(gr, "themes") else None
     with gr.Blocks(title="bankML · Savante", css=CSS, theme=theme) as demo:
         session = gr.State({"id": sid0})
+        # the switch to bankML's own console (sAGI/console.py, :7875) — this computer only, so not on the LAN view
+        switch = " &nbsp;·&nbsp; **[bankML ↗](http://127.0.0.1:7875/)** — talk to the engine itself" if mode == "interact" else ""
         gr.Markdown("## bankML · Savante — verified low-bit inference on this computer\n"
                     "Every answer is a **draft**, carried by a local model behind bankML's guard and sha256 pin, "
-                    "with a receipt. Savante's canon is read-only and checked against its ledger.", elem_id="bk-head")
+                    "with a receipt. Savante's canon is read-only and checked against its ledger." + switch, elem_id="bk-head")
         with gr.Tab("Interaction"):  # the question and the answer, nothing else: every setting is on the Admin tab
             with gr.Row(elem_id="bk-row"):
                 with gr.Column(scale=4, elem_id="bk-main"):

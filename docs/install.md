@@ -403,7 +403,7 @@ What each request may contain, and what is refused, is in [usage.md §6](usage.m
 | 18093 | `bankml serve` | loopback |
 | 7873 | Savante, interact mode (Gradio) | loopback only; anything else is refused |
 | 7874 | view mode (standard library HTTP) | `0.0.0.0` by default |
-| 7875 | the bankML console, `sAGI/console.py` (0.3.7) | loopback only; anything else is refused. `./install.sh stop` does not stop it |
+| 7875 | the bankML console, `sAGI/console.py` (0.3.7) | loopback only; anything else is refused. `./install.sh start` starts it beside Savante and `stop` stops it (since 2026-10-06) |
 | 11434 | Ollama, for embeddings (`BANKML_OLLAMA`) | loopback |
 | 8545 | anvil, the local iNFT devnet, when started from the Agents tab | loopback |
 

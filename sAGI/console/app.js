@@ -1,159 +1,188 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// bankML console: four tabs over sAGI/console.py. Every value is rendered with textContent; the charts draw only what
-// bankml measured (a null is drawn as a gap and labelled "not measured", never filled in).
+// bankML — the page over sAGI/console.py: Ask (the landing), Admin and Logs. Every value is rendered with textContent;
+// nothing bankML did not measure is drawn or filled in ("not measured"); every receipt is checked in the browser.
 "use strict";
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
-const fmt = (v, d = 1, unit = "") => (v === null || v === undefined || Number.isNaN(v)) ? "not measured" : `${(+v).toFixed(d)}${unit}`;
-const GB = 1e9, MB = 1e6;
-let history = [];
-const series = { t: [], cpu: [], rss: [], avail: [], gbusy: [], galloc: [], watts: [] };
-const KEEP = 150;
+const fmt = (v, d = 1, unit = "") => (v === null || v === undefined || Number.isNaN(+v)) ? "not measured" : `${(+v).toFixed(d)}${unit}`;
+const GB = 1e9, MB = 1e6, KEEP = 150;
+const short = (h, n = 12) => (h ? String(h).slice(0, n) + "…" : "—");
+const clock = (s) => new Date(s * 1000).toTimeString().slice(0, 5);
+let history = [], publicMode = false, slidersSet = false;
+const series = { t: [], cpu: [], rss: [], avail: [], gbusy: [], watts: [] };
+
+async function sha256hex(text) {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 // ── tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────
-document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => {
-  document.querySelectorAll("nav button").forEach((x) => x.setAttribute("aria-selected", x === b ? "true" : "false"));
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === b.dataset.tab));
-  if (b.dataset.tab === "logging") loadLog();
-  if (b.dataset.tab === "infotags") loadInfo();
-}));
+function show(tab) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === tab));
+  if (tab === "receipts") loadReceipts();
+  if (tab === "logs") loadLogs();
+  if (tab === "ask") $("q").focus();
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
 
-// ── interaction ─────────────────────────────────────────────────────────────────────────────────────────────────
-$("ask").addEventListener("submit", async (ev) => {
+// ── Ask ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+const grow = () => { const q = $("q"); q.style.height = "auto"; q.style.height = Math.min(q.scrollHeight, innerHeight * 0.4) + "px"; };
+$("q").addEventListener("input", grow);
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } });
+
+$("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const q = $("q").value.trim();
   if (!q) return;
-  $("q").value = ""; $("send").disabled = true;
-  $("chat").append(el("div", "msg user", q));
-  const bot = el("div", "msg bot", ""); const body = el("div"); const rc = el("div", "receipt", "…");
-  bot.append(body, rc); $("chat").append(bot); bot.scrollIntoView({ block: "end" });
+  $("empty")?.remove();
+  $("q").value = ""; grow(); $("send").disabled = true;
+  $("chat").append(el("div", "turn-q", q));
+  const a = el("div", "turn-a waiting", "…"); const rc = el("div", "receipt");
+  const turn = el("div"); turn.append(a, rc); $("chat").append(turn);
+  const t0 = Date.now();
+  const tick = setInterval(() => { if (a.classList.contains("waiting")) a.textContent = `… reading the prompt · ${Math.round((Date.now() - t0) / 1000)} s`; }, 1000);
+  turn.scrollIntoView({ block: "end" });
+  let text = "";
   try {
     const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: q, history }) });
-    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "", text = "";
+    if (!r.ok) throw new Error(await r.text());
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
     for (;;) {
-      const { done, value } = await reader.read(); if (done) break;
+      const { done, value } = await reader.read();
+      if (done) break;
       buf += dec.decode(value, { stream: true });
       let i;
       while ((i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 1);
         if (!line.trim()) continue;
         const d = JSON.parse(line);
-        if (d.piece) { text += d.piece; body.textContent = text; bot.scrollIntoView({ block: "end" }); }
+        if (d.piece) { a.classList.remove("waiting"); text += d.piece; a.textContent = text; }
         if (d.done) {
-          rc.textContent = "";
-          if (d.error) { rc.append(el("span", "bad", "refused: " + d.error)); }
+          a.classList.remove("waiting");
+          if (d.error) { a.textContent = text || "—"; rc.append(el("span", "bad", "refused: " + d.error)); }
           else if (d.receipt) {
+            const ok = (await sha256hex(text)) === d.receipt.response_sha256;
             const m = d.metrics || {};
-            rc.append(el("span", d.answer_sha256_ok ? "ok" : "bad", d.answer_sha256_ok ? "✓ answer = receipt" : "≠ received!"),
-              document.createTextNode(`  model ${String(d.receipt.model_sha256).slice(0, 12)}…  ` +
-                `${d.receipt.prompt_tokens}+${d.receipt.completion_tokens} tok · TTFT ${fmt(m.ttft_ms, 0, " ms")} · tg ${fmt(m.eval_tps, 1, " tok/s")} · ${fmt(m.joules_per_token, 3, " J/tok")}`));
+            rc.append(el("span", ok ? "ok" : "bad", ok ? "✓ receipt" : "≠ answer and receipt differ"),
+              el("span", null, `model ${short(d.receipt.model_sha256)}`), el("span", null, `answer ${short(d.receipt.response_sha256)}`),
+              el("span", null, `${d.receipt.prompt_tokens} + ${d.receipt.completion_tokens} tokens`),
+              el("span", null, `first token ${fmt(m.ttft_ms, 0, " ms")}`), el("span", null, `${fmt(m.eval_tps, 1, " tok/s")}`));
           }
           history.push({ role: "user", content: q }, { role: "assistant", content: text });
           history = history.slice(-12);
         }
       }
     }
-  } catch (e) { rc.textContent = "error: " + e; }
+  } catch (e) {
+    a.classList.remove("waiting"); a.textContent = text || "—";
+    rc.append(el("span", "bad", "no answer: " + String(e.message || e).slice(0, 200)));
+  }
+  clearInterval(tick);
   $("send").disabled = false; $("q").focus();
 });
-$("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("ask").requestSubmit(); } });
 
-// ── admin: sliders ──────────────────────────────────────────────────────────────────────────────────────────────
+// ── Admin ───────────────────────────────────────────────────────────────────────────────────────────────────────
 const sync = () => { $("threads-v").textContent = $("threads").value; $("ram-v").textContent = (+$("ram").value).toFixed(1) + " GB";
   $("gpu-v").textContent = +$("gpu").value === 0 ? "off" : $("gpu").value + " %"; };
 ["threads", "ram", "gpu"].forEach((id) => $(id).addEventListener("input", sync));
-let slidersSet = false;
 $("apply").addEventListener("click", async () => {
   $("apply").disabled = true;
   const r = await fetch("/api/resources", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ threads: +$("threads").value, ram_gb: +$("ram").value, gpu_limit: +$("gpu").value / 100 }) });
-  const j = await r.json(); $("job").textContent = j.ok ? "restarting…" : "refused: " + j.error; $("apply").disabled = false;
+  const j = r.headers.get("Content-Type")?.includes("json") ? await r.json() : { ok: false, error: await r.text() };
+  $("job").textContent = j.ok ? "restarting…" : "refused: " + j.error; $("apply").disabled = publicMode;
 });
 
-// ── admin: charts (D3) ──────────────────────────────────────────────────────────────────────────────────────────
 function chart(id, lines, opts = {}) {
-  const svg = d3.select("#" + id); const node = svg.node(); const W = node.clientWidth || 340, H = 150, m = { t: 8, r: 10, b: 20, l: 38 };
+  const svg = d3.select("#" + id), node = svg.node(); const W = node.clientWidth || 300, H = 130, m = { t: 6, r: 6, b: 18, l: 34 };
   svg.attr("viewBox", `0 0 ${W} ${H}`); svg.selectAll("*").remove();
   const all = lines.flatMap((l) => l.data.filter((p) => p.y !== null && p.y !== undefined));
   if (!all.length) { svg.append("text").attr("class", "none").attr("x", W / 2).attr("y", H / 2).attr("text-anchor", "middle").text(opts.empty || "not measured yet"); return; }
-  const xs = lines.flatMap((l) => l.data.map((p) => p.x));
-  const x = d3.scaleLinear().domain(d3.extent(xs)).range([m.l, W - m.r]);
-  const ymax = d3.max([d3.max(all, (p) => p.y), opts.limit || 0]) || 1;
-  const y = d3.scaleLinear().domain([0, ymax * 1.1]).nice().range([H - m.b, m.t]);
-  svg.append("g").attr("class", "axis").attr("transform", `translate(0,${H - m.b})`).call(d3.axisBottom(x).ticks(4).tickFormat(opts.xfmt || d3.format("d")));
-  svg.append("g").attr("class", "axis").attr("transform", `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4));
+  const x = d3.scaleLinear().domain(d3.extent(lines.flatMap((l) => l.data.map((p) => p.x)))).range([m.l, W - m.r]);
+  const y = d3.scaleLinear().domain([0, (d3.max([d3.max(all, (p) => p.y), opts.limit || 0]) || 1) * 1.1]).nice().range([H - m.b, m.t]);
+  svg.append("g").attr("class", "axis").attr("transform", `translate(0,${H - m.b})`).call(d3.axisBottom(x).ticks(3).tickFormat((s) => clock(s)).tickSizeOuter(0));
+  svg.append("g").attr("class", "axis").attr("transform", `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(3).tickSizeOuter(0));
   if (opts.limit) svg.append("line").attr("class", "limit").attr("x1", m.l).attr("x2", W - m.r).attr("y1", y(opts.limit)).attr("y2", y(opts.limit));
   const ln = d3.line().defined((p) => p.y !== null && p.y !== undefined).x((p) => x(p.x)).y((p) => y(p.y));
   lines.forEach((l) => svg.append("path").attr("class", l.cls).attr("d", ln(l.data)));
 }
-const tfmt = (s) => { const d = new Date(s * 1000); return d.toTimeString().slice(0, 8); };
-
-function nowRow(dl, k, v) { dl.append(el("dt", null, k), el("dd", null, v)); }
+const fact = (dl, k, v) => dl.append(el("dt", null, k), el("dd", null, v));
 
 async function poll() {
   let s;
-  try { s = await (await fetch("/api/state")).json(); } catch (e) { $("status").textContent = "console: " + e; return; }
-  const v = (s.serve || {}).verified || {}; const u = s.usage || {}; const m = s.metrics || {}; const lim = u.gpu_limiter || null;
+  try { s = await (await fetch("/api/state")).json(); } catch (e) { $("engine").textContent = "the console is not answering: " + e; return; }
+  publicMode = !!s.public;
   $("mantra").textContent = s.persona.mantra;
-  $("status").textContent = "";
-  $("status").append(v.verdict === "play" ? el("span", "ok", "✓ verified ") : el("span", "bad", "no verified engine "),
-    document.createTextNode(`${v.name || ""} · bankML ${v.bankml || "?"} · ${String(v.model_sha256 || "").slice(0, 12)}…`));
+  // the switch: Savante beside this console on this machine, or Savante's public Space from a hosted console
+  $("to-savante").href = publicMode ? "https://huggingface.co/spaces/PYTHAI/savante" : `${location.protocol}//${location.hostname}:7873/`;
+  const v = (s.serve || {}).verified || {};
+  $("engine").textContent = "";
+  $("engine").append(v.verdict === "play" ? el("span", "ok", "✓ verified ") : el("span", "bad", "no verified engine yet "),
+    document.createTextNode(v.verdict === "play" ? `${v.name || "model"} · sha256 ${short(v.model_sha256, 16)} · bankML ${v.bankml}` : "— is bankml serve running?"));
+  const u = s.usage || {}, m = s.metrics || {}, lim = u.gpu_limiter || null, g = (u.gpus || [])[0] || {};
   if (!slidersSet) {
-    const r = s.resources || {}; const cores = u.cores || 4;
-    $("threads").max = cores; $("threads").value = r.threads || 1;
-    $("ram").max = Math.max(1, ((u.mem_total_bytes || 6 * GB) / GB)).toFixed(1); $("ram").value = r.ram_gb || 2;
+    const r = s.resources || {};
+    $("threads").max = u.cores || 4; $("threads").value = r.threads || 1;
+    $("ram").max = Math.max(1, (u.mem_total_bytes || 6 * GB) / GB).toFixed(1); $("ram").value = r.ram_gb || 2;
     $("gpu").value = Math.round(100 * (r.gpu_limit ?? 0.8)); sync(); slidersSet = true;
-    if (s.public) {  // a public console is read-only: the controls show the settings, they do not change them
-      ["threads", "ram", "gpu", "apply"].forEach((id) => { $(id).disabled = true; });
-      $("apply").textContent = "read-only: this is a public console";
-    }
+    if (publicMode) { ["threads", "ram", "gpu", "apply"].forEach((id) => { $(id).disabled = true; }); $("apply").textContent = "read-only: a public console"; }
   }
-  $("job").textContent = s.job.busy ? s.job.what : (s.job.error ? "failed: " + s.job.error : (s.job.done ? "done: the engine restarted, verified" : ""));
-  const t = Date.now() / 1000; const g = (u.gpus || [])[0] || {};
-  const push = (k, val) => { series[k].push(val); if (series[k].length > KEEP) series[k].shift(); };
+  $("job").textContent = s.job.busy ? s.job.what : (s.job.error ? "failed: " + s.job.error : (s.job.done ? "done — the engine restarted, verified" : ""));
+  const now = $("now"); now.textContent = "";
+  const last = (m.records || []).slice(-1)[0] || {};
+  fact(now, "tokens in · out", `${m.prompt_tokens ?? 0} · ${m.completion_tokens ?? 0}`);
+  fact(now, "first token, last answer", fmt(last.ttft_ms, 0, " ms"));
+  fact(now, "prompt · generation", `${fmt(last.prompt_tps, 1)} · ${fmt(last.eval_tps, 1)} tok/s`);
+  fact(now, "CPU", fmt(u.cpu_percent, 0, " %"));
+  fact(now, "memory held", fmt(u.rss_bytes / GB, 2, " GB"));
+  fact(now, "memory available", fmt(u.mem_available_bytes / GB, 2, " GB"));
+  fact(now, "GPU", lim ? `${(100 * lim.limit).toFixed(0)} % limit · ${(lim.allocated_bytes / MB).toFixed(0)} MB` : "no card in use");
+  fact(now, "power · per token", `${fmt(u.package_watts, 1, " W")} · ${fmt(m.joules_per_token, 3, " J")}`);
+  if (!$("admin").classList.contains("active")) return;
+  const t = Date.now() / 1000, push = (k, val) => { series[k].push(val); if (series[k].length > KEEP) series[k].shift(); };
   push("t", t); push("cpu", u.cpu_percent ?? null); push("rss", u.rss_bytes != null ? u.rss_bytes / GB : null);
-  push("avail", u.mem_available_bytes != null ? u.mem_available_bytes / GB : null); push("gbusy", g.busy_percent ?? null);
-  push("galloc", lim ? lim.allocated_bytes / MB : null); push("watts", u.package_watts ?? null);
+  push("avail", u.mem_available_bytes != null ? u.mem_available_bytes / GB : null); push("gbusy", g.busy_percent ?? null); push("watts", u.package_watts ?? null);
   const pts = (k) => series.t.map((x, i) => ({ x, y: series[k][i] }));
   const recs = (m.records || []).slice(-60);
-  chart("c-tps", [{ cls: "l1", data: recs.map((r) => ({ x: r.at, y: r.eval_tps })) }, { cls: "l2", data: recs.map((r) => ({ x: r.at, y: r.prompt_tps })) }], { xfmt: tfmt, empty: "no answers yet" });
-  chart("c-ttft", [{ cls: "l1", data: recs.map((r) => ({ x: r.at, y: r.ttft_ms })) }], { xfmt: tfmt, empty: "no answers yet" });
-  chart("c-cpu", [{ cls: "l1", data: pts("cpu") }], { xfmt: tfmt });
-  chart("c-mem", [{ cls: "l1", data: pts("rss") }, { cls: "l2", data: pts("avail") }], { xfmt: tfmt });
-  chart("c-gpu", [{ cls: "l1", data: pts("gbusy") }], { xfmt: tfmt, limit: lim ? 100 * lim.limit : null, empty: "no GPU reading" });
-  chart("c-pow", [{ cls: "l1", data: pts("watts") }], { xfmt: tfmt, empty: "power not measured (./install.sh power)" });
-  $("pow-note").textContent = `energy per token over the kept answers: ${fmt(m.joules_per_token, 3, " J")}`;
-  const now = $("now"); now.textContent = "";
-  nowRow(now, "tokens in / out", `${m.prompt_tokens ?? 0} / ${m.completion_tokens ?? 0}`);
-  const last = (m.records || []).slice(-1)[0] || {};
-  nowRow(now, "last TTFT", fmt(last.ttft_ms, 0, " ms")); nowRow(now, "last pp · tg", `${fmt(last.prompt_tps, 1)} · ${fmt(last.eval_tps, 1)} tok/s`);
-  nowRow(now, "CPU", fmt(u.cpu_percent, 0, " %")); nowRow(now, "RSS", fmt(u.rss_bytes / GB, 2, " GB"));
-  nowRow(now, "RAM available", fmt(u.mem_available_bytes / GB, 2, " GB"));
-  nowRow(now, "GPU busy", fmt(g.busy_percent, 0, " %"));
-  nowRow(now, "GPU limiter", lim ? `${(100 * lim.limit).toFixed(0)} % · ${(lim.allocated_bytes / MB).toFixed(0)} MB of ${(lim.heap_bytes / GB).toFixed(1)} GB · busy ${(100 * lim.busy).toFixed(0)} %` : "no card in use");
-  nowRow(now, "power", fmt(u.package_watts, 1, " W"));
+  chart("c-tps", [{ cls: "l1", data: recs.map((r) => ({ x: r.at, y: r.eval_tps })) }, { cls: "l2", data: recs.map((r) => ({ x: r.at, y: r.prompt_tps })) }], { empty: "no answers yet" });
+  chart("c-ttft", [{ cls: "l1", data: recs.map((r) => ({ x: r.at, y: r.ttft_ms })) }], { empty: "no answers yet" });
+  chart("c-cpu", [{ cls: "l1", data: pts("cpu") }]);
+  chart("c-mem", [{ cls: "l1", data: pts("rss") }, { cls: "l2", data: pts("avail") }]);
+  chart("c-gpu", [{ cls: "l1", data: pts("gbusy") }], { limit: lim ? 100 * lim.limit : null, empty: "no GPU reading" });
+  chart("c-pow", [{ cls: "l1", data: pts("watts") }], { empty: "power not measured (./install.sh power)" });
 }
 
-// ── logging ─────────────────────────────────────────────────────────────────────────────────────────────────────
-async function loadLog() {
-  const j = await (await fetch("/api/log")).json(); const tb = document.querySelector("#log tbody"); tb.textContent = "";
-  j.exchanges.slice().reverse().forEach((x) => {
-    const tr = el("tr"); const m = x.metrics || {}; const r = x.receipt || {};
-    [tfmt(x.at), x.question.slice(0, 80), r.prompt_tokens != null ? `${r.prompt_tokens}+${r.completion_tokens}` : "—",
-      fmt(m.ttft_ms, 0), fmt(m.eval_tps, 1), x.error ? "refused: " + x.error.slice(0, 60) : String(r.response_sha256 || "").slice(0, 16)]
-      .forEach((c) => tr.append(el("td", null, c)));
-    tb.append(tr);
-  });
-  $("englog").textContent = j.engine_log.join("\n");
-}
-
-// ── infotags ────────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Receipts ────────────────────────────────────────────────────────────────────────────────────────────────────
 let info = null;
-async function loadInfo() {
+async function loadReceipts() {
+  const j = await (await fetch("/api/log")).json();
+  const list = $("receipt-list"); list.textContent = "";
+  const rows = j.exchanges.slice().reverse();
+  let verified = 0;
+  for (const x of rows) {
+    const r = x.receipt || null;
+    const ok = r ? (await sha256hex(x.answer || "")) === r.response_sha256 : false;
+    verified += ok;
+    const li = el("li"), d = el("details"), s = el("summary");
+    s.append(el("span", "t", clock(x.at)), el("span", "qq", x.question),
+      el("span", "v " + (x.error ? "bad" : ok ? "ok" : "bad"), x.error ? "refused" : ok ? "✓ " + short(r.response_sha256, 8) : "≠ check"));
+    const body = el("div", "body");
+    body.append(el("p", null, x.error ? "refused: " + x.error : x.answer));
+    body.append(el("pre", null, JSON.stringify(r || { error: x.error }, null, 1)));
+    d.append(s, body); li.append(d); list.append(li);
+  }
+  if (!rows.length) list.append(el("li", "none-yet", publicMode ? "A public console keeps no record of its visitors' questions." : "No answers yet — ask on the Ask tab."));
+  $("logsum").textContent = rows.length ? `${rows.length} answers · ${verified} receipts check out in this browser` : "";
   info = await (await fetch("/api/infotags")).json();
-  const tb = document.querySelector("#attrs tbody"); tb.textContent = "";
-  info.attributes.forEach((a) => { const tr = el("tr"); tr.append(el("td", null, a.trait_type), el("td", null, String(a.value))); tb.append(tr); });
-  $("infojson").textContent = JSON.stringify(info, null, 1);
+  const dl = $("attrs"); dl.textContent = "";
+  info.attributes.forEach((a) => fact(dl, a.trait_type, String(a.value)));
+}
+// ── Logs ────────────────────────────────────────────────────────────────────────────────────────────────────────
+async function loadLogs() {
+  const j = await (await fetch("/api/log")).json();
+  $("englog").textContent = (j.engine_log || []).join("\n") || "the engine has written nothing yet";
 }
 $("download").addEventListener("click", () => {
   if (!info) return;
@@ -162,3 +191,4 @@ $("download").addEventListener("click", () => {
 });
 
 poll(); setInterval(poll, 2000);
+$("q").focus();

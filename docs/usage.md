@@ -446,22 +446,26 @@ python3 sAGI/console.py          # http://127.0.0.1:7875 — talks to bankml ser
 ```
 
 `--port` moves it; any `--host` other than loopback is refused, because the console can restart the engine.
-`./install.sh stop` does not stop it (it stops 7874, 7873, 18093 and 18092); stop it with Ctrl-C.
+`./install.sh start` starts it beside Savante (:7875), `./install.sh stop` stops it, and Savante's header has a
+**bankML ↗** link to it; its own bar has the **Savante | bankML** switch back.
 
-A simple page with four tabs:
+bankML's own interface, deliberately unlike Savante's — a quiet page, light or dark with the system — with four tabs:
 
-- **Interaction**: ask; the answer streams, and under it the receipt — `✓ answer = receipt` when the sha256 of the text
-  you received is the receipt's, the model, the tokens, the time to first token, the generation speed. bankML answers as
+- **Ask** (the landing): one question, the streamed answer, and under it the receipt — `✓ receipt` when the sha256 of
+  the text you received is the receipt's (checked in the browser), the model, the tokens, the time to first token, the
+  generation speed; while the prompt is read, the answer shows the seconds elapsed. bankML answers as
   itself (`sAGI/personas/bankml.persona`): each question carries a SELF block measured at that moment from
   `/bankml/usage` and `/bankml/metrics`, so "how many tokens have you used, how fast, how much power" is answered from
   measurement, and "not measured" where it was not.
 - **Admin**: three sliders — CPU threads, the RAM budget (weights plus KV cache, which sets the context) and the GPU
   limit (0 = off) — applied as one verified restart of the engine, rolled back if it fails; and D3 charts of what bankML
   measures: tokens per second, TTFT, CPU, memory, GPU busy against its limit, power.
-- **Logging**: every exchange with its timings and receipt, refusals included, and the engine's log.
-- **Infotags**: the metadata an iNFT publication of the session carries (ERC-721 shape): the engine, the model and its
-  sha256, the persona and its doctrine root, the token totals, and an RFC 6962 Merkle root over the exchanges with their
-  CID. The exchanges stay on this machine; the root lets a holder check any one of them. Download it as JSON.
+- **Receipts**: every answer's receipt, newest first — each re-checked in the browser and opening to the answer and
+  the receipt's JSON; refusals included. Below, the commitments an iNFT publication of the session carries (ERC-721
+  shape): the engine, the model and its sha256, the persona and its doctrine root, the token totals, and an RFC 6962
+  Merkle root over the exchanges with their CID. The exchanges stay on this machine; the root lets a holder check any
+  one of them. Download it as JSON.
+- **Logs**: the engine's own log.
 
 Power appears only after `./install.sh power` (opt-in, the one step that uses sudo; see
 [install.md §2](install.md#the-steps)); until then it reads "not measured".
