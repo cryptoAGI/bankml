@@ -56,7 +56,9 @@ FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", 
          "/engine.js": (HERE.parent / "bankML" / "status.js", "text/javascript; charset=utf-8"),
          "/engine.css": (HERE.parent / "bankML" / "status.css", "text/css; charset=utf-8"),
          # the Ask landing: the ultimate input field, built (console/uif/README.md); the plain box when absent
-         "/uif.js": ("uif/uif.js", "text/javascript; charset=utf-8"), "/uif.css": ("uif/uif.css", "text/css; charset=utf-8")}
+         "/uif.js": ("uif/uif.js", "text/javascript; charset=utf-8"), "/uif.css": ("uif/uif.css", "text/css; charset=utf-8"),
+         # the Thesis tab: a scroll whose sections open as an accordion
+         "/thesis.css": ("thesis.css", "text/css; charset=utf-8")}
 LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
 # --public HOST: the one extra host name the console answers as; None = loopback only

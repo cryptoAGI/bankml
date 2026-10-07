@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/engine.css">
 <link rel="stylesheet" href="/uif.css">
+<link rel="stylesheet" href="/thesis.css">
 </head>
 <body>
 <header class="bar">
@@ -134,7 +135,14 @@
   <section id="thesis" class="tab">
     <div class="window">
       <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Thesis</b><span>Professor Codephreak and Gregory L. Magnusson</span></div>
-      <article id="thesis-body" class="prose window-body"><p class="quiet">reading docs/TECHNICAL.md…</p></article>
+      <div class="thesis-tools">
+        <span id="thesis-count" class="quiet"></span>
+        <button id="thesis-open" class="ghost">Expand all</button><button id="thesis-close" class="ghost">Collapse all</button>
+      </div>
+      <div class="thesis-scroll" id="thesis-scroll">
+        <div class="thesis-progress" aria-hidden="true"><span id="thesis-bar"></span></div>
+        <article id="thesis-body" class="prose"><p class="quiet">reading docs/TECHNICAL.md…</p></article>
+      </div>
       <p class="window-body quiet"><a id="thesis-src" href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md" target="_blank" rel="noreferrer">docs/TECHNICAL.md ↗</a> · the whole report, the sections that measure the work against this thesis</p>
     </div>
   </section>

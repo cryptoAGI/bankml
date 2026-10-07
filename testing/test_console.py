@@ -40,7 +40,7 @@ def req(path, data=None, headers=None, method=None):
 
 
 try:
-    for p in ("/", "/app.js", "/style.css", "/vendor/d3.v7.min.js", "/vendor/d3.LICENSE", "/engine.js", "/engine.css"):
+    for p in ("/", "/app.js", "/style.css", "/vendor/d3.v7.min.js", "/vendor/d3.LICENSE", "/engine.js", "/engine.css", "/thesis.css"):
         code, body, h = req(p)
         check(f"GET {p} is served", code == 200 and len(body) > 0)
     code, _, h = req("/")

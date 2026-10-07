@@ -237,6 +237,39 @@ function markdown(root, md, base) {
     root.append(p);
   }
 }
+// The thesis as a scroll of accordions: a paragraph led by **a principle.** and each numbered contribution become
+// <details>, titled by their bold lead. A section opens as it scrolls into view; one the reader closes stays closed.
+function fold(root) {
+  const items = [];
+  const make = (lead, body, n) => {
+    const d = el("details", "fold");
+    const s = el("summary");
+    if (n) s.append(el("span", "fold-n", String(n).padStart(2, "0")));
+    s.append(lead);
+    d.append(s, body);
+    items.push(d);
+    return d;
+  };
+  for (const p of [...root.querySelectorAll(":scope > p")]) {
+    const lead = p.firstChild;
+    if (!lead || lead.nodeName !== "STRONG") continue;
+    p.removeChild(lead);
+    const body = el("div", "fold-body");
+    body.append(p.cloneNode(true));
+    p.replaceWith(make(lead, body));
+  }
+  for (const ol of [...root.querySelectorAll(":scope > ol")]) {
+    const box = el("div", "folds");
+    [...ol.children].forEach((li, i) => {
+      const lead = li.firstChild && li.firstChild.nodeName === "STRONG" ? li.removeChild(li.firstChild) : el("strong", null, "Contribution " + (i + 1));
+      const body = el("div", "fold-body");
+      body.append(...li.childNodes);
+      box.append(make(lead, body, i + 1));
+    });
+    ol.replaceWith(box);
+  }
+  return items;
+}
 let thesisLoaded = false;
 async function loadThesis() {
   if (thesisLoaded) return;
@@ -244,6 +277,33 @@ async function loadThesis() {
   if (j.error) { $("thesis-body").textContent = j.error; return; }
   markdown($("thesis-body"), j.markdown, j.base);
   $("thesis-src").href = j.url;
+  const items = fold($("thesis-body"));
+  $("thesis-count").textContent = `${items.length} sections`;
+  const scroller = $("thesis-scroll"), bar = $("thesis-bar");
+  // on a narrow screen the thesis scrolls with the page (thesis.css), so the page is what is watched
+  const narrow = matchMedia("(max-width: 640px)").matches;
+  // the reader's own choice wins over the scroll
+  items.forEach((d) => d.querySelector("summary").addEventListener("click", () => { d.dataset.chosen = "1"; }));
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    const d = e.target;
+    if (e.isIntersecting && !d.dataset.chosen) d.open = true;
+  }), { root: narrow ? null : scroller, rootMargin: "0px 0px -35% 0px", threshold: 0 });
+  items.forEach((d) => io.observe(d));
+  const progress = () => {
+    let f;
+    if (narrow) {
+      const r = scroller.getBoundingClientRect(), span = r.height - innerHeight;
+      f = span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 1;
+    } else {
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      f = max > 0 ? scroller.scrollTop / max : 1;
+    }
+    bar.style.width = (100 * f).toFixed(1) + "%";
+  };
+  (narrow ? window : scroller).addEventListener("scroll", progress, { passive: true });
+  progress();
+  $("thesis-open").onclick = () => items.forEach((d) => { d.open = true; d.dataset.chosen = "1"; });
+  $("thesis-close").onclick = () => items.forEach((d) => { d.open = false; d.dataset.chosen = "1"; });
   thesisLoaded = true;
 }
 // ── Engine: bankml serve's status, every 3 s while the tab is open ─────────────────────────────────────────────────

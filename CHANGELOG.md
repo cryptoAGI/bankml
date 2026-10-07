@@ -46,6 +46,13 @@ follows that measurement.
   (`GET /api/thesis`), so the page never drifts from the report; drawn as DOM nodes by a small Markdown reader (bold,
   italic, code, links, headings, lists; never `innerHTML`), relative links resolved to the repository, in a window
   with the same depth, set for reading.
+- `sAGI/console/thesis.css`: the thesis as a scroll of accordions. Each principle and each of the sixteen
+  contributions is a section titled by its bold lead; the window scrolls on its own with a progress line along its
+  top, and a section opens as it comes into view (one the reader closes stays closed); expand all, collapse all. On a
+  narrow screen it scrolls with the page, and the page is what is watched. Reduced motion is honoured.
+- Fixed on the way: the input field's stylesheet defined generic theme tokens (`--accent`, `--muted`, …) on `:root`,
+  which overrode the console's own since the landing arrived (accent bars and fills went transparent); the console
+  build now renames them `--uif-k-*`.
 
 ### Diagnostics: every component of sAGI, in windows with depth, on any screen
 - The Diagnostics tab first asks every part of sAGI, in parallel and within a time limit, each in its own words
