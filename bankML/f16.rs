@@ -163,6 +163,7 @@ fn as_bytes(x: &[u16]) -> &[u8] {
 
 /// Widens f16 values to f32 exactly (F16C when available).
 pub fn widen(src: &[u16], dst: &mut [f32]) {
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
     let mut i0 = 0;
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
@@ -187,6 +188,7 @@ unsafe fn widen_f16c(src: &[u16], dst: &mut [f32]) {
 /// `ggml_vec_mad_f16` (flash attention's V accumulator): `acc[i] = f16(fma(v[i], w, acc[i]))` per element.
 pub fn mad(acc: &mut [u16], v: &[u16], w: f32) {
     assert!(v.len() >= acc.len());
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
     let mut i0 = 0;
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
@@ -201,6 +203,7 @@ pub fn mad(acc: &mut [u16], v: &[u16], w: f32) {
 
 /// `ggml_vec_scale_f16`: `acc[i] = f16(acc[i] · s)`.
 pub fn scale(acc: &mut [u16], s: f32) {
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
     let mut i0 = 0;
     #[cfg(target_arch = "x86_64")]
     if crate::q1_0::has_avx2() {
@@ -288,6 +291,7 @@ pub fn mat_mul_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, cols: &[Vec<
     #[cfg(not(target_arch = "x86_64"))]
     let fast = false;
     // The tiles read activations as f32 (exact); widen once per product, not per weight row.
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))] // read only by the x86 path
     let wide: Vec<Vec<f32>> = if fast {
         cols.iter().map(|c| {
             let mut w = vec![0.0f32; k];
@@ -299,6 +303,7 @@ pub fn mat_mul_par(pool: &crate::par::Pool, wb: &[u8], rows: usize, cols: &[Vec<
     };
     let (next, base) = (std::sync::atomic::AtomicUsize::new(0), out.as_mut_ptr() as usize);
     let step = crate::par::CHUNK_ROWS; // a multiple of 4: with rows % 4 == 0 every chunk is whole 4-row blocks
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))] // read only by the x86 path
     let n = cols.len();
     pool.run(&|_| loop {
         let r0 = next.fetch_add(step, std::sync::atomic::Ordering::Relaxed);

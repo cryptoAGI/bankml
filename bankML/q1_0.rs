@@ -547,6 +547,7 @@ fn mat_mul_check(w: &[u8], rows: usize, n: usize, ys: &[&[u8]], out: &[f32]) {
 /// `mat_mul_check` passed for these arguments, and no other thread writes rows `rs` of `out`.
 unsafe fn mat_mul_rows(w: &[u8], rows: usize, n: usize, rs: std::ops::Range<usize>, ys: &[&[u8]], out: *mut f32) {
     let rb = n / QK1_0 * Q1_0_BYTES;
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
     let mut c0 = 0;
     #[cfg(target_arch = "x86_64")]
     if has_avx2() {
@@ -613,6 +614,7 @@ fn mat_mul_act_check(w: &[u8], rows: usize, cols: &[Q8Act], out: &[f32]) -> bool
 /// `mat_mul_act_check` passed, and no other thread writes rows `rs` of `out`.
 unsafe fn mat_mul_act_rows(w: &[u8], rows: usize, rs: std::ops::Range<usize>, cols: &[Q8Act], out: *mut f32) {
     let rb = cols[0].n / QK1_0 * Q1_0_BYTES;
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
     let mut c0 = 0;
     #[cfg(target_arch = "x86_64")]
     if has_avx2() {

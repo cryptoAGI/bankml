@@ -1,5 +1,6 @@
 # Offline checks only: the oracles need the model files and the b11192 release, so they stay local
-# (`cargo test --release -- --ignored`, see PERFORMANCE.md).
+# (`testing/release_gate.sh`, see docs/oracles.md). The toolchain is rust-toolchain.toml's (1.99, which the C API's
+# C-variadic function needs); rustup installs it on first use.
 name: ci
 on:
   push:
@@ -12,14 +13,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # pinned to the toolchain the kernels were verified with; newer clippy adds style lints
-      # (e.g. chunks_exact_to_as_chunks) that -D warnings would fail on
-      - run: rustup toolchain install 1.95.0 --profile minimal --component clippy && rustup default 1.95.0
+      - run: cargo build --release --locked
+      - run: cargo test --release --locked
+      - run: cargo clippy --release --all-targets --locked -- -D warnings
+      - run: python3 testing/spdx_check.py
+      - run: python3 testing/test_gguf_guard.py
+      - run: python3 testing/guard_agree.py target/release/bankml
+      - run: python3 -B testing/test_ui.py
+      - run: python3 -B testing/test_console.py
+      - run: python3 -B testing/test_connectors.py
+      - run: python3 -B testing/test_chain.py
+  # 0.5.0: ARM, natively. The AVX2 kernels are x86-only, so here every kernel takes its portable path: the unit tests
+  # check that path's arithmetic (the same reference models the x86 kernels are proven against) on real aarch64.
+  aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
       - run: cargo build --release --locked
       - run: cargo test --release --locked
       - run: cargo clippy --release --all-targets --locked -- -D warnings
       - run: python3 testing/test_gguf_guard.py
       - run: python3 testing/guard_agree.py target/release/bankml
-      - run: python3 -B testing/test_ui.py
-      - run: python3 -B testing/test_connectors.py
-      - run: python3 -B testing/test_chain.py
