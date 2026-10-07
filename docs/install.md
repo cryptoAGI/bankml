@@ -415,7 +415,8 @@ with `BANKML_SERVE`. Keep the three consistent.
 The carrier is what `sAGI/models.py` starts. On Savante's Admin tab the **engine** setting (under *advanced*, saved
 in `savante/resources.json`) chooses how:
 - `auto` (the default): native for the ternary (`Q2_0`) files, where bankML is about 8× llama-server with the same
-  tokens; llama-server for everything else, since llama-server is still faster on the 1-bit files.
+  tokens, and (0.4.0) for the 1-bit (`Q1_0`) files, where the pinned A/B put it at least at llama-server's speed;
+  llama-server for everything else (F16 and the other types).
 - `native`: always `bankml serve --native`.
 - `llama.cpp`: always llama-server behind the gate.
 

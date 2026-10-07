@@ -121,8 +121,9 @@ llama.cpp b11192:
 - **faster where llama.cpp is weakest:** on the ternary model, 2.3–2.4 tokens/s against llama-server's 0.30, about
   8×, with the same tokens. On the 1-bit model llama-server was still faster at 0.3.0 (2.8 against 1.9–2.0), so
   Savante's default engine setting, `auto`, uses bankML for the ternary files and llama-server for the rest. After
-  0.3.4's attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48; the pinned, idle measurement
-  (`testing/decode_ab.py`) decides whether `auto` takes the 1-bit files too (0.4.0);
+  0.3.4's attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48; in 0.4.0 the pinned 8B A/B
+  (`testing/decode_ab.py`) put bankML at or above llama-server in 3 of 3 rounds (median 2.02 against 0.77 tokens/s
+  under the same load, answers identical), so `auto` now takes the 1-bit files too;
 - **the video card, when there is one:** a GPU found through Vulkan works inside the forward pass after it proves on
   the card that it gives the CPU's bits (`bankml gpu --verify`), and changes no token;
 - **verified, with receipts:** the same guard, sha256 pin and receipt as before, now naming the engine that did the

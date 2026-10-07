@@ -105,7 +105,7 @@ What runs where:
 
 - **bankml serve** is the gate. It refuses to start unless the model passes the guard, its sha256 equals the pin in
   the model's `FORK.json`, and llama-server serves that same file. Every answer carries a receipt (§9).
-- **With the native engine** (`--native`; Savante's `auto` engine setting chooses it for the ternary files), there is
+- **With the native engine** (`--native`; Savante's `auto` engine setting chooses it for the 1-bit and ternary files), there is
   no llama-server: `bankml serve` computes the answer itself and also listens on 18092 with llama-server's endpoints.
 - **Savante's page** is reachable only from this computer.
 - **View mode** is a read-only page for others on your network (§7).

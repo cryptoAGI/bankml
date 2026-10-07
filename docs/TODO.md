@@ -233,8 +233,8 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   `testing/decode_ab.py` under `testing/pinned.sh` on an idle machine: fresh processes each round, alternating order,
   identical answers or the round is refused. If bankML is behind: cache the norm weights, cut per-token allocations,
   share one quantized activation across Q/K/V and gate/up, and compute logits only where sampled.
-- [x] The engine setting's `auto` picks native for both the 1-bit and the ternary files (**0.4.0**, `AUTO_NATIVE_Q1`) (today it picks native for
-  the ternary files only: `sAGI/models.py`, `native_for`). It depends on the item above.
+- [x] The engine setting's `auto` picks native for both the 1-bit and the ternary files (**0.4.0**, `AUTO_NATIVE_Q1` in
+  `sAGI/models.py`, set by the item above).
 - [ ] **The milestone gate**: `testing/release_gate.sh` for 0.4.0, every oracle above in it, recorded in
   `testing/results/0.4.0.txt`.
 
