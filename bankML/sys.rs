@@ -37,12 +37,26 @@ pub fn memory() -> Option<Memory> {
     })
 }
 
-/// The CPU as `/proc/cpuinfo` names it, and the current clock of each logical CPU in MHz.
+/// The CPU's name and the current clock of each logical CPU in MHz.
+///
+/// x86 names itself in `/proc/cpuinfo` (`model name`) and lists `cpu MHz`; ARM usually does neither (found by the
+/// aarch64 CI runner). There the name comes from `Hardware`, then the device tree's model, then the implementer and
+/// part codes; the clocks from each CPU's `cpufreq/scaling_cur_freq` (kHz). What none of them gives stays absent.
 pub fn cpu() -> (Option<String>, Vec<f64>) {
-    let Ok(t) = std::fs::read_to_string("/proc/cpuinfo") else { return (None, Vec::new()) };
-    let val = |l: &str| l.split_once(':').map(|(_, v)| v.trim().to_string());
-    let name = t.lines().find(|l| l.starts_with("model name")).and_then(val);
-    let mhz = t.lines().filter(|l| l.starts_with("cpu MHz")).filter_map(|l| val(l)?.parse::<f64>().ok()).collect();
+    let t = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    let field = |key: &str| t.lines().find(|l| l.split(':').next().is_some_and(|k| k.trim() == key))
+        .and_then(|l| l.split_once(':')).map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty());
+    let name = field("model name").or_else(|| field("Hardware"))
+        .or_else(|| std::fs::read_to_string("/proc/device-tree/model").ok().map(|m| m.trim_end_matches('\0').trim().to_string()).filter(|m| !m.is_empty()))
+        .or_else(|| match (field("CPU implementer"), field("CPU part")) {
+            (Some(i), Some(p)) => Some(format!("CPU implementer {i}, part {p}")),
+            _ => None,
+        });
+    let mut mhz: Vec<f64> = t.lines().filter(|l| l.starts_with("cpu MHz")).filter_map(|l| l.split_once(':')?.1.trim().parse::<f64>().ok()).collect();
+    if mhz.is_empty() {
+        mhz = (0..cores()).filter_map(|c| std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{c}/cpufreq/scaling_cur_freq")).ok()?
+            .trim().parse::<f64>().ok().map(|khz| khz / 1000.0)).collect();
+    }
     (name, mhz)
 }
 
