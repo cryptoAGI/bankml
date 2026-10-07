@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""ggml's own answers on a real Q1_0 or Q2_0 (ternary, group 64) GGUF, for bankml's bit-exactness
+"""ggml's own answers on a real Q1_0 or Q2_0 (ternary, group 64) GGUF, for bankml's bit-for-bit precision
 tests.  stdlib + numpy.  The quant type is the one the file carries (Q1_0 = 41 wins if both).
 
 Calls the *exported* symbols of the prebuilt llama.cpp b11192 ubuntu-x64 release

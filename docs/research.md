@@ -72,7 +72,7 @@ marked.*
 
 ## 1. Rust-native inference engines
 
-| project | what it runs on CPU | own kernels? | vs llama.cpp on CPU | exactness testing |
+| project | what it runs on CPU | own kernels? | vs llama.cpp on CPU | precision testing |
 |---|---|---|---|---|
 | [candle](https://github.com/huggingface/candle) (Hugging Face) | GGUF K-quants ([k_quants.rs](https://github.com/huggingface/candle/blob/main/candle-core/src/quantized/k_quants.rs)); x86 repack in progress, aarch64 in [PR #3697](https://github.com/huggingface/candle/pull/3697) | yes (AVX2/NEON) | no published parity numbers | none found |
 | [mistral.rs](https://github.com/EricLBuehler/mistral.rs) | GGUF Q/K, ISQ, GPTQ, AWQ, HQQ, FP8 | yes (on candle) | published wins are CUDA; no CPU comparison | none found |
@@ -129,7 +129,7 @@ No Rust engine other than bankml was found with `Q2_0_g64`; OxiLLaMa lists `Q1_0
 | approach | projects | what it proves | bankml's relation |
 |---|---|---|---|
 | zero-knowledge proofs | [EZKL](https://github.com/zkonduit/ezkl) (Rust, small models); [zkLLM](https://arxiv.org/abs/2404.16109); [DeepProve](https://eprint.iacr.org/2026/1112); [OpenLLM](https://eprint.iacr.org/2026/1578) | that a computation was done, with no trust in the prover; [Hollow-LLM](https://arxiv.org/abs/2607.28884) shows ZK correctness alone does not prove a real large model ran | none; far heavier |
-| optimistic re-execution | [opML](https://github.com/ora-io/opml) ([paper](https://arxiv.org/abs/2401.17555)); [Optimistic TEE-Rollups](https://arxiv.org/abs/2512.20176) | fraud is challengeable by re-running | bankml's bit-exactness is what re-execution needs, but it has no dispute protocol |
+| optimistic re-execution | [opML](https://github.com/ora-io/opml) ([paper](https://arxiv.org/abs/2401.17555)); [Optimistic TEE-Rollups](https://arxiv.org/abs/2512.20176) | fraud is challengeable by re-running | bankml's bit-for-bit precision is what re-execution needs, but it has no dispute protocol |
 | TEEs | [EigenAI](https://arxiv.org/abs/2602.00182); [OpenPCC](https://arxiv.org/abs/2606.11145); [Phala private AI inference](https://phala.com/solutions/private-ai-inference) | signed receipts from attested hardware | bankml's receipts are unsigned, with no hardware root |
 | model pin + answer hash | bankml | which verified file served, and that the text and request are unchanged | honest scope: integrity between a client and its own gateway |
 
