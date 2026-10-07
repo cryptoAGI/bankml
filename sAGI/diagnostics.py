@@ -1,4 +1,5 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# The span model is ported from LlamaIndex (MIT, Copyright (c) Jerry Liu; LICENSING.md, "Other material").
 """Diagnostics for the bankML console: spans, events and trace trees, and a set of measured checks.
 
 The span model is LlamaIndex's instrumentation (run-llama/llama_index, MIT; llama-index-instrumentation at ec837e5):
