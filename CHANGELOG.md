@@ -36,6 +36,9 @@ decode speed, the third, is measured on an idle machine next.
   ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml)) talk to a visitor's own bankML, free, on their own
   CPU — the way Savante's page reaches a local engine. Checked live: the preflight, plain and streamed answers with
   the receipt, and another origin refused.
+- Several pages: `--allow-origin` takes a comma-separated list, each origin compared exactly (`origin_allowed`; a
+  suffix or an empty entry never matches). `--space` now allows both of bankML's Spaces: the classic page and
+  [PYTHAI/ultimate-bankml-ui](https://huggingface.co/spaces/PYTHAI/ultimate-bankml-ui), bankML behind the ultimate input field.
 
 ### The code audit and the documentation (2026-10-06)
 - **Comments, professional and short.** Every source file's comments were cut to the contract, the invariants, the

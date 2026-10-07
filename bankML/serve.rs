@@ -43,8 +43,9 @@ pub struct Config {
     pub registry: Option<PathBuf>,
     /// `--native`: how long `/api/*` keeps a model resident when the request does not say (Ollama's default, 5m)
     pub keep_alive: Option<String>,
-    /// one web page origin (`https://host[:port]`) whose scripts may call this gateway from a browser: CORS and
-    /// Chrome's private-network preflight are answered for it alone; the loopback `Host` rule still holds
+    /// the web page origins (`https://host[:port]`, comma-separated, each matched exactly) whose scripts may call
+    /// this gateway from a browser: CORS and Chrome's private-network preflight are answered for them alone; the
+    /// loopback `Host` rule still holds
     pub allow_origin: Option<String>,
 }
 
@@ -52,6 +53,11 @@ pub struct Config {
 pub fn is_origin(o: &str) -> bool {
     let rest = o.strip_prefix("https://").or_else(|| o.strip_prefix("http://"));
     rest.is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']')))
+}
+
+/// Whether `origin` is one of `--allow-origin`'s comma-separated origins, compared exactly.
+pub fn origin_allowed(list: &str, origin: &str) -> bool {
+    list.split(',').any(|o| o.trim() == origin)
 }
 
 thread_local! {
@@ -76,7 +82,7 @@ struct State {
     ident: FileIdent,
     /// where `/slots/{id}?action=save|restore` keeps slot files (`--slot-dir`; native mode)
     slot_dir: Option<PathBuf>,
-    /// `--allow-origin`: the one web origin answered with CORS headers
+    /// `--allow-origin`: the web origins answered with CORS headers (comma-separated, exact)
     allow_origin: Option<String>,
 }
 
@@ -131,8 +137,8 @@ mod sig {
 
 /// Verify the model, launch or check the upstream (or start `--native`), then serve until killed.
 pub fn run(cfg: Config) -> Result<(), String> {
-    if let Some(o) = cfg.allow_origin.as_deref().filter(|o| !is_origin(o)) {
-        return Err(format!("--allow-origin {o}: an origin is http(s)://host[:port], with no path"));
+    if let Some(o) = cfg.allow_origin.as_deref().and_then(|l| l.split(',').map(str::trim).find(|o| !is_origin(o))) {
+        return Err(format!("--allow-origin {o}: an origin is http(s)://host[:port], with no path (several: comma-separated)"));
     }
     let before = ident(&cfg.model).map_err(|e| format!("{}: {e}", cfg.model.display()))?;
     let verified = crate::verify(&cfg.model, &cfg.fork_json, cfg.engine)?;
@@ -429,8 +435,8 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
     if !loopback_host(header(&h, "host").unwrap_or("")) {
         return refuse(403, b"bankml serve answers loopback clients only (Host must be 127.0.0.1, localhost or [::1])", &mut r);
     }
-    // --allow-origin: that one web page may read the answers from a browser; every other origin gets no CORS headers
-    let allowed = header(&h, "origin").filter(|o| st.allow_origin.as_deref() == Some(*o)).map(str::to_string);
+    // --allow-origin: those web pages may read the answers from a browser; every other origin gets no CORS headers
+    let allowed = header(&h, "origin").filter(|o| st.allow_origin.as_deref().is_some_and(|l| origin_allowed(l, o))).map(str::to_string);
     CORS.with(|c| *c.borrow_mut() = allowed.as_deref().map(|o| format!("Access-Control-Allow-Origin: {o}\r\nVary: Origin\r\n")).unwrap_or_default());
     if method == "OPTIONS" {
         if allowed.is_none() {
@@ -1311,6 +1317,12 @@ mod tests {
         }
         for o in ["https://a.example/path", "pythai-bankml.static.hf.space", "https://", "https://u@h", "https://h?x=1", "*"] {
             assert!(!is_origin(o), "{o}");
+        }
+        let two = "https://pythai-bankml.static.hf.space,https://pythai-ultimate-bankml-ui.static.hf.space";
+        assert!(origin_allowed(two, "https://pythai-bankml.static.hf.space"));
+        assert!(origin_allowed(two, "https://pythai-ultimate-bankml-ui.static.hf.space"));
+        for o in ["https://pythai-bankml.static.hf.space.evil", "https://static.hf.space", "", "https://pythai-bankml.static.hf.space,"] {
+            assert!(!origin_allowed(two, o), "{o}");
         }
     }
 

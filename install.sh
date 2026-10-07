@@ -11,9 +11,10 @@
 #   --no-start     install everything, start nothing
 #   --view         also start view mode for the LAN (0.0.0.0:7874)
 #   --voice        also install Savante's Piper voice (step `voice`)
-#   --space        let bankML's Hugging Face page (huggingface.co/spaces/PYTHAI/bankml) talk to your bankml serve from
-#                  your browser ("Your own bankML": your CPU, your verified model, a receipt): serve starts with
-#                  --allow-origin for that one page; remembered; `./install.sh start --space` applies it now
+#   --space        let bankML's Hugging Face pages (huggingface.co/spaces/PYTHAI/bankml and
+#                  PYTHAI/ultimate-bankml-ui) talk to your bankml serve from your browser ("Your own bankML": your
+#                  CPU, your verified model, a receipt): serve starts with --allow-origin for those two pages only;
+#                  remembered; `./install.sh start --space` applies it now
 #   --no-space     forget it (serve answers this computer only, no web page)
 #   power [--remove]  opt-in, sudo: let your user read the CPU package energy counter (RAPL), so bankML can measure
 #                  watts and joules per token; it asks first (PLATYPUS, CVE-2020-8694), and --remove undoes it
@@ -78,7 +79,8 @@ LOGS="$DATA/logs"
 # ── options ──────────────────────────────────────────────────────────────────────────────────────────────────
 SKIP_TESTS=0 NO_START=0 WITH_VIEW=0 WITH_VOICE=0 POWER_REMOVE=0 SPACE_CHOICE=""
 # the one web page --space lets reach bankml serve: bankML's static Hugging Face Space
-SPACE_ORIGIN="https://pythai-bankml.static.hf.space"
+# bankML's two Hugging Face pages: the classic Space and the ultimate input field
+SPACE_ORIGIN="https://pythai-bankml.static.hf.space,https://pythai-ultimate-bankml-ui.static.hf.space"
 STEPS=()
 for a in "$@"; do
   case "$a" in

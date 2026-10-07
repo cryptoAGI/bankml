@@ -13,7 +13,7 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml pin FILE --fork FORK.json
        bankml verify FILE --fork FORK.json [--engine mainline|prism] [--json]
        bankml serve FILE --fork FORK.json [--upstream HOST:PORT | --spawn LLAMA_SERVER] [--listen HOST:PORT] [--threads N] [--ctx N] [--spec-ngram] [--slot-dir DIR]
-       bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR] [--slot-dir DIR] [--allow-origin ORIGIN]
+       bankml serve FILE --fork FORK.json --native [--listen HOST:PORT] [--upstream HOST:PORT] [--ctx N] [--registry [DIR]] [--keep-alive DUR] [--slot-dir DIR] [--allow-origin ORIGIN[,ORIGIN…]]
                                                               (answers from bankML's own forward pass; also serves the engine address;
                                                               OpenAI /v1 and Ollama /api; --registry: every model pinned in DIR,
                                                               default ~/.local/share/bankml/forks, by name, one resident at a time)
