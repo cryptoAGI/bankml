@@ -276,7 +276,7 @@ passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a 
 - [ ] **NEON kernels for ARM** (P5), with the oracle against llama.cpp's ARM build on an ARM machine: the first step of
   the handheld track below.
 - [ ] The target-feature 1.1 clean-up: the same bits with fewer `unsafe`.
-- [ ] CI builds and unit-tests across the x86 variants and aarch64.
+- [x] CI builds and unit-tests on x86-64 and natively on aarch64 (**0.4.1**: `ubuntu-24.04-arm`; build, unit tests, clippy `-D warnings`, the guard; the first run found that ARM's `/proc/cpuinfo` names no `model name`). Still to add: the x86 variants without AVX2, forced.
 
 ### 0.6.0 — more models
 

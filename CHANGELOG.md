@@ -11,6 +11,15 @@
   block a question carries is two lines instead of ten, a smaller prefix to recompute whichever turn it rides on
   (the same session measured why that matters for the prompt cache).
 
+### CI on ARM, natively
+- `.github/workflows/ci.yml` runs a second job on GitHub's `ubuntu-24.04-arm`: the build, the unit tests, clippy with
+  `-D warnings` and the guard, on real aarch64. Every kernel there takes its portable path, which the unit tests check
+  against the same reference models the x86 kernels are proven against. The toolchain is now rust-toolchain.toml's,
+  not a stale 1.95 pin; the x86 job adds the SPDX and console checks.
+- The first run found an ARM difference. `/proc/cpuinfo` there has no `model name` and no `cpu MHz`, so the status
+  page's CPU readings now fall back to `Hardware`, the device tree's model and the implementer and part codes, and to
+  each CPU's `cpufreq`. The x86-only variables that warned on ARM are marked so; both targets are clippy-clean.
+
 ### GPU objects are released on drop (`gpu_objects_are_released_on_drop`; the first 0.5.0 item)
 - Found by the 2026-10-06 audit: `Gpu` destroyed nothing on drop (device, buffers, pipelines), so dropping and reopening
   a worker leaked its card memory; and `unsafe impl Sync for Buffer` let two `Gpu`s on two threads write one buffer.
