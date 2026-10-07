@@ -62,8 +62,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 - `Receipt` is the receipt shape fixed at design time (model sha256, guard verdict, token counts, timings, an
   optional THOT8 leaf). Answers actually served carry `serve.rs`'s `bankml_receipt` object; the type is kept for
   the signed receipts planned for 0.8.0 ([../TODO.md](../TODO.md)).
-- `VERSION` is printed by `bankml version`. `Cargo.toml` says `0.3.6`, the last release; 0.3.7 to 0.3.9 are
-  unreleased ([../../CHANGELOG.md](../../CHANGELOG.md)).
+- `VERSION` is printed by `bankml version`. `Cargo.toml` says `0.4.0`, in its release gate; 0.3.8 is the last release ([../../CHANGELOG.md](../../CHANGELOG.md)).
 
 ### Logging
 

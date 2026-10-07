@@ -9,7 +9,7 @@ llama-server's `-np 1`.
 
 0.3.8 (unreleased) adds what llama-server does at the slot's edges: the context limit, saving and restoring the slot
 to a file, llama-server's host prompt cache for conversations that take turns, and each token's logprobs, reported
-step by step for streaming. 0.3.9 (unreleased, in progress) adds an optional q8_0 KV cache
+step by step for streaming. 0.4.0 adds an optional q8_0 KV cache
 (`BANKML_CACHE_TYPE=q8_0`).
 
 Since 0.3.1 it also owns the model's lifecycle. `Registry` names every GGUF pinned in the forks directory.
@@ -106,7 +106,7 @@ llama-server refuses, with its message: a negative `repeat_last_n`, `dry_allowed
 repeat penalty of 0 or below, an empty `dry_sequence_breakers`; and top-k outside 1–128, which bankML does not
 reproduce. DRY's breakers are built from the vocabulary's pieces once per breaker list and kept on the engine.
 
-### Slot files and the cache type (0.3.8, 0.3.9)
+### Slot files and the cache type (0.3.8, 0.4.0)
 
 `save_slot` writes bankML's own format: a magic line (`bankML slot v1`), the model's sha256, the context, token and
 layer counts, each layer's cache, the tokens, then a sha256 of all of it. It is written to a temporary name and
@@ -117,7 +117,7 @@ emptied, never half-filled, and the next answer computes its whole prompt. `serv
 
 `BANKML_CACHE_TYPE` picks the KV cache's type when the model opens: `f16` (the default, llama.cpp's) or `q8_0`, as
 llama.cpp's `--cache-type-k q8_0 --cache-type-v q8_0`. A q8_0 cache takes 53 % of the f16 cache's bytes (CHANGELOG
-0.3.9) and needs a head size that is a multiple of 32; anything else is refused. The attention over it, with
+0.4.0) and needs a head size that is a multiple of 32; anything else is refused. The attention over it, with
 llama.cpp's Hadamard rotation, is in `forward.rs` ([forward.md](forward.md)). A slot file records its cache type, and
 one saved with the other type is refused with the reason. The host prompt cache counts each saved state's real
 bytes, so a q8_0 cache keeps more states within `BANKML_CACHE_RAM`.
@@ -194,8 +194,8 @@ when nothing is resident.
 - Live, in the gate, each driving a running `serve --native`: `serve_oracle_ollama_shape`, `penalty_oracle_live`,
   `sampler_oracle_live`, and from 0.3.8 `context_oracle_live` (8 / 8), `slot_oracle_live` (19 / 19: the answer after
   a restore, in the same server and after a restart, equals an empty slot's), `session_oracle_live` (14 / 14, the host
-  prompt cache), `logprobs_oracle_live` (14 / 14, five streamed); from 0.3.9 `kv_oracle_live` (6 / 6 with
-  `BANKML_CACHE_TYPE=q8_0` against llama-server `--cache-type-k/v q8_0`). Counts from CHANGELOG 0.3.8 and 0.3.9.
+  prompt cache), `logprobs_oracle_live` (14 / 14, five streamed); from 0.4.0 `kv_oracle_live` (6 / 6 with
+  `BANKML_CACHE_TYPE=q8_0` against llama-server `--cache-type-k/v q8_0`). Counts from CHANGELOG 0.3.8 and 0.4.0.
 
 ## Advantages and efficiency
 
@@ -216,7 +216,7 @@ when nothing is resident.
 - **A warm start that survives a restart.** A slot restore replaces the prompt's prefill with one read checked by
   sha256; Savante and the console pass `--slot-dir` for this (CHANGELOG 0.3.8).
 - **Half the KV memory, on request.** `BANKML_CACHE_TYPE=q8_0` stores the cache in 53 % of the f16 bytes, with
-  answers token-identical to llama-server configured the same way (CHANGELOG 0.3.9).
+  answers token-identical to llama-server configured the same way (CHANGELOG 0.4.0).
 - **Logprobs cost nothing when off.** `token_probs` runs only when `n_probs` > 0: one partial sort of the vocabulary
   per generated token.
 - **Next** (docs/TODO.md 0.4.0, docs/OLLAMA.md): more than one slot with continuous batching (O8); a 4-bit KV cache

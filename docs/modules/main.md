@@ -44,7 +44,7 @@ address, [serve.md](serve.md)); the usage string lists it on both `serve` lines.
   them. `--json` opens the native engine with a 4096-token context and runs greedy unless `--sample` is given.
 - `--engine prism` selects the guard's Prism rules; anything else is mainline.
 - `serve --native` does not use `--threads` (that is llama-server's `-t` when spawned); the engine reads
-  `BANKML_THREADS`, `BANKML_LLAMA_THREADS`, `BANKML_CACHE_TYPE` (`f16` or `q8_0`, 0.3.9), `BANKML_CACHE_RAM` (the host
+  `BANKML_THREADS`, `BANKML_LLAMA_THREADS`, `BANKML_CACHE_TYPE` (`f16` or `q8_0`, 0.4.0), `BANKML_CACHE_RAM` (the host
   prompt cache in MiB, 0.3.8) and `BANKML_GPU`, `BANKML_GPU_SHARE`, `BANKML_GPU_LIMIT` from the environment
   ([forward.md](forward.md), [prompt_cache.md](prompt_cache.md), [gpu.md](gpu.md)).
 

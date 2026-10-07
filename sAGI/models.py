@@ -679,7 +679,7 @@ def allow_origin() -> str | None:
 
 
 # "auto" for the 1-bit (Q1_0) files: set by the pinned decode A/B (testing/decode_ab.py, docs/PERFORMANCE.md)
-AUTO_NATIVE_Q1 = False
+AUTO_NATIVE_Q1 = True  # 2026-10-07: the 8B A/B, 3 of 3 rounds at least llama-server's speed, answers identical
 
 
 def native_for(model: Path, engine: str | None = None) -> bool:

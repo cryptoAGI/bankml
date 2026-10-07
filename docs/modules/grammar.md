@@ -76,7 +76,7 @@ pub fn mask_hash(allowed: impl Iterator<Item = u32>) -> (usize, u64)
 - `Rules::parse` is `llama_grammar_init_impl(vocab, text, "root")`: parse, check every rule reference, refuse left
   recursion. `tokenize` resolves `<token>` terminals (special tokens parsed); `<[id]>` and `!<…>` are supported.
 - `Vocab` holds every token's piece as the grammar reads it (`Tokenizer::piece`), decoded to code points once, and
-  the end-of-generation set. Its trie (0.3.9) is built on the first whole-vocabulary mask and kept (`OnceLock`).
+  the end-of-generation set. Its trie (0.4.0) is built on the first whole-vocabulary mask and kept (`OnceLock`).
 - `apply` sets every rejected candidate to −∞. An end-of-generation token passes only when a stack is empty (the
   grammar is complete); an empty piece never passes. `allows` is the single-candidate check.
 - `accept` advances the stacks. A token that leaves no stack is an `Err` (llama.cpp throws).
@@ -139,7 +139,7 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
   Q1_0) and **3.95 ms** (ternary), about 1 % of a 1-bit step and 1.4 % of a ternary step. An answer written as valid
   JSON on its own spent 0.4 ms of grammar per token. These 0.3.3 figures predate the trie and were not re-measured
   with it.
-- **The trie (0.3.9).** A whole-vocabulary mask with no UTF-8 left open walks a trie of the vocabulary's code
+- **The trie (0.4.0).** A whole-vocabulary mask with no UTF-8 left open walks a trie of the vocabulary's code
   points (`Trie`, built once per vocabulary, tokens sorted so each subtree is one range): each grammar stack meets a
   shared prefix once instead of once per token, and the stacks after a terminal are computed once per stack and mask.
   Measured over the oracle's 1,645 masks (laptop, gate load): median **2.94 ms against 38.8 ms** one by one (13×),
@@ -155,7 +155,7 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
 - **History.** O6's first cut (0.3.3) was JSON mode. 0.3.4 added the ChatML templates' JSON-mode grammar
   (`JSON_OBJECT_GRAMMAR_CHATML`, SmolLM2-Instruct and `mindx-genN`). O6b added every other JSON schema
   (`Constraint::Schema`). 0.3.5 fixed the content rule for a cut inside an escape and added `json_message`'s
-  fallback. 0.3.9 added the trie.
+  fallback. 0.4.0 added the trie.
 - **Source.** The port follows llama.cpp b11192 at commit `171e8846b` (github.com/ggml-org/llama.cpp). llama.cpp's
   MIT notice is reproduced in the module header, as its licence asks (LICENSING.md). A stack element is an index
   into one flat element array where llama.cpp uses a pointer; indices compare the same way, so semantics are kept.
@@ -203,7 +203,7 @@ curl -s 127.0.0.1:PORT/v1/chat/completions \
 - [../oracles.md](../oracles.md) §5c, §5d, §5e
 - [../PERFORMANCE.md](../PERFORMANCE.md) — JSON mode's cost
 - [../OLLAMA.md](../OLLAMA.md) — O6, what llama-server does with `response_format`
-- [../TODO.md](../TODO.md) — 0.4.0, the faster whole-vocabulary mask (done in 0.3.9)
+- [../TODO.md](../TODO.md) — 0.4.0, the faster whole-vocabulary mask (done in 0.4.0)
 - [../usage.md](../usage.md) — `bankml generate --json`, the `/v1` and `/api` fields
 - Sibling pages: [schema.md](schema.md), [sampler.md](sampler.md), [tokenizer.md](tokenizer.md),
   [chat.md](chat.md), [native.md](native.md), [serve.md](serve.md), [ollama.md](ollama.md)

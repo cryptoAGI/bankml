@@ -39,8 +39,8 @@ if PromptCache::<Vec<KvCache>>::wants_update(&slot.tokens, prompt) {
 }
 ```
 
-`bytes` is the slot's real size (`KvCache::bytes`), so with `BANKML_CACHE_TYPE=q8_0` (0.3.9) each saved state is
-53 % of an f16 one's bytes (CHANGELOG 0.3.9) and the same limit holds more of them.
+`bytes` is the slot's real size (`KvCache::bytes`), so with `BANKML_CACHE_TYPE=q8_0` (0.4.0) each saved state is
+53 % of an f16 one's bytes (CHANGELOG 0.4.0) and the same limit holds more of them.
 
 The rules, from `server_context::get_available_slot` and `server_prompt_cache::{alloc, load, update}`:
 

@@ -7,8 +7,10 @@ b11192.** 0.3.3–0.3.8 brought JSON mode and schemas, the penalties and the who
 self-measurement, the context limit, slots, the prompt cache and logprobs; 0.4.0 closes the list: a q8_0 KV cache
 with llama.cpp's Hadamard rotation, the grammar mask 13× faster, `cache_prompt: false` as llama-server honours it,
 fewer pool wakes per token, and the engine's own status, diagnostics and a console whose landing is the ultimate
-input field. 1-bit decode against llama-server is measured pinned, on the 8B model, and the importer's `auto` engine
-follows that measurement.
+input field. **1-bit decode is at least at llama-server's speed**: the pinned 8B A/B, three rounds, bankML at or
+above llama-server in every one, median 2.02 against 0.77 tokens/s under the same load, every answer token-identical
+([PERFORMANCE.md](docs/PERFORMANCE.md#1-bit-decode-against-llama-server-040)) — so the importer's `auto` engine now
+chooses bankML's own forward pass for the 1-bit files as well as the ternary ones (`AUTO_NATIVE_Q1`).
 
 ### The q8_0 KV cache (`BANKML_CACHE_TYPE=q8_0`; `testing/kv_oracle.py`, 6 / 6)
 - K and V stored as q8_0 blocks (`KvType::Q8_0`), 53 % of the f16 cache's bytes. Attention over it is ggml's

@@ -10,14 +10,14 @@ What bankML is now, module by module, is in [modules/](modules/README.md); the d
 Thesis in [TECHNICAL.md](TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson), which also stands alone
 in [thesis.md](thesis.md).
 
-## Where each phase ended up (as of 2026-10-06: 0.3.6 released, 0.3.7–0.3.9 unreleased)
+## Where each phase ended up (as of 2026-10-06: 0.3.8 released, 0.4.0 in its release gate)
 
 | phase | what it asked | where it was done |
 |---|---|---|
 | **P0 — wrap** | `bankml serve` in front of llama-server: the gate, the upstream bound to the verified file, a receipt on every answer | **0.0.6** (2026-09-28); the Savante UI on it from 0.0.6–0.1.0 |
 | **P1 — guard + receipts** | the GGUF guard, the sha256 pin, one `verify` gate; a receipt per answer | guard and pin **0.0.1–0.0.2**; `bankml_receipt` on every answer since **0.0.6**; signed receipts and the THOT8 leaf are still open (0.8.0 in [TODO.md](TODO.md)) |
-| **P2 — own the kernels** | Q1_0 and Q2_0, bit-exact against ggml, then faster | AVX2 kernels **0.0.1**, threads **0.0.3**, memory floor and experiments **0.0.4–0.0.5**, SHA-NI **0.1.8**; the GPU (Vulkan, bankML's own SPIR-V) **0.2.12–0.2.14**; F16 products **0.3.4**. Unreleased: the GPU limiter and per-shape calibration (0.3.7); ggml's `q8_0` quantizer and `vec_dot_q8_0_q8_0` for the KV cache (0.3.9). NEON and AVX-512 still open |
-| **P3 — own the forward** | the Qwen3 block, token-identical to llama.cpp | eleven steps, **0.2.1–0.2.11** (tokenizer, template, layer 0 op by op, the whole model, the ternary model, the three attention kernels, sampling); milestone **0.3.0** (2026-09-29): Savante answered by bankML's own forward pass. The Llama graph followed in **0.3.4**. The `q8_0` KV cache the original ledger asked for first is unreleased (0.3.9), with llama.cpp's Hadamard rotation |
+| **P2 — own the kernels** | Q1_0 and Q2_0, bit-exact against ggml, then faster | AVX2 kernels **0.0.1**, threads **0.0.3**, memory floor and experiments **0.0.4–0.0.5**, SHA-NI **0.1.8**; the GPU (Vulkan, bankML's own SPIR-V) **0.2.12–0.2.14**; F16 products **0.3.4**. Unreleased: the GPU limiter and per-shape calibration (0.3.7); ggml's `q8_0` quantizer and `vec_dot_q8_0_q8_0` for the KV cache (0.4.0). NEON and AVX-512 still open |
+| **P3 — own the forward** | the Qwen3 block, token-identical to llama.cpp | eleven steps, **0.2.1–0.2.11** (tokenizer, template, layer 0 op by op, the whole model, the ternary model, the three attention kernels, sampling); milestone **0.3.0** (2026-09-29): Savante answered by bankML's own forward pass. The Llama graph followed in **0.3.4**. The `q8_0` KV cache the original ledger asked for first is unreleased (0.4.0), with llama.cpp's Hadamard rotation |
 | **P4 — the mindX seam** | an OpenAI-compatible provider mindX can route to | `serve --native` **0.3.0**, Ollama's API **0.3.1**, the C API **0.3.2**, JSON mode **0.3.3**, mindX's own model **0.3.4**, JSON schemas and `bankml create` **0.3.5**, the penalties **0.3.6**; **mindX's default engine on its VPS since 2026-10-04**. Unreleased: the rest of the sampler chain (0.3.7); the context limit, slots, the host prompt cache, logprobs (0.3.8). Open: mindX's inference discovery using it as a provider (0.9.0 in [TODO.md](TODO.md)) |
 | **P5 — handheld** | the same crate on Android and iOS | open (see [TODO.md](TODO.md), *Handheld and distributed intelligence*) |
 
@@ -53,7 +53,7 @@ refusals each; live 85 of 85 through `/v1` and `/api/chat`. Record: `testing/res
 erase (19 of 19), one slot with llama-server's host prompt cache (14 of 14,
 [modules/prompt_cache.md](modules/prompt_cache.md)), and logprobs on `/v1`, streamed or not (14 of 14).
 
-**0.3.9 (in progress): a `q8_0` KV cache and a faster grammar mask.**
+**0.4.0 (the milestone, in its release gate): a `q8_0` KV cache and a faster grammar mask.**
 - `BANKML_CACHE_TYPE=q8_0` stores K and V as `q8_0` blocks, 53 % of the f16 cache's bytes, with llama.cpp's Hadamard
   rotation around the quantized cache. Evidence: `oracle_ggml_b11192_q8_0_kv_kernels` (4,000 rows byte-exact, 4,000
   dot products bit-exact against the shipped library) and `kv_oracle_live` (6 of 6 answers against llama-server with

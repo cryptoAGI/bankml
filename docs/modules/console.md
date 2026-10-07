@@ -6,7 +6,7 @@ The console (0.3.7; redesigned 2026-10-06) is bankML's own interface, deliberate
 page, light or dark with the system, with six tabs over `bankml serve` — **Ask** (the landing: one question, one
 streamed answer, its receipt checked in the browser), **Admin** (CPU, RAM and GPU sliders, the measured "now", and D3
 charts), **Engine** (`GET /bankml/status` drawn by serve's own renderer: checks, CPU, memory, disk, GPU, the engine's log), **Receipts** (every answer's receipt, newest first, each re-checked and expandable to its JSON; the
-commitments an iNFT of the session carries), **Logs** (the engine's log) and **Diagnostics** (0.3.9: measured checks of the engine — reachable, verified, metrics, memory, the engine log's last error — and every answer's trace, span by span, with durations and timed events; `sAGI/diagnostics.py`, after LlamaIndex's instrumentation). A **Savante | bankML** switch in its bar
+commitments an iNFT of the session carries), **Logs** (the engine's log) and **Diagnostics** (0.4.0: measured checks of the engine — reachable, verified, metrics, memory, the engine log's last error — and every answer's trace, span by span, with durations and timed events; `sAGI/diagnostics.py`, after LlamaIndex's instrumentation). A **Savante | bankML** switch in its bar
 and a **bankML ↗** link in Savante's header move between the two interfaces. It talks to bankML as itself — `sAGI/personas/bankml.persona` — and gives that
 persona a SELF block measured at each question, so what bankML says about its own tokens, speed, load and power is
 measurement, not invention.

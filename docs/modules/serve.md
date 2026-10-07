@@ -165,8 +165,8 @@ does, and an escape after it that is not a low surrogate is read on its own.
   streamed; every logprob the same float), `session_oracle_live` (14 / 14: interleaved conversations through one
   slot and the host prompt cache, turn by turn; simultaneous requests queued); the unit test
   `logprob_texts_as_llama_server_writes_them`. Counts from CHANGELOG 0.3.8.
-- 0.3.9: `kv_oracle_live` (6 / 6: `BANKML_CACHE_TYPE=q8_0` against llama-server `--cache-type-k q8_0 --cache-type-v
-  q8_0`, text, counts and `cache_n`; CHANGELOG 0.3.9).
+- 0.4.0: `kv_oracle_live` (6 / 6: `BANKML_CACHE_TYPE=q8_0` against llama-server `--cache-type-k q8_0 --cache-type-v
+  q8_0`, text, counts and `cache_n`; CHANGELOG 0.4.0).
 
 ## Advantages and efficiency
 

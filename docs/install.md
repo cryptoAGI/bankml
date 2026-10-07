@@ -1,7 +1,7 @@
 # Installing and configuring bankML: the complete reference
 
 This is the full reference for installing bankML 0.3.6 and the Savante UI, and for every setting they accept.
-Settings from the next release (0.3.7, 0.3.8, and 0.3.9 in progress; not yet tagged) are marked with their version;
+Settings added since 0.3.6 are marked with their version (0.3.7 and 0.3.8 released; 0.4.0 in its release gate);
 [CHANGELOG.md](../CHANGELOG.md) has the details. What each source module does is in [modules/](modules/README.md). For a
 first install, read [usage.md §1–§3](usage.md#1-install); the README's *Install and use* gives the short version. This
 page assumes you have read one of them. It covers every step, flag, port, path and environment variable, what each
@@ -67,7 +67,7 @@ What else takes memory:
 - **The KV cache** is f16 and grows with the context. Qwen3-8B uses 147,456 bytes per token
   (`sAGI/models.py`), so a 2048-token context holds about 0.30 GB and 4096 tokens about 0.6 GB. The other models
   need less; the guard reports each one's `kv_f16_bytes_per_token`. In the native engine,
-  `BANKML_CACHE_TYPE=q8_0` (0.3.9, in progress) keeps it in 53 % of those bytes, as llama.cpp's q8_0 cache does (§6).
+  `BANKML_CACHE_TYPE=q8_0` (0.4.0) keeps it in 53 % of those bytes, as llama.cpp's q8_0 cache does (§6).
 - **llama-server** adds about 250 MB of compute buffers and runtime beside the weights and KV (`OVERHEAD` in
   `sAGI/models.py`, an order-of-magnitude measurement).
 - **The whole stack** (8B 1-bit model, engine, UI) runs in about 2 GB of free RAM. Plan for 3 GB of free disk.
@@ -135,7 +135,7 @@ alone brings the whole stack back. Use `./install.sh model start` to wait for th
 | `--no-start` | the default run ends after `model` (or `voice`): everything installed, Savante not started. `bankml serve` is still started by `model` |
 | `--view` | `start` also starts view mode on `0.0.0.0:7874`. It works with named steps too: `./install.sh start --view` |
 | `--voice` | the default run includes `voice`. With named steps, name it instead: `./install.sh voice` |
-| `--space` / `--no-space` | 0.3.9: let bankML's Hugging Face pages ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml) and [PYTHAI/ultimate-bankml-ui](https://huggingface.co/spaces/PYTHAI/ultimate-bankml-ui)) talk to your `bankml serve` from your browser — its *Your own bankML* mode: your CPU, your verified model, a receipt the page checks. Serve starts with `--allow-origin https://pythai-bankml.static.hf.space,https://pythai-ultimate-bankml-ui.static.hf.space` (those two pages, nothing else); the choice is remembered in `install.env` (`INSTALL_ALLOW_ORIGIN`; `BANKML_ALLOW_ORIGIN` overrides it). `./install.sh start --space` applies it at once (the running services stop first); `--no-space` forgets it. `./install.sh status` says which page is allowed |
+| `--space` / `--no-space` | 0.4.0: let bankML's Hugging Face pages ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml) and [PYTHAI/ultimate-bankml-ui](https://huggingface.co/spaces/PYTHAI/ultimate-bankml-ui)) talk to your `bankml serve` from your browser — its *Your own bankML* mode: your CPU, your verified model, a receipt the page checks. Serve starts with `--allow-origin https://pythai-bankml.static.hf.space,https://pythai-ultimate-bankml-ui.static.hf.space` (those two pages, nothing else); the choice is remembered in `install.env` (`INSTALL_ALLOW_ORIGIN`; `BANKML_ALLOW_ORIGIN` overrides it). `./install.sh start --space` applies it at once (the running services stop first); `--no-space` forgets it. `./install.sh status` says which page is allowed |
 | `-h`, `--help` | prints the header of `install.sh` and exits |
 
 Any other argument stops the installer with exit code 2.
@@ -354,7 +354,7 @@ oracles all do this.
 | `--ctx N` | `4096` | both | the context: `-c N` for the spawned llama-server, `n_ctx` for the native engine. A prompt of `N` tokens or more is refused (0.3.8: with llama-server's `exceed_context_size_error` 400 body on `/v1`); an Ollama `num_ctx` above it is refused |
 | `--spec-ngram` | off | llama.cpp | `--spec-type ngram-simple` in the spawned engine: n-gram speculative decoding, exact at temperature 0, opt-in because it measured within noise |
 | `--slot-dir DIR` | — | both | llama.cpp mode: `--slot-save-path DIR` for the spawned engine. Native mode (0.3.8): `POST /slots/0?action=save\|restore\|erase` with `{"filename"}`, as llama-server's slot API; the directory is created at start. Either way, a restart restores the system prompt instead of computing it again. Without it, the slot actions answer 501 |
-| `--allow-origin ORIGIN[,ORIGIN…]` | — | both | 0.3.9: the web pages (`https://host[:port]`, comma-separated, each matched exactly) whose scripts may call this gateway from a browser — the bankML Space's page, for example (`https://pythai-bankml.static.hf.space`). bankML answers those origins' CORS preflight (with Chrome's `Access-Control-Allow-Private-Network`) and adds `Access-Control-Allow-Origin` to its answers, streamed ones included; any other origin gets no CORS headers and a 403 preflight. The loopback `Host` and JSON-POST rules are unchanged |
+| `--allow-origin ORIGIN[,ORIGIN…]` | — | both | 0.4.0: the web pages (`https://host[:port]`, comma-separated, each matched exactly) whose scripts may call this gateway from a browser — the bankML Space's page, for example (`https://pythai-bankml.static.hf.space`). bankML answers those origins' CORS preflight (with Chrome's `Access-Control-Allow-Private-Network`) and adds `Access-Control-Allow-Origin` to its answers, streamed ones included; any other origin gets no CORS headers and a 403 preflight. The loopback `Host` and JSON-POST rules are unchanged |
 | `--native` | off | — | native mode |
 | `--registry [DIR]` | off; bare: `$BANKML_FORKS`, else `~/.local/share/bankml/forks` | native | serve every model pinned in `DIR` by name, one resident at a time, each verified again when it loads; answer `/api/create`, `/api/copy`, `/api/delete` for derived models. A following argument that starts with `--` is not taken as `DIR` |
 | `--keep-alive DUR` | `5m` | native | how long an `/api/*` request that names no `keep_alive` keeps the model resident: `"5m"`, `"1h30m"`, seconds, `0` (unload after the answer), negative (for good). OpenAI and llama-server endpoints keep the model resident |
@@ -477,7 +477,7 @@ sets a variable for the processes it starts, that is noted.
 | `BANKML_NO_SHANI` | `bankML/sha256.rs` | unset | set to any value to hash with the portable SHA-256 instead of the CPU's SHA extensions |
 | `BANKML_FORKS` | `bankML/main.rs` | `~/.local/share/bankml/forks` | the registry directory for `serve --registry` without a `DIR`, and for `bankml create` without `--registry` |
 | `HOME` | `bankML/main.rs` | — | the base of the default forks directory |
-| `BANKML_CACHE_TYPE` | `bankML/native.rs` (0.3.9) | `f16` | `q8_0` keeps the native engine's KV cache as llama.cpp's `--cache-type-k q8_0 --cache-type-v q8_0` does, Hadamard rotation included: 53 % of the f16 cache's memory, the same tokens as llama-server so configured |
+| `BANKML_CACHE_TYPE` | `bankML/native.rs` (0.4.0) | `f16` | `q8_0` keeps the native engine's KV cache as llama.cpp's `--cache-type-k q8_0 --cache-type-v q8_0` does, Hadamard rotation included: 53 % of the f16 cache's memory, the same tokens as llama-server so configured |
 | `BANKML_CACHE_RAM` | `bankML/native.rs` (0.3.8) | 8192 MiB, at most a quarter of the memory available at load | the host prompt cache's limit in MiB, as llama-server's `--cache-ram` (0 off, -1 no limit) |
 
 ### GPU (Rust)

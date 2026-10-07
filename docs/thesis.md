@@ -3,7 +3,7 @@
 *cryptoAGI · bankML · 6 October 2026. The design intent quoted in §0 is that of bankML's authors, Professor
 Codephreak and Gregory L. Magnusson, in their own words and dated. The argument around it is assembled from the
 project's record: its code, its [CHANGELOG](../CHANGELOG.md), its measurements ([PERFORMANCE.md](PERFORMANCE.md)) and
-its oracles ([oracles.md](oracles.md)). Written while v0.3.6 is the latest release and 0.3.7–0.3.9 are being gated on
+its oracles ([oracles.md](oracles.md)). Written while v0.3.6 was the latest release and 0.3.7–0.4.0 were being gated on
 the way to 0.4.0. The plain-language version is [why-bankml.md](why-bankml.md); the technical report is
 [TECHNICAL.md](TECHNICAL.md).*
 
@@ -266,11 +266,11 @@ The oracle's value shows most clearly in what it has found that was not being lo
 - **Fused multiply–add in the shipped binary**: found because a source-faithful port missed the last bit; the oracle
   also distinguishes the haswell and baseline x64 builds, which disagree on 19 of 762 ternary cases
   ([TECHNICAL.md, contribution 4](TECHNICAL.md#contributions)).
-- **The Hadamard rotation around a quantized cache** (0.3.9): bankML's first q8_0 KV cache matched llama-server on 2 of
+- **The Hadamard rotation around a quantized cache** (0.4.0): bankML's first q8_0 KV cache matched llama-server on 2 of
   6 answers, each agreeing for dozens of tokens and then drifting. The cause was that b11192 rotates queries, keys and
   values through a Hadamard transform whenever the cache is quantized, an outlier-smoothing technique of the QuaRot
   and QuIP# line (Ashkboos et al. 2024; Tseng et al. 2024). With the rotation reproduced, 6 of 6
-  ([CHANGELOG 0.3.9](../CHANGELOG.md)).
+  ([CHANGELOG 0.4.0](../CHANGELOG.md)).
 
 None of these is visible in a tokens-per-second figure, and none would have been found by a tolerance-based test.
 

@@ -2,8 +2,8 @@
 
 What comes next, and where each item came from. Every item ends in a measured, reproducible result, or it is recorded
 as rejected with its numbers (the house rule: the same bits first, then the speed). What has shipped, and its records,
-is in [CHANGELOG.md](../CHANGELOG.md); v0.3.6 is the latest public release, and 0.3.7–0.3.9 are on the branch,
-unreleased. **The current plan is [0.4.0](#040--native-serve-complete-everything-savante-and-mindx-ask-of-llama-server).**
+is in [CHANGELOG.md](../CHANGELOG.md); v0.3.8 is the latest public release, and 0.4.0 (which takes in what was 0.3.9)
+is in its release gate. **The current plan is [0.4.0](#040--native-serve-complete-everything-savante-and-mindx-ask-of-llama-server).**
 The argument for the method is [thesis.md](thesis.md). Sources:
 **R** = [research.md](research.md) (the field, 2026-09-29) · **K** = the clean-room study of KoboldCpp (docs only) ·
 **V** = the vLLM code review (main @ `36768d1`, Apache-2.0) · **Rs** = the Rust 1.95 study (the `rust` skill) ·
@@ -32,7 +32,7 @@ The argument for the method is [thesis.md](thesis.md). Sources:
   drains the declared body first; the suite passes 10/10 in a row.
 - [ ] **Measure the prefill/decode knobs** (K, V): `-t 2/3/4` with `-tb 4`; `-ub 128/256/512`; `-fa on`;
   `-ctv q8_0` (then `-ctk q8_0`) with RSS and exactness recorded. Adopt only what is faster *and* token-identical,
-  or clearly label what is not exact. (A `q8_0` K and V cache is exact in bankML since 0.3.9, at 53 % of the f16
+  or clearly label what is not exact. (A `q8_0` K and V cache is exact in bankML since 0.4.0, at 53 % of the f16
   bytes; its speed is not yet measured.)
 - [ ] **Is batched verification cheap here?** (V) `llama-bench -p 1,2,4,8,16`: speculation can only pay if a
   k-token verify costs much less than k single steps on this CPU.
@@ -45,7 +45,7 @@ The argument for the method is [thesis.md](thesis.md). Sources:
   on CPU (arXiv:2608.23841).
 - **KoboldCpp code** (K): AGPL-3.0; ideas only, from its documentation.
 - **fp8 KV cache** (V): needs AVX-512/AMX on vLLM's CPU backend; q8_0 via llama.cpp is the equivalent to measure
-  (bankML's `q8_0` KV cache, token-identical to llama-server's: 0.3.9).
+  (bankML's `q8_0` KV cache, token-identical to llama-server's: 0.4.0).
 
 ## 0.1.9 — done
 
@@ -186,8 +186,8 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 
 ### 0.4.0 — native serve complete (everything Savante and mindX ask of llama-server)
 
-**The current plan.** The serving items below are done (0.3.3–0.3.9; 0.3.7–0.3.9 unreleased). What remains for the
-milestone is three items: 1-bit decode at least at llama-server's speed, measured; the engine setting's `auto`
+**The current plan.** The serving items below are done (0.3.3–0.3.8 released; the rest on main for 0.4.0). What
+remains for the milestone is three items: 1-bit decode at least at llama-server's speed, measured; the engine setting's `auto`
 choosing native for both the 1-bit and the ternary files; and the milestone's release gate. The same list is in
 [thesis.md](thesis.md) §VII.
 
@@ -214,7 +214,7 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   `format: {schema}`, `response_format.json_schema`, `json_object` + `schema`, top-level `json_schema`, `bankml_chat`.
 - [x] **JSON schemas, the answers** (**0.3.5**): llama-server's answers token-identical on both 8B models and the
   three O4 models (`oracle_json_schema*`, live in the gate). Next: tool calls.
-- [x] **A faster whole-vocabulary mask** (**0.3.9**): a trie over the vocabulary's code points, each grammar stack
+- [x] **A faster whole-vocabulary mask** (**0.4.0**): a trie over the vocabulary's code points, each grammar stack
   walking a shared prefix once; median 2.94 ms against 38.8 ms per mask (13×), p90 49 against 81. The oracle is
   unchanged and now checks both paths: 196 / 196 runs, 1,645 masks identical to llama.cpp.
 - [x] **Logprobs on `/v1/chat/completions`** (**0.3.8**): bit-exact, llama-server's entry rules (UTF-8 splits, stop
@@ -223,20 +223,28 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   non-streamed cases. `/completion` (and `n_probs`) stays unserved natively: no client of bankML uses it.
 - [x] **Behaviour at the context limit exactly as llama-server's** (**0.3.8**): stop at the full context, past it
   its 400 body; 8 / 8 (`context_oracle_live`).
-- [x] **A `q8_0` KV cache** (**0.3.9**), llama.cpp's `--cache-type-k/v q8_0` with its Hadamard rotation (b11192
+- [x] **A `q8_0` KV cache** (**0.4.0**), llama.cpp's `--cache-type-k/v q8_0` with its Hadamard rotation (b11192
   rotates K/Q and V around any quantized cache): 6 / 6 answers token-identical to llama-server so configured
   (`kv_oracle_live`), the kernels bit-exact against the shipped ggml (`oracle_ggml_b11192_q8_0_kv_kernels`). Next: a
   4-bit KV (`q4_0`, the same rotation; O8: what makes the boardroom's `num_ctx 8192` affordable).
-- [ ] **1-bit decode at least at llama-server's speed** (0.3.9's third piece; O8): 1.9–2.0 tokens/s against 2.8
+- [x] **1-bit decode at least at llama-server's speed** (O8; **0.4.0**: the pinned 8B A/B, 3 of 3 rounds at or above llama-server, median 2.02 against 0.77 tokens/s under the same load, answers identical — [PERFORMANCE.md](PERFORMANCE.md#1-bit-decode-against-llama-server-040)). Before: 1.9–2.0 tokens/s against 2.8
   before 0.3.4; after 0.3.4's attention work one loaded-machine pair read 2.30–2.59 against 2.33–2.48
   ([PERFORMANCE.md](PERFORMANCE.md#f16-and-the-llama-graph-034--laptop-against-llama-server-b11192)). The method is
   `testing/decode_ab.py` under `testing/pinned.sh` on an idle machine: fresh processes each round, alternating order,
   identical answers or the round is refused. If bankML is behind: cache the norm weights, cut per-token allocations,
   share one quantized activation across Q/K/V and gate/up, and compute logits only where sampled.
-- [ ] The engine setting's `auto` picks native for both the 1-bit and the ternary files (today it picks native for
+- [x] The engine setting's `auto` picks native for both the 1-bit and the ternary files (**0.4.0**, `AUTO_NATIVE_Q1`) (today it picks native for
   the ternary files only: `sAGI/models.py`, `native_for`). It depends on the item above.
 - [ ] **The milestone gate**: `testing/release_gate.sh` for 0.4.0, every oracle above in it, recorded in
   `testing/results/0.4.0.txt`.
+
+### 0.4.x — found while measuring 0.4.0
+
+- [ ] **Abort a native run when its client goes away** (found 2026-10-06 by the ultimate-bankml-ui session): `serve.rs`
+  notices a closed socket only when a write fails, so an abandoned request's prefill and generation run to the end
+  for nobody — minutes per request on the laptop under contention, and the one slot is held meanwhile. Check the
+  socket before each micro-batch (a non-blocking peek, or the write of a keep-alive comment on a stream) and stop the
+  run, keeping the slot's cache up to the last computed token.
 
 ### 0.5.0 — hardware
 
