@@ -104,17 +104,28 @@
   <section id="diagnostics" class="tab">
     <div class="loghead">
       <h2>Diagnostics</h2>
-      <p class="quiet"><button id="diag-refresh" class="ghost">Refresh</button></p>
+      <p class="quiet"><span id="diag-sum"></span> <button id="diag-refresh" class="ghost">Refresh</button></p>
     </div>
-    <ul id="checks" class="checks"></ul>
-    <h2 class="sub">scientific.diagnostic — bankML against llama.cpp b11192, to 18 decimals</h2>
-    <div id="scientific" class="trace"><p class="quiet">none yet — run testing/scientific_diagnostic.py</p></div>
-    <h2 class="sub">Traces — the newest answers, span by span</h2>
-    <div id="traces" class="traces"></div>
-    <details class="more">
-      <summary>As text</summary>
-      <pre id="trace-text"></pre>
-    </details>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>sAGI</b><span>every component, asked now</span></div>
+      <div id="components" class="components"></div>
+    </div>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Engine checks</b><span>what bankml serve measures</span></div>
+      <ul id="checks" class="checks"></ul>
+    </div>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>scientific.diagnostic</b><span>bankML against llama.cpp b11192, to 18 decimals</span></div>
+      <div id="scientific" class="window-body"><p class="quiet">none yet — run testing/scientific_diagnostic.py</p></div>
+    </div>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Traces</b><span>the newest answers, span by span</span></div>
+      <div id="traces" class="traces window-body"></div>
+      <details class="more window-body">
+        <summary>As text</summary>
+        <pre id="trace-text"></pre>
+      </details>
+    </div>
     <p id="diag-source" class="quiet"></p>
   </section>
 </main>

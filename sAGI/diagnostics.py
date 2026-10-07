@@ -195,3 +195,138 @@ def checks(serve: str, engine_log: list[str]) -> list[dict]:
         f"{len(dropped)} of the last {len(HANDLER.done)} spans failed: {dropped[-1].name}: {dropped[-1].error}" if dropped
         else f"{len(HANDLER.done)} spans, none failed")
     return out
+
+
+# ── every component of sAGI, each asked in its own words ──────────────────────────────────────────────────────────
+
+def _component(name: str, file: str, role: str, fn) -> dict:
+    """Run one component's check, timed; an exception is the component's own failure, said as it was raised."""
+    t = time.perf_counter()
+    try:
+        level, seen = fn()
+    except Exception as e:  # noqa: BLE001 — reported, never hidden
+        level, seen = "bad", f"{type(e).__name__}: {e}"
+    return {"component": name, "file": file, "role": role, "level": level, "seen": seen, "ms": round((time.perf_counter() - t) * 1000, 1)}
+
+
+def _http(url: str, timeout: float = 3.0):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return r.status, r.read(4096)
+
+
+def components(serve: str, here_port: int | None = None, public: bool = False, timeout: float = 8.0) -> list[dict]:
+    """Every part of sAGI, checked now and in parallel: what each is for, whether it answers or is ready, and what it
+    said. A check that does not finish within `timeout` is reported as such. Nothing is started, installed or written."""
+    import concurrent.futures as cf
+    import pathlib
+    import shutil
+    here = pathlib.Path(__file__).resolve().parent
+
+    def serve_c():
+        ms, b, err = _probe(serve + "/bankml")
+        if b is None:
+            return "bad", f"{serve}: {err}"
+        v = b.get("verified") or {}
+        return ("ok" if v.get("guard") == "play" else "warn"), f"{v.get('name') or b.get('resident')} · bankML {v.get('bankml')} · {ms} ms"
+
+    def page(port: int, start: str):
+        def f():
+            try:
+                code, _ = _http(f"http://127.0.0.1:{port}/")
+                return ("ok" if code == 200 else "warn"), f"answering on 127.0.0.1:{port} (HTTP {code})"
+            except OSError:
+                return "info", f"not running — start it with: {start}"
+        return f
+
+    def models_c():
+        import models
+        pins = models.installed()
+        pinned = sum(1 for m in pins if m.get("pinned"))
+        bin_ok = models.BANKML.is_file()
+        llama = models.LLAMA.is_file()
+        lvl = "ok" if bin_ok and pinned else "warn"
+        return lvl, (f"{pinned} pinned of {len(pins)} model files in {models.MODELS} · bankml binary {'present' if bin_ok else 'MISSING at ' + str(models.BANKML)}"
+                     f" · llama-server {'present' if llama else 'absent (only the native engine)'} · engine setting {models.resources().get('engine', 'auto')}")
+
+    def personas_c():
+        import agents
+        out, bad = [], 0
+        for p in sorted((here / "personas").glob("*.persona")):
+            d = json.loads(p.read_text())
+            pf = agents.preflight(d)
+            bad += bool(pf)
+            out.append(f"{p.stem} {'✓' if not pf else '✗ ' + '; '.join(pf)[:80]} root {agents.doctrine_root(d)[:12]}…")
+        return ("bad" if bad else "ok"), " · ".join(out) or "no persona files"
+
+    def agents_c():
+        import agents
+        a = agents.list_agents()
+        return "ok", (f"{len(a)} agents in {agents.AGENTS}: " + ", ".join(a[:8]) + (" …" if len(a) > 8 else "")) if a else f"no agents yet in {agents.AGENTS} (derive one from Savante)"
+
+    def thot_c():
+        import agents
+        import thot
+        a = agents.list_agents()
+        bound = [x for x in a if (agents.AGENTS / x / f"{x}.thot.json").is_file()]
+        if not bound:
+            return "info", f"ready; none of {len(a)} agents bound into a THOT manifest yet (sagi.thot_manifest/1)"
+        bad = {x: thot.verify(x) for x in bound}
+        bad = {x: v for x, v in bad.items() if v}
+        return ("ok" if not bad else "warn"), (f"{len(bound)} of {len(a)} agents bound; every manifest verifies" if not bad
+                                               else "; ".join(f"{x}: {'; '.join(map(str, v))}" for x, v in bad.items())[:240])
+
+    def chain_c():
+        import chain
+        art = chain.ARTIFACT
+        return ("ok" if art.is_file() else "info"), (f"iNFT_7857 artifact present ({art}); a mint is prepared here, signed by its owner"
+                                                    if art.is_file() else f"no iNFT_7857 artifact at {art} (forge build in DeltaVerse/deploy/iNFT4): mints cannot be prepared")
+
+    def connectors_c():
+        if not shutil.which("psql"):
+            return "info", "no psql client: PostgreSQL publishing is off"
+        import connectors
+        s = connectors.status()
+        if not s.get("ok"):
+            return "info", f"PostgreSQL not reachable ({s.get('error')})"
+        return "ok", f"PostgreSQL {s.get('server')} · db {s.get('db')} · pgvector {s.get('vector') or 'not installed'} · vectorscale {s.get('vectorscale') or 'not installed'}"
+
+    def embed_c():
+        import embed
+        s = embed.status()
+        return ("ok" if s.get("ready") else "info"), (f"{embed.MODEL} ready in Ollama{' (loaded)' if s.get('loaded') else ''}" if s.get("ready") else s.get("why", "not ready"))
+
+    def speak_c():
+        import speak
+        ok, why = speak.available()
+        return ("ok" if ok else "info"), ("the voice renders" if ok else f"no voice: {why}")
+
+    def diag_c():
+        with HANDLER.lock:
+            n, failed = len(HANDLER.done), sum(1 for s in HANDLER.done if s.error)
+        return ("warn" if failed else "ok"), f"{n} spans kept, {failed} failed"
+
+    checks = [
+        ("bankml serve", "bankML/serve.rs", "the verified engine every page talks to", serve_c),
+        ("console", "sAGI/console.py", "this page: bankML as itself, its receipts, logs and diagnostics",
+         lambda: ("ok", f"answering{' on port ' + str(here_port) if here_port else ''}{' · public, read-only' if public else ''}")),
+        ("Savante", "sAGI/savante.py", "the chat UI (Gradio), Savante's persona over bankML", page(7873, "python3 sAGI/savante.py --mode interact")),
+        ("view", "sAGI/view.py", "the read-only page for the LAN", page(7874, "python3 sAGI/view.py --host 0.0.0.0 --port 7874")),
+        ("models", "sAGI/models.py", "the importer: pinned models, the carrier, its resources", models_c),
+        ("personas", "sAGI/personas/", "who speaks: each .persona checked, its doctrine root", personas_c),
+        ("agents", "sAGI/agents.py", "custom agents derived from the Savante template", agents_c),
+        ("thot", "sAGI/thot.py", "THOT manifests: the dataset bundle an iNFT points to", thot_c),
+        ("chain", "sAGI/chain.py", "prepares an iNFT mint the owner signs", chain_c),
+        ("connectors", "sAGI/connectors.py", "PostgreSQL (pgvector): publish an agent, load it back", connectors_c),
+        ("embed", "sAGI/embed.py", "embeddings (bge-m3 via the local Ollama) for history and memory", embed_c),
+        ("voice", "sAGI/speak.py", "Savante's voice, rendered from open parts", speak_c),
+        ("diagnostics", "sAGI/diagnostics.py", "spans and traces (after LlamaIndex's instrumentation)", diag_c),
+    ]
+    with cf.ThreadPoolExecutor(max_workers=len(checks)) as ex:
+        futs = [(c, ex.submit(_component, *c)) for c in checks]
+        out = []
+        for (name, file, role, _), f in futs:
+            try:
+                out.append(f.result(timeout=timeout))
+            except cf.TimeoutError:
+                out.append({"component": name, "file": file, "role": role, "level": "warn", "seen": f"no answer within {timeout:.0f} s", "ms": timeout * 1000})
+    return out

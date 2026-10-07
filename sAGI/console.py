@@ -61,6 +61,8 @@ LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
 # --public HOST: the one extra host name the console answers as; None = loopback only
 PUBLIC: str | None = None
+# the port this console answers on (for its own component check)
+PORT: int | None = None
 # public mode bounds each answer, as the hosted machine is shared
 PUBLIC_MAX_TOKENS = 384
 _LOCK = threading.Lock()
@@ -151,7 +153,10 @@ def diagnostics() -> dict:
         sci = {k: d.get(k) for k in ("at", "verdict", "bankml", "reference", "model", "threads", "precision", "summary", "timing", "answer")}
     except (OSError, ValueError):
         pass
-    return {"checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees), "scientific": sci,
+    comps = D.components(SERVE, PORT, PUBLIC is not None)
+    if PUBLIC:  # a public console says how each part is, not where its files are or what its agents are called
+        comps = [{k: c[k] for k in ("component", "file", "role", "level", "ms")} | {"seen": ""} for c in comps]
+    return {"components": comps, "checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees), "scientific": sci,
             "source": "sAGI/diagnostics.py — after LlamaIndex's instrumentation (MIT): SimpleSpan, SimpleSpanHandler"}
 
 
@@ -348,8 +353,8 @@ def main():
     ap.add_argument("--port", type=int, default=7875)
     ap.add_argument("--public", metavar="HOST", help="also answer as HOST, read-only and keeping no questions (a hosted demo)")
     a = ap.parse_args()
-    global PUBLIC
-    PUBLIC = a.public
+    global PUBLIC, PORT
+    PUBLIC, PORT = a.public, a.port
     if a.host not in ("127.0.0.1", "localhost", "::1") and not PUBLIC:
         sys.exit("the console is loopback only: it can restart the engine (use view.py for the LAN, --public for a hosted demo)")
     print(f"bankML console on http://{a.host}:{a.port} — bankml serve at {SERVE}")

@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased (0.3.9) — a q8_0 conversation memory, a faster grammar mask
+## Unreleased (0.4.0) — milestone: native serving complete
 
-**Two of 0.3.9's three pieces: the KV cache in half the memory, as llama.cpp keeps it with `--cache-type-k/v q8_0`,
-and the JSON/grammar mask 13× faster at the median.** Each is checked against llama.cpp b11192 as before; 1-bit
-decode speed, the third, is measured on an idle machine next.
+**Everything Savante and mindX ask of llama-server, answered by bankML's own engine, identical to llama-server
+b11192.** 0.3.3–0.3.8 brought JSON mode and schemas, the penalties and the whole default sampler chain,
+self-measurement, the context limit, slots, the prompt cache and logprobs; 0.4.0 closes the list: a q8_0 KV cache
+with llama.cpp's Hadamard rotation, the grammar mask 13× faster, `cache_prompt: false` as llama-server honours it,
+fewer pool wakes per token, and the engine's own status, diagnostics and a console whose landing is the ultimate
+input field. 1-bit decode against llama-server is measured pinned, on the 8B model, and the importer's `auto` engine
+follows that measurement.
 
 ### The q8_0 KV cache (`BANKML_CACHE_TYPE=q8_0`; `testing/kv_oracle.py`, 6 / 6)
 - K and V stored as q8_0 blocks (`KvType::Q8_0`), 53 % of the f16 cache's bytes. Attention over it is ggml's
@@ -35,6 +39,20 @@ decode speed, the third, is measured on an idle machine next.
   true) and, when it is false, starts from position 0 as llama-server does (`Params::cache_prompt`,
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
+
+### Diagnostics: every component of sAGI, in windows with depth, on any screen
+- The Diagnostics tab first asks every part of sAGI, in parallel and within a time limit, each in its own words
+  (`diagnostics.components`): bankml serve, the console, Savante (`:7873`), view (`:7874`), the model importer
+  (pins, the binary, llama-server, the engine setting), each persona (preflight, doctrine root), the agents, THOT
+  manifests (each bound agent's verified), the chain artifact for iNFT mints, PostgreSQL (`connectors.status`),
+  embeddings (`embed.status`), the voice (`speak.available`) and the spans. Ready, idle, to check or failing, with
+  what each said and how long it took; nothing is started or written. A public console shows each component's
+  level, not its paths or agent names.
+- Each section is a window: a title bar, a hairline border and two shadows (near and far), in light and dark; the
+  components are cards with a status edge. The Engine tab's cards share the depth.
+- Mobile: the tab bar scrolls sideways under the title, windows run edge to edge, cards stack in one column, trace
+  rows wrap; the ultimate input field keeps a separate layout on a narrow screen (full width at the bottom, without
+  side modules), so a desktop's saved positions never put it off a phone's screen.
 
 ### Fewer wakes of the pool per token (1-bit and ternary decode)
 - Measured first: under the same pool, bankML's 1-bit kernel is 1.58× ggml b11192's own `vec_dot` over the 8B

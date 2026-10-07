@@ -226,8 +226,22 @@ function spanNode(n, total) {
   }
   return li;
 }
+function componentCard(c) {
+  const card = el("article", "comp " + c.level);
+  const head = el("header");
+  head.append(el("span", "chip " + c.level, c.level === "ok" ? "ready" : c.level === "info" ? "idle" : c.level === "warn" ? "check" : "failing"),
+    el("h3", null, c.component), el("span", "ms", c.ms + " ms"));
+  card.append(head, el("p", "role", c.role), el("code", "file", c.file));
+  if (c.seen) card.append(el("p", "seen", c.seen));
+  return card;
+}
 async function loadDiagnostics() {
   const j = await (await fetch("/api/diagnostics")).json();
+  const comps = j.components || [], grid = $("components");
+  grid.textContent = "";
+  comps.forEach((c) => grid.append(componentCard(c)));
+  const n = (l) => comps.filter((c) => c.level === l).length;
+  $("diag-sum").textContent = comps.length ? `${n("ok")} ready · ${n("info")} idle · ${n("warn")} to check · ${n("bad")} failing` : "";
   const ul = $("checks"); ul.textContent = "";
   for (const c of j.checks) {
     const li = el("li", c.level);
