@@ -265,7 +265,7 @@ passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a 
   budget**), Intel. Per-vendor float behaviour (fused or unfused `Fma`, denormals) is detected by the verify step, as
   `spirv.rs fma_exact` already does for RADV.
 - [ ] The F16 and Q2_0 (ternary) GPU kernels, bit-exact on the card, in `--verify`: the formats Qwen3.8 imprints and
-  the ternary line need.
+  the ternary line need. **Q2_0 done (0.4.1):** `q2_0_mat_vec`, bit-exact on every row of the 8B shapes and in `--verify`; not yet used for inference (a lanes-per-row layout, as `q1_0_mat_vec8`, has to beat the CPU's ternary kernel first). F16 to do.
 - [ ] Batched GPU submissions: Q/K/V and gate/up in one command buffer, one wait per group, persistent descriptor
   sets. Goal: a measured gain on the Vega 3.
 - [ ] Several cards: each takes a share of every matrix's rows, still one card's exact dot per element. Proven on a

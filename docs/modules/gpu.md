@@ -140,6 +140,18 @@ pub fn pack_act(a: &crate::q1_0::Q8Act) -> (Vec<f32>, Vec<i32>)
   (i32 words of four i8), output (f32). Push constants: rows, blocks per row.
 - `pack_q1_0` repacks weights once (scales f16→f32, exact; bits as u32 words). `pack_act` repacks the q8_0 activation
   per call. The numbers are unchanged, only aligned.
+- **The ternary kernel (0.5.0, `q2_0_mat_vec`, `pack_q2_0`, `verify_q2_0`).** It uses one invocation per row and the
+  same five bindings as the Q1_0 kernels.
+  - Weights: `pack_q2_0` gives each 64-weight block's scale as f32 and its 16 code bytes as four u32.
+  - Order: it follows `q2_0::vec_dot_ref`. Per block it takes the two 32-element integer sums `s = Σ (code − 1)·q`
+    (exact), then `sumi = fma(d1₁, s₁, d1₀·s₀)`, then `sumf = fma(d0, sumi, sumf)`.
+  - Both FMAs go through `fma_exact`. Here `d1·s` can need 25 bits (|s| < 2¹⁴), where the Q1_0 inner step needs 23.
+  - `verify_q2_0` runs the Q1_0 verify's two regimes against the CPU ternary kernel. `bankml gpu --verify` runs both
+    verifies, and a card that fails either is not used.
+  - Limit: an infinite activation scale becomes NaN through the exact FMA where the CPU gives `inf`, so such a product
+    stays on the CPU. No real activation has one.
+  - Not yet used for inference: one invocation per row is slower than the CPU's ternary kernel (3.5–4.7 ms per
+    4096×4096 or 2048×12288 product on the Vega 3). A layout with lanes per row, as `q1_0_mat_vec8`, comes next.
 
 ### `compute.rs` — Vulkan compute
 

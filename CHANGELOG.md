@@ -11,6 +11,19 @@
   block a question carries is two lines instead of ten, a smaller prefix to recompute whichever turn it rides on
   (the same session measured why that matters for the prompt cache).
 
+### The ternary kernel on the GPU, bit-exact (`gpu_q2_0_mat_vec_bit_exact`, `bankml gpu --verify`)
+- `q2_0_mat_vec` is bankML's own SPIR-V, one invocation per row. Per block it takes the two 32-element integer sums,
+  then `sumi = fma(d1₁, s₁, d1₀·s₀)` and `sumf = fma(d0, sumi, sumf)`, the shipped ggml's float order. Both FMAs are
+  built exactly, because `d1·s` can need 25 bits and the Vega 3's driver does not fuse `Fma`.
+- **Bit-exact** against `q2_0::vec_dot_ref` on every row of the 8B model's shapes on the Vega 3: 64×128, 1000×512,
+  4096×4096, 1024×12288 and 12288×4096, 18,472 rows in all.
+- `bankml gpu --verify` now runs it after the 1-bit kernels, in both regimes (uniform and layer-shaped), and refuses a
+  card that fails either.
+- One rule the test found: an activation whose f16 scale overflows makes the exact FMA give NaN where the CPU gives
+  `inf`, so such a product stays on the CPU. No real activation has one.
+- Not yet used for inference. At one invocation per row it takes 3.5–4.7 ms per 4096×4096 or 2048×12288 product,
+  slower than the CPU's ternary kernel; a layout with lanes per row (as `q1_0_mat_vec8`) comes next.
+
 ### CI on ARM, natively
 - `.github/workflows/ci.yml` runs a second job on GitHub's `ubuntu-24.04-arm`: the build, the unit tests, clippy with
   `-D warnings` and the guard, on real aarch64. Every kernel there takes its portable path, which the unit tests check
