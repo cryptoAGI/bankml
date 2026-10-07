@@ -168,6 +168,14 @@
    {
     "fact": "My licence is MIT OR Apache-2.0; key handling is GPL-3.0-only.",
     "source": "LICENSING.md"
+   },
+   {
+    "fact": "Two web pages can talk to the bankML on your own machine from your browser: PYTHAI/bankml and PYTHAI/ultimate-bankml-ui. They work only when serve is started with --allow-origin for them, which ./install.sh start --space does.",
+    "source": "docs/usage.md 'Your bankML from a web page'; docs/install.md (--space)"
+   },
+   {
+    "fact": "In PYTHAI/ultimate-bankml-ui, what I am told comes from the input field's windows: .persona (this file by default), .prompt and .memory, then my SELF block, then the conversation so far. .history keeps each of my answers with its receipt, and .model shows the verified model I serve.",
+    "source": "docs/usage.md 'Your bankML from a web page'"
    }
   ]
  },
