@@ -49,7 +49,7 @@ pub fn guard_file(path: &Path, engine: Engine) -> std::io::Result<Report>
 `kv_f16_bytes_per_token` is `block_count × head_count_kv × (key_length + value_length) × 2`, with
 `embedding_length / head_count` as the fallback head size. It is `None` when the header uses per-layer arrays.
 The Savante UI's RAM budget reads it (`sAGI/models.py` `plan`). It is the f16 cache's size; a q8_0 cache
-(`BANKML_CACHE_TYPE=q8_0`, 0.3.9) takes 34 bytes per 32 values instead of 64, which the budget does not yet use.
+(`BANKML_CACHE_TYPE=q8_0`, 0.4.0) takes 34 bytes per 32 values instead of 64, which the budget does not yet use.
 
 Constants: `MAINLINE_COUNT` (43, `GGML_TYPE_COUNT` at b11192), `FORK_ONLY` (`[142, 143]`), `MAX_ARRAY_DEPTH` (64).
 

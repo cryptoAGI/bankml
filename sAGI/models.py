@@ -678,13 +678,17 @@ def allow_origin() -> str | None:
     return o.strip() or None
 
 
+# "auto" for the 1-bit (Q1_0) files: set by the pinned decode A/B (testing/decode_ab.py, docs/PERFORMANCE.md)
+AUTO_NATIVE_Q1 = True  # 2026-10-07: the 8B A/B, 3 of 3 rounds at least llama-server's speed, answers identical
+
+
 def native_for(model: Path, engine: str | None = None) -> bool:
     """Whether the carrier answers from bankML's own forward pass (`bankml serve --native`, 0.3.0) for this model:
     "native" always (bankml refuses a model its forward pass does not run), "llama.cpp" never, "auto" for the
-    ternary (Q2_0_g64) files — there bankML is about 8x llama-server with the same tokens; on the 1-bit files
-    llama-server is still faster."""
+    ternary (Q2_0_g64) files — there bankML is about 8x llama-server with the same tokens — and for the 1-bit files
+    when the pinned A/B says bankML decodes them at least at llama-server's speed (`AUTO_NATIVE_Q1`)."""
     e = engine or resources().get("engine", "auto")
-    return e == "native" or (e == "auto" and "Q2_0" in model.name)
+    return e == "native" or (e == "auto" and ("Q2_0" in model.name or (AUTO_NATIVE_Q1 and "Q1_0" in model.name)))
 
 
 def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False, engine: str = "auto",

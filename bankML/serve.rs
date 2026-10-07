@@ -136,7 +136,11 @@ mod sig {
 }
 
 /// Verify the model, launch or check the upstream (or start `--native`), then serve until killed.
+/// When this serve started and what it listens on (for `GET /bankml/status`).
+static STARTED: std::sync::OnceLock<(Instant, String)> = std::sync::OnceLock::new();
+
 pub fn run(cfg: Config) -> Result<(), String> {
+    let _ = STARTED.set((Instant::now(), cfg.listen.clone()));
     if let Some(o) = cfg.allow_origin.as_deref().and_then(|l| l.split(',').map(str::trim).find(|o| !is_origin(o))) {
         return Err(format!("--allow-origin {o}: an origin is http(s)://host[:port], with no path (several: comma-separated)"));
     }
@@ -169,7 +173,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("cannot launch {}: {e}", bin.display()))?;
-            eprintln!("bankml serve: launched {} (pid {}) on {upstream}; waiting for /health", bin.display(), c.id());
+            crate::log(crate::LOG_INFO, &format!("bankml serve: launched {} (pid {}) on {upstream}; waiting for /health", bin.display(), c.id()));
             CHILD_PID.store(c.id() as i32, Ordering::SeqCst);
             Some(ChildGuard(c))
         }
@@ -185,8 +189,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let engine = "llama.cpp b11192 llama-server (loopback), behind bankml P0".to_string();
     let st = Arc::new(State { native: None, keep_alive: crate::native::KeepAlive::Forever, verified, model, upstream, engine, hashed_at, ident: id, slot_dir: None, allow_origin: cfg.allow_origin.clone() });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
-    eprintln!("bankml serve {}: {} verified (sha256 {}), upstream {} serves it; listening on http://{}",
-        crate::VERSION, st.model.display(), st.verified.model_sha256, st.upstream, cfg.listen);
+    crate::log(crate::LOG_INFO, &format!("bankml serve {}: {} verified (sha256 {}), upstream {} serves it; listening on http://{}",
+        crate::VERSION, st.model.display(), st.verified.model_sha256, st.upstream, cfg.listen));
     accept(l, st);
     drop(child);
     Ok(())
@@ -200,12 +204,12 @@ pub fn run(cfg: Config) -> Result<(), String> {
 fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, upstream: String) -> Result<(), String> {
     let ka = crate::ollama::keep_alive(cfg.keep_alive.as_deref().map(|s| Json::Str(s.to_string())).as_ref(), crate::ollama::KEEP_ALIVE_DEFAULT)?;
     let reg = crate::native::Registry::build(&cfg.model, &cfg.fork_json, cfg.registry.as_deref());
-    eprintln!("bankml serve --native: loading {} into bankML's forward pass", model.display());
+    crate::log(crate::LOG_INFO, &format!("bankml serve --native: loading {} into bankML's forward pass", model.display()));
     let hashed_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let rs = crate::native::Residency::start(reg, cfg.ctx, cfg.engine, verified, model.clone(), id)?;
     // derived models beside the pins, each verified through its base when it loads
     for e in rs.derived.open(cfg.registry.as_deref(), &rs.reg) {
-        eprintln!("bankml serve --native: derived model skipped: {e}");
+        crate::log(crate::LOG_WARN, &format!("bankml serve --native: derived model skipped: {e}"));
     }
     let engine = rs.peek().map(|(l, _)| l.engine).unwrap_or_default();
     let names: Vec<String> = rs.reg.entries.iter().map(|e| e.name.clone()).collect();
@@ -223,8 +227,8 @@ fn run_native(cfg: Config, verified: Verified, model: PathBuf, id: FileIdent, up
                               model, upstream: upstream.clone(), engine, hashed_at, ident: id });
     let l = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
     let lu = TcpListener::bind(&upstream).map_err(|e| format!("cannot listen on the engine address {upstream}: {e} (is llama-server running there?)"))?;
-    eprintln!("bankml serve {} --native: {} verified (sha256 {sha}); models {}; listening on http://{} and, for llama-server's clients, http://{upstream}",
-        crate::VERSION, st.model.display(), names.join(", "), cfg.listen);
+    crate::log(crate::LOG_INFO, &format!("bankml serve {} --native: {} verified (sha256 {sha}); models {}; listening on http://{} and, for llama-server's clients, http://{upstream}",
+        crate::VERSION, st.model.display(), names.join(", "), cfg.listen));
     let st2 = st.clone();
     std::thread::spawn(move || accept(lu, st2));
     accept(l, st);
@@ -483,20 +487,11 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             );
             respond(&mut c, 200, "application/json", j.as_bytes())
         }
-        ("GET", "/bankml/usage") => {
-            // resource use of serve and a spawned engine (sys.rs, sampled over 250 ms); at most one sample per second,
-            // shared by all pollers
-            static LAST: std::sync::Mutex<Option<(Instant, String)>> = std::sync::Mutex::new(None);
-            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-            if last.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(1)) {
-                let engine = CHILD_PID.load(Ordering::SeqCst);
-                let procs = [("bankml serve", std::process::id()), ("llama-server", engine.max(0) as u32)];
-                *last = Some((Instant::now(), crate::sys::usage_json(&procs, Duration::from_millis(250))));
-            }
-            let body = last.as_ref().map(|(_, j)| j.clone()).unwrap_or_default();
-            drop(last);
-            respond(&mut c, 200, "application/json", body.as_bytes())
-        }
+        ("GET", "/bankml/usage") => respond(&mut c, 200, "application/json", usage_cached().as_bytes()),
+        // everything this engine measures of itself, in one answer (the status page and the console's Engine tab)
+        ("GET", "/bankml/status") => respond(&mut c, 200, "application/json", status_json(st).as_bytes()),
+        // a browser asking for the root gets the status page; every other client keeps Ollama's plain-text answer
+        ("GET", "/") if header(&h, "accept").is_some_and(|a| a.contains("text/html")) => respond(&mut c, 200, "text/html; charset=utf-8", status_page().as_bytes()),
         // the native engine's per-answer measurements (metrics.rs)
         ("GET", "/bankml/metrics") => respond(&mut c, 200, "application/json", crate::metrics::json().as_bytes()),
         _ if st.native.is_some() => native_route(&mut c, st, &method, &path, &body),
@@ -507,6 +502,92 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
         ("POST", "/v1/chat/completions") => chat(&mut c, st, &body),
         _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /bankml/usage /bankml/metrics /health /props /v1/models, POST /v1/chat/completions"),
     }
+}
+
+/// Resource use of serve and a spawned engine (sys.rs, sampled over 250 ms); at most one sample per second, shared by
+/// all pollers.
+fn usage_cached() -> String {
+    static LAST: std::sync::Mutex<Option<(Instant, String)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(1)) {
+        let engine = CHILD_PID.load(Ordering::SeqCst);
+        let procs = [("bankml serve", std::process::id()), ("llama-server", engine.max(0) as u32)];
+        *last = Some((Instant::now(), crate::sys::usage_json(&procs, Duration::from_millis(250))));
+    }
+    last.as_ref().map(|(_, j)| j.clone()).unwrap_or_default()
+}
+
+/// serve's own page for a browser: `status.html` with the shared renderer (`status.js`, `status.css`) inlined.
+fn status_page() -> String {
+    include_str!("status.html").replace("/*STATUS_CSS*/", include_str!("status.css")).replace("/*STATUS_JS*/", include_str!("status.js"))
+}
+
+/// One check of the status: ok, warn, bad or info, and what was seen.
+fn check(name: &str, level: &str, seen: &str) -> String {
+    format!("{{\"check\": {}, \"level\": {}, \"seen\": {}}}", crate::gguf::jstr(name), crate::gguf::jstr(level), crate::gguf::jstr(seen))
+}
+
+/// `GET /bankml/status`: the verified model, serve's settings, CPU, memory, disk, GPU (`/bankml/usage`), the answers
+/// measured (`/bankml/metrics`), the checks drawn from them, and the engine's log. Every reading is taken now; one
+/// that cannot be read is null, never estimated.
+fn status_json(st: &State) -> String {
+    let (verified, model) = match st.native.as_ref() {
+        Some(rs) => match rs.last.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            Some(l) => (Some(l.verified.to_json()), l.model.clone()),
+            None => (None, st.model.clone()),
+        },
+        None => (Some(st.verified.to_json()), st.model.clone()),
+    };
+    let play = verified.as_deref().is_some_and(|v| v.contains("\"guard\": \"play\""));
+    let (up, listen) = STARTED.get().map(|(t, l)| (t.elapsed().as_secs(), l.clone())).unwrap_or_default();
+    let (cpu_name, mhz) = crate::sys::cpu();
+    let model_bytes = std::fs::metadata(&model).ok().map(|m| m.len());
+    let dir = model.parent().unwrap_or(std::path::Path::new("/"));
+    let disk = crate::sys::disk(dir);
+    let io = crate::sys::io(std::process::id());
+    let mem = crate::sys::memory();
+    let opt = |v: Option<u64>| v.map(|x| x.to_string()).unwrap_or_else(|| "null".into());
+    let env = |k: &str| std::env::var(k).ok().map(|v| crate::gguf::jstr(&v)).unwrap_or_else(|| "null".into());
+    let log = crate::log_tail();
+    let mut checks = vec![check("the model is verified", if play { "ok" } else { "bad" },
+                                &if play { format!("guard play · sha256 pinned · {}", model.display()) } else { "no verified model loaded".into() })];
+    if let Some(m) = mem {
+        let a = m.available as f64 / 1e9;
+        checks.push(check("memory available", if a < 0.5 { "bad" } else if a < 1.0 { "warn" } else { "ok" }, &format!("{a:.2} GB of {:.2} GB", m.total as f64 / 1e9)));
+        if m.swap_total > 0 {
+            let used = m.swap_total - m.swap_free;
+            let full = m.swap_free * 10 < m.swap_total;
+            checks.push(check("swap", if full { "warn" } else { "ok" }, &format!("{:.2} of {:.2} GB used{}", used as f64 / 1e9, m.swap_total as f64 / 1e9,
+                                                                              if full { " — the machine is paging: speeds drop and measurements are not comparable" } else { "" })));
+        }
+    }
+    if let Some((_, avail)) = disk {
+        let a = avail as f64 / 1e9;
+        checks.push(check("disk space", if a < 2.0 { "warn" } else { "ok" }, &format!("{a:.1} GB available where the model lives ({})", dir.display())));
+    }
+    checks.push(match crate::gpu::worker::status() {
+        Some(g) => check("GPU", "ok", &format!("{} verified · limit {:.0} % of its memory and time · {} products on the card, {} on the CPU (resting {}, memory {}) · shapes: {} card, {} CPU, {} still measured",
+                                               g.card, g.limit * 100.0, g.on_card, g.on_cpu_resting + g.on_cpu_memory, g.on_cpu_resting, g.on_cpu_memory,
+                                               g.shapes_card, g.shapes_cpu, g.shapes_tuning)),
+        None => check("GPU", "info", "no card computes: the CPU does all the arithmetic (BANKML_GPU off, no verified card, or not a 1-bit model)"),
+    });
+    let warned = log.iter().rev().find(|(_, lv, _)| *lv <= crate::LOG_WARN);
+    checks.push(match warned {
+        Some((_, _, m)) => check("the engine log", "warn", m),
+        None => check("the engine log", "ok", &format!("{} messages kept, no warning", log.len())),
+    });
+    format!(
+        "{{\"bankml\": {}, \"at\": {:.3}, \"verified\": {}, \"serve\": {{\"listen\": {}, \"upstream\": {}, \"native\": {}, \"pid\": {}, \"uptime_s\": {up},          \"allow_origin\": {}, \"threads\": {}, \"cache_type\": {}, \"gpu\": {}}}, \"cpu\": {{\"model\": {}, \"logical\": {}, \"mhz\": [{}]}},          \"disk\": {{\"path\": {}, \"total_bytes\": {}, \"available_bytes\": {}, \"model_bytes\": {}, \"read_bytes\": {}, \"write_bytes\": {}}},          \"usage\": {}, \"metrics\": {}, \"checks\": [{}], \"log\": [{}]}}",
+        crate::gguf::jstr(crate::VERSION),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0),
+        verified.unwrap_or_else(|| "null".into()), crate::gguf::jstr(&listen), crate::gguf::jstr(&st.upstream), st.native.is_some(), std::process::id(),
+        st.allow_origin.as_deref().map(crate::gguf::jstr).unwrap_or_else(|| "null".into()), env("BANKML_THREADS"), env("BANKML_CACHE_TYPE"), env("BANKML_GPU"),
+        cpu_name.as_deref().map(crate::gguf::jstr).unwrap_or_else(|| "null".into()), crate::sys::cores(),
+        mhz.iter().map(|m| format!("{m:.0}")).collect::<Vec<_>>().join(", "),
+        crate::gguf::jstr(&dir.to_string_lossy()), opt(disk.map(|d| d.0)), opt(disk.map(|d| d.1)), opt(model_bytes), opt(io.map(|i| i.0)), opt(io.map(|i| i.1)),
+        usage_cached(), crate::metrics::json(), checks.join(", "),
+        log.iter().map(|(at, lv, m)| format!("{{\"at\": {at:.3}, \"level\": {lv}, \"msg\": {}}}", crate::gguf::jstr(m))).collect::<Vec<_>>().join(", "),
+    )
 }
 
 /// `Host` names this machine: 127.0.0.1, localhost or [::1], with or without a port.

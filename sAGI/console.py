@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """bankML · console — talk to bankML as itself (sAGI/personas/bankml.persona), and watch what it measures.
 
-Five tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
-GPU limit as sliders; D3 charts of what bankml measures), **Receipts** (every exchange's receipt, and the iNFT
+Six tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
+GPU limit as sliders; D3 charts of what bankml measures), **Engine** (bankml serve's own status: checks, CPU, memory, disk,
+GPU, the answers measured and the engine's log, drawn by serve's renderer, `bankML/status.js`), **Receipts** (every exchange's receipt, and the iNFT
 commitments: a Merkle root over the exchanges), **Logs** (the engine's log) and **Diagnostics** (measured checks of
 the engine, and every answer's trace: its spans and their durations — `diagnostics.py`, after LlamaIndex's
 instrumentation). A Savante | bankML switch links to
@@ -50,11 +51,20 @@ STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" 
 LOG = STATE / "console.jsonl"
 FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8"), "/vendor/d3.v7.min.js": ("vendor/d3.v7.min.js", "text/javascript"),
-         "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8")}
+         "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8"),
+         # the Engine tab draws bankml serve's status with serve's own renderer (one source for both pages)
+         "/engine.js": (HERE.parent / "bankML" / "status.js", "text/javascript; charset=utf-8"),
+         "/engine.css": (HERE.parent / "bankML" / "status.css", "text/css; charset=utf-8"),
+         # the Ask landing: the ultimate input field, built (console/uif/README.md); the plain box when absent
+         "/uif.js": ("uif/uif.js", "text/javascript; charset=utf-8"), "/uif.css": ("uif/uif.css", "text/css; charset=utf-8"),
+         # the Thesis tab: a scroll whose sections open as an accordion
+         "/thesis.css": ("thesis.css", "text/css; charset=utf-8")}
 LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
 # --public HOST: the one extra host name the console answers as; None = loopback only
 PUBLIC: str | None = None
+# the port this console answers on (for its own component check)
+PORT: int | None = None
 # public mode bounds each answer, as the hosted machine is shared
 PUBLIC_MAX_TOKENS = 384
 _LOCK = threading.Lock()
@@ -139,8 +149,36 @@ def diagnostics() -> dict:
     """The Diagnostics tab: measured checks of the engine now, and the newest answers' traces (spans, durations,
     events). A trace's tags carry counts and statuses, never a question's text, so public mode shows them too."""
     trees = D.HANDLER.trees()
-    return {"checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees),
+    sci = None
+    try:  # the newest scientific.diagnostic (testing/scientific_diagnostic.py): its verdict and summary, every number to 18 decimals
+        d = json.loads((models.LOG.parent / "scientific.diagnostic").read_text())
+        sci = {k: d.get(k) for k in ("at", "verdict", "bankml", "reference", "model", "threads", "precision", "summary", "timing", "answer")}
+    except (OSError, ValueError):
+        pass
+    comps = D.components(SERVE, PORT, PUBLIC is not None)
+    if PUBLIC:  # a public console says how each part is, not where its files are or what its agents are called
+        comps = [{k: c[k] for k in ("component", "file", "role", "level", "ms")} | {"seen": ""} for c in comps]
+    return {"components": comps, "checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees), "scientific": sci,
             "source": "sAGI/diagnostics.py — after LlamaIndex's instrumentation (MIT): SimpleSpan, SimpleSpanHandler"}
+
+
+THESIS_ANCHOR = "thesis--professor-codephreak-and-gregory-l-magnusson"
+
+
+def thesis() -> dict:
+    """The Thesis tab: the authors' thesis and the contributions measured against it, read from docs/TECHNICAL.md
+    (from its `## Thesis` heading to the next `## `), so the page and the report never drift apart."""
+    try:
+        text = (HERE.parent / "docs" / "TECHNICAL.md").read_text(encoding="utf-8")
+    except OSError as e:
+        return {"error": str(e)}
+    start = text.find("\n## Thesis")
+    end = text.find("\n## ", start + 5)
+    if start < 0:
+        return {"error": "docs/TECHNICAL.md has no Thesis section"}
+    return {"markdown": text[start + 1:end if end > 0 else None].strip(), "source": "docs/TECHNICAL.md",
+            "url": f"https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md#{THESIS_ANCHOR}",
+            "base": "https://github.com/cryptoAGI/bankml/blob/main/docs/"}
 
 
 def infotags() -> dict:
@@ -209,7 +247,10 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in FILES:
             name, ctype = FILES[path]
-            return self._send(200, (STATIC / name).read_bytes(), ctype)
+            try:
+                return self._send(200, (STATIC / name).read_bytes(), ctype)
+            except OSError:
+                return self._send(404, b"not built", "text/plain")
         if path == "/api/state":
             return self._json(state())
         if path == "/api/log":
@@ -219,6 +260,11 @@ class H(BaseHTTPRequestHandler):
             return self._json(infotags())
         if path == "/api/diagnostics":
             return self._json(diagnostics())
+        if path == "/api/thesis":
+            return self._json(thesis())
+        if path == "/api/engine":
+            s = _get("/bankml/status", 10)
+            return self._json(s) if s is not None else self._json({"error": f"bankml serve does not answer at {SERVE}"}, 502)
         self._send(404, b"not found", "text/plain")
 
     def _body(self):
@@ -330,8 +376,8 @@ def main():
     ap.add_argument("--port", type=int, default=7875)
     ap.add_argument("--public", metavar="HOST", help="also answer as HOST, read-only and keeping no questions (a hosted demo)")
     a = ap.parse_args()
-    global PUBLIC
-    PUBLIC = a.public
+    global PUBLIC, PORT
+    PUBLIC, PORT = a.public, a.port
     if a.host not in ("127.0.0.1", "localhost", "::1") and not PUBLIC:
         sys.exit("the console is loopback only: it can restart the engine (use view.py for the LAN, --public for a hosted demo)")
     print(f"bankML console on http://{a.host}:{a.port} — bankml serve at {SERVE}")

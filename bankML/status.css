@@ -1,0 +1,26 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+/* bankml serve's status: shared by serve's own page and the console's Engine tab (bs- prefix; colors from the page's tokens) */
+.bs-checks { list-style: none; margin: 0 0 22px; padding: 0; border-top: 1px solid var(--line, #262a31); }
+.bs-checks li { display: grid; grid-template-columns: 22px 200px 1fr; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--line, #262a31); font-size: 14px; }
+.bs-mark { font-weight: 700; }
+.bs-ok .bs-mark { color: var(--ok, #4ade80); }
+.bs-warn .bs-mark { color: #d97706; }
+.bs-bad .bs-mark { color: var(--bad, #f87171); }
+.bs-info .bs-mark { color: var(--faint, #6b7280); }
+.bs-seen { font: 12.5px/1.5 var(--mono, ui-monospace, monospace); color: var(--muted, #a3a9b4); overflow-wrap: anywhere; }
+.bs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.bs-card { background: var(--surface, #15181d); border: 1px solid var(--line, #262a31); border-radius: 14px; padding: 14px 18px;
+           box-shadow: var(--lift, 0 1px 2px rgba(0,0,0,.25), 0 12px 28px -10px rgba(0,0,0,.45)); }
+.bs-card h3, .bs-loghead { margin: 0 0 10px; font-size: 12.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted, #a3a9b4); }
+.bs-facts { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; font-size: 13.5px; }
+.bs-facts dt { color: var(--muted, #a3a9b4); }
+.bs-facts dd { margin: 0; font: 12.5px var(--mono, ui-monospace, monospace); text-align: right; overflow-wrap: anywhere; }
+.bs-meterbox { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.bs-meter { flex: 1; height: 6px; border-radius: 3px; background: var(--q, #1b1f26); overflow: hidden; }
+.bs-fill { display: block; height: 100%; width: 0; background: var(--accent, #5eead4); }
+.bs-meterlabel { font: 11.5px var(--mono, ui-monospace, monospace); color: var(--faint, #6b7280); }
+.bs-loghead { margin-top: 24px; }
+.bs-log { font: 12px/1.5 var(--mono, ui-monospace, monospace); background: var(--q, #1b1f26); border-radius: 10px; padding: 12px; max-height: 420px;
+          overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.bs-foot { color: var(--faint, #6b7280); font-size: 12px; margin-top: 14px; }
+@media (max-width: 640px) { .bs-checks li { grid-template-columns: 22px 1fr; } .bs-seen { grid-column: 2; } }

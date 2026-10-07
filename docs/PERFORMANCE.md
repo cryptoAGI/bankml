@@ -272,7 +272,7 @@ JSON on its own costs almost nothing: `bankml generate --json` on the cat prompt
 grammar per token.
 
 The mask was a straight port of llama.cpp's `reject_candidates`, which walks every candidate's code points per grammar
-stack. 0.3.9 replaced it with a trie over the vocabulary's code points, under the same oracle: see
+stack. 0.4.0 replaced it with a trie over the vocabulary's code points, under the same oracle: see
 [the next section](#the-grammar-mask-through-a-trie-039-unreleased).
 
 ## F16 and the Llama graph (0.3.4) — laptop, against llama-server b11192
@@ -334,13 +334,13 @@ recorded 1.9–2.0 against 2.8 before. Whether 1-bit decode is now at parity nee
 measurement (`testing/pinned.sh`); it is not claimed here. The method is in
 [1-bit decode against llama-server](#1-bit-decode-against-llama-server-039-pending).
 
-## The grammar mask, through a trie (0.3.9, unreleased)
+## The grammar mask, through a trie (0.4.0, unreleased)
 
 A whole-vocabulary mask now walks a trie of the vocabulary's code points, built once: each grammar stack meets a
 shared prefix once ([grammar.rs](modules/grammar.md)). `oracle_grammar_masks`, over the same 1,645 masks as the 0.3.3
-table above (CHANGELOG 0.3.9):
+table above (CHANGELOG 0.4.0):
 
-| one whole-vocabulary mask, 151,669 tokens | trie (0.3.9) | the port of `reject_candidates` |
+| one whole-vocabulary mask, 151,669 tokens | trie (0.4.0) | the port of `reject_candidates` |
 |---|---:|---:|
 | median | **2.94 ms** | 38.8 ms |
 | p90 | **49.3 ms** | 80.6 ms |
@@ -349,15 +349,15 @@ The median is 13× faster. The oracle computes every mask both ways: 196 / 196 r
 identical to llama.cpp b11192 by each. The port's median here (38.8 ms) is higher than the 0.3.3 gate's 24.2 ms. They
 are different runs on the same laptop; compare the two columns of one run, not runs with each other.
 
-## The q8_0 KV cache (0.3.9, unreleased): memory
+## The q8_0 KV cache (0.4.0, unreleased): memory
 
 `BANKML_CACHE_TYPE=q8_0` keeps K and V as q8_0 blocks, as llama.cpp's `--cache-type-k/v q8_0`: **53 % of the f16
 cache's bytes** (q8_0 stores 34 bytes per 32 values, f16 64). Its answers are token-identical to llama-server so
-configured (`kv_oracle_live`, 6 / 6; CHANGELOG 0.3.9). Its speed is not measured yet. A q8_0 cache has no tiled or
+configured (`kv_oracle_live`, 6 / 6; CHANGELOG 0.4.0). Its speed is not measured yet. A q8_0 cache has no tiled or
 split-KV attention kernel, as in ggml, so long prefills are expected to be slower than with f16
 ([forward.rs](modules/forward.md)).
 
-## 1-bit decode against llama-server (0.3.9, pending)
+## 1-bit decode against llama-server (0.4.0)
 
 The open question of 0.4.0 is whether 1-bit decode is at least at llama-server's speed. The paired checks above were
 taken on a loaded laptop and are hints. The method for the answer is `testing/decode_ab.py`:
@@ -373,4 +373,29 @@ BANKML_GGML_LIB=<b11192 release dir> BANKML_PIN_CPUS=1,2,3 BANKML_PIN_MEM=3000M 
 - The answers must be token-identical, or the round is refused.
 - It prints every round and the medians; the ratio is bankML ÷ llama-server (above 1: bankML faster).
 
-No result is recorded here yet. It will be, with the machine's load, when it is run on an idle machine.
+**The result, 2026-10-06/07** (bankML at b71109e: `cache_prompt: false` honoured, Q/K/V and gate/up in one wake
+of the pool), Bonsai-8B-Q1_0, three threads on CPUs 1–3, a 3,000 MB cap, 64 tokens greedy:
+
+| round | first | bankML decode | llama-server decode | ratio | prompt (bankML / llama-server) | answers |
+|---|---|---|---|---|---|---|
+| 1 | llama-server | 0.93 tok/s | 0.77 | 1.20× | 1.9 / 2.2 | identical (64 tokens) |
+| 2 | bankML | 2.02 | 0.95 | 2.12× | 2.1 / 2.5 | identical |
+| 3 | llama-server | 2.17 | 0.63 | 3.45× | 2.9 / 2.4 | identical |
+| **median** | | **2.02** | **0.77** | **2.63×** | 2.1 / 2.4 (0.89×) | |
+
+What the machine was doing, said plainly:
+- It was not idle. The load before was 1.22 and after 4.47. Swap was full: kswapd ran, a browser ran, and two
+  `vite` builds overlapped round 1 on CPU 0, the SMT sibling of CPU 1.
+- llama-server's numbers are far below its own idle `llama-bench` (2.12 tok/s, pinned the same way, the same evening).
+  So under memory pressure llama-server lost more than bankML did; the ratio is not bankML's idle advantage.
+- The question 0.4.0 asks is answered all the same. Under identical conditions, in every round and in either order,
+  bankML decoded at least as fast as llama-server, with token-identical answers.
+- Against llama-server's idle 2.12, bankML's 2.02–2.17 is level.
+
+Two earlier attempts were refused or misleading, and the record keeps them:
+- The first (2026-10-06, before 5ea6121) refused its first round: the answers parted at about 40 tokens. bankML
+  ignored `cache_prompt: false` and reused the warm-up's prefix; it now honours the flag.
+- The second (same evening) gave 0.94× and 0.74× on a loaded machine.
+
+So the importer's `auto` engine now chooses bankML's own forward pass for the 1-bit files as well as the ternary
+ones (`sAGI/models.py`, `AUTO_NATIVE_Q1`).

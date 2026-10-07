@@ -5,7 +5,7 @@ gate that verifies it, and Savante's page. New to Savante's page and her voice? 
 Every flag, environment variable and service setting is in **[install.md](install.md)**; each source module, its
 use and its limits, in **[modules/](modules/README.md)**.
 
-This guide covers the latest release, 0.3.6. Sections marked 0.3.7, 0.3.8 or 0.3.9 describe the next release, which
+This guide covers the latest release, 0.3.6. Sections marked 0.3.7, 0.3.8 or 0.4.0 describe the next release, which
 is not yet tagged; the details are in the *Unreleased* sections of [CHANGELOG.md](../CHANGELOG.md).
 
 - [1. Install](#1-install)
@@ -105,7 +105,7 @@ What runs where:
 
 - **bankml serve** is the gate. It refuses to start unless the model passes the guard, its sha256 equals the pin in
   the model's `FORK.json`, and llama-server serves that same file. Every answer carries a receipt (§9).
-- **With the native engine** (`--native`; Savante's `auto` engine setting chooses it for the ternary files), there is
+- **With the native engine** (`--native`; Savante's `auto` engine setting chooses it for the 1-bit and ternary files), there is
   no llama-server: `bankml serve` computes the answer itself and also listens on 18092 with llama-server's endpoints.
 - **Savante's page** is reachable only from this computer.
 - **View mode** is a read-only page for others on your network (§7).
@@ -247,7 +247,7 @@ In the next release (not yet tagged); each is checked against llama-server b1119
   llama-server `-np 1`. Like llama-server, it keeps the states of other conversations in RAM (`BANKML_CACHE_RAM`, MiB;
   0 off, -1 no limit; unset, 8192 MiB but at most a quarter of the memory available at load), so a conversation that comes back after
   another does not recompute its whole history.
-- **Your bankML from a web page (0.3.9).** `./install.sh start --space` lets the bankML Spaces' pages
+- **Your bankML from a web page (0.4.0).** `./install.sh start --space` lets the bankML Spaces' pages
   ([PYTHAI/bankml](https://huggingface.co/spaces/PYTHAI/bankml), *Your own bankML*, and [PYTHAI/ultimate-bankml-ui](https://huggingface.co/spaces/PYTHAI/ultimate-bankml-ui)) talk to your own `bankml serve`
   from your browser: your CPU, your verified model, a receipt on every answer, nothing sent anywhere else. It starts
   serve with `--allow-origin` for those two origins, so only those pages get CORS headers;
@@ -260,7 +260,7 @@ In the next release (not yet tagged); each is checked against llama-server b1119
   - Then comes SELF, measured just now, and then the conversation's past exchanges.
   - `.history` keeps every answer with its receipt, as `savante.history` does.
   - `.model` shows the verified model serve reads from `GET /bankml`.
-- **A smaller conversation memory (0.3.9, in progress).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
+- **A smaller conversation memory (0.4.0).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
   about half the memory, so a long context fits on a small machine. It is llama.cpp's `--cache-type-k q8_0
   --cache-type-v q8_0` exactly, with the Hadamard rotation llama.cpp applies around a quantized cache, and gives the
   same tokens as llama-server so configured (`testing/kv_oracle.py`). A slot saved with one cache type is refused by
@@ -474,7 +474,7 @@ bankML's own interface, deliberately unlike Savante's — a quiet page, light or
   Merkle root over the exchanges with their CID. The exchanges stay on this machine; the root lets a holder check any
   one of them. Download it as JSON.
 - **Logs**: the engine's own log.
-- **Diagnostics** (0.3.9): checks measured when the tab opens — does `bankml serve` answer and how fast, is the model
+- **Diagnostics** (0.4.0): checks measured when the tab opens — does `bankml serve` answer and how fast, is the model
   verified, what the metrics and memory say, the engine log's last error — and the trace of each recent answer: the
   span `ask` and inside it `self_block`, `engine.stream` (with the moments its headers, first piece and receipt
   arrived), `metrics`, `log.write` and `receipt.verify`, each with its duration. A slow answer shows where its time
@@ -794,6 +794,8 @@ A speed counts only if every oracle passed on the same code. See [testing/README
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
 | `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage`, with (0.3.7, next release) package watts when RAPL is readable (`./install.sh power`), each GPU's busy %, VRAM and GTT, and the GPU limiter's state |
 | `GET /bankml/metrics` | (0.3.7, next release) bankML's own measurements of its last 256 answers: TTFT, prompt and generation tokens per second, grammar time, energy and joules per token where measured; totals |
+| `GET /bankml/status` | (0.4.0) everything the engine measures of itself in one answer: the verified model, serve's settings, CPU (model, clocks), memory and swap, the model's disk (total, available, bytes read and written), GPUs and the limiter, the answers measured, the checks drawn from them, and the newest 200 log messages |
+| `GET /` from a browser | (0.4.0) that status as a page, refreshed every 3 s; any other client gets Ollama's plain `bankml is running…` |
 | `python3 sAGI/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 sAGI/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
 | `python3 sAGI/console.py [--port 7875]` | (0.3.7, next release) the bankML console, loopback only (§6c) |
@@ -837,4 +839,4 @@ The variables below are the ones a user meets most. The complete list, with wher
 | `BANKML_VOICE_DIR`, `BANKML_EXPORT_DIR` | `sAGI/voice/cache`, `sAGI/voice/export` | voice clips and the two exports |
 | `BANKML_VOICE_ASYNC` | `1` | `0` stops the UI rendering missing clips in the background |
 | `BANKML_CACHE_RAM` | 8192 MiB, at most a quarter of the memory available at load | (0.3.8, next release) the native engine's host prompt cache in MiB, as llama-server's `--cache-ram` (0 off, -1 no limit) |
-| `BANKML_CACHE_TYPE` | `f16` | (0.3.9, in progress) `q8_0` keeps the native KV cache as llama.cpp's `--cache-type-k/v q8_0` (§6) |
+| `BANKML_CACHE_TYPE` | `f16` | (0.4.0) `q8_0` keeps the native KV cache as llama.cpp's `--cache-type-k/v q8_0` (§6) |

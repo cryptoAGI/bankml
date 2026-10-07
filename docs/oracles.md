@@ -16,7 +16,7 @@ the THOT spec's vectors, Hugging Face's and Ollama's sha256 for a model file), a
 This file lists every oracle bankml uses, what it checks, how to run it, and what it last found. The results are in
 [`testing/results/`](../testing/results/), one record per release, written by
 [`testing/release_gate.sh`](../testing/release_gate.sh). The latest record is 0.3.6's; figures marked 0.3.7, 0.3.8 or
-0.3.9 are from [CHANGELOG.md](../CHANGELOG.md) for versions not yet released, and reach `testing/results/` when each
+0.4.0 are from [CHANGELOG.md](../CHANGELOG.md) for versions not yet released, and reach `testing/results/` when each
 is cut. Each module's own oracles are also listed on its page in [modules/](modules/README.md), under *How it is
 verified*.
 
@@ -56,14 +56,14 @@ end of this file they are not oracles.
 | `oracle_greedy_llama_server`, `_ternary`, `_long`, `_deep` | greedy tokens, short, long and deep prompts | llama-server | §1d |
 | `oracle_sample_llama_server` | seeded sampling, 40 continuations | llama-server | §1d |
 | `oracle_native_serve` | three conversations, 9 turns: text, counts, cache reuse | llama-server `/v1` | §1d |
-| `oracle_grammar_masks` | whole-vocabulary masks, both paths since 0.3.9 | libllama's grammar sampler | §5c, §5h |
+| `oracle_grammar_masks` | whole-vocabulary masks, both paths since 0.4.0 | libllama's grammar sampler | §5c, §5h |
 | `oracle_json_mode`, `oracle_json_mode_ternary` | answers under JSON mode and user grammars | llama-server | §5c |
 | `oracle_schema_grammars`, `oracle_json_schema`, `oracle_json_schema_ternary`, `oracle_json_schema_o4`, `oracle_json_content` | schema grammars, answers under schemas, the content rule | llama.cpp's own code; llama-server | §5e |
 | `oracle_persona_layer` | mindX's persona Modelfile, two ways | llama-server with the persona as system message | §5e |
 | `oracle_penalties`, `oracle_penalties_8b` | the repeat, frequency and presence penalties | llama-server | §5f |
 | `oracle_samplers`, `oracle_samplers_8b` (0.3.7) | typical-p, top-n-σ, XTC, dynamic temperature, DRY | llama-server | §5f |
 | `oracle_std_sort` (0.3.7) | `std::sort`'s order of equal keys | libstdc++ | §5f |
-| `oracle_ggml_b11192_q8_0_kv_kernels` (0.3.9) | the `q8_0` KV cache's quantizer and dot product | the shipped ggml | §5h |
+| `oracle_ggml_b11192_q8_0_kv_kernels` (0.4.0) | the `q8_0` KV cache's quantizer and dot product | the shipped ggml | §5h |
 | `gpu_q1_0_mat_vec_bit_exact` | the GPU kernels on every usable card | the CPU kernel, itself proven against ggml | §1d (0.2.13) |
 | `oracle_train_script`, `oracle_train_imprint` | mindXtrain's author and score stages | mindXtrain's Python | §1d (0.2.13) |
 | `oracle_ggml_b11192_real_bonsai_1_7b`, `_real_bonsai_8b_q1_0`, `_real_ternary_bonsai_8b` | every weight, `q8_0` rows, dot products | the shipped ggml | §1 |
@@ -77,7 +77,7 @@ end of this file they are not oracles.
 | `context_oracle_live` (0.3.8) | the context limit | llama-server's record | §5g |
 | `slot_oracle_live` (0.3.8) | slot save, restore and erase | the engine's own empty-slot answer; llama-server's refusals | §5g |
 | `session_oracle_live` (0.3.8) | interleaved conversations; simultaneous requests | llama-server's record; the queue against itself | §5g |
-| `kv_oracle_live` (0.3.9) | answers over a `q8_0` KV cache | llama-server with `--cache-type-k/v q8_0` | §5h |
+| `kv_oracle_live` (0.4.0) | answers over a `q8_0` KV cache | llama-server with `--cache-type-k/v q8_0` | §5h |
 | `logprobs_oracle_live` (0.3.8) | logprobs, streamed and not | llama-server's record | §5g |
 | `json_oracle_live`, `json_schema_oracle_live` | JSON mode and schemas live on the 8B model | llama-server's records | §5c, §5e |
 | `capi_chat_oracle` | `bankml_chat` | `serve --native`; llama-server's record | §5b |
@@ -569,7 +569,7 @@ on Bonsai-1.7B.
   split UTF-8, and its refusals. Five cases are streamed, and there every chunk's delta and entry must match.
   **14 of 14.**
 
-## 5h. The q8_0 KV cache and the grammar trie (0.3.9, in progress)
+## 5h. The q8_0 KV cache and the grammar trie (0.4.0)
 
 - **The KV cache's kernels** (`oracle_ggml_b11192_q8_0_kv_kernels`, `forward.rs`). The shipped haswell library,
   loaded with `dlopen`: `quantize_row_q8_0` byte for byte and `ggml_vec_dot_q8_0_q8_0` bit for bit, on random

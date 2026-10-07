@@ -5,7 +5,7 @@ One page per module of `bankML/` (and the C API in `capi/`). Each says what the 
 (**How it is verified**), why it is useful and how it keeps processing efficient (**Advantages and efficiency**), and
 what it refuses or does not do yet (**Limitations**), then links (**See also**). Where a module has history or
 rationale worth keeping, it is under **Design notes**. Release state: 0.3.6 is the last
-release; 0.3.7, 0.3.8 and 0.3.9 (in progress) are unreleased, and each page marks what they added by version
+release; 0.3.7 and 0.3.8 are released and 0.4.0 is in its release gate, and each page marks what they added by version
 ([../../CHANGELOG.md](../../CHANGELOG.md)).
 
 The code's own comments stay short and definitive — each file's header ends with `Details: docs/modules/<name>.md`
@@ -41,12 +41,12 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [sys.md](sys.md) | `sys.rs` | machine facts and the process's usage (`bankml usage`, `/bankml/usage`): CPU, memory, GPU busy and memory, package power |
 | [metrics.md](metrics.md) | `metrics.rs` | bankML's own measurements of its answers: TTFT, pp and tg tokens/s, energy per token (`/bankml/metrics`) |
 | **The model** | | |
-| [forward.md](forward.md) | `forward.rs` | the Qwen3 and Llama graphs, the KV cache (f16, or q8_0 with llama.cpp's rotation, 0.3.9), ggml's three attention kernels |
+| [forward.md](forward.md) | `forward.rs` | the Qwen3 and Llama graphs, the KV cache (f16, or q8_0 with llama.cpp's rotation, 0.4.0), ggml's three attention kernels |
 | [tokenizer.md](tokenizer.md) | `tokenizer.rs`, `unicode_letters.rs` | llama.cpp's tokenizer and pre-tokenizers |
 | [chat.md](chat.md) | `chat.rs` | the chat templates, byte-identical, chosen by the template's sha |
 | **The answer** | | |
 | [sampler.md](sampler.md) | `sampler.rs` | llama-server's whole default sampler chain (0.3.7), same seed same tokens |
-| [grammar.md](grammar.md) | `grammar.rs` | llama.cpp's GBNF engine, JSON mode and the content rule; the vocabulary trie (0.3.9) |
+| [grammar.md](grammar.md) | `grammar.rs` | llama.cpp's GBNF engine, JSON mode and the content rule; the vocabulary trie (0.4.0) |
 | [schema.md](schema.md) | `schema.rs` | `json_schema_to_grammar` and the chat wrapping, per template |
 | **Serving** | | |
 | [native.md](native.md) | `native.rs` | the engine: the slot and prompt cache, the registry, one resident model |

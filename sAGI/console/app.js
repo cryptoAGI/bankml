@@ -3,6 +3,14 @@
 // nothing bankML did not measure is drawn or filled in ("not measured"); every receipt is checked in the browser.
 "use strict";
 const $ = (id) => document.getElementById(id);
+// a popped-out output window of the input field shows only that output
+if (window.BankmlUIF && BankmlUIF.isOutputWindow()) {
+  document.body.textContent = "";
+  const w = document.createElement("div");
+  document.body.append(w);
+  BankmlUIF.mount(w);
+  throw new Error("bankML: an output window, nothing else to run here");
+}
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 const fmt = (v, d = 1, unit = "") => (v === null || v === undefined || Number.isNaN(+v)) ? "not measured" : `${(+v).toFixed(d)}${unit}`;
 const GB = 1e9, MB = 1e6, KEEP = 150;
@@ -23,6 +31,8 @@ function show(tab) {
   if (tab === "receipts") loadReceipts();
   if (tab === "logs") loadLogs();
   if (tab === "diagnostics") loadDiagnostics();
+  if (tab === "engine") loadEngine();
+  if (tab === "thesis") loadThesis();
   if (tab === "ask") $("q").focus();
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
@@ -185,6 +195,128 @@ async function loadLogs() {
   const j = await (await fetch("/api/log")).json();
   $("englog").textContent = (j.engine_log || []).join("\n") || "the engine has written nothing yet";
 }
+// ── Thesis: docs/TECHNICAL.md's thesis section, as DOM nodes (never innerHTML) ──────────────────────────────────
+// Inline: **bold**, *italic*, `code`, [text](url). Blocks: ### headings, numbered or dashed lists, paragraphs.
+function inline(parent, text, base) {
+  const re = /(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\))/g;
+  let at = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > at) parent.append(text.slice(at, m.index));
+    if (m[2] !== undefined) { const b = el("strong"); inline(b, m[2], base); parent.append(b); }
+    else if (m[3] !== undefined) { const i = el("em"); inline(i, m[3], base); parent.append(i); }
+    else if (m[4] !== undefined) parent.append(el("code", null, m[4]));
+    else {
+      const href = /^(https?:)?\/\//.test(m[6]) ? m[6] : m[6].startsWith("#") ? base + "TECHNICAL.md" + m[6] : base + m[6];
+      const a = el("a"); a.href = href; a.target = "_blank"; a.rel = "noreferrer"; inline(a, m[5], base); parent.append(a);
+    }
+    at = re.lastIndex;
+  }
+  if (at < text.length) parent.append(text.slice(at));
+}
+function markdown(root, md, base) {
+  root.textContent = "";
+  const blocks = md.split(/\n\s*\n/);
+  for (const raw of blocks) {
+    const lines = raw.split("\n");
+    const first = lines[0];
+    let h;
+    if ((h = /^(#{2,4})\s+(.*)$/.exec(first))) { const e = el(h[1].length === 2 ? "h2" : "h3", "prose-h"); inline(e, h[2], base); root.append(e); continue; }
+    if (/^(\d+\.|-)\s/.test(first)) {
+      const list = el(/^\d/.test(first) ? "ol" : "ul");
+      let cur = null;
+      for (const l of lines) {
+        const item = /^(\d+\.|-)\s+(.*)$/.exec(l);
+        if (item) { cur = el("li"); list.append(cur); inline(cur, item[2], base); }
+        else if (cur) { cur.append(" "); inline(cur, l.trim(), base); }
+      }
+      root.append(list);
+      continue;
+    }
+    const p = el("p");
+    inline(p, lines.map((l) => l.trim()).join(" "), base);
+    root.append(p);
+  }
+}
+// The thesis as a scroll of accordions: a paragraph led by **a principle.** and each numbered contribution become
+// <details>, titled by their bold lead. A section opens as it scrolls into view; one the reader closes stays closed.
+function fold(root) {
+  const items = [];
+  const make = (lead, body, n) => {
+    const d = el("details", "fold");
+    const s = el("summary");
+    if (n) s.append(el("span", "fold-n", String(n).padStart(2, "0")));
+    s.append(lead);
+    d.append(s, body);
+    items.push(d);
+    return d;
+  };
+  for (const p of [...root.querySelectorAll(":scope > p")]) {
+    const lead = p.firstChild;
+    if (!lead || lead.nodeName !== "STRONG") continue;
+    p.removeChild(lead);
+    const body = el("div", "fold-body");
+    body.append(p.cloneNode(true));
+    p.replaceWith(make(lead, body));
+  }
+  for (const ol of [...root.querySelectorAll(":scope > ol")]) {
+    const box = el("div", "folds");
+    [...ol.children].forEach((li, i) => {
+      const lead = li.firstChild && li.firstChild.nodeName === "STRONG" ? li.removeChild(li.firstChild) : el("strong", null, "Contribution " + (i + 1));
+      const body = el("div", "fold-body");
+      body.append(...li.childNodes);
+      box.append(make(lead, body, i + 1));
+    });
+    ol.replaceWith(box);
+  }
+  return items;
+}
+let thesisLoaded = false;
+async function loadThesis() {
+  if (thesisLoaded) return;
+  const j = await (await fetch("/api/thesis")).json();
+  if (j.error) { $("thesis-body").textContent = j.error; return; }
+  markdown($("thesis-body"), j.markdown, j.base);
+  $("thesis-src").href = j.url;
+  const items = fold($("thesis-body"));
+  $("thesis-count").textContent = `${items.length} sections`;
+  const scroller = $("thesis-scroll"), bar = $("thesis-bar");
+  // on a narrow screen the thesis scrolls with the page (thesis.css), so the page is what is watched
+  const narrow = matchMedia("(max-width: 640px)").matches;
+  // the reader's own choice wins over the scroll
+  items.forEach((d) => d.querySelector("summary").addEventListener("click", () => { d.dataset.chosen = "1"; }));
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    const d = e.target;
+    if (e.isIntersecting && !d.dataset.chosen) d.open = true;
+  }), { root: narrow ? null : scroller, rootMargin: "0px 0px -35% 0px", threshold: 0 });
+  items.forEach((d) => io.observe(d));
+  const progress = () => {
+    let f;
+    if (narrow) {
+      const r = scroller.getBoundingClientRect(), span = r.height - innerHeight;
+      f = span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 1;
+    } else {
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      f = max > 0 ? scroller.scrollTop / max : 1;
+    }
+    bar.style.width = (100 * f).toFixed(1) + "%";
+  };
+  (narrow ? window : scroller).addEventListener("scroll", progress, { passive: true });
+  progress();
+  $("thesis-open").onclick = () => items.forEach((d) => { d.open = true; d.dataset.chosen = "1"; });
+  $("thesis-close").onclick = () => items.forEach((d) => { d.open = false; d.dataset.chosen = "1"; });
+  thesisLoaded = true;
+}
+// ── Engine: bankml serve's status, every 3 s while the tab is open ─────────────────────────────────────────────────
+async function loadEngine() {
+  const root = $("engine-status");
+  try {
+    const r = await fetch("/api/engine");
+    const j = await r.json();
+    if (!r.ok) { root.textContent = j.error || "bankml serve did not answer"; return; }
+    BankmlStatus.render(root, j);
+  } catch (e) { root.textContent = "bankml serve did not answer: " + e; }
+}
+setInterval(() => { if ($("engine").classList.contains("active")) loadEngine(); }, 3000);
 // ── Diagnostics ─────────────────────────────────────────────────────────────────────────────────────────────────
 function spanNode(n, total) {
   const li = el("li", "span" + (n.error ? " bad" : "") + (n.open ? " open" : ""));
@@ -206,8 +338,22 @@ function spanNode(n, total) {
   }
   return li;
 }
+function componentCard(c) {
+  const card = el("article", "comp " + c.level);
+  const head = el("header");
+  head.append(el("span", "chip " + c.level, c.level === "ok" ? "ready" : c.level === "info" ? "idle" : c.level === "warn" ? "check" : "failing"),
+    el("h3", null, c.component), el("span", "ms", c.ms + " ms"));
+  card.append(head, el("p", "role", c.role), el("code", "file", c.file));
+  if (c.seen) card.append(el("p", "seen", c.seen));
+  return card;
+}
 async function loadDiagnostics() {
   const j = await (await fetch("/api/diagnostics")).json();
+  const comps = j.components || [], grid = $("components");
+  grid.textContent = "";
+  comps.forEach((c) => grid.append(componentCard(c)));
+  const n = (l) => comps.filter((c) => c.level === l).length;
+  $("diag-sum").textContent = comps.length ? `${n("ok")} ready · ${n("info")} idle · ${n("warn")} to check · ${n("bad")} failing` : "";
   const ul = $("checks"); ul.textContent = "";
   for (const c of j.checks) {
     const li = el("li", c.level);
@@ -225,6 +371,23 @@ async function loadDiagnostics() {
     tr.append(box);
   }
   $("trace-text").textContent = j.text || "";
+  const sc = $("scientific"), x = j.scientific;
+  if (x) {
+    sc.textContent = "";
+    const s = x.summary || {};
+    const dl = el("dl", "facts");
+    const add = (k, v) => dl.append(el("dt", null, k), el("dd", null, v));
+    add("verdict", `${x.verdict} — ${s.bits_equal} of ${s.tokens} tokens bit-equal (top-5 included)`);
+    add("model", `${(x.model || {}).name} · ${String((x.model || {}).sha256 || "").slice(0, 16)}… · bankML ${x.bankml} · ${x.threads} threads`);
+    add("max |Δ| logprob", s.max_abs_delta);
+    add("log-likelihood", `${(s.log_likelihood || {}).bankml} (bankML) · ${(s.log_likelihood || {}).reference} (llama.cpp)`);
+    add("perplexity", `${(s.perplexity || {}).bankml} · ${(s.perplexity || {}).reference}`);
+    const t = x.timing || {};
+    add("generation", `${(t.bankml || {}).predicted_tokens_per_s} tok/s (bankML) · ${(t.reference || {}).predicted_tokens_per_s} (llama.cpp)`);
+    add("resolution", `values ${(x.precision || {}).unit}; time ${(x.precision || {}).time_resolution_s} s (${(x.precision || {}).time_note})`);
+    add("measured", x.at);
+    sc.append(dl);
+  }
   $("diag-source").textContent = j.source || "";
 }
 $("diag-refresh").addEventListener("click", loadDiagnostics);
@@ -235,4 +398,11 @@ $("download").addEventListener("click", () => {
 });
 
 poll(); setInterval(poll, 2000);
-$("q").focus();
+// the Ask landing: the ultimate input field when it is built (uif/), the plain box otherwise
+if (window.BankmlUIF) {
+  $("form").hidden = true;
+  $("ask").classList.add("uif");
+  BankmlUIF.mount($("uif-landing"), { placeholder: "Ask bankML — T for terminal mode" });
+} else {
+  $("q").focus();
+}

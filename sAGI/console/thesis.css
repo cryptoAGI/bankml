@@ -1,0 +1,36 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+/* The Thesis tab: a scroll of accordions. The window body scrolls on its own with a progress line along its top; each
+   principle and each contribution is a <details> that opens as it comes into view (app.js fold/loadThesis). */
+.thesis-tools { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--line); }
+.thesis-tools .quiet { flex: 1; font-size: 13px; }
+.thesis-tools button { padding: 5px 12px; font-size: 13px; }
+.thesis-scroll { position: relative; max-height: min(72vh, 900px); overflow-y: auto; overscroll-behavior: contain; padding: 0 22px 22px;
+                 scroll-padding-top: 12px; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+                 /* a soft fade at the bottom says there is more */
+                 mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+.thesis-progress { position: sticky; top: 0; z-index: 1; height: 3px; margin: 0 -22px 14px; background: var(--q); }
+.thesis-progress span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+
+.fold { border: 1px solid var(--line); border-radius: 12px; margin: 0 0 12px; background: var(--surface); box-shadow: var(--lift);
+        transition: box-shadow .2s ease; }
+.fold[open] { box-shadow: var(--lift-hover); }
+.fold summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 12px; padding: 13px 16px; font-size: 16px;
+                line-height: 1.45; border-radius: 12px; }
+.fold summary::-webkit-details-marker { display: none; }
+.fold summary::after { content: "+"; margin-left: auto; padding-left: 12px; color: var(--faint); font: 600 18px/1 var(--mono); transition: transform .2s ease; }
+.fold[open] summary::after { transform: rotate(45deg); }
+.fold summary:hover { background: color-mix(in srgb, var(--q) 60%, transparent); }
+.fold summary:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 2px; }
+.fold summary strong { font-weight: 650; }
+.fold-n { font: 600 12px var(--mono); color: var(--accent); min-width: 2ch; }
+.fold-body { padding: 0 16px 6px; border-top: 1px solid var(--line); animation: unfold .22s ease; }
+.fold-body p { margin: 12px 0; }
+.folds { margin: 4px 0 8px; }
+@keyframes unfold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .fold-body, .fold summary::after, .thesis-progress span { animation: none; transition: none; } }
+@media (max-width: 640px) {
+  .thesis-scroll { max-height: none; overflow: visible; mask-image: none; padding: 0 14px 14px; }
+  .thesis-progress { margin: 0 -14px 10px; }
+  .fold summary { font-size: 15px; padding: 12px 12px; }
+  .fold-body { padding: 0 12px 4px; }
+}

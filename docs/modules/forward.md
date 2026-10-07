@@ -37,7 +37,7 @@ outside the reproduced graph is an `Err` that names the tensor or key and why (s
 ```rust
 pub fn Weights::open(path: &Path) -> Result<Self, String>
 pub fn caches(&self) -> Vec<KvCache>                       // f16
-pub fn caches_of(&self, kind: KvType) -> Vec<KvCache>      // 0.3.9: KvType::F16 or KvType::Q8_0
+pub fn caches_of(&self, kind: KvType) -> Vec<KvCache>      // 0.4.0: KvType::F16 or KvType::Q8_0
 pub fn prefill(&self, caches: &mut [KvCache], tokens: &[u32], each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<f32>, String>
 pub fn prefill_with(&self, caches: &mut [KvCache], tokens: &[u32], outputs: Outputs, each: impl FnMut(usize, usize, &[f32])) -> Result<Vec<Vec<f32>>, String>
 pub fn decode(&self, caches: &mut [KvCache], token: u32) -> Result<Vec<f32>, String>
@@ -51,7 +51,7 @@ pub fn logits_rows(&self, result_norms: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, St
 - `caches()` gives one empty `KvCache` per layer. A `KvCache` holds K and V as f16 (`set_rows` rounding), one row of
   `n_head_kv · head_dim` per position. `truncate(n)` keeps the first `n` positions, as llama.cpp's `seq_rm` does for
   its prompt cache.
-- 0.3.9: `caches_of(KvType::Q8_0)` keeps them as q8_0 blocks instead (`kq`/`vq`), as llama.cpp's `--cache-type-k/v
+- 0.4.0: `caches_of(KvType::Q8_0)` keeps them as q8_0 blocks instead (`kq`/`vq`), as llama.cpp's `--cache-type-k/v
   q8_0`. llama.cpp b11192 rotates around a quantized cache (`attn_rot_k`/`attn_rot_v`): K and Q by a Hadamard
   transform over 128 values (the head), V over 64, the attention output back by the same 64-wide transform; ggml
   computes it as a fast Walsh–Hadamard transform (`fwht`: scale by `1/sqrtf(n)`, then `u + v`, `u − v` butterflies).
@@ -126,7 +126,7 @@ The split-KV bits depend on llama.cpp's thread count. `Weights::llama_threads` h
 |---|---|---|
 | `BANKML_LLAMA_THREADS` | 3 | the `-t` of the llama.cpp being matched (Savante runs 3); decides the split-KV chunks |
 | `BANKML_THREADS` | all cores | size of the thread pool (`par::Pool::from_env`) |
-| `BANKML_CACHE_TYPE` | `f16` | the K/V cache type, `f16` or `q8_0` (read by `native.rs`, 0.3.9) |
+| `BANKML_CACHE_TYPE` | `f16` | the K/V cache type, `f16` or `q8_0` (read by `native.rs`, 0.4.0) |
 | `BANKML_GPU`, `BANKML_GPU_SHARE`, `BANKML_GPU_LIMIT` | —, measured, 0.8 | the GPU worker for 1-bit matrices and its limiter ([gpu.md](gpu.md), docs/usage.md §13) |
 
 ## How it is verified
@@ -147,11 +147,11 @@ All oracle tests are `#[ignore]`d (they need the models and recorded files) and 
 | `oracle_forward_model_llama_f16` | same (SmolLM2-135M-Instruct, mindx-gen39) | 800 of 800 each |
 | `oracle_greedy_llama_server` (`_ternary`, `_long`, `_deep`) | llama-server b11192, `testing/greedy_oracle.py` | 6 of 6 (164 tokens); ternary 6 of 6 (140); long 6 of 6; deep 600 tokens |
 | `oracle_sample_llama_server`, `oracle_llama_server_bonsai_1_7b`, `oracle_llama_server_llama_f16` | `testing/{greedy,sample}_oracle.py` | 40 of 40 seeded continuations (1,175 tokens) on Bonsai-8B; 40 of 40 on each O4 model |
-| `oracle_ggml_b11192_q8_0_kv_kernels` (0.3.9) | the shipped haswell library through `dlopen` (`BANKML_GGML_LIB`) | 4,000 rows quantized byte-exact, 4,000 dot products bit-exact, saturating `maddubs` cases included |
-| `kv_oracle_live` (0.3.9, `testing/kv_oracle.py`, Bonsai-1.7B in the gate) | llama-server b11192 with `--cache-type-k q8_0 --cache-type-v q8_0` | 6 of 6 answers (greedy, seeded, a 2,244-token prompt, a 320-token answer, two turns; 567 tokens) |
+| `oracle_ggml_b11192_q8_0_kv_kernels` (0.4.0) | the shipped haswell library through `dlopen` (`BANKML_GGML_LIB`) | 4,000 rows quantized byte-exact, 4,000 dot products bit-exact, saturating `maddubs` cases included |
+| `kv_oracle_live` (0.4.0, `testing/kv_oracle.py`, Bonsai-1.7B in the gate) | llama-server b11192 with `--cache-type-k q8_0 --cache-type-v q8_0` | 6 of 6 answers (greedy, seeded, a 2,244-token prompt, a 320-token answer, two turns; 567 tokens) |
 
 Rows are compared by the sha256 of their f32 bytes, not within a tolerance. Figures are from docs/oracles.md §1d and
-§5d and the 0.3.6 gate record (`testing/results/0.3.6.txt`); the two 0.3.9 rows from CHANGELOG.md (Unreleased 0.3.9).
+§5d and the 0.3.6 gate record (`testing/results/0.3.6.txt`); the two 0.4.0 rows from CHANGELOG.md (Unreleased 0.4.0).
 
 ## Advantages and efficiency
 
@@ -180,7 +180,7 @@ Rows are compared by the sha256 of their f32 bytes, not within a tolerance. Figu
   attention jobs, each with a `SAFETY` comment. The toolchain is pinned (`rust-toolchain.toml`, 1.99.0), and the gate
   runs `cargo clippy -D warnings`.
 - **Next** (docs/TODO.md 0.4.0): 1-bit decode at least at llama-server's speed (cut per-token allocations, compute
-  logits only where sampled); after the `q8_0` cache (0.3.9), a 4-bit `q4_0` K/V with the same rotation. 0.5.0:
+  logits only where sampled); after the `q8_0` cache (0.4.0), a 4-bit `q4_0` K/V with the same rotation. 0.5.0:
   batched GPU submissions and the ternary GPU kernel.
 
 ## Design notes
@@ -224,7 +224,7 @@ the shipped ggml computing the same graph (`testing/forward_oracle.py` → `orac
   on adjacent pairs, GQA). The multi-row tiled attention (`attend_heads_tiled`) and the tensor-name hash map date from
   this release. What the forward pass runs is decided from the header alone (`plan`); everything else is refused with
   the reason.
-- **0.3.9:** the q8_0 K/V cache (`KvType::Q8_0`, `caches_of`) with llama.cpp's Hadamard rotation, and its oracle
+- **0.4.0:** the q8_0 K/V cache (`KvType::Q8_0`, `caches_of`) with llama.cpp's Hadamard rotation, and its oracle
   `oracle_ggml_b11192_q8_0_kv_kernels`.
 
 ### Why only the output rows leave the last layer

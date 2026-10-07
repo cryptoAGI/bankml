@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bankML</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/engine.css">
+<link rel="stylesheet" href="/uif.css">
+<link rel="stylesheet" href="/thesis.css">
 </head>
 <body>
 <header class="bar">
@@ -12,9 +15,11 @@
   <nav class="tabs" role="tablist" aria-label="bankML">
     <button role="tab" data-tab="ask" aria-selected="true">Ask</button>
     <button role="tab" data-tab="admin" aria-selected="false">Admin</button>
+    <button role="tab" data-tab="engine" aria-selected="false">Engine</button>
     <button role="tab" data-tab="receipts" aria-selected="false">Receipts</button>
     <button role="tab" data-tab="logs" aria-selected="false">Logs</button>
     <button role="tab" data-tab="diagnostics" aria-selected="false">Diagnostics</button>
+    <button role="tab" data-tab="thesis" aria-selected="false">Thesis</button>
   </nav>
   <div class="switch" role="group" aria-label="interface">
     <a id="to-savante" href="http://127.0.0.1:7873/">Savante</a><span class="on" aria-current="page">bankML</span>
@@ -25,6 +30,7 @@
   <!-- Ask: the landing — one question, one answer, its receipt -->
   <section id="ask" class="tab active">
     <p id="engine" class="engine">connecting to bankml serve…</p>
+    <div id="uif-landing"></div>
     <div id="chat" class="chat" aria-live="polite">
       <div class="empty" id="empty">
         <p>Ask bankML anything — or about itself: its tokens, its speed, its load.</p>
@@ -63,6 +69,15 @@
     </div>
   </section>
 
+  <!-- Engine: bankml serve's own status (GET /bankml/status), drawn by serve's renderer -->
+  <section id="engine" class="tab">
+    <div class="loghead">
+      <h2>Engine</h2>
+      <p class="quiet">bankml serve's own status · also at the engine's address in a browser</p>
+    </div>
+    <div id="engine-status"><p class="quiet">reading bankml serve…</p></div>
+  </section>
+
   <!-- Receipts: every answer's receipt, newest first, checked in this browser -->
   <section id="receipts" class="tab">
     <div class="loghead">
@@ -91,19 +106,50 @@
   <section id="diagnostics" class="tab">
     <div class="loghead">
       <h2>Diagnostics</h2>
-      <p class="quiet"><button id="diag-refresh" class="ghost">Refresh</button></p>
+      <p class="quiet"><span id="diag-sum"></span> <button id="diag-refresh" class="ghost">Refresh</button></p>
     </div>
-    <ul id="checks" class="checks"></ul>
-    <h2 class="sub">Traces — the newest answers, span by span</h2>
-    <div id="traces" class="traces"></div>
-    <details class="more">
-      <summary>As text</summary>
-      <pre id="trace-text"></pre>
-    </details>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>sAGI</b><span>every component, asked now</span></div>
+      <div id="components" class="components"></div>
+    </div>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Engine checks</b><span>what bankml serve measures</span></div>
+      <ul id="checks" class="checks"></ul>
+    </div>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>scientific.diagnostic</b><span>bankML against llama.cpp b11192, to 18 decimals</span></div>
+      <div id="scientific" class="window-body"><p class="quiet">none yet — run testing/scientific_diagnostic.py</p></div>
+    </div>
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Traces</b><span>the newest answers, span by span</span></div>
+      <div id="traces" class="traces window-body"></div>
+      <details class="more window-body">
+        <summary>As text</summary>
+        <pre id="trace-text"></pre>
+      </details>
+    </div>
     <p id="diag-source" class="quiet"></p>
+  </section>
+
+  <!-- Thesis: the authors' thesis and contributions, read from docs/TECHNICAL.md -->
+  <section id="thesis" class="tab">
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Thesis</b><span>Professor Codephreak and Gregory L. Magnusson</span></div>
+      <div class="thesis-tools">
+        <span id="thesis-count" class="quiet"></span>
+        <button id="thesis-open" class="ghost">Expand all</button><button id="thesis-close" class="ghost">Collapse all</button>
+      </div>
+      <div class="thesis-scroll" id="thesis-scroll">
+        <div class="thesis-progress" aria-hidden="true"><span id="thesis-bar"></span></div>
+        <article id="thesis-body" class="prose"><p class="quiet">reading docs/TECHNICAL.md…</p></article>
+      </div>
+      <p class="window-body quiet"><a id="thesis-src" href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md" target="_blank" rel="noreferrer">docs/TECHNICAL.md ↗</a> · the whole report, the sections that measure the work against this thesis</p>
+    </div>
   </section>
 </main>
 <script src="/vendor/d3.v7.min.js"></script>
+<script src="/engine.js"></script>
+<script src="/uif.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

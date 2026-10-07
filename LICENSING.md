@@ -34,6 +34,8 @@ Rules that keep the layers honest:
 | what | licence |
 |---|---|
 | `upstream/` (the AVX2 `Q2_0` kernel prepared for llama.cpp) | `MIT`, llama.cpp's licence, so it can be contributed as is |
+| `sAGI/diagnostics.py` (its span model) | ported from [LlamaIndex](https://github.com/run-llama/llama_index)'s instrumentation (MIT, Copyright (c) Jerry Liu); the file is `MIT OR Apache-2.0`, with that notice kept |
+| `sAGI/console/uif/` (`uif.js`, `uif.css`) | a build of [ultimate-input-field](https://github.com/Professor-Codephreak/ultimate-input-field) (MIT) and React (MIT), with the console's mount; source and build in `sAGI/console/uif/README.md` |
 | `testing/gguf_guard.py` | vendored from [minaiml](https://github.com/minaiml) (same authors); `MIT OR Apache-2.0` here |
 | `sAGI/voice/knobs/savante_knobs.js` | a build of DreamKnob and React (MIT); regenerate with `node sAGI/voice/knobs/build.mjs` |
 | `sAGI/voice/cache/`, `sAGI/voice/export/` | Savante's voice, rendered by bankml with Piper and the `en_GB-cori-high` voice (trained on public-domain LibriVox recordings); offered under `MIT OR Apache-2.0` |

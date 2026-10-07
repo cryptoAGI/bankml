@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased (0.3.9) — a q8_0 conversation memory, a faster grammar mask
+## Unreleased (0.4.0) — milestone: native serving complete
 
-**Two of 0.3.9's three pieces: the KV cache in half the memory, as llama.cpp keeps it with `--cache-type-k/v q8_0`,
-and the JSON/grammar mask 13× faster at the median.** Each is checked against llama.cpp b11192 as before; 1-bit
-decode speed, the third, is measured on an idle machine next.
+**Everything Savante and mindX ask of llama-server, answered by bankML's own engine, identical to llama-server
+b11192.** 0.3.3–0.3.8 brought JSON mode and schemas, the penalties and the whole default sampler chain,
+self-measurement, the context limit, slots, the prompt cache and logprobs; 0.4.0 closes the list: a q8_0 KV cache
+with llama.cpp's Hadamard rotation, the grammar mask 13× faster, `cache_prompt: false` as llama-server honours it,
+fewer pool wakes per token, and the engine's own status, diagnostics and a console whose landing is the ultimate
+input field. **1-bit decode is at least at llama-server's speed**: the pinned 8B A/B, three rounds, bankML at or
+above llama-server in every one, median 2.02 against 0.77 tokens/s under the same load, every answer token-identical
+([PERFORMANCE.md](docs/PERFORMANCE.md#1-bit-decode-against-llama-server-040)) — so the importer's `auto` engine now
+chooses bankML's own forward pass for the 1-bit files as well as the ternary ones (`AUTO_NATIVE_Q1`).
 
 ### The q8_0 KV cache (`BANKML_CACHE_TYPE=q8_0`; `testing/kv_oracle.py`, 6 / 6)
 - K and V stored as q8_0 blocks (`KvType::Q8_0`), 53 % of the f16 cache's bytes. Attention over it is ggml's
@@ -35,6 +41,78 @@ decode speed, the third, is measured on an idle machine next.
   true) and, when it is false, starts from position 0 as llama-server does (`Params::cache_prompt`,
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
+
+### A Thesis tab in the console
+- The authors' thesis and the sixteen contributions measured against it, read from docs/TECHNICAL.md's
+  [Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson) section each time the tab opens
+  (`GET /api/thesis`), so the page never drifts from the report; drawn as DOM nodes by a small Markdown reader (bold,
+  italic, code, links, headings, lists; never `innerHTML`), relative links resolved to the repository, in a window
+  with the same depth, set for reading.
+- `sAGI/console/thesis.css`: the thesis as a scroll of accordions. Each principle and each of the sixteen
+  contributions is a section titled by its bold lead; the window scrolls on its own with a progress line along its
+  top, and a section opens as it comes into view (one the reader closes stays closed); expand all, collapse all. On a
+  narrow screen it scrolls with the page, and the page is what is watched. Reduced motion is honoured.
+- Fixed on the way: the input field's stylesheet defined generic theme tokens (`--accent`, `--muted`, …) on `:root`,
+  which overrode the console's own since the landing arrived (accent bars and fills went transparent); the console
+  build now renames them `--uif-k-*`.
+
+### Diagnostics: every component of sAGI, in windows with depth, on any screen
+- The Diagnostics tab first asks every part of sAGI, in parallel and within a time limit, each in its own words
+  (`diagnostics.components`): bankml serve, the console, Savante (`:7873`), view (`:7874`), the model importer
+  (pins, the binary, llama-server, the engine setting), each persona (preflight, doctrine root), the agents, THOT
+  manifests (each bound agent's verified), the chain artifact for iNFT mints, PostgreSQL (`connectors.status`),
+  embeddings (`embed.status`), the voice (`speak.available`) and the spans. Ready, idle, to check or failing, with
+  what each said and how long it took; nothing is started or written. A public console shows each component's
+  level, not its paths or agent names.
+- Each section is a window: a title bar, a hairline border and two shadows (near and far), in light and dark; the
+  components are cards with a status edge. The Engine tab's cards share the depth.
+- Mobile: the tab bar scrolls sideways under the title, windows run edge to edge, cards stack in one column, trace
+  rows wrap; the ultimate input field keeps a separate layout on a narrow screen (full width at the bottom, without
+  side modules), so a desktop's saved positions never put it off a phone's screen.
+
+### Fewer wakes of the pool per token (1-bit and ternary decode)
+- Measured first: under the same pool, bankML's 1-bit kernel is 1.58× ggml b11192's own `vec_dot` over the 8B
+  model's 253 matrices (`decode_budget_q1_0`), so the decode gap to llama-server is not the arithmetic. A token's
+  time inside bankML is about 91 % matrix–vector products and under 2 % everything else; the rest is how the work
+  is handed out: each product woke the pool once, seven times per layer.
+- `Pool::rows_multi`: several outputs' rows in one wake, in chunks that never cross a matrix, each row by the same
+  single-thread kernel. `Weights::mv_many` uses it for Q1_0 and Q2_0 on the CPU, so Q/K/V and gate/up are one wake
+  each (seven per layer become four). The bits are the same: `oracle_forward_model_bonsai_1_7b` 840 / 840 and
+  `oracle_forward_model_ternary` 1,064 / 1,064 with the GPU off, `oracle_native_serve_o4` 9 / 9 and 23 / 23 per model.
+
+### The console's landing is the ultimate input field
+- The Ask tab now opens on [ultimate-input-field](https://github.com/Professor-Codephreak/ultimate-input-field) (MIT):
+  one elegant field (chat, or **T** for terminal commands) whose answers stream into output fields you can move,
+  spawn, pop out to another monitor and call home, each one its own conversation with bankML through the console's
+  `POST /api/ask`, every answer ending with its receipt, checked again in the browser. The build lives in
+  `sAGI/console/uif/` (`uif.js`, `uif.css`; React bundled, so the console's CSP still loads nothing from elsewhere);
+  its source is ultimate-bankml-ui's `console-mount` branch (`src/console/`). Without the build, the plain question box
+  comes back.
+
+### The engine's own status page, and an Engine tab (`GET /bankml/status`)
+- `GET /bankml/status` on both of serve's addresses: the verified model, serve's settings (listen, upstream, native,
+  threads, KV cache type, GPU, allowed origins, uptime), the CPU (`/proc/cpuinfo`: model, each logical CPU's clock),
+  memory and swap, the disk where the model lives (`statvfs`: total and available; the model's size; this process's
+  bytes read and written, `/proc/self/io`), every GPU and bankML's limiter (`/bankml/usage`), the answers measured
+  (`/bankml/metrics`), the checks drawn from those (verified, memory, swap, disk, GPU, the log's last warning) and the
+  engine's log — the newest 200 messages, now kept in a ring by `bankml::log` (serve's own startup lines go through it).
+- A browser at serve's root (`http://127.0.0.1:18093/` or the engine address `:18094/`) gets that status as a page,
+  refreshed every 3 s; every other client still gets Ollama's `bankml is running…` line, which Ollama clients check.
+- The bankML console's **Engine** tab draws the same status with the same renderer (`bankML/status.js`,
+  `status.css`: one source for both pages), through `GET /api/engine`.
+- The first reading found the laptop's swap full (2.15 of 2.15 GB): the `swap` check now says when the machine is
+  paging, because speeds measured then are not comparable.
+
+### scientific.diagnostic — every number to 18 decimals (`testing/scientific_diagnostic.py`)
+- One greedy request with `logprobs` and `top_logprobs: 5`, sent to a fresh llama-server b11192 and a fresh
+  `bankml serve --native` (both computing the whole prompt). For every token and each of its top five: the 32-bit
+  float's bits, its exact value to 18 decimals (rounded half-even from the float's exact binary value) and as an
+  integer count of 10⁻¹⁸ (the 18-decimal fixed point of an ERC-20 amount), and the exact difference between the
+  engines. Sums are exact; the perplexity is computed with 60 significant digits; timings are measured to the
+  nanosecond and the record says the digits past the ninth are zero by construction.
+- First record, Bonsai-1.7B, 32 tokens: **identical** — 32 of 32 tokens bit-equal with their top fives, max |Δ|
+  `0.000000000000000000`, log-likelihood `-8.221305353127718263` on both engines. Written to the console's state as
+  `scientific.diagnostic` and shown in the Diagnostics tab.
 
 ### A restart never trades a running engine for a missing binary
 - The console's *Apply* (and the model switch) stopped the engine first and only then found there was no `bankml`

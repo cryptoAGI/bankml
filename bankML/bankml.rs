@@ -121,8 +121,27 @@ pub fn set_log_sink(sink: Option<LogSink>) {
     *LOG_SINK.write().unwrap_or_else(|e| e.into_inner()) = sink;
 }
 
-/// Sends one message at `level` to the sink, or one line to standard error.
+/// The newest log messages (`LOG_KEEP`), with the time each was logged: what `GET /bankml/status` and serve's
+/// status page show as the engine's log.
+pub const LOG_KEEP: usize = 200;
+static LOG_RING: std::sync::Mutex<std::collections::VecDeque<(f64, i32, String)>> = std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// The kept log messages, oldest first: (seconds since the epoch, level, message).
+pub fn log_tail() -> Vec<(f64, i32, String)> {
+    LOG_RING.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+}
+
+/// Sends one message at `level` to the sink, or one line to standard error, and keeps it in the log ring (the
+/// newest `LOG_KEEP`).
 pub fn log(level: i32, msg: &str) {
+    {
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        let mut ring = LOG_RING.lock().unwrap_or_else(|e| e.into_inner());
+        if ring.len() == LOG_KEEP {
+            ring.pop_front();
+        }
+        ring.push_back((at, level, msg.to_string()));
+    }
     let sink = *LOG_SINK.read().unwrap_or_else(|e| e.into_inner());
     match sink {
         Some(f) => f(level, msg),

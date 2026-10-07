@@ -150,8 +150,8 @@ and the measurements (PERFORMANCE.md).
     each checked against the shipped b11192 binaries or llama-server before the next was built. Since 0.3.0
     `bankml serve --native` answers whole conversations with llama-server's text, counts and cache reuse
     (`native.rs`, `forward.rs`; [oracles.md](oracles.md) §1b–§1d).
-16. **llama-server's request surface, reproduced rather than approximated** (0.3.1–0.3.6 released; 0.3.7–0.3.9
-    unreleased). Ollama's API, a C API, JSON mode and JSON schemas (llama.cpp's grammar engine and schema converter
+16. **llama-server's request surface, reproduced rather than approximated** (0.3.1–0.3.8 released; 0.4.0, the
+    milestone, in its release gate). Ollama's API, a C API, JSON mode and JSON schemas (llama.cpp's grammar engine and schema converter
     ported), the penalties, then the rest of the default sampler chain, the context limit, slots, the host prompt
     cache, logprobs and a `q8_0` KV cache. Each was added with a check against llama.cpp's own code or
     llama-server's answers; where the reference does not fix a result (a restored slot, the order of simultaneous
