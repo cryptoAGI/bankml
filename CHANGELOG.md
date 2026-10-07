@@ -2,6 +2,20 @@
 
 ## Unreleased (0.4.1) — a request whose client has gone stops
 
+### GPU objects are released on drop (`gpu_objects_are_released_on_drop`; the first 0.5.0 item)
+- Found by the 2026-10-06 audit: `Gpu` destroyed nothing on drop (device, buffers, pipelines), so dropping and reopening
+  a worker leaked its card memory; and `unsafe impl Sync for Buffer` let two `Gpu`s on two threads write one buffer.
+- Every object is now released on drop. The Vulkan instance, the device and its entry points live in one shared
+  `Device`, held by the `Gpu` and by every `Buffer` and `Pipeline` made on it. The device, and then the instance, go
+  with the last of them, so nothing is used after its device is gone. A `Buffer` is no longer `Sync`, and `write` and
+  `submit` refuse a buffer or pipeline of another device.
+- The new test found what the audit had not: each `Gpu::open` also made a Vulkan instance and never destroyed it.
+  - Measured with the driver's own counters (sysfs VRAM + GTT), over 30 rounds of open, five 16 MB buffers, a
+    pipeline, a run and drop.
+  - Before, card memory grew 65 MB, about 2.2 MB a round; after, 221.4 → 223.4 MB, within the desktop's own noise.
+- The same bits: the GPU kernel oracle and `bankml gpu --verify` are bit-exact on every row, and the 1.7B forward
+  oracle is 840 / 840 with the card computing 35 % of each 1-bit matrix.
+
 ### Abort a native run when its client goes away (`testing/disconnect_oracle.py`, 6 / 6)
 - Found by the ultimate-bankml-ui session under contention: `serve` noticed a closed connection only when a write
   failed, so an abandoned request's whole prefill (and, unstreamed, its whole answer) ran for nobody, minutes per

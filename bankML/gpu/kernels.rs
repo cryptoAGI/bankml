@@ -432,6 +432,45 @@ mod tests {
     use super::*;
     use crate::q1_0::{mat_vec, Q8Act};
 
+    /// Every device object is released on drop (0.5.0): opening the card, making buffers and the kernel's pipeline,
+    /// running it and dropping all of it, thirty times, leaves the driver's own memory counters (sysfs VRAM + GTT) where
+    /// they were and bankML's `allocated` at zero each time. Before, nothing was destroyed and each round leaked.
+    #[test]
+    #[ignore = "needs a Vulkan GPU"]
+    fn gpu_objects_are_released_on_drop() {
+        let devs = crate::gpu::selected(&crate::gpu::discover().0);
+        let Some(d) = devs.first() else {
+            eprintln!("gpu lifetimes: no usable GPU on this machine; skipped");
+            return;
+        };
+        let used = || crate::sys::gpus().iter().map(|g| g.vram_used.unwrap_or(0) + g.gtt_used.unwrap_or(0)).sum::<u64>();
+        let round = || {
+            let gpu = crate::gpu::compute::Gpu::open(d.index).unwrap();
+            let pipe = gpu.pipeline(&q1_0_mat_vec8(), Q1_0_BINDINGS, 8).unwrap();
+            let bufs: Vec<_> = (0..Q1_0_BINDINGS).map(|_| gpu.buffer(16 << 20).unwrap()).collect();
+            assert!(gpu.allocated() >= (16u64 << 20) * Q1_0_BINDINGS as u64);
+            gpu.run(&pipe, &bufs.iter().collect::<Vec<_>>(), &[0, 128], 1).unwrap();
+            let one = gpu.buffer(4096).unwrap();
+            let before_free = gpu.allocated();
+            gpu.free(one);
+            assert!(gpu.allocated() < before_free, "free gives its bytes back");
+            drop(bufs);
+            assert_eq!(gpu.allocated(), 0, "every buffer's bytes are given back when it drops");
+            // the pipeline and the device go here, the device last
+        };
+        round(); // the first round pays the driver's one-time costs
+        let base = used();
+        for _ in 0..30 {
+            round();
+        }
+        let after = used();
+        let grew = after.saturating_sub(base);
+        eprintln!("gpu lifetimes: {} — 30 rounds of open, {}×16 MB buffers, a pipeline, a run and drop: card memory {:.1} → {:.1} MB",
+                  d.name, Q1_0_BINDINGS, base as f64 / 1e6, after as f64 / 1e6);
+        // each round held at least 64 MB; a leak of even one buffer per round would show 480 MB here
+        assert!(grew < 16 << 20, "card memory grew by {grew} bytes over 30 rounds: something is not released");
+    }
+
     /// Both Q1_0 kernels on every usable local GPU against the CPU kernel, including −128 quants.
     #[test]
     #[ignore = "needs a Vulkan GPU"]

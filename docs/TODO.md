@@ -247,7 +247,7 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
 
 ### 0.5.0 — hardware
 
-- [ ] **GPU object lifetimes** (found by the 2026-10-06 code audit): `Gpu` destroys nothing on drop — device, buffers
+- [x] **GPU object lifetimes** (found by the 2026-10-06 code audit; **0.4.1**: every object released on drop, the instance leak found by the test closed, `Buffer` no longer `Sync`, `gpu_objects_are_released_on_drop`): `Gpu` destroys nothing on drop — device, buffers
   and pipelines stay until the process exits — so a worker dropped and reopened (a model reload) leaks its card
   memory; give `Gpu`, `Buffer` and the pipelines real `Drop`s. And `unsafe impl Sync for Buffer` lets two `Gpu`s on
   two threads write one `&Buffer` through safe `write`: unreachable today, to be closed with the lifetimes

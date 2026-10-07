@@ -87,29 +87,73 @@ struct Fns {
     wait: unsafe extern "C" fn(P, u32, *const H, u32, u64) -> i32,
     reset_fence: unsafe extern "C" fn(P, u32, *const H) -> i32,
     idle: unsafe extern "C" fn(P) -> i32,
+    destroy_shader: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_dsl: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_playout: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_pipeline: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_dpool: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_cpool: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_fence: unsafe extern "C" fn(P, H, *const c_void),
+    destroy_device: unsafe extern "C" fn(P, *const c_void),
+}
+
+/// The logical device and its entry points, shared by the `Gpu` and every object made on it: whichever is dropped
+/// last destroys the device, so nothing is ever used after its device is gone.
+struct Device {
+    dev: P,
+    fns: Fns,
+    /// The Vulkan instance the device was made from; destroyed after the device.
+    inst: Instance,
+    /// Bytes bankML's live buffers hold on this device.
+    allocated: std::sync::atomic::AtomicU64,
+}
+
+impl Drop for Device {
+    fn drop(&mut self) {
+        // SAFETY: the last reference is going: no `Gpu`, `Buffer` or `Pipeline` of this device is left, so no work is
+        // in flight on it and no object of it remains.
+        unsafe {
+            (self.fns.idle)(self.dev);
+            (self.fns.destroy_device)(self.dev, std::ptr::null());
+        }
+        // then `inst` drops, and the instance with it
+    }
+}
+
+/// A Vulkan instance, destroyed on drop: every `Gpu::open` makes one, and before 0.5.0 none was ever destroyed.
+struct Instance {
+    inst: P,
+    destroy: unsafe extern "C" fn(P, *const c_void),
+}
+
+impl Drop for Instance {
+    fn drop(&mut self) {
+        // SAFETY: the instance was created by `vulkan::instance` and is destroyed once, here, after its device.
+        unsafe { (self.destroy)(self.inst, std::ptr::null()) }
+    }
 }
 
 /// One GPU, ready for compute.
 ///
-/// `Send` but not `Sync`: its Vulkan calls come from one thread at a time. Device objects are not destroyed on drop.
+/// `Send` but not `Sync`: its Vulkan calls come from one thread at a time. On drop it waits for its work and destroys
+/// its command pool and fence; the device itself goes with the last object made on it.
 pub struct Gpu {
     pub name: String,
-    dev: P,
+    dev: std::sync::Arc<Device>,
     queue: P,
-    fns: Fns,
     mem_type: u32,
     /// Size of the heap bankML's buffers come from; the GPU limiter's budget, against [`Gpu::allocated`].
     pub heap_bytes: u64,
-    allocated: std::sync::atomic::AtomicU64,
     cpool: H,
     cb: P,
     fence: H,
 }
 
-/// A host-visible storage buffer, mapped for its whole life.
+/// A host-visible storage buffer, mapped for its whole life; destroyed, and its memory freed, on drop.
 ///
-/// Not released on drop: pass it to [`Gpu::free`] on the device that made it.
+/// `Send`, not `Sync`: it is written and read only through a `Gpu` of its own device.
 pub struct Buffer {
+    dev: std::sync::Arc<Device>,
     buf: H,
     mem: H,
     ptr: *mut u8,
@@ -118,10 +162,13 @@ pub struct Buffer {
     alloc: u64,
 }
 
-/// A compute pipeline: its layout, single descriptor set and push-constant size. Never destroyed.
+/// A compute pipeline: its layout, single descriptor set and push-constant size; destroyed on drop.
 pub struct Pipeline {
+    dev: std::sync::Arc<Device>,
     pipe: H,
     layout: H,
+    dsl: H,
+    pool: H,
     set: H,
     bindings: u32,
     push_bytes: u32,
@@ -134,6 +181,8 @@ impl Gpu {
         // each call; `pd` comes from this instance and `dev` from `pd`.
         unsafe {
             let (gipa, inst) = vulkan::instance()?;
+            // owned from here: an early return below destroys it
+            let instance = Instance { inst, destroy: std::mem::transmute_copy(&gipa(inst, c"vkDestroyInstance".as_ptr()).ok_or("no vkDestroyInstance")?) };
             let get = |name: &CStr| -> Result<Pfn, String> {
                 gipa(inst, name.as_ptr()).ok_or_else(|| format!("no {}", name.to_string_lossy()))
             };
@@ -164,10 +213,6 @@ impl Gpu {
             let qci = DeviceQueueCreateInfo { s_type: 2, p_next: std::ptr::null(), flags: 0, family, count: 1, priorities: &prio };
             let dci = DeviceCreateInfo { s_type: 3, p_next: std::ptr::null(), flags: 0, queue_info_count: 1, queue_infos: &qci, layer_count: 0,
                                          layers: std::ptr::null(), ext_count: 0, exts: std::ptr::null(), features: std::ptr::null() };
-            let mut dev = std::ptr::null_mut();
-            check(create_device(pd, &dci, std::ptr::null(), &mut dev), "vkCreateDevice")?;
-            let mut queue = std::ptr::null_mut();
-            get_queue(dev, family, 0, &mut queue);
             let fns = Fns {
                 create_buffer: f!(c"vkCreateBuffer"), buffer_reqs: f!(c"vkGetBufferMemoryRequirements"), alloc: f!(c"vkAllocateMemory"),
                 bind: f!(c"vkBindBufferMemory"), map: f!(c"vkMapMemory"), destroy_buffer: f!(c"vkDestroyBuffer"), free: f!(c"vkFreeMemory"),
@@ -178,7 +223,18 @@ impl Gpu {
                 bind_pipeline: f!(c"vkCmdBindPipeline"), bind_sets: f!(c"vkCmdBindDescriptorSets"), push: f!(c"vkCmdPushConstants"),
                 dispatch: f!(c"vkCmdDispatch"), fence: f!(c"vkCreateFence"), submit: f!(c"vkQueueSubmit"), wait: f!(c"vkWaitForFences"),
                 reset_fence: f!(c"vkResetFences"), idle: f!(c"vkDeviceWaitIdle"),
+                destroy_shader: f!(c"vkDestroyShaderModule"), destroy_dsl: f!(c"vkDestroyDescriptorSetLayout"),
+                destroy_playout: f!(c"vkDestroyPipelineLayout"), destroy_pipeline: f!(c"vkDestroyPipeline"),
+                destroy_dpool: f!(c"vkDestroyDescriptorPool"), destroy_cpool: f!(c"vkDestroyCommandPool"),
+                destroy_fence: f!(c"vkDestroyFence"), destroy_device: f!(c"vkDestroyDevice"),
             };
+            let mut dev = std::ptr::null_mut();
+            check(create_device(pd, &dci, std::ptr::null(), &mut dev), "vkCreateDevice")?;
+            let mut queue = std::ptr::null_mut();
+            get_queue(dev, family, 0, &mut queue);
+            // from here on the device is owned: an early return below destroys it with `dv`
+            let dv = std::sync::Arc::new(Device { dev, fns, inst: instance, allocated: Default::default() });
+            let fns = &dv.fns;
             let mut cpool = 0;
             let cpci = CommandPoolCreateInfo { s_type: 39, p_next: std::ptr::null(), flags: 0x2, family }; // RESET_COMMAND_BUFFER
             check((fns.cpool)(dev, &cpci, std::ptr::null(), &mut cpool), "vkCreateCommandPool")?;
@@ -188,7 +244,7 @@ impl Gpu {
             let mut fence = 0;
             check((fns.fence)(dev, &FenceCreateInfo { s_type: 8, p_next: std::ptr::null(), flags: 0 }, std::ptr::null(), &mut fence), "vkCreateFence")?;
             let heap_bytes = mp.heaps[mp.types[mem_type as usize].heap as usize].size;
-            Ok(Gpu { name, dev, queue, fns, mem_type, heap_bytes, allocated: Default::default(), cpool, cb, fence })
+            Ok(Gpu { name, dev: dv, queue, mem_type, heap_bytes, cpool, cb, fence })
         }
     }
 
@@ -200,20 +256,20 @@ impl Gpu {
         unsafe {
             let mut buf = 0;
             let bci = BufferCreateInfo { s_type: 12, p_next: std::ptr::null(), flags: 0, size: bytes as u64, usage: 0x20, sharing: 0, family_count: 0, families: std::ptr::null() };
-            check((self.fns.create_buffer)(self.dev, &bci, std::ptr::null(), &mut buf), "vkCreateBuffer")?;
+            check((self.dev.fns.create_buffer)(self.dev.dev, &bci, std::ptr::null(), &mut buf), "vkCreateBuffer")?;
             let mut req = MemoryRequirements { size: 0, alignment: 0, type_bits: 0 };
-            (self.fns.buffer_reqs)(self.dev, buf, &mut req);
+            (self.dev.fns.buffer_reqs)(self.dev.dev, buf, &mut req);
             if req.type_bits & (1 << self.mem_type) == 0 {
                 return Err("the buffer cannot live in host-visible memory".into());
             }
             let mut mem = 0;
             let mai = MemoryAllocateInfo { s_type: 5, p_next: std::ptr::null(), size: req.size, type_index: self.mem_type };
-            check((self.fns.alloc)(self.dev, &mai, std::ptr::null(), &mut mem), "vkAllocateMemory")?;
-            check((self.fns.bind)(self.dev, buf, mem, 0), "vkBindBufferMemory")?;
+            check((self.dev.fns.alloc)(self.dev.dev, &mai, std::ptr::null(), &mut mem), "vkAllocateMemory")?;
+            check((self.dev.fns.bind)(self.dev.dev, buf, mem, 0), "vkBindBufferMemory")?;
             let mut ptr = std::ptr::null_mut();
-            check((self.fns.map)(self.dev, mem, 0, u64::MAX, 0, &mut ptr), "vkMapMemory")?;
-            self.allocated.fetch_add(req.size, std::sync::atomic::Ordering::Relaxed);
-            Ok(Buffer { buf, mem, ptr: ptr as *mut u8, bytes, alloc: req.size })
+            check((self.dev.fns.map)(self.dev.dev, mem, 0, u64::MAX, 0, &mut ptr), "vkMapMemory")?;
+            self.dev.allocated.fetch_add(req.size, std::sync::atomic::Ordering::Relaxed);
+            Ok(Buffer { dev: self.dev.clone(), buf, mem, ptr: ptr as *mut u8, bytes, alloc: req.size })
         }
     }
 
@@ -230,6 +286,7 @@ impl Gpu {
     ///
     /// Must not be called while a pending submission uses `b`.
     pub fn write<T: Copy>(&self, b: &Buffer, data: &[T]) {
+        assert!(std::sync::Arc::ptr_eq(&b.dev, &self.dev), "a buffer of another device");
         let bytes = std::mem::size_of_val(data);
         assert!(bytes <= b.bytes);
         // SAFETY: the mapping is at least `b.bytes` ≥ `bytes` long (asserted) and `T` is plain data.
@@ -247,17 +304,13 @@ impl Gpu {
 
     /// Bytes bankML's buffers hold on this device now.
     pub fn allocated(&self) -> u64 {
-        self.allocated.load(std::sync::atomic::Ordering::Relaxed)
+        self.dev.allocated.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Destroy `b` and free its memory, which also unmaps it. `b` must not be in use by a pending submission.
+    /// Destroy `b` and free its memory, which also unmaps it (what dropping it does). `b` must not be in use by a
+    /// pending submission.
     pub fn free(&self, b: Buffer) {
-        self.allocated.fetch_sub(b.alloc, std::sync::atomic::Ordering::Relaxed);
-        // SAFETY: `b` was made on this device and is consumed here, so it is destroyed exactly once.
-        unsafe {
-            (self.fns.destroy_buffer)(self.dev, b.buf, std::ptr::null());
-            (self.fns.free)(self.dev, b.mem, std::ptr::null());
-        }
+        drop(b);
     }
 
     /// A compute pipeline from SPIR-V with `bindings` storage buffers (bindings 0…) and `push_bytes` of constants.
@@ -266,31 +319,33 @@ impl Gpu {
         unsafe {
             let mut module = 0;
             let smci = ShaderModuleCreateInfo { s_type: 16, p_next: std::ptr::null(), flags: 0, code_size: spirv.len() * 4, code: spirv.as_ptr() };
-            check((self.fns.shader)(self.dev, &smci, std::ptr::null(), &mut module), "vkCreateShaderModule")?;
+            check((self.dev.fns.shader)(self.dev.dev, &smci, std::ptr::null(), &mut module), "vkCreateShaderModule")?;
             let bs: Vec<DescriptorSetLayoutBinding> = (0..bindings)
                 .map(|b| DescriptorSetLayoutBinding { binding: b, dtype: STORAGE_BUFFER, count: 1, stages: STAGE_COMPUTE, samplers: std::ptr::null() })
                 .collect();
             let mut dsl = 0;
             let dslci = DescriptorSetLayoutCreateInfo { s_type: 32, p_next: std::ptr::null(), flags: 0, count: bindings, bindings: bs.as_ptr() };
-            check((self.fns.dsl)(self.dev, &dslci, std::ptr::null(), &mut dsl), "vkCreateDescriptorSetLayout")?;
+            check((self.dev.fns.dsl)(self.dev.dev, &dslci, std::ptr::null(), &mut dsl), "vkCreateDescriptorSetLayout")?;
             let pcr = PushConstantRange { stages: STAGE_COMPUTE, offset: 0, size: push_bytes };
             let mut layout = 0;
             let plci = PipelineLayoutCreateInfo { s_type: 30, p_next: std::ptr::null(), flags: 0, set_count: 1, sets: &dsl,
                                                   pc_count: (push_bytes > 0) as u32, pcs: &pcr };
-            check((self.fns.playout)(self.dev, &plci, std::ptr::null(), &mut layout), "vkCreatePipelineLayout")?;
+            check((self.dev.fns.playout)(self.dev.dev, &plci, std::ptr::null(), &mut layout), "vkCreatePipelineLayout")?;
             let stage = PipelineShaderStageCreateInfo { s_type: 18, p_next: std::ptr::null(), flags: 0, stage: STAGE_COMPUTE, module,
                                                         name: c"main".as_ptr(), spec: std::ptr::null() };
             let cpci = ComputePipelineCreateInfo { s_type: 29, p_next: std::ptr::null(), flags: 0, stage, layout, base: 0, base_index: -1 };
             let mut pipe = 0;
-            check((self.fns.pipelines)(self.dev, 0, 1, &cpci, std::ptr::null(), &mut pipe), "vkCreateComputePipelines")?;
+            check((self.dev.fns.pipelines)(self.dev.dev, 0, 1, &cpci, std::ptr::null(), &mut pipe), "vkCreateComputePipelines")?;
             let size = DescriptorPoolSize { dtype: STORAGE_BUFFER, count: bindings };
             let mut pool = 0;
             let dpci = DescriptorPoolCreateInfo { s_type: 33, p_next: std::ptr::null(), flags: 0, max_sets: 1, size_count: 1, sizes: &size };
-            check((self.fns.dpool)(self.dev, &dpci, std::ptr::null(), &mut pool), "vkCreateDescriptorPool")?;
+            check((self.dev.fns.dpool)(self.dev.dev, &dpci, std::ptr::null(), &mut pool), "vkCreateDescriptorPool")?;
             let mut set = 0;
             let dsai = DescriptorSetAllocateInfo { s_type: 34, p_next: std::ptr::null(), pool, count: 1, layouts: &dsl };
-            check((self.fns.dsets)(self.dev, &dsai, &mut set), "vkAllocateDescriptorSets")?;
-            Ok(Pipeline { pipe, layout, set, bindings, push_bytes })
+            check((self.dev.fns.dsets)(self.dev.dev, &dsai, &mut set), "vkAllocateDescriptorSets")?;
+            // the module is compiled into the pipeline and no longer needed
+            (self.dev.fns.destroy_shader)(self.dev.dev, module, std::ptr::null());
+            Ok(Pipeline { dev: self.dev.clone(), pipe, layout, dsl, pool, set, bindings, push_bytes })
         }
     }
 
@@ -306,8 +361,8 @@ impl Gpu {
     pub fn wait(&self) -> Result<(), String> {
         // SAFETY: the fence belongs to `self.dev`.
         unsafe {
-            check((self.fns.wait)(self.dev, 1, &self.fence, 1, u64::MAX), "vkWaitForFences")?;
-            check((self.fns.reset_fence)(self.dev, 1, &self.fence), "vkResetFences")
+            check((self.dev.fns.wait)(self.dev.dev, 1, &self.fence, 1, u64::MAX), "vkWaitForFences")?;
+            check((self.dev.fns.reset_fence)(self.dev.dev, 1, &self.fence), "vkResetFences")
         }
     }
 
@@ -317,6 +372,8 @@ impl Gpu {
     /// `wait` before the next `submit`. Panics if `bufs` or `push` do not match the pipeline.
     pub fn submit(&self, p: &Pipeline, bufs: &[&Buffer], push: &[u32], groups: u32) -> Result<(), String> {
         assert_eq!(bufs.len() as u32, p.bindings);
+        assert!(std::sync::Arc::ptr_eq(&p.dev, &self.dev) && bufs.iter().all(|b| std::sync::Arc::ptr_eq(&b.dev, &self.dev)),
+                "a pipeline or buffer of another device");
         assert_eq!(push.len() as u32 * 4, p.push_bytes);
         // SAFETY: the buffers and pipeline belong to this device; the previous submission has been waited for, so the
         // command buffer may be reset and the descriptor set rewritten; `infos`, `writes` and `si` outlive the calls.
@@ -326,38 +383,66 @@ impl Gpu {
                 .map(|(i, info)| WriteDescriptorSet { s_type: 35, p_next: std::ptr::null(), set: p.set, binding: i as u32, element: 0, count: 1,
                                                       dtype: STORAGE_BUFFER, images: std::ptr::null(), buffers: info, views: std::ptr::null() })
                 .collect();
-            (self.fns.update)(self.dev, writes.len() as u32, writes.as_ptr(), 0, std::ptr::null());
-            check((self.fns.reset_cb)(self.cb, 0), "vkResetCommandBuffer")?;
-            check((self.fns.begin)(self.cb, &CommandBufferBeginInfo { s_type: 42, p_next: std::ptr::null(), flags: 1, inheritance: std::ptr::null() }), "vkBeginCommandBuffer")?;
-            (self.fns.bind_pipeline)(self.cb, BIND_POINT_COMPUTE, p.pipe);
-            (self.fns.bind_sets)(self.cb, BIND_POINT_COMPUTE, p.layout, 0, 1, &p.set, 0, std::ptr::null());
+            (self.dev.fns.update)(self.dev.dev, writes.len() as u32, writes.as_ptr(), 0, std::ptr::null());
+            check((self.dev.fns.reset_cb)(self.cb, 0), "vkResetCommandBuffer")?;
+            check((self.dev.fns.begin)(self.cb, &CommandBufferBeginInfo { s_type: 42, p_next: std::ptr::null(), flags: 1, inheritance: std::ptr::null() }), "vkBeginCommandBuffer")?;
+            (self.dev.fns.bind_pipeline)(self.cb, BIND_POINT_COMPUTE, p.pipe);
+            (self.dev.fns.bind_sets)(self.cb, BIND_POINT_COMPUTE, p.layout, 0, 1, &p.set, 0, std::ptr::null());
             if p.push_bytes > 0 {
-                (self.fns.push)(self.cb, p.layout, STAGE_COMPUTE, 0, p.push_bytes, push.as_ptr() as *const c_void);
+                (self.dev.fns.push)(self.cb, p.layout, STAGE_COMPUTE, 0, p.push_bytes, push.as_ptr() as *const c_void);
             }
-            (self.fns.dispatch)(self.cb, groups, 1, 1);
-            check((self.fns.end)(self.cb), "vkEndCommandBuffer")?;
+            (self.dev.fns.dispatch)(self.cb, groups, 1, 1);
+            check((self.dev.fns.end)(self.cb), "vkEndCommandBuffer")?;
             let si = SubmitInfo { s_type: 4, p_next: std::ptr::null(), wait_count: 0, waits: std::ptr::null(), wait_stages: std::ptr::null(),
                                   cb_count: 1, cbs: &self.cb, signal_count: 0, signals: std::ptr::null() };
-            check((self.fns.submit)(self.queue, 1, &si, self.fence), "vkQueueSubmit")
+            check((self.dev.fns.submit)(self.queue, 1, &si, self.fence), "vkQueueSubmit")
         }
     }
 }
 
-// SAFETY: Vulkan objects are not tied to the thread that made them, and every call on a `Gpu` comes from one thread
-// at a time (`Gpu` is not `Sync`; the forward pass holds the worker behind a Mutex). A `Buffer`'s pointer is private
-// and used only through `Gpu` methods, so sharing `&Buffer` adds no unsynchronized access.
+// SAFETY: Vulkan objects are not tied to the thread that made them. Every call on a `Gpu` comes from one thread at a
+// time (`Gpu` is not `Sync`; the forward pass holds the worker behind a Mutex), and a `Buffer` is reached only through a
+// `Gpu` of its own device (asserted), so it is `Send` but not `Sync`. `Device` is shared by `Arc`: its handle and
+// entry points never change after creation, its counter is atomic, and Vulkan lets different objects of one device be
+// created and destroyed from different threads.
+unsafe impl Send for Device {}
+unsafe impl Sync for Device {}
 unsafe impl Send for Gpu {}
 unsafe impl Send for Buffer {}
-unsafe impl Sync for Buffer {}
 unsafe impl Send for Pipeline {}
 
 impl Drop for Gpu {
     fn drop(&mut self) {
-        // Wait until no work is in flight. Device objects are not destroyed; the driver reclaims them at process exit.
-        // SAFETY: `self.dev` is live.
+        // SAFETY: waiting for the device first means the command buffer and fence are no longer in use; both were made
+        // on this device and are destroyed once, here. The device itself goes with its last object.
         unsafe {
-            (self.fns.idle)(self.dev);
+            (self.dev.fns.idle)(self.dev.dev);
+            (self.dev.fns.destroy_fence)(self.dev.dev, self.fence, std::ptr::null());
+            (self.dev.fns.destroy_cpool)(self.dev.dev, self.cpool, std::ptr::null());
         }
-        let _ = self.cpool;
+    }
+}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        self.dev.allocated.fetch_sub(self.alloc, std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: made on `self.dev`, destroyed exactly once, here; freeing the memory also unmaps it. The caller keeps
+        // a buffer alive while a submission uses it (`Gpu::submit` takes it by reference until `wait`).
+        unsafe {
+            (self.dev.fns.destroy_buffer)(self.dev.dev, self.buf, std::ptr::null());
+            (self.dev.fns.free)(self.dev.dev, self.mem, std::ptr::null());
+        }
+    }
+}
+
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        // SAFETY: made on `self.dev` and destroyed once, here; destroying the pool frees its descriptor set.
+        unsafe {
+            (self.dev.fns.destroy_pipeline)(self.dev.dev, self.pipe, std::ptr::null());
+            (self.dev.fns.destroy_playout)(self.dev.dev, self.layout, std::ptr::null());
+            (self.dev.fns.destroy_dpool)(self.dev.dev, self.pool, std::ptr::null());
+            (self.dev.fns.destroy_dsl)(self.dev.dev, self.dsl, std::ptr::null());
+        }
     }
 }

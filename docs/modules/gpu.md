@@ -166,9 +166,25 @@ buffer, one fence, one descriptor set per pipeline), so `wait` must follow each 
 without a pending `submit` blocks indefinitely. Every Vulkan call's result is checked.
 
 On a card without device-local host-visible memory, buffers live in host-visible memory the CPU can write. `Gpu` is
-`Send` but not `Sync`: one thread drives it at a time (the forward pass holds the worker behind a `Mutex`). Nothing is
-destroyed on drop: a `Buffer` is released only by `Gpu::free`, pipelines are never destroyed, and dropping a `Gpu`
-waits for the device to go idle and leaves the device objects for the driver to reclaim at process exit.
+`Send` but not `Sync`: one thread drives it at a time (the forward pass holds the worker behind a `Mutex`).
+
+Lifetimes (0.4.1):
+- Every object is released on drop. The Vulkan instance, the device and its entry points live in one shared `Device`
+  (`Arc`), held by the `Gpu` and by every `Buffer` and `Pipeline` made on it.
+- Dropping a `Buffer` destroys it and frees its memory (`Gpu::free` is now just that).
+- Dropping a `Pipeline` destroys its pipeline, layout, descriptor pool and set layout. The shader module is destroyed
+  as soon as the pipeline is built.
+- Dropping a `Gpu` waits for the card, then destroys its fence and command pool.
+- The device, and then the instance, go with the last of them. So whatever the drop order, nothing is used after its
+  device is gone.
+- A `Buffer` is `Send` but no longer `Sync`. `write` and `submit` assert that every buffer and pipeline belongs to their
+  own device.
+
+`gpu_objects_are_released_on_drop` measures it with the driver's own counters (sysfs VRAM + GTT): 30 rounds of open,
+five 16 MB buffers, a pipeline, a run and drop.
+- Before: card memory grew 65 MB, about 2.2 MB a round. Each `Gpu::open` made a Vulkan instance and never destroyed
+  it, and nothing else was destroyed either.
+- After: 221.4 → 223.4 MB, within the desktop's own noise.
 
 ### `worker.rs` — the GPU beside the CPU's threads
 
