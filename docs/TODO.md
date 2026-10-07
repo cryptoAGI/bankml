@@ -244,6 +244,7 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   for nobody — minutes per request on the laptop under contention, and the one slot is held meanwhile. Check the
   socket before each micro-batch (a non-blocking peek, or the write of a keep-alive comment on a stream) and stop the
   run, keeping the slot's cache up to the last computed token.
+- [x] **A compact SELF** (**0.4.1**): two lines — who is speaking (the A/B's wording, 3 / 3), then every measurement on one line.
 
 ### 0.5.0 — hardware
 

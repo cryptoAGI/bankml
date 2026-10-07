@@ -2,6 +2,15 @@
 
 ## Unreleased (0.4.1) — a request whose client has gone stops
 
+### The console's SELF: who is speaking, then one line of measurements
+- An A/B by the ultimate-bankml-ui session (bankML 0.4.0, Bonsai-8B, "who are you?", three fresh conversations each,
+  every receipt ✓): with SELF's first line "the model I am running: Bonsai-8B …", bankML said "I am bankML" 1 of 3
+  times and "I am … Bonsai-8B" 2 of 3; with "I am bankML 0.4.0. The model file I run is Bonsai-8B (sha256 …): it is
+  what I compute with, not who I am", 3 of 3. The console's SELF now opens with that line.
+- The nine measurement lines are one line, each value still with its unit and "not measured" where it was not: the
+  block a question carries is two lines instead of ten, a smaller prefix to recompute whichever turn it rides on
+  (the same session measured why that matters for the prompt cache).
+
 ### GPU objects are released on drop (`gpu_objects_are_released_on_drop`; the first 0.5.0 item)
 - Found by the 2026-10-06 audit: `Gpu` destroyed nothing on drop (device, buffers, pipelines), so dropping and reopening
   a worker leaked its card memory; and `unsafe impl Sync for Buffer` let two `Gpu`s on two threads write one buffer.

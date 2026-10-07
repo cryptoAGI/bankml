@@ -98,23 +98,27 @@ def self_block() -> dict:
 
 
 def self_text(sb: dict) -> str:
-    """The SELF block as the model reads it: one plain sentence per measurement, with its unit (a bare key such as
-    `last_eval_tps` was read as seconds in testing); a value not measured says so."""
+    """The SELF block as the model reads it: two lines. The first says who is speaking, so the model file is never
+    taken for the speaker (an A/B on Bonsai-8B, three fresh conversations each: "I am bankML" 3 of 3 with this line,
+    1 of 3 with "the model I am running: …", which twice answered "I am Bonsai-8B"). The second carries every
+    measurement, each with its unit (a bare key such as `last_eval_tps` was read as seconds in testing) and "not
+    measured" where it was not: one line instead of nine, so it costs the prompt little whichever turn it rides on."""
     def v(x, unit="", scale=1.0, d=1):
         return "not measured" if x is None else f"{x * scale:.{d}f}{unit}"
-    return "\n".join([
-        f"- the model I am running: {sb['model'] or 'none'} (sha256 {str(sb['model_sha256'] or '')[:16]}…), bankML {sb['bankml']}",
-        f"- tokens I have read in total (prompts): {v(sb['prompt_tokens_total'], d=0)}",
-        f"- tokens I have written in total (answers): {v(sb['completion_tokens_total'], d=0)}",
-        f"- time to first token of my last answer: {v(sb['last_ttft_ms'], ' milliseconds', d=0)}",
-        f"- prompt reading speed of my last answer: {v(sb['last_prompt_tps'], ' tokens per second')}",
-        f"- generation speed of my last answer: {v(sb['last_eval_tps'], ' tokens per second')}",
-        f"- CPU use right now: {v(sb['cpu_percent'], ' percent of one core')}",
-        f"- memory I hold (RSS): {v(sb['rss_bytes'], ' GB', 1e-9, 2)}; memory still available on this machine: {v(sb['mem_available_bytes'], ' GB', 1e-9, 2)}",
-        f"- GPU busy right now: {v(sb['gpu_busy_percent'], ' percent', d=0)}; my GPU limit: {v(sb['gpu_limit'], ' percent of its memory and time', 100, 0)}; GPU memory I hold: {v(sb['gpu_allocated_bytes'], ' MB', 1e-6, 0)}",
-        f"- power the CPU package draws: {v(sb['package_watts'], ' watts')}; energy per token I write: {v(sb['joules_per_token'], ' joules', d=3)}",
-    ])
-
+    sha = str(sb["model_sha256"] or "")[:16]
+    who = ("- I am bankML" + (f" {sb['bankml']}" if sb["bankml"] else "") + f". The model file I run is {sb['model'] or 'none'}"
+           + (f" (sha256 {sha}…)" if sha else "") + ": it is what I compute with, not who I am")
+    now = ("- measured now: tokens read in total " + v(sb["prompt_tokens_total"], d=0)
+           + ", written " + v(sb["completion_tokens_total"], d=0)
+           + "; my last answer: first token after " + v(sb["last_ttft_ms"], " milliseconds", d=0)
+           + ", reading at " + v(sb["last_prompt_tps"], " tokens per second")
+           + ", writing at " + v(sb["last_eval_tps"], " tokens per second")
+           + "; CPU " + v(sb["cpu_percent"], " percent of one core")
+           + "; memory I hold " + v(sb["rss_bytes"], " GB", 1e-9, 2) + ", still available " + v(sb["mem_available_bytes"], " GB", 1e-9, 2)
+           + "; GPU busy " + v(sb["gpu_busy_percent"], " percent", d=0) + ", my GPU limit " + v(sb["gpu_limit"], " percent of its memory and time", 100, 0)
+           + ", GPU memory I hold " + v(sb["gpu_allocated_bytes"], " MB", 1e-6, 0)
+           + "; power " + v(sb["package_watts"], " watts") + ", energy per token I write " + v(sb["joules_per_token"], " joules", d=3))
+    return who + "\n" + now
 
 def state() -> dict:
     p = persona()
