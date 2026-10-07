@@ -924,6 +924,23 @@ impl Weights {
     /// Several matrices by the same prepared row: one pass of the pool for F16 (`f16::mat_vec_multi_par`), each
     /// matrix in turn otherwise. The same bits as `mv` on each.
     pub fn mv_many(&self, ms: &[&Mat], a: &Act, outs: &mut [&mut [f32]]) -> Result<(), String> {
+        // 1-bit and ternary on the CPU: every matrix's rows in one wake of the pool (`rows_multi`), each row by the same
+        // kernel as `mv`, so the same bits (Q/K/V, gate/up: three and two wakes become one each)
+        if self.gpu.is_none() && ms.len() > 1 && ms.iter().zip(outs.iter()).all(|(m, o)| o.len() == m.rows) {
+            match a {
+                Act::Q1(a) if ms.iter().all(|m| m.ty == TYPE_Q1_0) => {
+                    let rb = a.n() / QK1_0 * Q1_0_BYTES;
+                    self.pool.rows_multi(outs, &|s, r0, o| q1_0::mat_vec(&ms[s].bytes[r0 * rb..], o.len(), a, o));
+                    return Ok(());
+                }
+                Act::Q2(a) if ms.iter().all(|m| m.ty == TYPE_Q2_0) => {
+                    let rb = a.n() / q2_0::QK2_0 * q2_0::Q2_0_BYTES;
+                    self.pool.rows_multi(outs, &|s, r0, o| q2_0::mat_vec(&ms[s].bytes[r0 * rb..], o.len(), a, o));
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         if let Act::F16(a) = a {
             if ms.iter().zip(outs.iter()).all(|(m, o)| m.ty == TYPE_F16 && o.len() == m.rows) {
                 let ws: Vec<(&[u8], usize)> = ms.iter().map(|m| (m.bytes, m.rows)).collect();

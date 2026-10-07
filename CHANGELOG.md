@@ -36,6 +36,16 @@ decode speed, the third, is measured on an idle machine next.
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
 
+### Fewer wakes of the pool per token (1-bit and ternary decode)
+- Measured first: under the same pool, bankML's 1-bit kernel is 1.58× ggml b11192's own `vec_dot` over the 8B
+  model's 253 matrices (`decode_budget_q1_0`), so the decode gap to llama-server is not the arithmetic. A token's
+  time inside bankML is about 91 % matrix–vector products and under 2 % everything else; the rest is how the work
+  is handed out: each product woke the pool once, seven times per layer.
+- `Pool::rows_multi`: several outputs' rows in one wake, in chunks that never cross a matrix, each row by the same
+  single-thread kernel. `Weights::mv_many` uses it for Q1_0 and Q2_0 on the CPU, so Q/K/V and gate/up are one wake
+  each (seven per layer become four). The bits are the same: `oracle_forward_model_bonsai_1_7b` 840 / 840 and
+  `oracle_forward_model_ternary` 1,064 / 1,064 with the GPU off, `oracle_native_serve_o4` 9 / 9 and 23 / 23 per model.
+
 ### The console's landing is the ultimate input field
 - The Ask tab now opens on [ultimate-input-field](https://github.com/Professor-Codephreak/ultimate-input-field) (MIT):
   one elegant field (chat, or **T** for terminal commands) whose answers stream into output fields you can move,

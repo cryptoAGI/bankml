@@ -135,6 +135,33 @@ impl Pool {
     }
 }
 
+impl Pool {
+    /// `rows` over several outputs in one wake of the pool: segment `s` fills `outs[s]`, and `f(s, r0, chunk)` computes
+    /// its rows `r0..r0 + chunk.len()`. Chunks of `CHUNK_ROWS` never cross a segment, so each row is computed by the
+    /// same single-thread kernel as in `rows`: the same bits, with one wake instead of one per output.
+    pub fn rows_multi(&self, outs: &mut [&mut [f32]], f: &(dyn Fn(usize, usize, &mut [f32]) + Sync)) {
+        let chunks: Vec<(usize, usize, usize)> = outs.iter().enumerate()
+            .flat_map(|(s, o)| (0..o.len()).step_by(CHUNK_ROWS).map(move |r0| (s, r0, CHUNK_ROWS.min(o.len() - r0))))
+            .collect();
+        if self.n == 1 || chunks.len() <= 1 {
+            for (s, o) in outs.iter_mut().enumerate() {
+                if !o.is_empty() {
+                    f(s, 0, o);
+                }
+            }
+            return;
+        }
+        let bases: Vec<usize> = outs.iter_mut().map(|o| o.as_mut_ptr() as usize).collect();
+        let next = AtomicUsize::new(0);
+        self.run(&|_| loop {
+            let i = next.fetch_add(1, Ordering::Relaxed);
+            let Some(&(s, r0, len)) = chunks.get(i) else { break };
+            // SAFETY: chunk i alone covers rows r0..r0+len of output s, inside that output
+            f(s, r0, unsafe { std::slice::from_raw_parts_mut((bases[s] as *mut f32).add(r0), len) });
+        });
+    }
+}
+
 impl Drop for Pool {
     fn drop(&mut self) {
         self.shared.state.lock().unwrap().quit = true;
@@ -148,6 +175,21 @@ impl Drop for Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_multi_covers_every_row_of_every_output_once() {
+        for th in [1, 2, 3, 5] {
+            let pool = Pool::new(th);
+            for sizes in [vec![0, 1], vec![15, 16, 17], vec![100, 3, 1000]] {
+                let mut bufs: Vec<Vec<f32>> = sizes.iter().map(|&n| vec![-1f32; n]).collect();
+                let mut outs: Vec<&mut [f32]> = bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
+                pool.rows_multi(&mut outs, &|s, r0, o| o.iter_mut().enumerate().for_each(|(i, v)| *v = (s * 10_000 + r0 + i) as f32));
+                for (s, b) in bufs.iter().enumerate() {
+                    assert!(b.iter().enumerate().all(|(i, v)| *v == (s * 10_000 + i) as f32), "th {th} sizes {sizes:?} seg {s}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn rows_cover_every_row_once_at_any_thread_count() {
