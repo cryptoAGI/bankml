@@ -6,6 +6,7 @@
 <title>bankML</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/engine.css">
+<link rel="stylesheet" href="/uif.css">
 </head>
 <body>
 <header class="bar">
@@ -27,6 +28,7 @@
   <!-- Ask: the landing — one question, one answer, its receipt -->
   <section id="ask" class="tab active">
     <p id="engine" class="engine">connecting to bankml serve…</p>
+    <div id="uif-landing"></div>
     <div id="chat" class="chat" aria-live="polite">
       <div class="empty" id="empty">
         <p>Ask bankML anything — or about itself: its tokens, its speed, its load.</p>
@@ -118,6 +120,7 @@
 </main>
 <script src="/vendor/d3.v7.min.js"></script>
 <script src="/engine.js"></script>
+<script src="/uif.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

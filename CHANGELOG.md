@@ -36,6 +36,15 @@ decode speed, the third, is measured on an idle machine next.
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
 
+### The console's landing is the ultimate input field
+- The Ask tab now opens on [ultimate-input-field](https://github.com/Professor-Codephreak/ultimate-input-field) (MIT):
+  one elegant field (chat, or **T** for terminal commands) whose answers stream into output fields you can move,
+  spawn, pop out to another monitor and call home, each one its own conversation with bankML through the console's
+  `POST /api/ask`, every answer ending with its receipt, checked again in the browser. The build lives in
+  `sAGI/console/uif/` (`uif.js`, `uif.css`; React bundled, so the console's CSP still loads nothing from elsewhere);
+  its source is ultimate-bankml-ui's `console-mount` branch (`src/console/`). Without the build, the plain question box
+  comes back.
+
 ### The engine's own status page, and an Engine tab (`GET /bankml/status`)
 - `GET /bankml/status` on both of serve's addresses: the verified model, serve's settings (listen, upstream, native,
   threads, KV cache type, GPU, allowed origins, uptime), the CPU (`/proc/cpuinfo`: model, each logical CPU's clock),

@@ -3,6 +3,14 @@
 // nothing bankML did not measure is drawn or filled in ("not measured"); every receipt is checked in the browser.
 "use strict";
 const $ = (id) => document.getElementById(id);
+// a popped-out output window of the input field shows only that output
+if (window.BankmlUIF && BankmlUIF.isOutputWindow()) {
+  document.body.textContent = "";
+  const w = document.createElement("div");
+  document.body.append(w);
+  BankmlUIF.mount(w);
+  throw new Error("bankML: an output window, nothing else to run here");
+}
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 const fmt = (v, d = 1, unit = "") => (v === null || v === undefined || Number.isNaN(+v)) ? "not measured" : `${(+v).toFixed(d)}${unit}`;
 const GB = 1e9, MB = 1e6, KEEP = 150;
@@ -264,4 +272,11 @@ $("download").addEventListener("click", () => {
 });
 
 poll(); setInterval(poll, 2000);
-$("q").focus();
+// the Ask landing: the ultimate input field when it is built (uif/), the plain box otherwise
+if (window.BankmlUIF) {
+  $("form").hidden = true;
+  $("ask").classList.add("uif");
+  BankmlUIF.mount($("uif-landing"), { placeholder: "Ask bankML — T for terminal mode" });
+} else {
+  $("q").focus();
+}

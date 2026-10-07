@@ -54,7 +54,9 @@ FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", 
          "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8"),
          # the Engine tab draws bankml serve's status with serve's own renderer (one source for both pages)
          "/engine.js": (HERE.parent / "bankML" / "status.js", "text/javascript; charset=utf-8"),
-         "/engine.css": (HERE.parent / "bankML" / "status.css", "text/css; charset=utf-8")}
+         "/engine.css": (HERE.parent / "bankML" / "status.css", "text/css; charset=utf-8"),
+         # the Ask landing: the ultimate input field, built (console/uif/README.md); the plain box when absent
+         "/uif.js": ("uif/uif.js", "text/javascript; charset=utf-8"), "/uif.css": ("uif/uif.css", "text/css; charset=utf-8")}
 LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
 # --public HOST: the one extra host name the console answers as; None = loopback only
@@ -219,7 +221,10 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in FILES:
             name, ctype = FILES[path]
-            return self._send(200, (STATIC / name).read_bytes(), ctype)
+            try:
+                return self._send(200, (STATIC / name).read_bytes(), ctype)
+            except OSError:
+                return self._send(404, b"not built", "text/plain")
         if path == "/api/state":
             return self._json(state())
         if path == "/api/log":
