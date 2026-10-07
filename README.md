@@ -30,13 +30,14 @@
 
 ## Where it stands (2026-10-06)
 
-**v0.3.6 is the latest release.** Three more are on their way, each passing its oracles as it is built; each ships
-once its full release gate passes ([CHANGELOG.md](CHANGELOG.md), *Unreleased*):
+**[v0.3.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.7) is the latest release** (gate passed, every stage).
+The rest is on its way, each passing its oracles as it is built; each ships once its full release gate passes
+([CHANGELOG.md](CHANGELOG.md), *Unreleased*):
 
 | release | state | what it brings |
 |---|---|---|
-| **0.3.7** | in its release gate | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
-| **0.3.8** | built | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
+| **0.3.7** | **released** 2026-10-06 | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
+| **0.3.8** | in its release gate | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
 | **0.3.9** | in progress | a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
 | **0.4.0** | next milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)) |
 
