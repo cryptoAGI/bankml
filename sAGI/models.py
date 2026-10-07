@@ -578,6 +578,14 @@ def _kill(pid: int, sig) -> None:
         pass
 
 
+def _need_bankml() -> None:
+    """Refuse a restart before anything is stopped when there is no bankml to start again: a running engine is never
+    traded for a missing binary."""
+    if not (BANKML.is_file() and os.access(BANKML, os.X_OK)):
+        raise RuntimeError(f"no bankml binary at {BANKML}: build it first (cargo build --release, or ./install.sh), "
+                           "or set BANKML_BIN; the engine was left running")
+
+
 def _stop_carrier():
     for pid in set(_listeners().values()):
         _kill(pid, signal.SIGTERM)
@@ -682,6 +690,7 @@ def native_for(model: Path, engine: str | None = None) -> bool:
 def apply_resources(threads: int, ram_gb: float, busy=lambda: False, spec_ngram: bool = False, engine: str = "auto",
                     gpu_limit: float | None = None) -> dict:
     """Save the choice and restart the carrier on the same model with it (a verified switch, with rollback)."""
+    _need_bankml()  # before anything is read, saved or stopped
     threads = max(1, min(int(threads), os.cpu_count() or 1))
     st = serve_status()
     sha = (st.get("verified") or {}).get("model_sha256")
@@ -788,6 +797,7 @@ def _pinned_path(sha: str, model: str | None, pins: dict):
 def switch(file: str, busy=lambda: False) -> dict:
     """Make `file` (in MODELS, pinned) the carrier: success only when bankml serve answers verified with this file's
     sha256. If the new one fails, the previous model is restored (found by its verified sha256)."""
+    _need_bankml()  # before anything is read or stopped
     if busy():
         raise RuntimeError("an answer is being written; switch when it is done")
     p = MODELS / file

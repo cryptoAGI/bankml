@@ -36,6 +36,12 @@ decode speed, the third, is measured on an idle machine next.
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
 
+### A restart never trades a running engine for a missing binary
+- The console's *Apply* (and the model switch) stopped the engine first and only then found there was no `bankml`
+  to start: a raw `[Errno 2] No such file or directory` and, at worst, no engine. `models._need_bankml()` now refuses
+  first — nothing is read, saved or stopped — and says how to fix it (build, `./install.sh`, or `BANKML_BIN`).
+  Tested in `testing/test_models.py` for `apply_resources` and `switch`.
+
 ### Diagnostics in the console (`sAGI/diagnostics.py`)
 - A **Diagnostics** tab beside Logs: measured checks (serve reachable and its latency, the model verified, metrics,
   memory, CPU, the engine log's last error, failed spans) and the trace of each recent answer, span by span with

@@ -244,6 +244,20 @@ try:
     check("the recorded conversions (0.3.4): open source, the GGUF and its source both pinned by sha256, a 40-hex revision, the tools named",
           all(M.licence_open(c["licence"]) and len(c["sha256"]) == 64 and len(c["source_sha256"]) == 64 and len(c["revision"]) == 40
               and "convert_hf_to_gguf.py" in c["tools"] for c in M.CONVERTED))
+    # no bankml binary: a restart is refused before the running engine is stopped or a setting is saved
+    real, stopped = M.BANKML, []
+    M.BANKML = tmp / "no-such-bankml"
+    keep_stop, M._stop_carrier = M._stop_carrier, lambda: stopped.append(1)
+    before = M.RESOURCES.read_text() if M.RESOURCES.exists() else None
+    for name, call in (("apply_resources", lambda: M.apply_resources(1, 2.0)), ("switch", lambda: M.switch("tiny.gguf"))):
+        try:
+            call()
+            check(f"{name} without a bankml binary is refused", False)
+        except RuntimeError as e:
+            check(f"{name} without a bankml binary is refused before anything stops, and says how to fix it",
+                  "no bankml binary" in str(e) and "cargo build" in str(e) and not stopped
+                  and (M.RESOURCES.read_text() if M.RESOURCES.exists() else None) == before)
+    M.BANKML, M._stop_carrier = real, keep_stop
     try:
         M.pin_converted("not-a-conversion.gguf")
         check("pin_converted refuses a file it has no record of", False)
