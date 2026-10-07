@@ -244,6 +244,13 @@ try:
     check("the recorded conversions (0.3.4): open source, the GGUF and its source both pinned by sha256, a 40-hex revision, the tools named",
           all(M.licence_open(c["licence"]) and len(c["sha256"]) == 64 and len(c["source_sha256"]) == 64 and len(c["revision"]) == 40
               and "convert_hf_to_gguf.py" in c["tools"] for c in M.CONVERTED))
+    # the engine setting: "native" always, "llama.cpp" never, "auto" by the file's type (decided by measurement)
+    from pathlib import Path as _P
+    q1, q2, f16 = _P("Bonsai-8B-Q1_0.gguf"), _P("Ternary-Bonsai-8B-Q2_0_g64.gguf"), _P("mindx-gen39-F16.gguf")
+    check("engine 'native' answers natively for every file, 'llama.cpp' for none",
+          all(M.native_for(m, "native") for m in (q1, q2, f16)) and not any(M.native_for(m, "llama.cpp") for m in (q1, q2, f16)))
+    check("engine 'auto': native for the ternary files" + (" and the 1-bit files" if M.AUTO_NATIVE_Q1 else ", llama-server for the 1-bit files"),
+          M.native_for(q2, "auto") and M.native_for(q1, "auto") == M.AUTO_NATIVE_Q1 and not M.native_for(f16, "auto"))
     # no bankml binary: a restart is refused before the running engine is stopped or a setting is saved
     real, stopped = M.BANKML, []
     M.BANKML = tmp / "no-such-bankml"
