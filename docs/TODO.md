@@ -2,8 +2,7 @@
 
 What comes next, and where each item came from. Every item ends in a measured, reproducible result, or it is recorded
 as rejected with its numbers (the house rule: the same bits first, then the speed). What has shipped, and its records,
-is in [CHANGELOG.md](../CHANGELOG.md); v0.3.8 is the latest public release, and 0.4.0 (which takes in what was 0.3.9)
-is in its release gate. **The current plan is [0.4.0](#040--native-serve-complete-everything-savante-and-mindx-ask-of-llama-server).**
+is in [CHANGELOG.md](../CHANGELOG.md); v0.4.0, the milestone, is the latest public release (it took in what was 0.3.9). **The current plan is [0.4.0](#040--native-serve-complete-everything-savante-and-mindx-ask-of-llama-server).**
 The argument for the method is [thesis.md](thesis.md). Sources:
 **R** = [research.md](research.md) (the field, 2026-09-29) · **K** = the clean-room study of KoboldCpp (docs only) ·
 **V** = the vLLM code review (main @ `36768d1`, Apache-2.0) · **Rs** = the Rust 1.95 study (the `rust` skill) ·

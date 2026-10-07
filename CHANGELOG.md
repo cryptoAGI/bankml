@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.4.0) — milestone: native serving complete
+## 0.4.0 — 2026-10-07 — milestone: native serving complete
 
 **Everything Savante and mindX ask of llama-server, answered by bankML's own engine, identical to llama-server
 b11192.** 0.3.3–0.3.8 brought JSON mode and schemas, the penalties and the whole default sampler chain,
@@ -10,7 +10,9 @@ fewer pool wakes per token, and the engine's own status, diagnostics and a conso
 input field. **1-bit decode is at least at llama-server's speed**: the pinned 8B A/B, three rounds, bankML at or
 above llama-server in every one, median 2.02 against 0.77 tokens/s under the same load, every answer token-identical
 ([PERFORMANCE.md](docs/PERFORMANCE.md#1-bit-decode-against-llama-server-040)) — so the importer's `auto` engine now
-chooses bankML's own forward pass for the 1-bit files as well as the ternary ones (`AUTO_NATIVE_Q1`).
+chooses bankML's own forward pass for the 1-bit files as well as the ternary ones (`AUTO_NATIVE_Q1`). Record:
+`testing/results/0.4.0.txt`, one run of the full gate, every stage passed (2026-10-07, the laptop; the decode budgets
+at three threads: 1-bit 1.02× ggml b11192's own kernel, ternary 8.9×).
 
 ### The q8_0 KV cache (`BANKML_CACHE_TYPE=q8_0`; `testing/kv_oracle.py`, 6 / 6)
 - K and V stored as q8_0 blocks (`KvType::Q8_0`), 53 % of the f16 cache's bytes. Attention over it is ggml's

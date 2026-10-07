@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.4%E2%80%9310.0%C3%97-D9A23A?style=flat-square" alt="ternary 9.4–10.0x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
-  <img src="https://img.shields.io/badge/status-0.3.7%20%C2%B7%20whole%20sampler%20chain%2C%20self-measured%2C%20GPU%20limiter%2C%20console-F59E0B?style=flat-square" alt="status">
+  <img src="https://img.shields.io/badge/status-0.4.0%20%C2%B7%20milestone%3A%20native%20serving%20complete-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
   <a href="https://deltaverse.pythai.net/bankml"><img src="https://img.shields.io/badge/read-why%20bankML-22D3EE?style=flat-square" alt="why bankML, on the web"></a>
 </p>
@@ -28,17 +28,16 @@
 
 ---
 
-## Where it stands (2026-10-06)
+## Where it stands (2026-10-07)
 
-**[v0.3.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.8) is the latest release** (gate passed, every stage).
-The rest is on its way, each passing its oracles as it is built; each ships once its full release gate passes
-([CHANGELOG.md](CHANGELOG.md), *Unreleased*):
+**[v0.4.0](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.0), the milestone, is the latest release** (gate passed,
+every stage): native serving complete. What comes next is in [TODO.md](docs/TODO.md) (0.4.x, then 0.5.0 — hardware):
 
 | release | state | what it brings |
 |---|---|---|
 | **0.3.7** | **released** 2026-10-06 | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
 | **0.3.8** | **released** 2026-10-06 | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
-| **0.4.0** | the milestone, in its release gate | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)); with it: a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
+| **0.4.0** | **released** 2026-10-07 — the milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)); with it: a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
 
 ## Why
 
@@ -241,11 +240,12 @@ the 1-bit kernel is at the core's instruction limit (TECHNICAL §IV.5).
 
 Every release passed the full gate (build, tests, clippy, every suite, every oracle, the A/Bs and the decode budgets)
 before it was tagged; its record is `testing/results/<version>.txt`, and the details are in
-**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.3.8. What comes next (the 0.4.0 milestone) is
+**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.4.0, the milestone. What comes next is
 in the changelog's *Unreleased* sections until its gate passes and it is tagged.
 
 | version | what it brought |
 |---|---|
+| [0.4.0](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.0) | **Milestone: native serving complete** — everything Savante and mindX ask of llama-server, answered by bankML's own engine and identical to llama-server b11192; 1-bit decode at least at llama-server's speed (the pinned 8B A/B, 3 of 3 rounds, median 2.02 against 0.77 tokens/s under the same load, answers identical), so `auto` takes the 1-bit files too; a q8_0 KV cache with llama.cpp's Hadamard rotation (6 / 6); the grammar mask 13× faster; `cache_prompt: false` honoured; Q/K/V and gate/up in one pool wake; `GET /bankml/status` and serve's status page; the console's ultimate-input-field landing, Engine, Diagnostics (every sAGI component, traces) and Thesis tabs; `scientific.diagnostic` (32 / 32 tokens bit-equal to 18 decimals) |
 | [0.3.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.8) | **The serving contract**: the context limit (a full context stops with `length`, a prompt that does not fit refused with llama-server's 400, 8 / 8), slots saved, erased and restored as llama-server's slot API (19 / 19, across a restart), a host prompt cache for conversations that take turns through one slot (14 / 14, `cache_n` identical), and logprobs, streamed and not (14 / 14, every logprob the same float) — all against llama-server b11192 |
 | [0.3.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.7) | **The whole sampler chain; bankML measures itself; the GPU limiter; the bankML console**: typical-p, top-n-σ, XTC, dynamic temperature and DRY token-identical to llama-server (76 / 76 per model, 16 / 16 refusals; libstdc++'s `std::sort` ported, 876 / 876); TTFT on every receipt, llama-server's `timings`, `/bankml/metrics` (pp, tg, J/token) and power and GPU readings in `/bankml/usage`; `BANKML_GPU_LIMIT` (memory and duty cycle) and per-shape GPU calibration (the Vega 3's 18 % decode penalty removed); `./install.sh power` (opt-in RAPL); `bankml.persona` and `sAGI/console.py` — four tabs, a measured SELF block, D3 diagnostics, iNFT infotags |
 | [0.3.6](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.6) | **The penalties** (O2): llama.cpp b11192's `llama_sampler_penalties` — repeat, frequency and presence penalties over `repeat_last_n`, first in the chain and again on a grammar's redraw, the window filled by the whole prompt as llama-server fills it; token-identical to llama-server on mindx-gen39, Bonsai-1.7B and Bonsai-8B (56 / 56 each, greedy and seeded, 12 / 12 refusals with its message), live through `/v1` and `/api/chat` (85 / 85); on `/v1`, `/api/*`, a Modelfile `PARAMETER` and the C API; a sampler refusal on `/v1` is a 400 |
