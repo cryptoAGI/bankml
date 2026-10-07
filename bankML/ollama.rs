@@ -524,7 +524,8 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
     if stream {
         write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\n{}Connection: close\r\n\r\n", crate::serve::cors_headers())?;
         let send = |c: &mut TcpStream, piece: &str| piece.is_empty() || c.write_all(piece_line(model, chat, piece).as_bytes()).and_then(|_| c.flush()).is_ok();
-        let done = eng.complete(&prompt, params, o.max, grammar, |piece| {
+        let probe = c.try_clone()?;
+        let done = eng.complete_alive(&prompt, params, o.max, grammar, &|| crate::serve::client_alive(&probe), |piece| {
             if t.ttft.is_none() {
                 t.ttft = Some(t.t0.elapsed());
             }
@@ -544,7 +545,8 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
         c.write_all(line.as_bytes())?;
         return c.flush();
     }
-    let d = match eng.complete(&prompt, params, o.max, grammar, |piece| {
+    let probe = c.try_clone()?;
+    let d = match eng.complete_alive(&prompt, params, o.max, grammar, &|| crate::serve::client_alive(&probe), |piece| {
         if t.ttft.is_none() {
             t.ttft = Some(t.t0.elapsed());
         }

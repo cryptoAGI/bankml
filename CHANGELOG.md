@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased (0.4.1) — a request whose client has gone stops
+
+### Abort a native run when its client goes away (`testing/disconnect_oracle.py`, 6 / 6)
+- Found by the ultimate-bankml-ui session under contention: `serve` noticed a closed connection only when a write
+  failed, so an abandoned request's whole prefill (and, unstreamed, its whole answer) ran for nobody, minutes per
+  request on the laptop, with the one slot held.
+- `Native::complete_while` asks `alive()` between prefill micro-batches (`Weights::prefill_while`: the same 512-token
+  micro-batches, so the same bits) and before each generated token. `serve::client_alive` is a non-blocking peek at the
+  client's socket: end of file or a reset means gone, anything else (bytes waiting, nothing yet, any doubt) means
+  there. `/v1/chat/completions` (streamed or not) and Ollama's `/api/chat` and `/api/generate` all use it.
+- A stopped run logs where it stopped (`bankml: the client went away; stopped after N of M prompt tokens (kept in the
+  slot)`), records no answer, and leaves the slot holding exactly what it computed: the next request reuses it
+  (`cache_n` > 0) and its answer is still an empty slot's.
+- Checked live: an abandoned 2,294-token prompt stopped after its first micro-batch; the reuse and its answer; an
+  abandoned 400-token stream stopped early; `/api/generate` abandoned the same way. No answer changed:
+  `oracle_native_serve_o4`, `cache_prompt_false_is_an_empty_slot`, the session (14 / 14), logprobs (14 / 14) and
+  Ollama-shape (9 / 9) oracles all pass. `disconnect_oracle_live` is in the release gate.
+
 ## 0.4.0 — 2026-10-07 — milestone: native serving complete
 
 **Everything Savante and mindX ask of llama-server, answered by bankML's own engine, identical to llama-server

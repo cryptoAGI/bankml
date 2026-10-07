@@ -85,6 +85,9 @@ pub struct Done {
     pub probs: Vec<TokenLogprob>,
 }
 
+/// What a run that stopped because its client left returns (`complete_while`).
+pub const GONE: &str = "the client went away";
+
 /// One step of a completion, as `Native::complete_with` reports it.
 ///
 /// - `piece`: the text this step released (may be empty).
@@ -222,12 +225,26 @@ impl Native {
         self.complete_with(prompt, params, max_tokens, grammar, |s| s.eog || s.piece.is_empty() || emit(s.piece))
     }
 
+    /// `complete`, stopping when `alive()` says the asker has gone (`complete_while`).
+    pub fn complete_alive(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, grammar: Option<crate::grammar::Grammar>,
+                          alive: &dyn Fn() -> bool, mut emit: impl FnMut(&str) -> bool) -> Result<Done, String> {
+        self.complete_while(prompt, params, max_tokens, grammar, alive, |s| s.eog || s.piece.is_empty() || emit(s.piece))
+    }
+
     /// `complete`, reporting every step (`Step`).
     ///
     /// Steps include whole tokens that release no text and the end-of-turn token, each with its logprobs, so a
     /// stream can send them as llama-server does.
-    pub fn complete_with(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
-                         mut emit: impl FnMut(Step) -> bool) -> Result<Done, String> {
+    pub fn complete_with(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, grammar: Option<crate::grammar::Grammar>,
+                         emit: impl FnMut(Step) -> bool) -> Result<Done, String> {
+        self.complete_while(prompt, params, max_tokens, grammar, &|| true, emit)
+    }
+
+    /// `complete_with`, asking `alive()` between prefill micro-batches and before each generated token: when the asker
+    /// has gone (its client closed the connection) the run stops there with `GONE`, and the slot keeps exactly what was
+    /// computed, so a client that comes back reuses it. The bits of what is computed do not change.
+    pub fn complete_while(&self, prompt: &[u32], params: Params, max_tokens: Option<usize>, mut grammar: Option<crate::grammar::Grammar>,
+                          alive: &dyn Fn() -> bool, mut emit: impl FnMut(Step) -> bool) -> Result<Done, String> {
         if prompt.is_empty() {
             return Err("an empty prompt".into());
         }
@@ -270,8 +287,13 @@ impl Native {
             c.truncate(n_past);
         }
         let Slot { tokens, caches, .. } = &mut *slot;
-        let mut rn = self.w.prefill(caches, &prompt[n_past..], |_, _, _| {})?;
-        tokens.extend_from_slice(&prompt[n_past..]);
+        let (computed, rn) = self.w.prefill_while(caches, &prompt[n_past..], alive)?;
+        tokens.extend_from_slice(&prompt[n_past..n_past + computed]);
+        let Some(mut rn) = rn else {
+            crate::log(crate::LOG_INFO, &format!("bankml: the client went away; stopped after {} of {} prompt tokens (kept in the slot)",
+                                                 n_past + computed, prompt.len()));
+            return Err(GONE.into());
+        };
         let prompt_ns = t0.elapsed().as_nanos() as u64;
         let t1 = Instant::now();
         let (mut pending, mut text, mut n, mut finish) = (Vec::<u8>::new(), String::new(), 0usize, "length");
@@ -339,6 +361,10 @@ impl Native {
             }
             if max_tokens.is_some_and(|m| n >= m) || tokens.len() + 1 >= self.n_ctx {
                 break;
+            }
+            if !alive() {
+                crate::log(crate::LOG_INFO, &format!("bankml: the client went away; stopped after {n} generated tokens"));
+                return Err(GONE.into());
             }
             rn = self.w.decode(caches, next)?;
             tokens.push(next);

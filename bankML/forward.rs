@@ -1119,6 +1119,23 @@ impl Weights {
         Ok(self.prefill_with(caches, tokens, Outputs::Last, each)?.pop().unwrap_or_default())
     }
 
+    /// `prefill`, asking `alive()` before each micro-batch: the same micro-batches and the same bits, but it stops
+    /// between two of them when the asker has gone. Returns how many tokens were computed into the caches and, when all
+    /// were, the last token's `result_norm`.
+    pub fn prefill_while(&self, caches: &mut [KvCache], tokens: &[u32], alive: &dyn Fn() -> bool) -> Result<(usize, Option<Vec<f32>>), String> {
+        let n_ub = tokens.len().div_ceil(N_UBATCH);
+        let mut rn = Vec::new();
+        for (i, ub) in tokens.chunks(N_UBATCH).enumerate() {
+            if !alive() {
+                return Ok((i * N_UBATCH, None));
+            }
+            let kernel = kernel_for(ub.len(), caches[0].len() + ub.len(), self.llama_threads)?;
+            let out = if i + 1 == n_ub { Some(Outputs::Last) } else { None };
+            rn = self.ubatch(caches, ub, kernel, out, &mut |_, _, _| {})?;
+        }
+        Ok((tokens.len(), Some(rn.pop().unwrap_or_default())))
+    }
+
     /// `prefill` with the rows asked for: `Outputs::Last` gives the last token's `result_norm` (llama-server's
     /// request: only the last micro-batch's last row leaves the last layer); `Outputs::All` gives every token's.
     pub fn prefill_with(&self, caches: &mut [KvCache], tokens: &[u32], outputs: Outputs, mut each: impl FnMut(usize, usize, &[f32]))

@@ -79,6 +79,9 @@ out=testing/results/$v.txt
     echo "## kv_oracle_live"
     python3 -B testing/kv_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: kv_oracle_live"; exit 1; }
     # 0.3.8: /v1 logprobs — ids, texts, bytes and every logprob the same float as llama-server's; stop words, UTF-8 splits
+    # 0.4.1: a run whose client goes away stops there, keeps what it computed, changes no answer
+    echo "## disconnect_oracle_live"
+    python3 -B testing/disconnect_oracle.py Bonsai-1.7B-Q1_0 || { echo "FAILED: disconnect_oracle_live"; exit 1; }
     echo "## logprobs_oracle_live"
     python3 -B testing/logprobs_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: logprobs_oracle_live"; exit 1; }
     # 0.3.3: JSON mode and grammars live — /v1 response_format (streamed once) and grammar, /api/chat format "json"

@@ -590,6 +590,17 @@ fn status_json(st: &State) -> String {
     )
 }
 
+/// Whether the client is still there: a non-blocking peek reads end of file only when it has closed the connection.
+/// Bytes waiting (or none yet) mean it is there; any doubt (the peek or the mode switch fails otherwise) counts as there.
+pub(crate) fn client_alive(s: &TcpStream) -> bool {
+    if s.set_nonblocking(true).is_err() {
+        return true;
+    }
+    let r = s.peek(&mut [0u8; 1]);
+    let _ = s.set_nonblocking(false);
+    !matches!(r, Ok(0)) && !matches!(&r, Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset)
+}
+
 /// `Host` names this machine: 127.0.0.1, localhost or [::1], with or without a port.
 fn loopback_host(h: &str) -> bool {
     let h = h.trim().to_ascii_lowercase();
@@ -726,7 +737,8 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
             }
             out.is_empty() || c.write_all(out.as_bytes()).and_then(|_| c.flush()).is_ok()
         };
-        let d = match nc.run_steps(eng, &mut t, true, |ch| send(c, ch)) {
+        let probe = c.try_clone()?;
+        let d = match nc.run_steps_while(eng, &mut t, true, &|| client_alive(&probe), |ch| send(c, ch)) {
             Ok(d) => d,
             Err(e) => return write!(c, "data: {{\"error\": {}}}\n\n", crate::gguf::jstr(&e)),
         };
@@ -735,7 +747,8 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
         write!(c, "data: {{\"bankml_receipt\": {}}}\n\ndata: [DONE]\n\n", t.receipt(&l.engine, &l.verified))?;
         c.flush()
     } else {
-        let d = match nc.run(eng, &mut t, false, |_| true) {
+        let probe = c.try_clone()?;
+        let d = match nc.run_steps_while(eng, &mut t, false, &|| client_alive(&probe), |_| true) {
             Ok(d) => d,
             Err(e) => return respond(c, 500, "text/plain", e.as_bytes()),
         };
@@ -813,14 +826,20 @@ impl NativeChat {
     /// `run`, streaming `Chunk`s as llama-server's partial responses carry them.
     ///
     /// One chunk per whole token, plus a last flush; each carries the releasing token's logprob entry when asked for.
-    pub fn run_steps(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, mut emit: impl FnMut(Chunk) -> bool) -> Result<crate::native::Done, String> {
+    pub fn run_steps(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, emit: impl FnMut(Chunk) -> bool) -> Result<crate::native::Done, String> {
+        self.run_steps_while(eng, t, stream, &|| true, emit)
+    }
+
+    /// `run_steps`, stopping when `alive()` says the client has gone (`Native::complete_while`).
+    pub fn run_steps_while(self, eng: &crate::native::Native, t: &mut Tally, stream: bool, alive: &dyn Fn() -> bool, mut emit: impl FnMut(Chunk) -> bool)
+                           -> Result<crate::native::Done, String> {
         let mut stop = crate::ollama::StopFilter::new(self.stops);
         let grammar = eng.grammar(&self.constraint)?;
         let mut content = crate::grammar::ContentStream::new(&self.constraint);
         let mut sent: Vec<String> = Vec::new();
         // streamed, text waits for a whole token, as llama-server sends nothing while UTF-8 is incomplete
         let mut held = String::new();
-        let done = eng.complete_with(&self.prompt, self.params, self.max, grammar, |s| {
+        let done = eng.complete_while(&self.prompt, self.params, self.max, grammar, alive, |s| {
             if !stream && (s.eog || s.piece.is_empty()) {
                 return true;
             }

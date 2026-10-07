@@ -239,7 +239,7 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
 
 ### 0.4.x — found while measuring 0.4.0
 
-- [ ] **Abort a native run when its client goes away** (found 2026-10-06 by the ultimate-bankml-ui session): `serve.rs`
+- [x] **Abort a native run when its client goes away** (**0.4.1**, `testing/disconnect_oracle.py` 6 / 6) (found 2026-10-06 by the ultimate-bankml-ui session): `serve.rs`
   notices a closed socket only when a write fails, so an abandoned request's prefill and generation run to the end
   for nobody — minutes per request on the laptop under contention, and the one slot is held meanwhile. Check the
   socket before each micro-batch (a non-blocking peek, or the write of a keep-alive comment on a stream) and stop the
