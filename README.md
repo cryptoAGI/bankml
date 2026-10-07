@@ -30,14 +30,14 @@
 
 ## Where it stands (2026-10-06)
 
-**[v0.3.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.7) is the latest release** (gate passed, every stage).
+**[v0.3.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.8) is the latest release** (gate passed, every stage).
 The rest is on its way, each passing its oracles as it is built; each ships once its full release gate passes
 ([CHANGELOG.md](CHANGELOG.md), *Unreleased*):
 
 | release | state | what it brings |
 |---|---|---|
 | **0.3.7** | **released** 2026-10-06 | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
-| **0.3.8** | in its release gate | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
+| **0.3.8** | **released** 2026-10-06 | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
 | **0.3.9** | in progress | a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
 | **0.4.0** | next milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)) |
 
@@ -241,13 +241,13 @@ the 1-bit kernel is at the core's instruction limit (TECHNICAL §IV.5).
 
 Every release passed the full gate (build, tests, clippy, every suite, every oracle, the A/Bs and the decode budgets)
 before it was tagged; its record is `testing/results/<version>.txt`, and the details are in
-**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.3.6. What comes next (0.3.7, 0.3.8 and 0.3.9 in progress) is
+**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.3.8. What comes next (0.3.9, then the 0.4.0 milestone) is
 in the changelog's *Unreleased* sections until its gate passes and it is tagged.
 
 | version | what it brought |
 |---|---|
+| [0.3.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.8) | **The serving contract**: the context limit (a full context stops with `length`, a prompt that does not fit refused with llama-server's 400, 8 / 8), slots saved, erased and restored as llama-server's slot API (19 / 19, across a restart), a host prompt cache for conversations that take turns through one slot (14 / 14, `cache_n` identical), and logprobs, streamed and not (14 / 14, every logprob the same float) — all against llama-server b11192 |
 | [0.3.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.7) | **The whole sampler chain; bankML measures itself; the GPU limiter; the bankML console**: typical-p, top-n-σ, XTC, dynamic temperature and DRY token-identical to llama-server (76 / 76 per model, 16 / 16 refusals; libstdc++'s `std::sort` ported, 876 / 876); TTFT on every receipt, llama-server's `timings`, `/bankml/metrics` (pp, tg, J/token) and power and GPU readings in `/bankml/usage`; `BANKML_GPU_LIMIT` (memory and duty cycle) and per-shape GPU calibration (the Vega 3's 18 % decode penalty removed); `./install.sh power` (opt-in RAPL); `bankml.persona` and `sAGI/console.py` — four tabs, a measured SELF block, D3 diagnostics, iNFT infotags |
-| [0.3.7](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.7) | **The whole sampler chain, and bankML measures itself**: llama-server b11192's default chain reproduced token for token — typical-p, top-n-σ, XTC, dynamic temperature and DRY after 0.3.6's penalties (`oracle_samplers` 76 / 76 on mindx-gen39, Bonsai-1.7B and Bonsai-8B, 16 / 16 refusals each, live through `/v1`); time to first token, prompt and generation speed, CPU, memory, GPU and power measured on every answer (`/bankml/metrics`); a GPU limiter (`BANKML_GPU_LIMIT`) and per-shape calibration; the bankML console, bankML speaking as itself (`bankml.persona`) |
 | [0.3.6](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.6) | **The penalties** (O2): llama.cpp b11192's `llama_sampler_penalties` — repeat, frequency and presence penalties over `repeat_last_n`, first in the chain and again on a grammar's redraw, the window filled by the whole prompt as llama-server fills it; token-identical to llama-server on mindx-gen39, Bonsai-1.7B and Bonsai-8B (56 / 56 each, greedy and seeded, 12 / 12 refusals with its message), live through `/v1` and `/api/chat` (85 / 85); on `/v1`, `/api/*`, a Modelfile `PARAMETER` and the C API; a sampler refusal on `/v1` is a 400 |
 | [0.3.5](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.5) | **JSON schemas and `bankml create`** (O6b, O5's first cut): llama.cpp b11192's `json_schema_to_grammar` and the chat parser's wrapping ported (`schema.rs`), per template (Qwen3 and ChatML), byte-identical on 173 schemas × 3 templates; answers under schemas token-identical to llama-server on all five native models (28 / 28, 11 / 11, 56 / 56 × 3), length cuts included; the content rule checked against llama.cpp's own parser on 30,063 texts per template (two fixes); `bankml convert` (safetensors → GGUF F16, the same bytes as b11192's converter, now also run directly) and `bankml create` / `/api/create` / `/api/delete` / `/api/copy` (Ollama's Modelfile, derived models as verified layers); promote.py's persona Modelfile for `mindx-gen39` token-identical end to end (27 / 27, two ways); `num_ctx` fitted as Ollama fits it; `/api/ps` names the derived model |
 | [0.3.4](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.4) | **mindX's own model, natively** (O4, with O3's F16): the Llama graph (NORM RoPE, no Q/K norms), tied embeddings (Bonsai-1.7B, refused until now), F16 weights by ggml's two paths chosen by shape (`vec_dot_f16`, llamafile's tinyBLAS; 552,268 of 552,268 `mul_mat` elements bit-exact), SmolLM2's `smollm` pre-tokenizer and two ChatML templates, JSON mode's ChatML grammar; SmolLM2-135M-Instruct and `mindx-gen39` (mindXtrain39) converted by b11192's own converter from pinned safetensors and pinned; token-identical to llama-server on every oracle family (whole model, greedy short/long/deep, seeded, conversations, JSON mode, live `/v1` and `/api`, C API); `mindx-gen39` resolves Ollama's tag; F16 decode 38 vs 41 tok/s, attention faster for every model; fixed: `</s>` in the Qwen3 vocabulary is a special token, as llama-vocab makes it |
@@ -407,7 +407,7 @@ bankml/
 | `bankML/grammar.rs` | O6 (0.3.3): llama.cpp's GBNF grammar engine, ported; llama-server's JSON-mode grammar and prefill (per template since 0.3.4); how a request's `response_format` / `grammar` / Ollama `format` resolve; JSON mode's content |
 | `bankML/f16.rs` | O3/O4 (0.3.4): F16 weights as ggml multiplies them — `ggml_vec_dot_f16` for one column, llamafile's tinyBLAS for two or more — scalar definitions and AVX2 + FMA + F16C paths with the same bits; the f16 helpers of flash attention |
 | `bankML/native.rs`, `bankML/sampler.rs` | the native engine behind `serve --native` and the C API, and llama-server's sampler chain (0.2.11; the penalties 0.3.6) |
-| `bankML/metrics.rs`, `bankML/prompt_cache.rs` | unreleased: bankML's own measurements at `GET /bankml/metrics` (0.3.7); llama-server's host prompt cache (0.3.8) |
+| `bankML/metrics.rs`, `bankML/prompt_cache.rs` | bankML's own measurements at `GET /bankml/metrics` (0.3.7); llama-server's host prompt cache (0.3.8) |
 | `sAGI/console.py` | unreleased (0.3.7): the bankML console, port 7875, loopback only — see [usage.md §6c](docs/usage.md#6c-the-bankml-console-bankml-as-itself-037) |
 | each module | one page each in [docs/modules/](docs/modules/README.md): usage, why it is fast, limits |
 | `capi/` | the C API (0.3.2): `src/lib.rs` (open, chat, close, free, the log), `src/printf.rs` (the formatter behind the C-variadic `bankml_log`), `include/bankml.h` — see [CAPI.md](docs/CAPI.md) |
