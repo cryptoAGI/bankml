@@ -252,6 +252,14 @@ In the next release (not yet tagged); each is checked against llama-server b1119
   from your browser: your CPU, your verified model, a receipt on every answer, nothing sent anywhere else. It starts
   serve with `--allow-origin` for those two origins, so only those pages get CORS headers;
   `./install.sh start --no-space` takes it back.
+
+  In [PYTHAI/ultimate-bankml-ui](https://huggingface.co/spaces/PYTHAI/ultimate-bankml-ui), what bankML is told comes from the
+  input field's windows, in Savante's file formats:
+  - `.persona` is `sAGI/personas/bankml.persona` by default. Import another to change who speaks.
+  - `.prompt` and `.memory` (sent under Savante's `MEMORY —` header) follow the persona.
+  - Then comes SELF, measured just now, and then the conversation's past exchanges.
+  - `.history` keeps every answer with its receipt, as `savante.history` does.
+  - `.model` shows the verified model serve reads from `GET /bankml`.
 - **A smaller conversation memory (0.4.0).** `BANKML_CACHE_TYPE=q8_0` keeps the KV cache in q8_0 instead of f16,
   about half the memory, so a long context fits on a small machine. It is llama.cpp's `--cache-type-k q8_0
   --cache-type-v q8_0` exactly, with the Hadamard rotation llama.cpp applies around a quantized cache, and gives the
