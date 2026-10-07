@@ -98,7 +98,7 @@ then memory traffic per token, with strategies from llama.cpp, vLLM, Ollama and 
 #### The three design goals, made testable
 
 1. **Optimization** — for a 1-bit weight the matmul is a signed sum: `y = s · (Σ x[w=+1] − Σ x[w=−1])`
-   per 128-weight group. No multiplies on the weights (matching ggml bit for bit pins the activations to q8_0,
+   per 128-weight group. No multiplies on the weights (ggml-exactness pins the activations to q8_0,
    so the sums run as `maddubs`/`madd` by ±1 or {0,1}). Targets on the reference node:
    gen ≥ 3.0 tok/s (parity), then ≥ 4.5 tok/s; prompt eval ≥ 2× b11192 (batched GEMM, not GEMV);
    RSS ≤ weights + KV(ctx, kv_type) + 150 MB. Measured by ternary_diagnostics, never quoted.

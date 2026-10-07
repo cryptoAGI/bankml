@@ -48,7 +48,7 @@ once per token costs 11 µs (n = 4096) and 29 µs (n = 12288), about 2 ms per to
 included above. From L1 the kernel runs at about 4.0 ns/block against a measured memory floor of about 2.3 ns
 (7.7 GB/s single-thread read), so it is still partly compute-bound.
 
-**Precision** (`oracle_ggml_b11192_real_ternary_bonsai_8b`, re-run independently on 2026-09-26): all **254** `Q2_0`
+**Exactness** (`oracle_ggml_b11192_real_ternary_bonsai_8b`, re-run independently on 2026-09-26): all **254** `Q2_0`
 tensors — **8,188,239,872** weights — dequantized bit-exact; **762 / 762** q8_0 activation rows byte-exact; **762 / 762**
 dot products bit-exact against ggml's haswell build (scalar model, AVX2 and portable paths), and a no-FMA model equal to
 ggml's baseline `libggml-cpu-x64.so` in 762 / 762. The haswell and x64 builds themselves disagree on 19 of the 762 — the
@@ -72,7 +72,7 @@ oracle does test float order. The format's codes are {−1, 0, +1, +2}; in the r
 Within the crate: the AVX2 path is **15.2×** the portable C port of ggml's generic kernel and **20.1×** the scalar
 reference model (L1-resident row, n = 4096: 16.25 vs 246.28 vs 327.02 ns/block).
 
-**Precision** (`oracle_ggml_b11192_real_bonsai_1_7b`, against the release's `libggml-cpu-haswell.so`):
+**Exactness** (`oracle_ggml_b11192_real_bonsai_1_7b`, against the release's `libggml-cpu-haswell.so`):
 all **197** Q1_0 tensors — **1,719,904,256** weights — dequantized bit-exact; **788 / 788** q8_0 activation rows
 byte-exact; **788 / 788** dot products bit-exact against ggml's AVX2 kernel and against its generic kernel.
 
@@ -144,7 +144,7 @@ with kernel. Laptop, two runs, min s/token; the full output is in `testing/resul
 - The persistent pool replaced per-call thread spawning (12.6 against 88.8 µs per matmul; `bench_pool_overhead`). With
   it, the 3-thread ternary budget moved from 0.36 s (0.0.2 harness) to 0.23–0.25 s.
 - The 1-bit kernel is at parity at every thread count (0.93–1.13×).
-- Precision: the new `oracle_ggml_b11192_real_bonsai_8b_q1_0` covers all **254** `Q1_0` tensors of Bonsai-8B
+- Exactness: the new `oracle_ggml_b11192_real_bonsai_8b_q1_0` covers all **254** `Q1_0` tensors of Bonsai-8B
   (8,188,239,872 weights) bit-exact, 762/762 rows and dot products. Every threaded output in the budgets is compared
   bit for bit with ggml.
 

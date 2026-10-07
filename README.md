@@ -42,7 +42,7 @@
 >   - `scientific.diagnostic`: 32 / 32 tokens bit-equal to 18 decimals.
 > - **The kernels at three threads:** 1-bit 1.02× and ternary 8.9× ggml b11192's own.
 >
-> **The thesis — Professor Codephreak and Gregory L. Magnusson.** *Precision before speed.*
+> **The thesis — Professor Codephreak and Gregory L. Magnusson.** *Exactness before speed.*
 > 1. Port what works, and only what works.
 > 2. Optimization, succinct, and verified response.
 > 3. The standing machine is the CPU you already have.
@@ -79,7 +79,7 @@ at all** — it runs scalar C with 64 integer multiplies per block. bankml's ker
 against llama.cpp's own compiled library on all 8.19 billion weights of the model, **9.4–10.0× faster** per matrix
 (the 0.2.2 gate record; every gate since 0.0.1 has measured 9.4–10.8×).
 
-The argument in full — precision first, then speed, and why the discipline finds speed rather than costing it — is
+The argument in full — exactness first, then speed, and why the discipline finds speed rather than costing it — is
 **[docs/thesis.md](docs/thesis.md)**.
 
 ## Install and use
@@ -178,7 +178,7 @@ Start here, then go where your question is. The same documents read as a website
 | meet Savante's page for the first time: asking, her card, listening to her | **[docs/playback.md](docs/playback.md)** |
 | understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
 | read the thesis: the design intent of bankml's authors, in their own words | **[the Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson)**, in TECHNICAL.md (Savante reads it aloud: `Savante-reading.opus`) |
-| read the argument in full: precision before speed, assembled from the code, the changelog and the oracles | **[docs/thesis.md](docs/thesis.md)** |
+| read the argument in full: exactness before speed, assembled from the code, the changelog and the oracles | **[docs/thesis.md](docs/thesis.md)** |
 | meet Savante, the agent bankml runs | **[Using Savante](#using-savante)**, with her public places (Hugging Face, canon, sAGI) |
 | see every speed number, the machines and the commands that produced them | **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** |
 | know what bankml is checked against, and how | **[docs/oracles.md](docs/oracles.md)** |

@@ -596,7 +596,7 @@ The figures below are from [PERFORMANCE.md](PERFORMANCE.md) unless stated. They 
   a fourth thread added nothing. The 1-bit kernel is at parity with ggml at every count. On a shared machine, give bankML fewer threads than cores, as the service in §8 does with 1.
 - **`--threads`** is passed to a spawned llama-server (`-t`). It has no effect in native mode. The importer's
   carrier uses `BANKML_THREADS_SERVE` (3) or the Admin tab's choice for whichever engine it starts.
-- **`BANKML_LLAMA_THREADS`** (default 3) is about precision, not speed. It must equal the `-t` of the llama.cpp run
+- **`BANKML_LLAMA_THREADS`** (default 3) is about exactness, not speed. It must equal the `-t` of the llama.cpp run
   whose tokens you compare against, because llama.cpp's split attention kernel (decode at 512 or more KV cells)
   chunks by thread count. Leave it at 3 unless your reference ran with another `-t`.
 

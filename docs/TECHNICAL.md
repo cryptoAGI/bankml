@@ -12,7 +12,7 @@ Language models quantized to one bit or to ternary values per weight shrink an 8
 1.2–2.3 GB, small enough for a laptop or a two-core server. Whether such models are *useful* there depends less on the
 arithmetic than on two properties the literature treats separately: the speed of the matrix kernels that consume the
 packed weights, and the confidence that a fast kernel computes exactly what the reference computes. This report argues
-that the two must be established together, and that **bit-for-bit precision against the reference implementation's own
+that the two must be established together, and that **bit-exactness against the reference implementation's own
 compiled code is the correctness criterion a low-bit kernel should meet before its speed is reported at all**. We
 describe bankml, a zero-dependency Rust runtime for the ggml `Q1_0` (1-bit) and `Q2_0_g64` (ternary) formats; its
 verification discipline (a header guard, a sha256 pin, and an oracle that calls the reference library's exported
@@ -44,7 +44,7 @@ argument, in [thesis.md](thesis.md).*
 (2026-07-04). bankml was not begun from a design document. It was begun, on the instruction to "create llama.cpp rust
 version todo as bankml.rs" (2026-09-25), after a working architecture existed and had been measured: a 1-bit Bonsai-8B
 served by llama.cpp b11192 on a two-core server. The Rust runtime inherits a proven system's behaviour as its
-specification, which is why precision against that system's compiled code (§III.4) is its first criterion.
+specification, which is why exactness against that system's compiled code (§III.4) is its first criterion.
 
 **Three design goals: "optimization, succinct, and verified response"** (2026-09-25). Optimization is measured,
 never quoted; succinctness is a budget (one crate, no runtime dependencies, one static binary); and a verified
@@ -88,7 +88,7 @@ What this work contributes, stated so each can be checked against the code (file
 and the measurements (PERFORMANCE.md).
 
 1. **A verified-response runtime architecture.** A model is admitted only through three gates: a header guard, a
-   provenance pin, and a bit-for-bit precision oracle. Since 0.0.6 every answer carries a receipt: model hash, guard verdict,
+   provenance pin, and a bit-exactness oracle. Since 0.0.6 every answer carries a receipt: model hash, guard verdict,
    token counts, timings, and the sha256 of the answer text (`serve.rs`). The contribution is the ordering: correctness
    is established before speed is measured, and a model that cannot be verified does not answer (§III.1).
 2. **A header-only GGUF guard for the three low-bit traps.** From the file header alone, without reading tensor data,
@@ -101,7 +101,7 @@ and the measurements (PERFORMANCE.md).
 3. **Provenance forks and the pin.** The models are forked with provenance to `PYTHAI/Bonsai-8B-gguf-fork` and
    `PYTHAI/Ternary-Bonsai-8B-gguf-fork`, each with a `FORK.json` recording the upstream revision and every file's
    sha256; `bankml pin` refuses a file whose hash differs and names both hashes (`sha256.rs`, FIPS 180-4 vectors).
-4. **Precision against the compiled reference, not its source.** The oracle loads the sha256-checked llama.cpp b11192
+4. **Exactness against the compiled reference, not its source.** The oracle loads the sha256-checked llama.cpp b11192
    release and calls its exported symbols in-process on the same bytes (`testing/ggml_oracle.py`). Reading the shipped
    binary exposed that its compiler contracts multiply-add pairs into single FMA instructions; a source-faithful port
    disagrees in the last bit. bankml models both reference builds — the haswell build and the baseline x64 build,
@@ -116,7 +116,7 @@ and the measurements (PERFORMANCE.md).
    kernel, not because ternary weights are expensive (§III.5).
 7. **A bit-exact ternary (`Q2_0_g64`) kernel, 9.5–9.8× the reference.** Two blocks per 256-bit register, the
    activation re-laid-out once per token so the inner loop has no shuffles, and ggml's float chain kept serial for
-   precision: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8× the
+   exactness: all 8.19 billion weights of Ternary-Bonsai-8B and 762 of 762 dot products match, at 9.5–9.8× the
    reference per projection and 12.5× in prefill (`q2_0.rs`).
 8. **A whole-model decode budget and its floor.** Timing one token's worth of every matrix product at the same clock
    as the reference's own end-to-end benchmark shows those products are about 98 % of its time per token. On a
@@ -183,7 +183,7 @@ structured review task its verdict agreed with its own reasoning where the 1-bit
 "Ternary vs 1-bit"). The practical problem is therefore concrete: the more useful model is the one the reference
 runtime serves poorly.
 
-### I.3 Speed claims without precision are not comparable
+### I.3 Speed claims without exactness are not comparable
 
 A faster kernel that rounds differently is not the same computation. In a quantized network small differences in
 accumulation order or activation rounding change logits, and a changed logit changes a sampled token, after which two
@@ -224,7 +224,7 @@ Runtime engineering for these models has taken two directions. Server engines su
 maximize throughput across many concurrent requests on accelerators, chiefly by managing the key–value cache in pages;
 their gains come from batching and do not transfer to one user on a CPU. The ggml/llama.cpp direction targets exactly
 that case: a single process, CPU kernels specialized per quantization format and per instruction set, weights
-memory-mapped from the file. bankml is a contribution to the second direction, with one change of emphasis: precision
+memory-mapped from the file. bankml is a contribution to the second direction, with one change of emphasis: exactness
 against the reference is proven per kernel before speed is claimed, and every answer is meant to carry the evidence
 of what produced it.
 
@@ -293,7 +293,7 @@ decode kernel recovers parity with the reference. For prefill — many activatio
 a 1×4 tile loads each weight block once and applies it to four columns, amortizing the sign expansion; this is the
 source of the 1.10–1.16× prefill gain.
 
-### III.4 The oracle: precision against the compiled reference
+### III.4 The oracle: exactness against the compiled reference
 
 The oracle loads the reference library's own shared objects (`libggml-base.so`, `libggml-cpu-haswell.so`) from the
 sha256-checked b11192 release and calls their exported functions through a foreign-function interface on the same
@@ -508,7 +508,7 @@ engine alone, behind the same gate and receipt (`bankml serve` without `--native
 propositions this report makes testable are stated at the kernel level, with their status:
 
 - **P1.** A low-bit kernel proven bit-exact against the compiled reference can match its speed without giving up
-  precision (supported for `Q1_0`, §IV.1).
+  exactness (supported for `Q1_0`, §IV.1).
 - **P2.** The reference runtime's ternary slowdown relative to 1-bit exceeds the ratio of their file sizes, so part of
   it is recoverable in the kernel (§IV.2–IV.3).
 - **P3.** An end-to-end bankml answer will be token-identical to the reference's at temperature zero on the same
@@ -540,9 +540,9 @@ core with wider or better-fed vector units. The code of every rejected variant i
 
 ## V. Objections
 
-**"Bit-for-bit precision is the wrong target; accuracy is what matters."** The model's accuracy is fixed by its weights; the
+**"Bit-exactness is the wrong target; accuracy is what matters."** The model's accuracy is fixed by its weights; the
 runtime's only freedom is to compute the same function faster. Any deviation, however small, is a different
-function whose accuracy is unmeasured. Precision is what lets speed be compared at all (§I.3).
+function whose accuracy is unmeasured. Exactness is what lets speed be compared at all (§I.3).
 
 **"A kernel benchmark is not an inference benchmark."** Agreed, which is why PERFORMANCE.md reports the reference's
 end-to-end numbers beside the kernel numbers, and why §IV.3 measures how much of a token's wall time the matrix

@@ -30,7 +30,7 @@ The argument for the method is [thesis.md](thesis.md). Sources:
   nothing before closing, so an unread body made the kernel send RST and the client could lose the 403/415. It now
   drains the declared body first; the suite passes 10/10 in a row.
 - [ ] **Measure the prefill/decode knobs** (K, V): `-t 2/3/4` with `-tb 4`; `-ub 128/256/512`; `-fa on`;
-  `-ctv q8_0` (then `-ctk q8_0`) with RSS and precision recorded. Adopt only what is faster *and* token-identical,
+  `-ctv q8_0` (then `-ctk q8_0`) with RSS and exactness recorded. Adopt only what is faster *and* token-identical,
   or clearly label what is not exact. (A `q8_0` K and V cache is exact in bankML since 0.4.0, at 53 % of the f16
   bytes; its speed is not yet measured.)
 - [ ] **Is batched verification cheap here?** (V) `llama-bench -p 1,2,4,8,16`: speculation can only pay if a

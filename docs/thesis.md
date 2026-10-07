@@ -1,4 +1,4 @@
-# The bankML thesis: precision before speed, and inference you can check on the computer you already have
+# The bankML thesis: exactness before speed, and inference you can check on the computer you already have
 
 *cryptoAGI · bankML · 6 October 2026. The design intent quoted in §0 is that of bankML's authors, Professor
 Codephreak and Gregory L. Magnusson, in their own words and dated. The argument around it is assembled from the
@@ -19,7 +19,7 @@ the way to 0.4.0. The plain-language version is [why-bankml.md](why-bankml.md); 
 Low-bit language models make an eight-billion-parameter network small enough for a laptop. The engines that run
 them report speed, but a speed figure says nothing about whether the engine computes what the model's reference
 computes, and in floating point two correct-looking programs rarely produce the same bits. This thesis argues that
-**for a low-bit inference engine, bit-for-bit precision against the reference implementation's compiled code is the
+**for a low-bit inference engine, bit-exactness against the reference implementation's compiled code is the
 correctness criterion, and it must be met before any speed is reported**. It argues further that the criterion is
 not a cost paid against speed but an instrument for finding speed: holding every kernel to the reference's bits is
 how bankML found that the reference has no vectorised x86 kernel for ternary weights, and how it closed a 9.4–10×
@@ -124,7 +124,7 @@ does is fixed by the instructions it was compiled to, not by its source (Thompso
 builds compare binaries rather than intentions (Lamb and Zacchiroli 2022). bankML applies both to inference. Its
 oracle calls the reference's **shipped, compiled library** in-process on the same bytes, and that is how the project
 found that the shipped binary contracts multiply–add pairs into fused instructions, so that a port faithful to the
-C source disagrees in the last bit ([TECHNICAL.md §III.4](TECHNICAL.md#iii4-the-oracle-precision-against-the-compiled-reference)).
+C source disagrees in the last bit ([TECHNICAL.md §III.4](TECHNICAL.md#iii4-the-oracle-exactness-against-the-compiled-reference)).
 
 ### II.4 Verifiable inference
 
@@ -172,14 +172,14 @@ rotation bankML reproduced for llama.cpp's quantized cache (§III.4).
 |---|---|---|
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) upstream | `Q1_0` ([#21273](https://github.com/ggml-org/llama.cpp/pull/21273); x86 AVX2+FMA in [#21636](https://github.com/ggml-org/llama.cpp/pull/21636)); `Q2_0` ([#24448](https://github.com/ggml-org/llama.cpp/pull/24448), NEON and scalar); an x86 `Q2_0` kernel needing AVX-VNNI ([#26348](https://github.com/ggml-org/llama.cpp/pull/26348), open); the older `TQ1_0`/`TQ2_0` ([#10010](https://github.com/ggml-org/llama.cpp/pull/10010)) | the reference: bankML reproduces b11192's compiled code bit for bit and adds the plain-AVX2 `Q2_0` kernel it lacks |
 | [PrismML's fork](https://github.com/PrismML-Eng/llama.cpp) | kernels for the Bonsai 2 formats, e.g. `PQ2_0` AVX2/AVX-VNNI ([#206](https://github.com/PrismML-Eng/llama.cpp/pull/206)) | different formats; refused by bankML's guard until a kernel and an oracle exist |
-| [bitnet.cpp](https://github.com/microsoft/BitNet) (Wang, Zhou, Song et al. 2024; 2025) | lookup-table and I2_S kernels for BitNet b1.58 on CPU; reports 2.37–6.17× on x86 | a different weight format (BitNet's), and a different precision claim (lossless to its own model, not to an external reference) |
+| [bitnet.cpp](https://github.com/microsoft/BitNet) (Wang, Zhou, Song et al. 2024; 2025) | lookup-table and I2_S kernels for BitNet b1.58 on CPU; reports 2.37–6.17× on x86 | a different weight format (BitNet's), and a different exactness claim (lossless to its own model, not to an external reference) |
 | [T-MAC](https://github.com/microsoft/T-MAC) (Wei et al. 2025) | lookup-table mixed-precision GEMM on CPU and NPU | the table-lookup alternative to bankML's `maddubs` arithmetic |
 | Vec-LUT (Li et al. 2025) | vector table lookup for parallel ultra-low-bit inference on edge devices | the same direction as T-MAC, parallelised |
 | Spectra 1.1's TriRun (Vaidhya et al. 2025) | a GPU kernel for packed ternary weights | GPU, not CPU |
 
 #### II.5.3 Inference engines written in Rust
 
-| engine | what it is | state on 2026-10-06 | precision claim |
+| engine | what it is | state on 2026-10-06 | exactness claim |
 |---|---|---|---|
 | [candle](https://github.com/huggingface/candle) (Hugging Face) | a minimalist ML framework; GGUF K-quants on CPU (AVX2/NEON), CUDA, Metal, WASM | active, the base most Rust LLM projects build on | none against llama.cpp found |
 | [mistral.rs](https://github.com/EricLBuehler/mistral.rs) | an LLM server on candle: many architectures, ISQ, GPTQ/AWQ/HQQ/FP8 | active | none found |
@@ -233,7 +233,7 @@ already shown identical.
 
 ### III.2 Axioms the runtime is built on
 
-1. **Precision precedes speed.** No speed figure is recorded for a kernel until its oracle passes in the same run
+1. **Exactness precedes speed.** No speed figure is recorded for a kernel until its oracle passes in the same run
    ([PERFORMANCE.md](PERFORMANCE.md)). A variant that is bit-exact but not reliably faster is kept as a negative
    result and not shipped ([`testing/experiments/`](../testing/experiments/)).
 2. **The compiled reference is the specification, not its source.** Where the shipped library and its C source
@@ -292,7 +292,7 @@ Each proposition below is a claim anyone can re-test: the oracle named is in the
 | P8 | Token probabilities are the reference's floats, streamed or not | logprobs 14 / 14, every value the same 32-bit float | [serve.md](modules/serve.md) |
 | P9 | A half-size q8_0 cache keeps the reference's answers | kernels 4,000 / 4,000 bit-exact against the shipped library; answers 6 / 6 | [forward.md](modules/forward.md) |
 | P10 | The kernels sit at the hardware's limit, not the memory floor | a measured 15–17 GB/s floor; five further bit-exact variants with no reliable gain | [TECHNICAL.md §IV.5](TECHNICAL.md#iv5-the-floor-and-the-limit-of-the-test-core) |
-| P11 | Precision costs nothing on the grammar mask either | a trie mask 13× faster at the median (2.94 against 38.8 ms), every mask identical by both paths | [grammar.md](modules/grammar.md) |
+| P11 | Exactness costs nothing on the grammar mask either | a trie mask 13× faster at the median (2.94 against 38.8 ms), every mask identical by both paths | [grammar.md](modules/grammar.md) |
 
 **Open proposition.** P12: *1-bit decode is at least at the reference's speed.* A loaded-machine pair read 2.30–2.59
 against 2.33–2.48 tokens/s after 0.3.4; the claim waits for the pinned, idle-machine measurement
@@ -302,7 +302,7 @@ against 2.33–2.48 tokens/s after 0.3.4; the claim waits for the pinned, idle-m
 
 ## V. Objections
 
-**1. "Bit-for-bit precision is too strict. A different but equally accurate arithmetic is just as good."** In its strongest
+**1. "Bit-exactness is too strict. A different but equally accurate arithmetic is just as good."** In its strongest
 form: an engine with a better summation order may be *more* accurate than the reference, so binding it to the
 reference's rounding forbids improvement. The answer is that "equally good" is a statistical claim about a
 distribution of answers, which must be argued model by model and is rarely argued at all, while "identical" is a
@@ -314,9 +314,9 @@ bits.
 newer reference means re-recording the oracles and passing them again, which is the same work any port needs to know
 it is still right. The pin makes the change visible instead of silent.
 
-**3. "The 1-bit kernel is not faster, so precision has a ceiling."** The 1-bit kernel is at parity
+**3. "The 1-bit kernel is not faster, so exactness has a ceiling."** The 1-bit kernel is at parity
 (0.93–1.13× decode across releases) and §IV.5 of the technical report places it at the instruction-throughput limit
-of the test core: five bit-exact variants gained nothing reliable. That is a property of the core, not of precision;
+of the test core: five bit-exact variants gained nothing reliable. That is a property of the core, not of exactness;
 the next measurement belongs on a core with a single-instruction byte dot product (AVX-512 VNNI)
 ([TECHNICAL.md §VI](TECHNICAL.md#vi-future-work)).
 
@@ -345,7 +345,7 @@ The thesis does not depend on the gap staying open. It depends on the method tha
   the root, not to the world.
 - Every speed figure is from one laptop core class (Ryzen 3 3200U, Zen+) unless stated. A one-core server and a
   sixteen-core container were measured for baselines, not for the kernels' claims.
-- Bit-for-bit precision is against b11192's haswell build on x86 with AVX2. Other builds and other instruction sets are
+- Bit-exactness is against b11192's haswell build on x86 with AVX2. Other builds and other instruction sets are
   separate oracles.
 
 ---

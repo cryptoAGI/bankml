@@ -110,7 +110,7 @@ programmer. Here is how that plays out in practice:
 - **Whole-program optimisation.** Release builds use link-time optimisation, one code-generation unit and
   abort-on-panic, which gives a single small, fast binary. → [`Cargo.toml`](../Cargo.toml)
 - **A pinned toolchain.** Rust 1.99 is pinned, so a build today gives the same machine code as a build next month,
-  which a precision project needs. → [`rust-toolchain.toml`](../rust-toolchain.toml)
+  which an exactness project needs. → [`rust-toolchain.toml`](../rust-toolchain.toml)
 
 ---
 
