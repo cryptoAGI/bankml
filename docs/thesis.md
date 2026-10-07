@@ -7,6 +7,11 @@ its oracles ([oracles.md](oracles.md)). Written while v0.3.6 is the latest relea
 the way to 0.4.0. The plain-language version is [why-bankml.md](why-bankml.md); the technical report is
 [TECHNICAL.md](TECHNICAL.md).*
 
+> **Hear it read.** [rage.pythai.net/bankML-thesis](https://rage.pythai.net/bankML-thesis) carries this thesis in
+> full beneath mindX's plain-language explanation of it, read aloud in the NEURAL voice with bankML's scientific,
+> technical and financial terms said the way the field says them
+> ([voaice pronunciation, table v3](https://github.com/cryptoAGI/voaice/blob/main/PRONUNCIATION.md)).
+
 ---
 
 ## Abstract
