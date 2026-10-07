@@ -160,6 +160,25 @@ def diagnostics() -> dict:
             "source": "sAGI/diagnostics.py — after LlamaIndex's instrumentation (MIT): SimpleSpan, SimpleSpanHandler"}
 
 
+THESIS_ANCHOR = "thesis--professor-codephreak-and-gregory-l-magnusson"
+
+
+def thesis() -> dict:
+    """The Thesis tab: the authors' thesis and the contributions measured against it, read from docs/TECHNICAL.md
+    (from its `## Thesis` heading to the next `## `), so the page and the report never drift apart."""
+    try:
+        text = (HERE.parent / "docs" / "TECHNICAL.md").read_text(encoding="utf-8")
+    except OSError as e:
+        return {"error": str(e)}
+    start = text.find("\n## Thesis")
+    end = text.find("\n## ", start + 5)
+    if start < 0:
+        return {"error": "docs/TECHNICAL.md has no Thesis section"}
+    return {"markdown": text[start + 1:end if end > 0 else None].strip(), "source": "docs/TECHNICAL.md",
+            "url": f"https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md#{THESIS_ANCHOR}",
+            "base": "https://github.com/cryptoAGI/bankml/blob/main/docs/"}
+
+
 def infotags() -> dict:
     """The metadata an iNFT publication of this session carries (ERC-721 metadata shape, `attributes`), with the
     commitments that let a holder check any one exchange: an RFC 6962 Merkle root over the log's lines and its CIDv1."""
@@ -239,6 +258,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(infotags())
         if path == "/api/diagnostics":
             return self._json(diagnostics())
+        if path == "/api/thesis":
+            return self._json(thesis())
         if path == "/api/engine":
             s = _get("/bankml/status", 10)
             return self._json(s) if s is not None else self._json({"error": f"bankml serve does not answer at {SERVE}"}, 502)

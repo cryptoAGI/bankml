@@ -71,6 +71,10 @@ try:
     check("Infotags: ERC-721 shape (name, description, attributes) and CIDs", info["name"] and info["description"] and info["bankml"]["persona_cid"].startswith("b"))
     log = json.loads(req("/api/log")[1])
     check("/api/log returns the exchanges", len(log["exchanges"]) == 2)
+    th = json.loads(req("/api/thesis")[1])
+    check("/api/thesis: the Thesis section of docs/TECHNICAL.md, whole, with its anchor",
+          th["markdown"].startswith("## Thesis — Professor Codephreak and Gregory L. Magnusson") and "### Contributions" in th["markdown"]
+          and "## I. The problem" not in th["markdown"] and th["url"].endswith("#thesis--professor-codephreak-and-gregory-l-magnusson"))
     code, body, _ = req("/api/engine")
     check("/api/engine without an engine is a 502 that says where it looked", code == 502 and "127.0.0.1:9" in json.loads(body)["error"])
     check("the Engine tab draws with serve's own renderer", req("/engine.js")[1] == (ROOT / "bankML" / "status.js").read_bytes())

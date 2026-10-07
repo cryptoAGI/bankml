@@ -40,6 +40,13 @@ follows that measurement.
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
 
+### A Thesis tab in the console
+- The authors' thesis and the sixteen contributions measured against it, read from docs/TECHNICAL.md's
+  [Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson) section each time the tab opens
+  (`GET /api/thesis`), so the page never drifts from the report; drawn as DOM nodes by a small Markdown reader (bold,
+  italic, code, links, headings, lists; never `innerHTML`), relative links resolved to the repository, in a window
+  with the same depth, set for reading.
+
 ### Diagnostics: every component of sAGI, in windows with depth, on any screen
 - The Diagnostics tab first asks every part of sAGI, in parallel and within a time limit, each in its own words
   (`diagnostics.components`): bankml serve, the console, Savante (`:7873`), view (`:7874`), the model importer

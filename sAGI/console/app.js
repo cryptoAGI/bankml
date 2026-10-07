@@ -32,6 +32,7 @@ function show(tab) {
   if (tab === "logs") loadLogs();
   if (tab === "diagnostics") loadDiagnostics();
   if (tab === "engine") loadEngine();
+  if (tab === "thesis") loadThesis();
   if (tab === "ask") $("q").focus();
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
@@ -193,6 +194,57 @@ async function loadReceipts() {
 async function loadLogs() {
   const j = await (await fetch("/api/log")).json();
   $("englog").textContent = (j.engine_log || []).join("\n") || "the engine has written nothing yet";
+}
+// ── Thesis: docs/TECHNICAL.md's thesis section, as DOM nodes (never innerHTML) ──────────────────────────────────
+// Inline: **bold**, *italic*, `code`, [text](url). Blocks: ### headings, numbered or dashed lists, paragraphs.
+function inline(parent, text, base) {
+  const re = /(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\))/g;
+  let at = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > at) parent.append(text.slice(at, m.index));
+    if (m[2] !== undefined) { const b = el("strong"); inline(b, m[2], base); parent.append(b); }
+    else if (m[3] !== undefined) { const i = el("em"); inline(i, m[3], base); parent.append(i); }
+    else if (m[4] !== undefined) parent.append(el("code", null, m[4]));
+    else {
+      const href = /^(https?:)?\/\//.test(m[6]) ? m[6] : m[6].startsWith("#") ? base + "TECHNICAL.md" + m[6] : base + m[6];
+      const a = el("a"); a.href = href; a.target = "_blank"; a.rel = "noreferrer"; inline(a, m[5], base); parent.append(a);
+    }
+    at = re.lastIndex;
+  }
+  if (at < text.length) parent.append(text.slice(at));
+}
+function markdown(root, md, base) {
+  root.textContent = "";
+  const blocks = md.split(/\n\s*\n/);
+  for (const raw of blocks) {
+    const lines = raw.split("\n");
+    const first = lines[0];
+    let h;
+    if ((h = /^(#{2,4})\s+(.*)$/.exec(first))) { const e = el(h[1].length === 2 ? "h2" : "h3", "prose-h"); inline(e, h[2], base); root.append(e); continue; }
+    if (/^(\d+\.|-)\s/.test(first)) {
+      const list = el(/^\d/.test(first) ? "ol" : "ul");
+      let cur = null;
+      for (const l of lines) {
+        const item = /^(\d+\.|-)\s+(.*)$/.exec(l);
+        if (item) { cur = el("li"); list.append(cur); inline(cur, item[2], base); }
+        else if (cur) { cur.append(" "); inline(cur, l.trim(), base); }
+      }
+      root.append(list);
+      continue;
+    }
+    const p = el("p");
+    inline(p, lines.map((l) => l.trim()).join(" "), base);
+    root.append(p);
+  }
+}
+let thesisLoaded = false;
+async function loadThesis() {
+  if (thesisLoaded) return;
+  const j = await (await fetch("/api/thesis")).json();
+  if (j.error) { $("thesis-body").textContent = j.error; return; }
+  markdown($("thesis-body"), j.markdown, j.base);
+  $("thesis-src").href = j.url;
+  thesisLoaded = true;
 }
 // ── Engine: bankml serve's status, every 3 s while the tab is open ─────────────────────────────────────────────────
 async function loadEngine() {

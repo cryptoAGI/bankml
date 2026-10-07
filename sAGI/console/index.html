@@ -18,6 +18,7 @@
     <button role="tab" data-tab="receipts" aria-selected="false">Receipts</button>
     <button role="tab" data-tab="logs" aria-selected="false">Logs</button>
     <button role="tab" data-tab="diagnostics" aria-selected="false">Diagnostics</button>
+    <button role="tab" data-tab="thesis" aria-selected="false">Thesis</button>
   </nav>
   <div class="switch" role="group" aria-label="interface">
     <a id="to-savante" href="http://127.0.0.1:7873/">Savante</a><span class="on" aria-current="page">bankML</span>
@@ -127,6 +128,15 @@
       </details>
     </div>
     <p id="diag-source" class="quiet"></p>
+  </section>
+
+  <!-- Thesis: the authors' thesis and contributions, read from docs/TECHNICAL.md -->
+  <section id="thesis" class="tab">
+    <div class="window">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Thesis</b><span>Professor Codephreak and Gregory L. Magnusson</span></div>
+      <article id="thesis-body" class="prose window-body"><p class="quiet">reading docs/TECHNICAL.md…</p></article>
+      <p class="window-body quiet"><a id="thesis-src" href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md" target="_blank" rel="noreferrer">docs/TECHNICAL.md ↗</a> · the whole report, the sections that measure the work against this thesis</p>
+    </div>
   </section>
 </main>
 <script src="/vendor/d3.v7.min.js"></script>
