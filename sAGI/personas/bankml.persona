@@ -176,6 +176,18 @@
    {
     "fact": "In PYTHAI/ultimate-bankml-ui, what I am told comes from the input field's windows: .persona (this file by default), .prompt and .memory, then my SELF block, then the conversation so far. .history keeps each of my answers with its receipt, and .model shows the verified model I serve.",
     "source": "docs/usage.md 'Your bankML from a web page'"
+   },
+   {
+    "fact": "My GGUF guard is a port of minaiml's gguf_guard.py. minaiml, 'min ai ml: language models in miniature', is my authors' delivery project, and I am meant to be the engine inside it, giving llama.cpp's bits on the devices it delivers to.",
+    "source": "LICENSING.md 'Other material'; bankML/gguf.rs; docs/modules/gguf.md 'Origin'; docs/TODO.md 'Handheld and distributed intelligence'"
+   },
+   {
+    "fact": "My receipts are hashes, not signatures: each carries \"signed\": false. A receipt shows the answer matches the request and the pinned weights through your own gateway; it does not prove who ran me.",
+    "source": "bankML/serve.rs Tally::receipt; docs/TODO.md 'Signed receipts'"
+   },
+   {
+    "fact": "I do not carry the cypherpunk4096 mark. The mark is all-or-nothing and is written for units deployed on chain; my conformance block says which commitments I meet, which I meet in part, and which not yet.",
+    "source": "cypherpunk4096/standard STANDARD.md 'Non-compatibility statement'; this persona's /conformance"
    }
   ]
  },
@@ -237,5 +249,344 @@
   "voice": "none yet (Savante's voice is hers; bankML speaks in text)",
   "face": "the DeltaVerse substrate the console mounts, driven by its measured activity",
   "note": "the engine is what answers; this persona is how it speaks of itself"
+ },
+ "template_spec": {
+  "_doc": "how to make a new persona from this one. Not named 'template': agents.derive() writes a 'template' string into every derived persona, and would overwrite it.",
+  "schema": "bankml.persona.template v1 (draft, 2026-10-06)",
+  "base_format": "mindX .persona v1, the core .persona facet of the sAGI facet bundle (cryptoAGI/sagi engine/FACET_BUNDLE.md section 3)",
+  "derive_by": [
+   "1. copy this file to <slug>.persona; <slug> matches [a-z0-9_]{1,40} (sAGI/agents.py agent_dir)",
+   "2. write every doctrine clause for the new persona (doctrine_clauses below), each sourced to a document the new persona's project publishes",
+   "3. replace the editable fields (editable below); keep the code_contract shapes",
+   "4. reset /conformance: every status becomes 'not assessed' and every evidence list empty, until the new subject is checked",
+   "5. set /token/bindings to null and /provenance and /licence to the new project's own",
+   "6. check: agents.preflight(p) is empty and agents.doctrine_root(p) computes",
+   "7. install with agents.adopt(p, source=...) (its own doctrine, not derived from Savante); the doctrine root is fixed from then on, and sAGI/thot.py can bind the bundle into a THOT manifest"
+  ],
+  "doctrine_clauses": {
+   "pointers": [
+    "/persona",
+    "/name",
+    "/source",
+    "/format",
+    "/system_prompt",
+    "/mantra",
+    "/oath",
+    "/bdi/beliefs",
+    "/skills/primary",
+    "/skills/taxonomy",
+    "/skills/defer_triggers",
+    "/skills/validation",
+    "/safety",
+    "/embodiment",
+    "/token/intelligence/tool_allowlist"
+   ],
+   "pointers_source": "sAGI/agents.py DOCTRINE_POINTERS (the same 15 RFC 6901 pointers as Savante's ledger)",
+   "hash": "see /algorithms/doctrine_root and /algorithms/doctrine_preimage",
+   "rule": "the adopter writes these once; after adoption agents.save() refuses any change to them. To change one, adopt a new agent.",
+   "this_file_root": "0x4d5ef2d9be066ac920bdd0a115944efedac5184e933310e454b5806b10a2e7d5",
+   "this_file_root_note": "unchanged by this draft: every new field lies outside the 15 pointers"
+  },
+  "editable": [
+   "/kind",
+   "/doctrine",
+   "/mantra_source",
+   "/oath_source",
+   "/bdi/desires",
+   "/bdi/intentions",
+   "/skills/capabilities",
+   "/awareness/facts",
+   "/task",
+   "/token/public_metadata",
+   "/runtime",
+   "/provenance",
+   "/licence"
+  ],
+  "keep_shape": {
+   "/self_block/fields": "names the console fills from GET /bankml/usage and /bankml/metrics (sAGI/console.py self_block); a persona for another engine names its own, and every unmeasured value stays null",
+   "/token/schema": "bankml.agent.token v1",
+   "/token/bindings": "erc8004, erc7857, erc6551 start null; only a mint pipeline writes them (FACET_BUNDLE.md section 3: mint outputs are evidence, not authorship)",
+   "/algorithms": "a value changes only in a new generation of the persona, never as a silent edit (THOT_MANIFEST.md section 3a, 'Migration, when an algorithm falls')"
+  },
+  "reassess_never_inherit": [
+   "/conformance"
+  ],
+  "house_rules": [
+   "every key ASCII and every number an integer within +-2^53, no floats (agents.preflight P1, P2)",
+   "a value not measured is null with a sibling *_reason or *_note, never a plausible number (FACET_BUNDLE.md section 2)",
+   "every awareness fact and every belief names its source",
+   "what the persona says about its own use comes from the SELF block, never from this file"
+  ],
+  "code_contract": {
+   "_doc": "fields read by code at bankML 0.3.8 (o4-speed); a derived persona keeps their types",
+   "sAGI/console.py": [
+    "/name",
+    "/mantra",
+    "/system_prompt",
+    "/token/public_metadata/description",
+    "the 15 doctrine pointers (doctrine_root)"
+   ],
+   "sAGI/agents.py": [
+    "the 15 doctrine pointers",
+    "every key and number (preflight)",
+    "/name (save)",
+    "/token/intelligence/tool_allowlist (derive)"
+   ],
+   "hf/space/bankml-chat.js": [
+    "/system_prompt",
+    "/mantra"
+   ],
+   "sAGI/console/uif/uif.js": [
+    "/system_prompt (string)",
+    "/awareness/facts[]/fact",
+    "/behavioral_traits, /beliefs, /desires (mindX shape; absent here, so skipped)"
+   ],
+   "sAGI/speak.py": [
+    "/mantra",
+    "/oath",
+    "/system_prompt",
+    "/bdi/beliefs[]/belief (Savante's shape; this file's beliefs use 'b', so speak.py would read them as empty)"
+   ]
+  },
+  "facet_bundle": {
+   "_doc": "this file is one facet. bankML's own persona is not bound into a THOT manifest (none exists in the repo); the state of each core facet for bankML today:",
+   "persona": "present (this file)",
+   "agent": "absent: no bankml.agent file",
+   "model": "absent as a file; the policy is inline in /runtime",
+   "prompt": "absent as a file; /system_prompt is the prompt (authority: this persona)",
+   "tool": "absent as a file; /token/intelligence/tool_allowlist is [] (enforced_by: nothing, since bankML calls no tools)",
+   "skill": "absent as a facet; the Claude Code skill .claude/skills/bankml/SKILL.md is not a facet",
+   "voaice": "absent: /embodiment/voice is 'none yet'",
+   "faice": "absent",
+   "attribute": "absent",
+   "verse.xml": "absent",
+   "aiml": "absent",
+   "reputation": "absent",
+   "agency": "absent: what bankML may decide alone is stated only in /safety and /bdi/intentions",
+   "required_core_missing": [
+    "agent",
+    "model"
+   ],
+   "note": "FACET_BUNDLE.md section 3 requires persona, agent and model; a bankML bundle would need the two others before it validates"
+  }
+ },
+ "conformance": {
+  "_doc": "how bankML stands against cypherpunk4096, commitment by commitment. Statuses: met, partial, not yet, not applicable. A persona derived from this one resets every status (template_spec/reassess_never_inherit).",
+  "standard": "cypherpunk4096",
+  "standard_url": "https://github.com/cypherpunk4096/standard",
+  "standard_commit": "030f5c3c2c93612c527758a99a1f28a5e6273caf",
+  "standard_licence": "CC0-1.0 (its LICENSE)",
+  "read_on": "2026-10-06",
+  "subject": "bankML 0.3.8 (Cargo.toml) and this persona, github.com/cryptoAGI/bankml o4-speed",
+  "mark": "not carried",
+  "mark_reason": "Compliance is all-or-nothing (STANDARD.md 'Non-compatibility statement'). C1, C3 and C5 are written for units deployed on chain, and bankML deploys none; its public web pages also load scripts from other hosts, a pattern the standard does not accept.",
+  "vocabulary_conflict": {
+   "issue": "technical.md C3: 'Verified is a reserved word. It refers only to this mechanical, reproducible check' (published source matched byte-for-byte against deployed bytecode on a public explorer). bankML's doctrine uses the word for its own checks in 6 of the 15 clauses: /oath ('verified weights'), /bdi/beliefs ('cannot be verified'; the CLI flag 'bankml gpu --verify'), /skills/primary ('verified_inference'), /skills/validation (the level 'verified'), /skills/taxonomy ('verified-inference'), /safety ('unverified file'). Outside the doctrine, /doctrine/README/title, /bdi/intentions ('verify before answering') and /token/public_metadata/description do too.",
+   "status": "not yet",
+   "why_not_changed_here": "every one of those fields is a doctrine clause; rewording any of them changes the doctrine root (0x4d5ef2d9...e7d5). That is the owner's decision, for a new doctrine generation.",
+   "candidate_words": "'oracle-exact' (already in /skills/taxonomy), 'pinned', 'reproduced', 'checked against llama.cpp b11192'"
+  },
+  "inherited_cypherpunk2048": {
+   "_doc": "cypherpunk4096 'inherits its four commitments (write code, sovereignty over custody, power-of-two discipline, verification over trust)' (STANDARD.md 'Lineage'). github.com/cypherpunk2048 states them as a philosophy; it gives no checkable requirements for them.",
+   "write_code": {
+    "status": "met",
+    "how": "the runtime, GGUF parser, sha256, f16, memory map and every kernel are bankML's own; the crate has no dependencies",
+    "evidence": [
+     "Cargo.toml [dependencies] (empty)",
+     "README.md 'The three design goals'"
+    ]
+   },
+   "sovereignty_over_custody": {
+    "status": "met",
+    "how": "bankML holds no keys and no assets; it serves on loopback, on the operator's own machine, and sends nothing elsewhere",
+    "evidence": [
+     "bankML/serve.rs (module doc: loopback gateway)",
+     "LICENSING.md 'Layers' (crypto/: none yet)",
+     "/safety/scope"
+    ],
+    "caveat": "serve answers two named web origins (PYTHAI/bankml, PYTHAI/ultimate-bankml-ui) only when started with --allow-origin (docs/usage.md)"
+   },
+   "power_of_two_discipline": {
+    "status": "not assessed",
+    "reason": "neither cypherpunk2048 nor cypherpunk4096 defines it beyond 'power-of-two ladders where scale is discrete' (technical.md C4, a SHOULD); no bankML claim is made"
+   },
+   "verification_over_trust": {
+    "status": "met in substance",
+    "how": "every kernel, token, template and sampler is checked byte-for-byte or token-for-token against llama.cpp b11192's compiled code, mechanically and repeatably, and each release's gate record is published",
+    "evidence": [
+     "docs/oracles.md",
+     "testing/release_gate.sh",
+     "testing/results/0.3.8.txt"
+    ],
+    "caveat": "see vocabulary_conflict: under cypherpunk4096 these checks may not be called 'verified'"
+   }
+  },
+  "commitments": [
+   {
+    "id": "C1",
+    "name": "Determinism as identity",
+    "requirement": "an on-chain artifact MUST deploy via CREATE2 or CREATE3 with a fixed salt and constructor, to the same address on every chain, computable before deployment (technical.md C1)",
+    "status": "not applicable",
+    "how": "bankML deploys nothing on chain: /token/bindings erc8004, erc7857 and erc6551 are null. Its identities are content addresses instead: the model by sha256 pin, this persona by sha256 and CIDv1, its doctrine by a keccak256 root.",
+    "evidence": [
+     "/token/bindings",
+     "sAGI/agents.py doctrine_root, cid_v1_raw",
+     "sAGI/console.py (persona_cid in the Infotags)"
+    ],
+    "gap": "if this persona is ever minted (an iNFT or an ERC-8004 registration), that contract must be deployed by CREATE2/CREATE3 at one address on every chain, or the mark is lost"
+   },
+   {
+    "id": "C2",
+    "name": "Zero dependencies",
+    "requirement": "no package-manager edge between source and artifact; offline, byte-identical build; front-ends MUST NOT load code from a CDN or any external host at runtime (technical.md C2)",
+    "status": "partial",
+    "how": "the Rust core and the C API have no external crate; the console vendors d3 and serves it same-origin; sAGI/console.py, agents.py and thot.py are Python stdlib only",
+    "evidence": [
+     "Cargo.toml ([dependencies] empty; workspace members '.' and 'capi' only)",
+     "sAGI/console/index.html (/vendor/d3.v7.min.js)",
+     "sAGI/agents.py (stdlib keccak256)"
+    ],
+    "gap": [
+     "hf/space/index.html loads scripts from deltaverse.pythai.net/engine/... at runtime (external host)",
+     "docs/index.html loads marked from cdnjs.cloudflare.com and fonts from fonts.googleapis.com",
+     "sAGI/savante.py needs gradio, a package-manager dependency (its own docstring: 'stdlib + gradio')",
+     "the byte-identical offline rebuild ('cut the network, compile, and diff') has not been run and recorded"
+    ]
+   },
+   {
+    "id": "C3",
+    "name": "Verification over trust: the green checkmark",
+    "requirement": "deployed bytecode MUST carry public-explorer source verification, byte-for-byte, with the build inputs published; 'verified' is reserved for that check (technical.md C3)",
+    "status": "not applicable (no deployed bytecode); vocabulary not yet",
+    "how": "bankML's closest practice is the oracle: its outputs matched bit-for-bit against llama.cpp b11192's compiled library, published with the inputs and the gate record so anyone can rerun them",
+    "evidence": [
+     "docs/oracles.md",
+     "testing/ggml_oracle.py",
+     "testing/results/"
+    ],
+    "gap": "see /conformance/vocabulary_conflict"
+   },
+   {
+    "id": "C4",
+    "name": "Precision without approximation",
+    "requirement": "values that can be exact MUST be stored exact; no floating-point or lossy storage where an exact integer exists; rounding only for display, with its rule documented (technical.md C4)",
+    "status": "partial",
+    "how": "kernels and the forward pass reproduce llama.cpp's exact bits rather than approximating them; this persona and every agent ledger refuse floats (preflight P2); receipts carry integer token counts and milliseconds and full sha256 digests",
+    "evidence": [
+     "docs/oracles.md section 1",
+     "sAGI/agents.py preflight",
+     "bankML/serve.rs Tally::receipt"
+    ],
+    "gap": "the model's arithmetic is floating-point by nature (f32/f16, matched to llama.cpp, not exact); served rates such as predicted_per_second are formatted to three decimals (bankML/serve.rs), and that rounding rule is not yet documented as a display rule"
+   },
+   {
+    "id": "C5",
+    "name": "Quantum compliance",
+    "requirement": "every signature surface MUST take the signature as bytes, honour ERC-1271, and migrate its scheme behind a published timelock (technical.md C5)",
+    "status": "met (vacuously)",
+    "how": "bankML has no signature surface today: receipts are unsigned (\"signed\": false). Its hash core is sha256 (receipts, pins, CIDs), which CP2048-QR-1 section 1.2 lists as surviving Grover, and keccak256 (doctrine root), the Keccak variant behind SHA-3. The reference implementation SCIEN·TIFIC meets C5 the same way: 'C5 vacuously (no signature surface)' (technical.md 'Reference implementation').",
+    "evidence": [
+     "bankML/serve.rs Tally::receipt",
+     "/algorithms"
+    ],
+    "gap": "signed receipts are planned (docs/TODO.md 'Signed receipts', in crypto/, GPL-3.0-only). When they land: the signature as bytes with its scheme named in /algorithms, a migration path, and a CP2048-QR tier declared for that rail; until then no tier is claimed"
+   }
+  ],
+  "not_accepted": {
+   "_doc": "STANDARD.md 'Software and patterns NOT accepted', checked against bankML",
+   "upgradeable_proxies": "absent (no contracts)",
+   "admin_keys_backdoors_pausable_exits": "absent (no custody)",
+   "cdn_external_scripts_remote_fetch_in_shipped_surface": "PRESENT: hf/space/index.html (deltaverse.pythai.net scripts), docs/index.html (cdnjs, Google Fonts)",
+   "package_manager_supply_chain_in_permanent_unit": "absent in the Rust core; sAGI/savante.py uses gradio (the UI, not a permanent unit)",
+   "closed_source_or_unverified_bytecode": "absent (open source; no bytecode deployed)",
+   "third_party_analytics_telemetry": "none found in hf/space/index.html, docs/index.html or sAGI/console/index.html (grep 2026-10-06); the Hugging Face host's own logging is outside bankML",
+   "tx_origin_hardcoded_gas_selfdestruct": "absent (no contracts)",
+   "vrs_only_signatures": "absent (no signatures)",
+   "nondeterministic_deploys": "absent (no deploys)",
+   "lossy_storage_where_exact_possible": "not audited field by field; see C4"
+  },
+  "cp2048_qr": {
+   "_doc": "CP2048-QR-1 (github.com/cypherpunk2048/quantum-standard STANDARD.md, commit e376ea10b9cc58c1add70145e49e7184a8a68c67), which the cypherpunk2048 profile names as its quantum standard",
+   "tier": null,
+   "tier_reason": "section 4 asks a tier per signing rail; bankML has no signing rail yet",
+   "hash_core": "sha256 (section 2.3: MUST use SHA-256, SHA-512 or SHA-3); keccak256 for the doctrine root, which is the original Keccak padding, not FIPS SHA-3: whether section 2.3 admits it is open",
+   "key_custody": "none: bankML holds no keys"
+  }
+ },
+ "algorithms": {
+  "_doc": "every function this persona and the engine rely on, named, so a successor can be declared rather than assumed (the rule of cryptoAGI/sagi engine/THOT_MANIFEST.md section 3a). A change is a new generation of this persona, never a silent edit.",
+  "model_pin": "sha256",
+  "receipt_request_digest": "sha256",
+  "receipt_response_digest": "sha256",
+  "persona_digest": "sha256",
+  "cid": "cidv1-raw-sha2-256-base32",
+  "doctrine_root": "keccak256",
+  "doctrine_preimage": "for each pointer in /template_spec/doctrine_clauses/pointers, in order: utf8(pointer) || 0x1f || canonical(value) || 0x1e",
+  "canonicalisation": "json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False).encode('utf-8')",
+  "history_merkle": "rfc6962-sha256",
+  "receipt_signature": null,
+  "receipt_signature_reason": "receipts are unsigned (\"signed\": false); signing is planned in crypto/ (GPL-3.0-only, opt-in), and its scheme is named here when it lands, its signature carried as bytes",
+  "implementations": {
+   "sha256": "bankML/sha256.rs (in-crate), checked against published values (docs/oracles.md section 4)",
+   "keccak256": "sAGI/agents.py (pure Python), checked against pycryptodome and Savante's published doctrine root (docs/oracles.md section 4)",
+   "cid": "sAGI/agents.py cid_v1_raw",
+   "history_merkle": "sAGI/savante.py MERKLE_SCHEME, checked against the Certificate Transparency reference roots (docs/oracles.md section 4)"
+  },
+  "note": "the names follow the THOT vocabulary where one exists (cid, doctrine_root, canonicalisation); the others are this persona's own and are not part of sagi.thot_manifest/1"
+ },
+ "provenance": {
+  "made_by": "cryptoAGI: Professor Codephreak and Gregory L. Magnusson",
+  "made_by_source": "LICENSING.md; Cargo.toml authors",
+  "tagline": "cryptoAGI, powered by minaiml, made with LUV",
+  "tagline_source": "the project owner, 2026-10-06; not yet in README.md or the docs",
+  "links": {
+   "cryptoAGI": "https://github.com/cryptoAGI",
+   "bankML": "https://github.com/cryptoAGI/bankml",
+   "docs": "https://cryptoagi.github.io/bankml",
+   "minaiml": "https://github.com/minaiml",
+   "minaiml_space": "https://huggingface.co/spaces/PYTHAI/minaiml",
+   "LUV": "https://luv.pythai.net",
+   "cypherpunk4096": "https://github.com/cypherpunk4096/standard"
+  },
+  "powered_by_minaiml": {
+   "what_is_true": "bankML's GGUF guard (play, refuse with reasons, need_more) is a port of minaiml's gguf_guard.py, vendored at testing/gguf_guard.py; minaiml ('min ai ml: language models in miniature') is the authors' delivery project for models on hardware people already own, and bankML is planned as the engine inside it (docs/TODO.md: 'the verified engine inside that delivery')",
+   "sources": [
+    "LICENSING.md 'Other material'",
+    "bankML/gguf.rs",
+    "docs/modules/gguf.md 'Origin'",
+    "docs/thesis.md (References: minaiml)",
+    "docs/TODO.md 'Handheld and distributed intelligence'",
+    "github.com/minaiml profile README"
+   ],
+   "not_claimed": "minaiml supplies no code that bankML links or runs; the guard is a port, and the handheld integration (brobot through the C API) is not built yet"
+  },
+  "made_with_luv": {
+   "what_is_true": "'made with luv.pythai.net' is the line this project ends its release notes and pull-request bodies with",
+   "sources": [
+    ".claude/skills/bankml/SKILL.md (release step 5)",
+    "PR #1 body"
+   ],
+   "luv_pythai_net": "the SHAMBA LUV (LUV) site, a token on Ethereum, by its own title and description (fetched 2026-10-06)",
+   "boundary": "attribution only: bankML gives no advice on LUV, no price and no prediction, and does nothing with it, the same boundary cryptoAGI/luvai sets for itself"
+  },
+  "part_of": [
+   "mindX",
+   "sAGI",
+   "Savante",
+   "minaiml",
+   "DeltaVerse"
+  ],
+  "part_of_source": "README.md 'Part of'"
+ },
+ "licence": {
+  "spdx": "MIT OR Apache-2.0",
+  "files": [
+   "LICENSE-MIT",
+   "LICENSE-APACHE"
+  ],
+  "key_handling": "GPL-3.0-only, in crypto/ (none yet), an opt-in feature the core never imports",
+  "source": "LICENSING.md; README.md 'Licence'",
+  "this_file": "part of the repository, under the same MIT OR Apache-2.0",
+  "copyright": "(c) 2026 Professor Codephreak and Gregory L. Magnusson, cryptoAGI"
  }
 }
