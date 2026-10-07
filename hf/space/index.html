@@ -11,7 +11,7 @@
   <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large" />
   <meta name="theme-color" content="#000000" />
   <meta name="color-scheme" content="dark" />
-  <meta name="date" content="2026-10-06" />
+  <meta name="date" content="2026-10-07" />
   <link rel="canonical" href="https://deltaverse.pythai.net/bankml" />
   <link rel="alternate" type="text/plain" title="llms.txt" href="https://github.com/cryptoAGI/bankml/blob/main/llms.txt" />
   <!-- the DeltaVerse $ -->
@@ -125,6 +125,11 @@
     .table td:first-child{color:#fff; font-weight:500; width:34%;}
     .road li strong{color:rgb(var(--am));}
     .hope p{font-size:18px; color:#eef;}
+    .release{border:1px solid rgba(var(--am),.45); border-radius:14px; padding:6px 22px 14px; background:rgba(var(--am),.06);
+             box-shadow:0 1px 0 rgba(255,255,255,.05) inset, 0 14px 34px -14px rgba(0,0,0,.7);}
+    .release li, .thesis li{margin:0 0 10px;}
+    .release li strong, .thesis li strong{color:rgb(var(--am));}
+    .thesis ol{padding-left:1.3em;}
     .spaces{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:3px;font-size:13px;margin-bottom:18px;background:rgba(0,0,0,.35)}
     .spaces a,.spaces span{padding:3px 14px;border-radius:999px;border:none;color:var(--muted)}
     .spaces a:hover{color:#fff}
@@ -170,9 +175,61 @@
       <h1>bankML</h1>
       <p>Verified 1-bit and ternary language models on the CPU you already have: exactly the same answers as
         llama.cpp, checked bit for bit, then faster.</p>
-      <p class="date">Written 6 October 2026, while bankML 0.3.6 is the latest release, 0.3.7 is in its release gate,
-        and 0.3.8 and 0.3.9 are being built on the way to the 0.4.0 milestone.</p>
+      <p class="date">Updated 7 October 2026: bankML 0.4.0, the milestone, is the latest release.</p>
     </header>
+
+    <section class="release">
+      <h2>Latest release: v0.4.0 — native serving complete</h2>
+      <p>Released 7 October 2026, after one run of the full release gate in which every stage passed. Everything Savante
+        and mindX ask of llama-server is now answered by bankML's own engine, identical to llama-server b11192.</p>
+      <ul>
+        <li><strong>1-bit at llama-server's speed.</strong> In the pinned 8B test, bankML was at least as fast in all
+          three rounds (median 2.02 against 0.77 tokens per second under the same load), and every answer was identical.
+          The default engine is now bankML's own for 1-bit as well as ternary models.</li>
+        <li><strong>A smaller conversation memory.</strong> A <code>q8_0</code> cache with llama.cpp's own Hadamard
+          rotation: 53&nbsp;% of the memory, the same answers (6 of 6).</li>
+        <li><strong>The serving contract.</strong> The context limit, saved and restored slots, a prompt cache for
+          conversations that take turns, and token probabilities, each identical to llama-server's.</li>
+        <li><strong>It shows its work.</strong> A status page on the engine's own address (CPU, memory, disk, GPU, its
+          log). The console opens on the ultimate input field and has Engine, Diagnostics and Thesis tabs. A
+          <em>scientific diagnostic</em> writes every token's probability from both engines to 18 decimals: 32 of 32
+          bit-equal, difference <code>0.000000000000000000</code>.</li>
+        <li><strong>Kernels on this laptop, three threads:</strong> 1-bit level with llama.cpp's own (1.02×), ternary
+          8.9× faster, the same bits.</li>
+      </ul>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/releases/tag/v0.4.0">the release</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/CHANGELOG.md">what changed, in full</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/testing/results/0.4.0.txt">the gate record</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/PERFORMANCE.md#1-bit-decode-against-llama-server-040">the speed test, with the machine's load</a></p>
+    </section>
+
+    <section class="thesis">
+      <h2>The thesis — Professor Codephreak and Gregory L. Magnusson</h2>
+      <p>bankML is built to test its authors' design intent, stated in their own words over the course of the project.
+        Every release is measured against it.</p>
+      <ol>
+        <li><strong>Port what works, and only what works.</strong> "We prototyped in python and we switch to rust from
+          working architecture." A proven system's behaviour is the specification, so exactness against its compiled
+          code comes first.</li>
+        <li><strong>Optimization, succinct, and verified response.</strong> Speed is measured, never quoted. The runtime is one
+          crate with no dependencies. A model that cannot be verified does not answer.</li>
+        <li><strong>The standing machine is the CPU you already have.</strong> One server powers one autonomous AI
+          system for about a dollar a day. Accelerators are rented for events, not owned.</li>
+        <li><strong>Consume the inference, and prefer the better answer.</strong> "A better answer is more important than
+          speed where speed under one minute is fine for now". That is why the better ternary model is the one made fast.</li>
+        <li><strong>Know the limit, and code around it.</strong> The guard refuses, with its reason, a file that would
+          answer in nonsense. Where the reference is slow, the answer is a new kernel, not acceptance.</li>
+        <li><strong>Improve by increments, with the oracle in the loop.</strong> A speed counts only when every oracle has
+          passed on the same code; the rejected variants are kept as evidence.</li>
+        <li><strong>Use the machine at hand.</strong> Every number was taken on a two-core laptop. Where the machine
+          disturbs a measurement, the record says so.</li>
+        <li><strong>Prove the data; keep the data.</strong> What travels is a commitment (a sha256, a CID, a Merkle root),
+          never the data itself.</li>
+      </ol>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson">the Thesis, in full, with its sixteen contributions</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">the argument, with the contemporary field</a> ·
+        <a href="https://rage.pythai.net/bankML-thesis">hear it read</a></p>
+    </section>
 
 
     <section id="ask">
@@ -312,7 +369,8 @@
       <h3>6. It measures itself</h3>
       <p>bankML reports its own time to first token, tokens per second and, where the machine allows, the energy
         each token costs. It also limits how much of a graphics card it may use.</p>
-      <p class="more"><span class="soon" title="arrives with 0.3.7">metrics.md and console.md (with 0.3.7)</span> · the GPU:
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/metrics.md">metrics.md</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/console.md">console.md</a> · the GPU:
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/gpu.md">gpu.md</a></p>
     </section>
 
@@ -385,15 +443,16 @@
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TODO.md">TODO.md</a>, and each step counts only once
         its oracle passes.</p>
       <ul>
-        <li><strong>0.3.7</strong> (in its release gate): llama-server's whole sampler chain, bankML measuring itself,
-          a GPU limiter, and the bankML console.</li>
-        <li><strong>0.3.8</strong> (built): llama-server's behaviour at the context limit, saved and restored
+        <li><strong>0.3.7</strong> (released): llama-server's whole sampler chain, bankML measuring itself, a GPU
+          limiter, and the bankML console.</li>
+        <li><strong>0.3.8</strong> (released): llama-server's behaviour at the context limit, saved and restored
           conversations (slots), a prompt cache so conversations taking turns each keep their context, and token
           probabilities, streamed or not.</li>
-        <li><strong>0.3.9</strong> (in progress): a <code>q8_0</code> memory cache that halves the conversation memory,
-          a faster grammar mask, and 1-bit speed at or above llama-server's.</li>
-        <li><strong>0.4.0, the milestone:</strong> native serving complete. bankML answers everything Savante and mindX
-          ask of llama-server, and its own engine is chosen by default for both 1-bit and ternary models.</li>
+        <li><strong>0.4.0, the milestone</strong> (released 7 October 2026): native serving complete. bankML answers
+          everything Savante and mindX ask of llama-server, and its own engine is chosen by default for both 1-bit and
+          ternary models.</li>
+        <li><strong>0.4.x:</strong> stop the work of a request whose client has gone, and a one-line measured self for the
+          console, so long conversations keep their cache.</li>
         <li><strong>0.5.0, hardware:</strong> ARM phones and tablets (NEON), newer x86 instructions (AVX-512), and more
           graphics cards.</li>
         <li><strong>1.0.0:</strong> llama.cpp is needed only as the oracle in the gate, never at run time. bankML runs
