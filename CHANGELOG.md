@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.3.7) — the whole sampler chain; bankML measures itself; the GPU limiter; the bankML console
+## 0.3.7 — 2026-10-06 — the whole sampler chain; bankML measures itself; the GPU limiter; the bankML console
 
 **Every sampler in llama-server b11192's default chain is now reproduced, token for token: after 0.3.6's penalties,
 typical-p, top-n-σ, XTC, dynamic temperature and DRY.** A request that sets any of them gets llama-server's answer
@@ -8,7 +8,8 @@ instead of a refusal; what llama-server clamps is clamped, what it refuses is re
 measures itself** — time to first token on every answer, prompt and generation speed, CPU, memory, the GPU and, where
 the operator allows it, power and joules per token — **limits its GPU** to a share of the card's memory and time and
 lets each matrix shape decide whether the card pays, and has **a console** in which it answers as itself, from those
-measurements.
+measurements. Record: `testing/results/0.3.7.txt`, one
+run of the full gate, every stage passed (2026-10-06, the laptop, the GPU limiter at its default).
 
 ### Measurement: what bankML knows of itself
 - `bankML/metrics.rs`: one record per completion, taken inside the engine — TTFT, prompt and generation tokens per second
