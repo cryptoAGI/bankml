@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased (0.4.1) — a request whose client has gone stops
+## Unreleased (0.4.1) — a request whose client has gone stops; GPU objects released; ternary on the GPU; CI on ARM
+
+**The first steps towards 0.5.0 (hardware), and the two 0.4.x items.**
+- A native run stops when its client goes away, and keeps what it computed.
+- Every GPU object is released on drop. The test found an instance leaked per open.
+- The ternary kernel runs on the GPU bit-exact, and `bankml gpu --verify` checks it.
+- CI builds and tests natively on aarch64.
+- The console's SELF says who is speaking, in two lines.
 
 ### The console's SELF: who is speaking, then one line of measurements
 - An A/B by the ultimate-bankml-ui session (bankML 0.4.0, Bonsai-8B, "who are you?", three fresh conversations each,
