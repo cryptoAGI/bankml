@@ -40,7 +40,7 @@ def req(path, data=None, headers=None, method=None):
 
 
 try:
-    for p in ("/", "/app.js", "/style.css", "/vendor/d3.v7.min.js", "/vendor/d3.LICENSE"):
+    for p in ("/", "/app.js", "/style.css", "/vendor/d3.v7.min.js", "/vendor/d3.LICENSE", "/engine.js", "/engine.css"):
         code, body, h = req(p)
         check(f"GET {p} is served", code == 200 and len(body) > 0)
     code, _, h = req("/")
@@ -71,6 +71,9 @@ try:
     check("Infotags: ERC-721 shape (name, description, attributes) and CIDs", info["name"] and info["description"] and info["bankml"]["persona_cid"].startswith("b"))
     log = json.loads(req("/api/log")[1])
     check("/api/log returns the exchanges", len(log["exchanges"]) == 2)
+    code, body, _ = req("/api/engine")
+    check("/api/engine without an engine is a 502 that says where it looked", code == 502 and "127.0.0.1:9" in json.loads(body)["error"])
+    check("the Engine tab draws with serve's own renderer", req("/engine.js")[1] == (ROOT / "bankML" / "status.js").read_bytes())
     # Diagnostics: spans after LlamaIndex's SimpleSpanHandler, and measured checks
     import diagnostics as D  # noqa: E402
     h = D.SpanHandler(keep=3)

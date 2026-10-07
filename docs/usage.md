@@ -786,6 +786,8 @@ A speed counts only if every oracle passed on the same code. See [testing/README
 | `bankml tokenize MODEL.gguf [--no-special] < text` | token ids, as llama.cpp's `/tokenize` (P3's tokenizer; token-identical on its oracle) |
 | `bankml usage [PID …]` | memory, cores, and each process's resident memory and CPU % (bankml's psutil, from `/proc`); `bankml serve` answers the same at `GET /bankml/usage`, with (0.3.7, next release) package watts when RAPL is readable (`./install.sh power`), each GPU's busy %, VRAM and GTT, and the GPU limiter's state |
 | `GET /bankml/metrics` | (0.3.7, next release) bankML's own measurements of its last 256 answers: TTFT, prompt and generation tokens per second, grammar time, energy and joules per token where measured; totals |
+| `GET /bankml/status` | (0.3.9) everything the engine measures of itself in one answer: the verified model, serve's settings, CPU (model, clocks), memory and swap, the model's disk (total, available, bytes read and written), GPUs and the limiter, the answers measured, the checks drawn from them, and the newest 200 log messages |
+| `GET /` from a browser | (0.3.9) that status as a page, refreshed every 3 s; any other client gets Ollama's plain `bankml is running…` |
 | `python3 sAGI/savante.py --mode interact [--port 7873]` | talk to Savante (loopback) |
 | `python3 sAGI/view.py [--host 0.0.0.0] [--port 7874]` | the read-only page for the LAN |
 | `python3 sAGI/console.py [--port 7875]` | (0.3.7, next release) the bankML console, loopback only (§6c) |

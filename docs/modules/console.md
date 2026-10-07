@@ -3,9 +3,9 @@
 ## Summary
 
 The console (0.3.7; redesigned 2026-10-06) is bankML's own interface, deliberately unlike Savante's: a quiet, typographic
-page, light or dark with the system, with five tabs over `bankml serve` — **Ask** (the landing: one question, one
+page, light or dark with the system, with six tabs over `bankml serve` — **Ask** (the landing: one question, one
 streamed answer, its receipt checked in the browser), **Admin** (CPU, RAM and GPU sliders, the measured "now", and D3
-charts), **Receipts** (every answer's receipt, newest first, each re-checked and expandable to its JSON; the
+charts), **Engine** (`GET /bankml/status` drawn by serve's own renderer: checks, CPU, memory, disk, GPU, the engine's log), **Receipts** (every answer's receipt, newest first, each re-checked and expandable to its JSON; the
 commitments an iNFT of the session carries), **Logs** (the engine's log) and **Diagnostics** (0.3.9: measured checks of the engine — reachable, verified, metrics, memory, the engine log's last error — and every answer's trace, span by span, with durations and timed events; `sAGI/diagnostics.py`, after LlamaIndex's instrumentation). A **Savante | bankML** switch in its bar
 and a **bankML ↗** link in Savante's header move between the two interfaces. It talks to bankML as itself — `sAGI/personas/bankml.persona` — and gives that
 persona a SELF block measured at each question, so what bankML says about its own tokens, speed, load and power is
@@ -26,6 +26,7 @@ python3 sAGI/console.py [--host 127.0.0.1] [--port 7875]   # loopback hosts only
 | `GET /api/log` | the last 200 exchanges and the engine log's tail |
 | `GET /api/infotags` | ERC-721 metadata: name, description, `attributes`, and the RFC 6962 root and CIDs |
 | `GET /api/diagnostics` | the measured checks (`level` ok, warn or bad, and what was `seen`), the newest answers' trace trees (spans, durations, events) and the same as text |
+| `GET /api/engine` | bankml serve's `GET /bankml/status`, passed through (502 with where it looked when serve does not answer) |
 
 `/api/ask` sends the persona's system prompt with the SELF block appended, the last 12 user and assistant turns of
 `history`, and the question to `/v1/chat/completions` (streamed, `max_tokens` 256 unless set). The SELF block is

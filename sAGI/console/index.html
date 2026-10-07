@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bankML</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/engine.css">
 </head>
 <body>
 <header class="bar">
@@ -12,6 +13,7 @@
   <nav class="tabs" role="tablist" aria-label="bankML">
     <button role="tab" data-tab="ask" aria-selected="true">Ask</button>
     <button role="tab" data-tab="admin" aria-selected="false">Admin</button>
+    <button role="tab" data-tab="engine" aria-selected="false">Engine</button>
     <button role="tab" data-tab="receipts" aria-selected="false">Receipts</button>
     <button role="tab" data-tab="logs" aria-selected="false">Logs</button>
     <button role="tab" data-tab="diagnostics" aria-selected="false">Diagnostics</button>
@@ -63,6 +65,15 @@
     </div>
   </section>
 
+  <!-- Engine: bankml serve's own status (GET /bankml/status), drawn by serve's renderer -->
+  <section id="engine" class="tab">
+    <div class="loghead">
+      <h2>Engine</h2>
+      <p class="quiet">bankml serve's own status · also at the engine's address in a browser</p>
+    </div>
+    <div id="engine-status"><p class="quiet">reading bankml serve…</p></div>
+  </section>
+
   <!-- Receipts: every answer's receipt, newest first, checked in this browser -->
   <section id="receipts" class="tab">
     <div class="loghead">
@@ -94,6 +105,8 @@
       <p class="quiet"><button id="diag-refresh" class="ghost">Refresh</button></p>
     </div>
     <ul id="checks" class="checks"></ul>
+    <h2 class="sub">scientific.diagnostic — bankML against llama.cpp b11192, to 18 decimals</h2>
+    <div id="scientific" class="trace"><p class="quiet">none yet — run testing/scientific_diagnostic.py</p></div>
     <h2 class="sub">Traces — the newest answers, span by span</h2>
     <div id="traces" class="traces"></div>
     <details class="more">
@@ -104,6 +117,7 @@
   </section>
 </main>
 <script src="/vendor/d3.v7.min.js"></script>
+<script src="/engine.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

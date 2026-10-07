@@ -36,6 +36,31 @@ decode speed, the third, is measured on an idle machine next.
   `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
   `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
 
+### The engine's own status page, and an Engine tab (`GET /bankml/status`)
+- `GET /bankml/status` on both of serve's addresses: the verified model, serve's settings (listen, upstream, native,
+  threads, KV cache type, GPU, allowed origins, uptime), the CPU (`/proc/cpuinfo`: model, each logical CPU's clock),
+  memory and swap, the disk where the model lives (`statvfs`: total and available; the model's size; this process's
+  bytes read and written, `/proc/self/io`), every GPU and bankML's limiter (`/bankml/usage`), the answers measured
+  (`/bankml/metrics`), the checks drawn from those (verified, memory, swap, disk, GPU, the log's last warning) and the
+  engine's log — the newest 200 messages, now kept in a ring by `bankml::log` (serve's own startup lines go through it).
+- A browser at serve's root (`http://127.0.0.1:18093/` or the engine address `:18094/`) gets that status as a page,
+  refreshed every 3 s; every other client still gets Ollama's `bankml is running…` line, which Ollama clients check.
+- The bankML console's **Engine** tab draws the same status with the same renderer (`bankML/status.js`,
+  `status.css`: one source for both pages), through `GET /api/engine`.
+- The first reading found the laptop's swap full (2.15 of 2.15 GB): the `swap` check now says when the machine is
+  paging, because speeds measured then are not comparable.
+
+### scientific.diagnostic — every number to 18 decimals (`testing/scientific_diagnostic.py`)
+- One greedy request with `logprobs` and `top_logprobs: 5`, sent to a fresh llama-server b11192 and a fresh
+  `bankml serve --native` (both computing the whole prompt). For every token and each of its top five: the 32-bit
+  float's bits, its exact value to 18 decimals (rounded half-even from the float's exact binary value) and as an
+  integer count of 10⁻¹⁸ (the 18-decimal fixed point of an ERC-20 amount), and the exact difference between the
+  engines. Sums are exact; the perplexity is computed with 60 significant digits; timings are measured to the
+  nanosecond and the record says the digits past the ninth are zero by construction.
+- First record, Bonsai-1.7B, 32 tokens: **identical** — 32 of 32 tokens bit-equal with their top fives, max |Δ|
+  `0.000000000000000000`, log-likelihood `-8.221305353127718263` on both engines. Written to the console's state as
+  `scientific.diagnostic` and shown in the Diagnostics tab.
+
 ### A restart never trades a running engine for a missing binary
 - The console's *Apply* (and the model switch) stopped the engine first and only then found there was no `bankml`
   to start: a raw `[Errno 2] No such file or directory` and, at worst, no engine. `models._need_bankml()` now refuses

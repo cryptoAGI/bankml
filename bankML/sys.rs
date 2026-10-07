@@ -37,6 +37,43 @@ pub fn memory() -> Option<Memory> {
     })
 }
 
+/// The CPU as `/proc/cpuinfo` names it, and the current clock of each logical CPU in MHz.
+pub fn cpu() -> (Option<String>, Vec<f64>) {
+    let Ok(t) = std::fs::read_to_string("/proc/cpuinfo") else { return (None, Vec::new()) };
+    let val = |l: &str| l.split_once(':').map(|(_, v)| v.trim().to_string());
+    let name = t.lines().find(|l| l.starts_with("model name")).and_then(val);
+    let mhz = t.lines().filter(|l| l.starts_with("cpu MHz")).filter_map(|l| val(l)?.parse::<f64>().ok()).collect();
+    (name, mhz)
+}
+
+/// The filesystem holding `path`: (total bytes, bytes available to this user), from `statvfs(3)`.
+pub fn disk(path: &Path) -> Option<(u64, u64)> {
+    #[repr(C)]
+    struct StatVfs {
+        bsize: u64, frsize: u64, blocks: u64, bfree: u64, bavail: u64, files: u64, ffree: u64, favail: u64,
+        fsid: u64, flag: u64, namemax: u64, spare: [i32; 6],
+    }
+    extern "C" {
+        fn statvfs(path: *const std::ffi::c_char, buf: *mut StatVfs) -> std::ffi::c_int;
+    }
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
+    let mut s = std::mem::MaybeUninit::<StatVfs>::uninit();
+    // SAFETY: a NUL-terminated path and a buffer of glibc's x86-64/aarch64 `struct statvfs` layout (11 words, 6 ints)
+    if unsafe { statvfs(c.as_ptr(), s.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: statvfs returned 0, so it filled the buffer
+    let s = unsafe { s.assume_init() };
+    Some((s.blocks * s.frsize, s.bavail * s.frsize))
+}
+
+/// A process's storage I/O so far (`/proc/<pid>/io`): bytes read from and written to the block layer.
+pub fn io(pid: u32) -> Option<(u64, u64)> {
+    let t = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
+    let f = |k: &str| t.lines().find_map(|l| l.strip_prefix(k)?.trim().parse::<u64>().ok());
+    Some((f("read_bytes:")?, f("write_bytes:")?))
+}
+
 /// Available parallelism; 1 if unknown.
 pub fn cores() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
@@ -193,6 +230,17 @@ mod tests {
         let me = std::process::id();
         assert!(rss(me).unwrap() > 0 && cpu_ticks(me).is_some() && alive(me));
         assert!(ticks_per_second() >= 1);
+    }
+
+    #[test]
+    fn cpu_disk_and_io_are_read_or_none() {
+        let (name, mhz) = cpu();
+        assert!(name.is_some_and(|n| !n.is_empty()) && mhz.iter().all(|m| *m > 0.0));
+        let (total, avail) = disk(Path::new("/")).expect("statvfs /");
+        assert!(total > 0 && avail <= total);
+        assert!(disk(Path::new("/no/such/place")).is_none());
+        let (r, w) = io(std::process::id()).expect("/proc/self/io");
+        assert!(r < u64::MAX && w < u64::MAX);
     }
 
     #[test]

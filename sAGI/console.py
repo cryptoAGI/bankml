@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """bankML · console — talk to bankML as itself (sAGI/personas/bankml.persona), and watch what it measures.
 
-Five tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
-GPU limit as sliders; D3 charts of what bankml measures), **Receipts** (every exchange's receipt, and the iNFT
+Six tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
+GPU limit as sliders; D3 charts of what bankml measures), **Engine** (bankml serve's own status: checks, CPU, memory, disk,
+GPU, the answers measured and the engine's log, drawn by serve's renderer, `bankML/status.js`), **Receipts** (every exchange's receipt, and the iNFT
 commitments: a Merkle root over the exchanges), **Logs** (the engine's log) and **Diagnostics** (measured checks of
 the engine, and every answer's trace: its spans and their durations — `diagnostics.py`, after LlamaIndex's
 instrumentation). A Savante | bankML switch links to
@@ -50,7 +51,10 @@ STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" 
 LOG = STATE / "console.jsonl"
 FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8"), "/vendor/d3.v7.min.js": ("vendor/d3.v7.min.js", "text/javascript"),
-         "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8")}
+         "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8"),
+         # the Engine tab draws bankml serve's status with serve's own renderer (one source for both pages)
+         "/engine.js": (HERE.parent / "bankML" / "status.js", "text/javascript; charset=utf-8"),
+         "/engine.css": (HERE.parent / "bankML" / "status.css", "text/css; charset=utf-8")}
 LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
 # --public HOST: the one extra host name the console answers as; None = loopback only
@@ -139,7 +143,13 @@ def diagnostics() -> dict:
     """The Diagnostics tab: measured checks of the engine now, and the newest answers' traces (spans, durations,
     events). A trace's tags carry counts and statuses, never a question's text, so public mode shows them too."""
     trees = D.HANDLER.trees()
-    return {"checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees),
+    sci = None
+    try:  # the newest scientific.diagnostic (testing/scientific_diagnostic.py): its verdict and summary, every number to 18 decimals
+        d = json.loads((models.LOG.parent / "scientific.diagnostic").read_text())
+        sci = {k: d.get(k) for k in ("at", "verdict", "bankml", "reference", "model", "threads", "precision", "summary", "timing", "answer")}
+    except (OSError, ValueError):
+        pass
+    return {"checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees), "scientific": sci,
             "source": "sAGI/diagnostics.py — after LlamaIndex's instrumentation (MIT): SimpleSpan, SimpleSpanHandler"}
 
 
@@ -219,6 +229,9 @@ class H(BaseHTTPRequestHandler):
             return self._json(infotags())
         if path == "/api/diagnostics":
             return self._json(diagnostics())
+        if path == "/api/engine":
+            s = _get("/bankml/status", 10)
+            return self._json(s) if s is not None else self._json({"error": f"bankml serve does not answer at {SERVE}"}, 502)
         self._send(404, b"not found", "text/plain")
 
     def _body(self):

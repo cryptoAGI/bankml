@@ -23,6 +23,7 @@ function show(tab) {
   if (tab === "receipts") loadReceipts();
   if (tab === "logs") loadLogs();
   if (tab === "diagnostics") loadDiagnostics();
+  if (tab === "engine") loadEngine();
   if (tab === "ask") $("q").focus();
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
@@ -185,6 +186,17 @@ async function loadLogs() {
   const j = await (await fetch("/api/log")).json();
   $("englog").textContent = (j.engine_log || []).join("\n") || "the engine has written nothing yet";
 }
+// ── Engine: bankml serve's status, every 3 s while the tab is open ─────────────────────────────────────────────────
+async function loadEngine() {
+  const root = $("engine-status");
+  try {
+    const r = await fetch("/api/engine");
+    const j = await r.json();
+    if (!r.ok) { root.textContent = j.error || "bankml serve did not answer"; return; }
+    BankmlStatus.render(root, j);
+  } catch (e) { root.textContent = "bankml serve did not answer: " + e; }
+}
+setInterval(() => { if ($("engine").classList.contains("active")) loadEngine(); }, 3000);
 // ── Diagnostics ─────────────────────────────────────────────────────────────────────────────────────────────────
 function spanNode(n, total) {
   const li = el("li", "span" + (n.error ? " bad" : "") + (n.open ? " open" : ""));
@@ -225,6 +237,23 @@ async function loadDiagnostics() {
     tr.append(box);
   }
   $("trace-text").textContent = j.text || "";
+  const sc = $("scientific"), x = j.scientific;
+  if (x) {
+    sc.textContent = "";
+    const s = x.summary || {};
+    const dl = el("dl", "facts");
+    const add = (k, v) => dl.append(el("dt", null, k), el("dd", null, v));
+    add("verdict", `${x.verdict} — ${s.bits_equal} of ${s.tokens} tokens bit-equal (top-5 included)`);
+    add("model", `${(x.model || {}).name} · ${String((x.model || {}).sha256 || "").slice(0, 16)}… · bankML ${x.bankml} · ${x.threads} threads`);
+    add("max |Δ| logprob", s.max_abs_delta);
+    add("log-likelihood", `${(s.log_likelihood || {}).bankml} (bankML) · ${(s.log_likelihood || {}).reference} (llama.cpp)`);
+    add("perplexity", `${(s.perplexity || {}).bankml} · ${(s.perplexity || {}).reference}`);
+    const t = x.timing || {};
+    add("generation", `${(t.bankml || {}).predicted_tokens_per_s} tok/s (bankML) · ${(t.reference || {}).predicted_tokens_per_s} (llama.cpp)`);
+    add("resolution", `values ${(x.precision || {}).unit}; time ${(x.precision || {}).time_resolution_s} s (${(x.precision || {}).time_note})`);
+    add("measured", x.at);
+    sc.append(dl);
+  }
   $("diag-source").textContent = j.source || "";
 }
 $("diag-refresh").addEventListener("click", loadDiagnostics);

@@ -125,7 +125,8 @@ h2.sub { margin-top: 8px; }
 .span.open > .row .ms { color: #d97706; }
 .span .meta { font: 11.5px/1.5 var(--mono); color: var(--faint); padding: 0 0 4px; overflow-wrap: anywhere; }
 button.ghost { background: none; border: 1px solid var(--line); border-radius: 10px; padding: 5px 12px; cursor: pointer; }
-#diagnostics { padding-top: 28px; }
+#diagnostics, #engine { padding-top: 28px; }
+#engine { max-width: none; }
 
 @media (max-width: 640px) {
   .checks li { grid-template-columns: 22px 1fr; }
