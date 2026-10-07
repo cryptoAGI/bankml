@@ -1,4 +1,4 @@
-# The bankML thesis: exactness before speed, and inference you can check on the computer you already have
+# The bankML thesis: exact and precise first, then efficient and optimized — inference you can check on the computer you already have
 
 *cryptoAGI · bankML · 6 October 2026. The design intent quoted in §0 is that of bankML's authors, Professor
 Codephreak and Gregory L. Magnusson, in their own words and dated. The argument around it is assembled from the
@@ -27,6 +27,17 @@ gap without changing a single answer. We define the terms, place the work in its
 project has gathered (every claim tied to an oracle that can be re-run), answer the strongest objections, state the
 limits, and set out what remains between the present work and a 1.0 in which the reference is needed only as the
 oracle.
+
+Four words carry the argument, and their order is the method.
+- **Exactness** is the criterion: the same bits as the reference's compiled code, or no answer.
+- **Precision** is how exactness is held and stated:
+  - every value is kept to the last bit of its 32-bit float, and `scientific.diagnostic` writes both engines'
+    values to 18 decimals, with their difference;
+  - every measurement carries its resolution, so no digit claims more than was measured.
+- **Efficiency** is what is asked of the hardware: the CPU already owned, one crate with no runtime dependencies,
+  and about a dollar a day for one autonomous system.
+- **Optimization** comes last, and it is measured, never quoted: a kernel counts as faster only when its oracle has
+  passed in the same run.
 
 ---
 
