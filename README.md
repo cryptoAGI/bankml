@@ -26,6 +26,35 @@
   <a href="https://huggingface.co/spaces/PYTHAI/bankml"><b>on Hugging Face</b></a>
 </p>
 
+> **Latest release: [v0.4.0](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.0) — the milestone, native serving
+> complete** (2026-10-07; every stage of the gate passed, [record](testing/results/0.4.0.txt)). Everything Savante and
+> mindX ask of llama-server is answered by bankML's own engine, identical to llama-server b11192:
+> - **1-bit decode at least at llama-server's speed.** The pinned 8B A/B: 3 of 3 rounds, median 2.02 against 0.77
+>   tokens/s under the same load, every answer identical
+>   ([the test, with the machine's load](docs/PERFORMANCE.md#1-bit-decode-against-llama-server-040)). So `auto` now
+>   takes the 1-bit files as well as the ternary ones.
+> - **A q8_0 KV cache** with llama.cpp's Hadamard rotation (53 % of the memory, 6 / 6), and the grammar mask 13× faster.
+> - **The serving contract:** the context limit, slots, a prompt cache for conversations that take turns, and
+>   logprobs, all identical to llama-server.
+> - **It shows its work:**
+>   - a status page on the engine's own address;
+>   - the console's ultimate-input-field landing, and its Engine, Diagnostics and Thesis tabs;
+>   - `scientific.diagnostic`: 32 / 32 tokens bit-equal to 18 decimals.
+> - **The kernels at three threads:** 1-bit 1.02× and ternary 8.9× ggml b11192's own.
+>
+> **The thesis — Professor Codephreak and Gregory L. Magnusson.** *Exactness before speed.*
+> 1. Port what works, and only what works.
+> 2. Optimization, succinct, and verified response.
+> 3. The standing machine is the CPU you already have.
+> 4. Consume the inference, and prefer the better answer.
+> 5. Know the limit, and code around it.
+> 6. Improve by increments, with the oracle in the loop.
+> 7. Use the machine at hand.
+> 8. Prove the data; keep the data.
+>
+> [The Thesis and its sixteen contributions](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson) ·
+> [the argument, with the contemporary field](docs/thesis.md) · [hear it read](https://rage.pythai.net/bankML-thesis)
+
 ---
 
 ## Where it stands (2026-10-07)
