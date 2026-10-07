@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased (0.3.8) — the serving contract: the context limit, slots, the prompt cache, logprobs
+## 0.3.8 — 2026-10-06 — the serving contract: the context limit, slots, the prompt cache, logprobs
 
 **`bankml serve --native` now behaves as llama-server b11192 at the edges a client meets in production: a prompt
 that does not fit, a slot saved and restored, conversations that take turns, and the probabilities behind each
 token.** Each is checked against
-llama-server's own answers, as everything before it.
+llama-server's own answers, as everything before it. Record: `testing/results/0.3.8.txt`, one run of the full
+gate, every stage passed (2026-10-06, the laptop).
 
 ### The context limit (`testing/context_oracle.py`, 8 / 8)
 - With context shift off (llama-server's default), a generation that fills the context stops there with
