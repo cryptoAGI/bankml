@@ -163,7 +163,13 @@ fn main() {
                 }
                 let mut bad = 0;
                 for d in &sel {
-                    match bankml::gpu::compute::Gpu::open(d.index).and_then(|g| bankml::gpu::kernels::verify_q1_0(&g)) {
+                    // 1-bit, then (0.5.0) ternary: each kernel bit-exact against the CPU's, or the card is not used
+                    let verified = bankml::gpu::compute::Gpu::open(d.index).and_then(|g| {
+                        let mut lines = bankml::gpu::kernels::verify_q1_0(&g)?;
+                        lines.extend(bankml::gpu::kernels::verify_q2_0(&g)?);
+                        Ok(lines)
+                    });
+                    match verified {
                         Ok(lines) => lines.iter().for_each(|l| println!("{}: {l}", d.name)),
                         Err(e) => {
                             bad += 1;

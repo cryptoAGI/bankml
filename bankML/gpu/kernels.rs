@@ -408,6 +408,53 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
+/// The ternary kernel against the CPU's ternary kernel (`q2_0::mat_vec`, bit-identical to `vec_dot_ref` and to ggml),
+/// in the same two regimes as [`verify_q1_0`]: uniform data, and layer-shaped data whose products are inexact in f32.
+/// Activations keep finite scales: the card never gets a product whose activation scale is not finite.
+pub fn verify_q2_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
+    use crate::q2_0::{mat_vec, Q8Act2};
+    let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    let mut lines = Vec::new();
+    let pipe = gpu.pipeline(&q2_0_mat_vec(), Q1_0_BINDINGS, 8)?;
+    for &(rows, n, real) in &[(1000usize, 512usize, false), (4096, 4096, false), (1024, 12288, false), (4096, 4096, true), (2048, 12288, true)] {
+        let nb = n / 64;
+        let w: Vec<u8> = (0..rows * nb).flat_map(|_| {
+            let mut b = [0u8; 18];
+            let d = if real { (1.0 + (next() % 1900) as f32) * 1e-5 * if next() & 1 == 1 { -1.0 } else { 1.0 } } else { ((next() % 2000) as f32 - 1000.0) * 1e-5 };
+            b[..2].copy_from_slice(&crate::q1_0::f32_to_f16(d).to_le_bytes());
+            b[2..].iter_mut().for_each(|x| *x = next() as u8);
+            b
+        }).collect();
+        let x: Vec<f32> = (0..n).map(|i| {
+            let v = ((next() % 20001) as f32 - 10000.0) * 1e-4;
+            if real { v * (1.0 + (i / 32 % 7) as f32 * 0.37) * (0.05 + ((i / 32) * 2654435761 % 97) as f32 * 0.01) } else { v * 10.0 }
+        }).collect();
+        let mut q8 = vec![0u8; n / 32 * 34];
+        crate::q1_0::quantize_row_q8_0(&x, &mut q8);
+        let mut cpu = vec![0.0f32; rows];
+        mat_vec(&w, rows, &Q8Act2::from_q8_0(n, &q8), &mut cpu);
+        let (wd, wc) = pack_q2_0(&w, rows, n);
+        let (ad, aq) = pack_act(&crate::q1_0::Q8Act::from_q8_0(n, &q8));
+        let bufs = [gpu.upload(&wd)?, gpu.upload(&wc)?, gpu.upload(&ad)?, gpu.upload(&aq)?, gpu.buffer(rows * 4)?];
+        let t = std::time::Instant::now();
+        gpu.run(&pipe, &bufs.iter().collect::<Vec<_>>(), &[rows as u32, nb as u32], (rows as u32).div_ceil(LOCAL_SIZE))?;
+        let dt = t.elapsed().as_secs_f64() * 1e3;
+        let got = gpu.read_f32(&bufs[4], rows);
+        drop(bufs);
+        if let Some(i) = got.iter().zip(&cpu).position(|(g, c)| g.to_bits() != c.to_bits()) {
+            return Err(format!("q2_0_mat_vec {rows}×{n}: row {i} differs from the CPU kernel (gpu {:e}, cpu {:e})", got[i], cpu[i]));
+        }
+        lines.push(format!("q2_0_mat_vec {rows}×{n}{}: {rows} of {rows} rows bit-exact ({dt:.2} ms)", if real { " (layer-shaped)" } else { "" }));
+    }
+    Ok(lines)
+}
+
 /// A Q1_0 matrix repacked for the kernels: per block, its scale as f32 (exact) and its 128 bits as four u32 words.
 ///
 /// `w` holds `rows` rows of `n / 128` 18-byte blocks.
@@ -419,6 +466,173 @@ pub fn pack_q1_0(w: &[u8], rows: usize, n: usize) -> (Vec<f32>, Vec<u32>) {
         bits.extend(b[2..18].as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])));
     }
     (d, bits)
+}
+
+/// The ternary Q2_0 matrix–vector kernel (0.5.0), one invocation per output row; dispatch `ceil(rows / 64)`.
+///
+/// The same five bindings as the Q1_0 kernels: weight scales (f32 per 64-weight block), weight codes (four u32 per
+/// block, 2 bits per weight, LSB first), activation scales (f32 per 32), activation quants (i32 words of four i8),
+/// output (f32). Push constants: rows, blocks per row. It performs `q2_0::vec_dot_ref`'s float operations in its
+/// order: per block, the two 32-element integer sums `s = Σ (code − 1)·q` (exact), `sumi = fma(d1₁, s₁, d1₀·s₀)`,
+/// then `sumf = fma(d0, sumi, sumf)`. Here `d1·s` can need 25 bits (|s| < 2¹⁴, an f16 scale has 11), so unlike the
+/// Q1_0 kernel's inner step both fused multiply-adds are built exactly ([`Module::fma_exact`]).
+pub fn q2_0_mat_vec() -> Vec<u32> {
+    let mut m = Module::new();
+    m.capability(1); // Shader
+    m.ext_import("GLSL.std.450");
+    m.memory_model_glsl450();
+    let void = m.ty(op::TYPE_VOID, &[]);
+    let fn_ty = m.ty(op::TYPE_FUNCTION, &[void]);
+    let tbool = m.ty(op::TYPE_BOOL, &[]);
+    let u32t = m.ty(op::TYPE_INT, &[32, 0]);
+    let i32t = m.ty(op::TYPE_INT, &[32, 1]);
+    let f32t = m.ty(op::TYPE_FLOAT, &[32]);
+    let v3u = m.ty(op::TYPE_VECTOR, &[u32t, 3]);
+    let buffer_ty = |m: &mut Module, elem: u32| {
+        let arr = m.ty(op::TYPE_RUNTIME_ARRAY, &[elem]);
+        m.decorate(arr, &[dec::ARRAY_STRIDE, 4]);
+        let st = m.ty(op::TYPE_STRUCT, &[arr]);
+        m.decorate(st, &[dec::BLOCK]);
+        m.member_decorate(st, 0, &[dec::OFFSET, 0]);
+        let p = m.ty(op::TYPE_POINTER, &[sc::STORAGE_BUFFER, st]);
+        let pe = m.ty(op::TYPE_POINTER, &[sc::STORAGE_BUFFER, elem]);
+        (p, pe)
+    };
+    let (p_sf, pe_f) = buffer_ty(&mut m, f32t);
+    let (p_su, pe_u) = buffer_ty(&mut m, u32t);
+    let (p_si, pe_i) = buffer_ty(&mut m, i32t);
+    let bind = |m: &mut Module, p: u32, b: u32| {
+        let v = m.global(p, sc::STORAGE_BUFFER);
+        m.decorate(v, &[dec::DESCRIPTOR_SET, 0]);
+        m.decorate(v, &[dec::BINDING, b]);
+        v
+    };
+    let (wd, wcodes, ad, aq, outb) = (bind(&mut m, p_sf, 0), bind(&mut m, p_su, 1), bind(&mut m, p_sf, 2), bind(&mut m, p_si, 3), bind(&mut m, p_sf, 4));
+    let pc_st = m.ty(op::TYPE_STRUCT, &[u32t, u32t]);
+    m.decorate(pc_st, &[dec::BLOCK]);
+    m.member_decorate(pc_st, 0, &[dec::OFFSET, 0]);
+    m.member_decorate(pc_st, 1, &[dec::OFFSET, 4]);
+    let p_pc = m.ty(op::TYPE_POINTER, &[sc::PUSH_CONSTANT, pc_st]);
+    let pe_pcu = m.ty(op::TYPE_POINTER, &[sc::PUSH_CONSTANT, u32t]);
+    let pc = m.global(p_pc, sc::PUSH_CONSTANT);
+    let p_in = m.ty(op::TYPE_POINTER, &[sc::INPUT, v3u]);
+    let gid = m.global(p_in, sc::INPUT);
+    m.decorate(gid, &[dec::BUILTIN, BUILTIN_GLOBAL_INVOCATION_ID]);
+    let pf_f = m.ty(op::TYPE_POINTER, &[sc::FUNCTION, f32t]);
+    let pf_u = m.ty(op::TYPE_POINTER, &[sc::FUNCTION, u32t]);
+    let cu: Vec<u32> = (0..40).map(|v| m.const_u32(u32t, v)).collect();
+    let ci0 = m.const_u32(i32t, 0);
+    let ci1 = m.const_u32(i32t, 1);
+    let cf0 = m.const_u32(f32t, 0);
+    let c_mask = m.const_u32(u32t, 0xFFFF_F000);
+
+    let func = m.id();
+    m.entry_point_compute(func, "main", &[gid], [LOCAL_SIZE, 1, 1]);
+    m.stmt(op::FUNCTION, &[void, func, 0, fn_ty]);
+    let (l_entry, l_work, l_head, l_check, l_body, l_cont, l_merge, l_end) = (m.id(), m.id(), m.id(), m.id(), m.id(), m.id(), m.id(), m.id());
+    m.label(l_entry);
+    let sumf = m.op(op::VARIABLE, pf_f, &[sc::FUNCTION]);
+    let ivar = m.op(op::VARIABLE, pf_u, &[sc::FUNCTION]);
+    let g = m.op(op::LOAD, v3u, &[gid]);
+    let r = m.op(op::COMPOSITE_EXTRACT, u32t, &[g, 0]);
+    let prow = m.op(op::ACCESS_CHAIN, pe_pcu, &[pc, cu[0]]);
+    let rows = m.op(op::LOAD, u32t, &[prow]);
+    let pnb = m.op(op::ACCESS_CHAIN, pe_pcu, &[pc, cu[1]]);
+    let nb = m.op(op::LOAD, u32t, &[pnb]);
+    let inrange = m.op(op::U_LESS_THAN, tbool, &[r, rows]);
+    m.stmt(op::SELECTION_MERGE, &[l_end, 0]);
+    m.stmt(op::BRANCH_CONDITIONAL, &[inrange, l_work, l_end]);
+
+    m.label(l_work);
+    m.stmt(op::STORE, &[sumf, cf0]);
+    m.stmt(op::STORE, &[ivar, cu[0]]);
+    m.stmt(op::BRANCH, &[l_head]);
+
+    m.label(l_head);
+    m.stmt(op::LOOP_MERGE, &[l_merge, l_cont, 0]);
+    m.stmt(op::BRANCH, &[l_check]);
+
+    m.label(l_check);
+    let iv = m.op(op::LOAD, u32t, &[ivar]);
+    let more = m.op(op::U_LESS_THAN, tbool, &[iv, nb]);
+    m.stmt(op::BRANCH_CONDITIONAL, &[more, l_body, l_merge]);
+
+    m.label(l_body);
+    let rnb = m.op(op::I_MUL, u32t, &[r, nb]);
+    let blk = m.op(op::I_ADD, u32t, &[rnb, iv]);
+    let p = m.op(op::ACCESS_CHAIN, pe_f, &[wd, cu[0], blk]);
+    let d0 = m.op(op::LOAD, f32t, &[p]);
+    let blk4 = m.op(op::I_MUL, u32t, &[blk, cu[4]]);
+    let iv2 = m.op(op::I_MUL, u32t, &[iv, cu[2]]);
+    let mut sumi = cf0;
+    for k in 0..2u32 {
+        // the activation's q8 block 2·i + k, and the eight words of its 32 quants
+        let ab_i = m.op(op::I_ADD, u32t, &[iv2, cu[k as usize]]);
+        let pd = m.op(op::ACCESS_CHAIN, pe_f, &[ad, cu[0], ab_i]);
+        let d1 = m.op(op::LOAD, f32t, &[pd]);
+        let ab8 = m.op(op::I_MUL, u32t, &[ab_i, cu[8]]);
+        let mut s = ci0;
+        // the block's half k: two code words, sixteen 2-bit codes each
+        for w in 0..2u32 {
+            let wi = m.op(op::I_ADD, u32t, &[blk4, cu[(2 * k + w) as usize]]);
+            let pw = m.op(op::ACCESS_CHAIN, pe_u, &[wcodes, cu[0], wi]);
+            let cword = m.op(op::LOAD, u32t, &[pw]);
+            for qwi in 0..4u32 {
+                let qi = m.op(op::I_ADD, u32t, &[ab8, cu[(4 * w + qwi) as usize]]);
+                let pq = m.op(op::ACCESS_CHAIN, pe_i, &[aq, cu[0], qi]);
+                let qword = m.op(op::LOAD, i32t, &[pq]);
+                for e in 0..4u32 {
+                    let up = m.op(op::SHIFT_LEFT_LOGICAL, i32t, &[qword, cu[(24 - 8 * e) as usize]]);
+                    let q = m.op(op::SHIFT_RIGHT_ARITHMETIC, i32t, &[up, cu[24]]);
+                    let sh = m.op(op::SHIFT_RIGHT_LOGICAL, u32t, &[cword, cu[(2 * (4 * qwi + e)) as usize]]);
+                    let code = m.op(op::BITWISE_AND, u32t, &[sh, cu[3]]);
+                    let codei = m.op(op::BITCAST, i32t, &[code]);
+                    let c = m.op(op::I_SUB, i32t, &[codei, ci1]);
+                    let term = m.op(op::I_MUL, i32t, &[c, q]);
+                    s = m.op(op::I_ADD, i32t, &[s, term]);
+                }
+            }
+        }
+        let sf = m.op(op::CONVERT_S_TO_F, f32t, &[s]);
+        sumi = if k == 0 {
+            // fma(d1, s, 0) is one rounding of the product
+            m.op(op::F_MUL, f32t, &[d1, sf])
+        } else {
+            m.fma_exact((f32t, u32t, tbool), d1, sf, sumi, c_mask, cu[1], cu[0], cf0)
+        };
+    }
+    let a = m.op(op::LOAD, f32t, &[sumf]);
+    let n = m.fma_exact((f32t, u32t, tbool), d0, sumi, a, c_mask, cu[1], cu[0], cf0);
+    m.stmt(op::STORE, &[sumf, n]);
+    m.stmt(op::BRANCH, &[l_cont]);
+
+    m.label(l_cont);
+    let iv3 = m.op(op::LOAD, u32t, &[ivar]);
+    let inc = m.op(op::I_ADD, u32t, &[iv3, cu[1]]);
+    m.stmt(op::STORE, &[ivar, inc]);
+    m.stmt(op::BRANCH, &[l_head]);
+
+    m.label(l_merge);
+    let total = m.op(op::LOAD, f32t, &[sumf]);
+    let po = m.op(op::ACCESS_CHAIN, pe_f, &[outb, cu[0], r]);
+    m.stmt(op::STORE, &[po, total]);
+    m.stmt(op::BRANCH, &[l_end]);
+
+    m.label(l_end);
+    m.stmt(op::RETURN, &[]);
+    m.stmt(op::FUNCTION_END, &[]);
+    m.words()
+}
+
+/// Q2_0 rows repacked for [`q2_0_mat_vec`]: each 64-weight block's scale as f32, its 16 code bytes as four u32.
+pub fn pack_q2_0(w: &[u8], rows: usize, n: usize) -> (Vec<f32>, Vec<u32>) {
+    let nb = n / 64;
+    let (mut d, mut codes) = (Vec::with_capacity(rows * nb), Vec::with_capacity(rows * nb * 4));
+    for b in w[..rows * nb * 18].as_chunks::<18>().0.iter() {
+        d.push(crate::q1_0::f16_to_f32(u16::from_le_bytes([b[0], b[1]])));
+        codes.extend(b[2..18].as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])));
+    }
+    (d, codes)
 }
 
 /// A q8_0 activation repacked for the kernels: its f32 scales and its quants four to a word.
@@ -469,6 +683,63 @@ mod tests {
                   d.name, Q1_0_BINDINGS, base as f64 / 1e6, after as f64 / 1e6);
         // each round held at least 64 MB; a leak of even one buffer per round would show 480 MB here
         assert!(grew < 16 << 20, "card memory grew by {grew} bytes over 30 rounds: something is not released");
+    }
+
+    /// The ternary kernel (0.5.0) on every usable local GPU against `q2_0::vec_dot_ref` (the shipped ggml's float
+    /// order), row by row, the bits compared: random weights with every code (3 included) and activations with a
+    /// far outlier, across the 8B model's shapes.
+    #[test]
+    #[ignore = "needs a Vulkan GPU"]
+    fn gpu_q2_0_mat_vec_bit_exact() {
+        let devs = crate::gpu::selected(&crate::gpu::discover().0);
+        if devs.is_empty() {
+            eprintln!("gpu oracle: no usable GPU on this machine; skipped (bankml runs on the CPU)");
+            return;
+        }
+        let mut rng = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for d in &devs {
+            let gpu = crate::gpu::compute::Gpu::open(d.index).unwrap();
+            let pipe = gpu.pipeline(&q2_0_mat_vec(), Q1_0_BINDINGS, 8).unwrap();
+            for &(rows, n) in &[(64usize, 128usize), (1000, 512), (4096, 4096), (1024, 12288), (12288, 4096)] {
+                let nb = n / 64;
+                let w: Vec<u8> = (0..rows * nb).flat_map(|_| {
+                    let mut b = vec![0u8; 18];
+                    let dd = crate::q1_0::f32_to_f16(((next() % 2000) as f32 - 1000.0) * 1e-5);
+                    b[..2].copy_from_slice(&dd.to_le_bytes());
+                    for x in b[2..].iter_mut() {
+                        *x = next() as u8;
+                    }
+                    b
+                }).collect();
+                let mut x: Vec<f32> = (0..n).map(|_| ((next() % 20001) as f32 - 10000.0) * 1e-3).collect();
+                // one block with a far outlier (a large scale, its other quants near 0); an f16 scale must stay finite:
+                // the exact FMA turns an infinite scale into NaN where the CPU gives inf, so a product whose
+                // activation has a non-finite scale stays on the CPU
+                x[3] = -6.0e4;
+                let mut q8 = vec![0u8; n / 32 * 34];
+                crate::q1_0::quantize_row_q8_0(&x, &mut q8);
+                let a = Q8Act::from_q8_0(n, &q8);
+                let cpu: Vec<f32> = (0..rows).map(|r| crate::q2_0::vec_dot_ref(n, &w[r * nb * 18..], &q8)).collect();
+                let (wd, wc) = pack_q2_0(&w, rows, n);
+                let (ad, aq) = pack_act(&a);
+                let (bwd, bwc, bad, baq, bout) = (gpu.upload(&wd).unwrap(), gpu.upload(&wc).unwrap(), gpu.upload(&ad).unwrap(),
+                                                  gpu.upload(&aq).unwrap(), gpu.buffer(rows * 4).unwrap());
+                let t = std::time::Instant::now();
+                gpu.run(&pipe, &[&bwd, &bwc, &bad, &baq, &bout], &[rows as u32, nb as u32], (rows as u32).div_ceil(LOCAL_SIZE)).unwrap();
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                let got = gpu.read_f32(&bout, rows);
+                let same = got.iter().zip(&cpu).filter(|(a, b)| a.to_bits() == b.to_bits()).count();
+                eprintln!("gpu {}: q2_0_mat_vec {rows}×{n}: {same} of {rows} rows bit-exact against q2_0::vec_dot_ref ({ms:.2} ms)", d.name);
+                assert_eq!(same, rows, "{}: first difference at row {:?}", d.name,
+                           got.iter().zip(&cpu).position(|(a, b)| a.to_bits() != b.to_bits()));
+            }
+        }
     }
 
     /// Both Q1_0 kernels on every usable local GPU against the CPU kernel, including −128 quants.
