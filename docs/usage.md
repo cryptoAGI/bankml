@@ -449,7 +449,7 @@ python3 sAGI/console.py          # http://127.0.0.1:7875 — talks to bankml ser
 `./install.sh start` starts it beside Savante (:7875), `./install.sh stop` stops it, and Savante's header has a
 **bankML ↗** link to it; its own bar has the **Savante | bankML** switch back.
 
-bankML's own interface, deliberately unlike Savante's — a quiet page, light or dark with the system — with four tabs:
+bankML's own interface, deliberately unlike Savante's — a quiet page, light or dark with the system — with five tabs:
 
 - **Ask** (the landing): one question, the streamed answer, and under it the receipt — `✓ receipt` when the sha256 of
   the text you received is the receipt's (checked in the browser), the model, the tokens, the time to first token, the
@@ -466,6 +466,13 @@ bankML's own interface, deliberately unlike Savante's — a quiet page, light or
   Merkle root over the exchanges with their CID. The exchanges stay on this machine; the root lets a holder check any
   one of them. Download it as JSON.
 - **Logs**: the engine's own log.
+- **Diagnostics** (0.3.9): checks measured when the tab opens — does `bankml serve` answer and how fast, is the model
+  verified, what the metrics and memory say, the engine log's last error — and the trace of each recent answer: the
+  span `ask` and inside it `self_block`, `engine.stream` (with the moments its headers, first piece and receipt
+  arrived), `metrics`, `log.write` and `receipt.verify`, each with its duration. A slow answer shows where its time
+  went (on a busy laptop, almost all of it reading the persona's prompt). Spans hold counts and statuses, never the
+  question, so a public console shows them too. The span model is LlamaIndex's instrumentation (MIT), ported to the
+  standard library in `sAGI/diagnostics.py`.
 
 Power appears only after `./install.sh power` (opt-in, the one step that uses sudo; see
 [install.md §2](install.md#the-steps)); until then it reads "not measured".

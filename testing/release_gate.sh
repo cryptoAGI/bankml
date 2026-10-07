@@ -40,7 +40,7 @@ out=testing/results/$v.txt
     fi
     for t in oracle_tokenizer oracle_chat_template oracle_forward_embed_norm oracle_forward_qkv_rope oracle_forward_attention oracle_forward_attention_tiled oracle_forward_attention_split oracle_forward_swiglu_sweep oracle_forward_model oracle_forward_model_ternary oracle_greedy_llama_server oracle_greedy_llama_server_ternary oracle_greedy_llama_server_long oracle_greedy_llama_server_deep oracle_sample_llama_server oracle_native_serve oracle_grammar_masks oracle_json_mode oracle_json_mode_ternary oracle_schema_grammars oracle_json_schema oracle_json_schema_ternary oracle_json_schema_o4 oracle_json_content oracle_persona_layer oracle_penalties oracle_penalties_8b oracle_samplers oracle_samplers_8b oracle_std_sort oracle_ggml_b11192_q8_0_kv_kernels gpu_q1_0_mat_vec_bit_exact oracle_train_script oracle_train_imprint oracle_ggml_b11192_real_bonsai_1_7b oracle_ggml_b11192_real_bonsai_8b_q1_0 oracle_ggml_b11192_real_ternary_bonsai_8b \
              oracle_ggml_b11192_f16 oracle_tokenizer_smollm oracle_chat_template_chatml oracle_forward_model_bonsai_1_7b oracle_forward_model_llama_f16 \
-             oracle_llama_server_bonsai_1_7b oracle_llama_server_llama_f16 oracle_native_serve_o4 \
+             oracle_llama_server_bonsai_1_7b oracle_llama_server_llama_f16 oracle_native_serve_o4 cache_prompt_false_is_an_empty_slot \
              ab_vs_ggml ab_vs_ggml_q2_0 bench_q1_0_prefill_act bench_memory_floor decode_budget_q1_0 decode_budget_q2_0; do
       echo "## $t"
       name=$(cargo test --release -q -- --list --ignored 2>/dev/null | sed -n "s/^\(.*::$t\): test$/\1/p")

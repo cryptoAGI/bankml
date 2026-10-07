@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """bankML · console — talk to bankML as itself (sAGI/personas/bankml.persona), and watch what it measures.
 
-Four tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
+Five tabs: **Ask** (the landing: a question, its streamed answer and receipt), **Admin** (CPU threads, RAM budget and
 GPU limit as sliders; D3 charts of what bankml measures), **Receipts** (every exchange's receipt, and the iNFT
-commitments: a Merkle root over the exchanges) and **Logs** (the engine's log). A Savante | bankML switch links to
+commitments: a Merkle root over the exchanges), **Logs** (the engine's log) and **Diagnostics** (measured checks of
+the engine, and every answer's trace: its spans and their durations — `diagnostics.py`, after LlamaIndex's
+instrumentation). A Savante | bankML switch links to
 Savante's page on :7873.
 
 The persona knows its own use only from measurement: each question goes to `bankml serve` with a SELF block built
@@ -37,6 +39,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import diagnostics as D  # noqa: E402  (stdlib-only)
 import models  # noqa: E402  (stdlib-only)
 import savante as S  # noqa: E402  (stdlib-only at import; its Merkle tree and CIDv1)
 
@@ -125,6 +128,21 @@ def log_lines() -> list:
         return []
 
 
+def engine_tail(n: int = 60) -> list:
+    try:
+        return models.LOG.read_text(errors="replace").splitlines()[-n:]
+    except OSError:
+        return []
+
+
+def diagnostics() -> dict:
+    """The Diagnostics tab: measured checks of the engine now, and the newest answers' traces (spans, durations,
+    events). A trace's tags carry counts and statuses, never a question's text, so public mode shows them too."""
+    trees = D.HANDLER.trees()
+    return {"checks": D.checks(SERVE, engine_tail()), "traces": trees, "text": D.render(trees),
+            "source": "sAGI/diagnostics.py — after LlamaIndex's instrumentation (MIT): SimpleSpan, SimpleSpanHandler"}
+
+
 def infotags() -> dict:
     """The metadata an iNFT publication of this session carries (ERC-721 metadata shape, `attributes`), with the
     commitments that let a holder check any one exchange: an RFC 6962 Merkle root over the log's lines and its CIDv1."""
@@ -150,13 +168,14 @@ def apply(threads: int, ram_gb: float, gpu_limit: float) -> None:
         JOB.update(busy=True, what=f"restarting with {threads} threads, {ram_gb:.1f} GB, GPU {gpu_limit:.0%}", error="", done=None)
 
     def run():
-        try:
-            models.apply_resources(threads, ram_gb, engine="native", gpu_limit=gpu_limit)
-            JOB["done"] = time.time()
-        except Exception as e:  # noqa: BLE001 — reported to the page
-            JOB["error"] = str(e)
-        finally:
-            JOB["busy"] = False
+        with D.span("apply", threads=threads, ram_gb=ram_gb, gpu_limit=gpu_limit) as sp:
+            try:
+                models.apply_resources(threads, ram_gb, engine="native", gpu_limit=gpu_limit)
+                JOB["done"] = time.time()
+            except Exception as e:  # noqa: BLE001 — reported to the page
+                JOB["error"] = sp.error = str(e)
+            finally:
+                JOB["busy"] = False
     threading.Thread(target=run, daemon=True).start()
 
 
@@ -195,14 +214,11 @@ class H(BaseHTTPRequestHandler):
             return self._json(state())
         if path == "/api/log":
             rows = [] if PUBLIC else [json.loads(l) for l in log_lines()[-200:]]
-            tail = []
-            try:
-                tail = models.LOG.read_text(errors="replace").splitlines()[-60:]
-            except OSError:
-                pass
-            return self._json({"exchanges": rows, "engine_log": tail})
+            return self._json({"exchanges": rows, "engine_log": engine_tail()})
         if path == "/api/infotags":
             return self._json(infotags())
+        if path == "/api/diagnostics":
+            return self._json(diagnostics())
         self._send(404, b"not found", "text/plain")
 
     def _body(self):
@@ -239,11 +255,18 @@ class H(BaseHTTPRequestHandler):
         self._send(404, b"not found", "text/plain")
 
     def _ask(self, req: dict):
-        """Stream an answer as NDJSON lines {"piece"} … then {"done", "receipt", "timings", "self"}; log the exchange."""
+        """Stream an answer as NDJSON lines {"piece"} … then {"done", "receipt", "timings", "self"}; log the exchange.
+        Traced: the span `ask` holds `self_block`, `engine.stream` (its first piece as an event), `metrics`,
+        `receipt.verify` and `log.write`."""
         q = str(req.get("message", "")).strip()
         if not q:
             return self._json({"error": "an empty question"}, 400)
-        sb = self_block()
+        with D.span("ask", chars=len(q), history=len(req.get("history") or []), public=PUBLIC is not None) as root:
+            self._ask_traced(req, q, root)
+
+    def _ask_traced(self, req: dict, q: str, root):
+        with D.span("self_block"):
+            sb = self_block()
         system = persona()["system_prompt"] + "\n\nSELF (measured by bankML just now):\n" + self_text(sb)
         hist = [m for m in (req.get("history") or [])[-12:] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
         body = {"messages": [{"role": "system", "content": system}, *hist, {"role": "user", "content": q}], "stream": True,
@@ -255,35 +278,49 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        text, receipt, err, t0 = "", None, None, time.time()
-        try:
-            r = urllib.request.Request(SERVE + "/v1/chat/completions", json.dumps(body).encode(), {"Content-Type": "application/json"})
-            with urllib.request.urlopen(r, timeout=1800) as resp:
-                for raw in resp:
-                    line = raw.decode("utf-8", "replace").strip()
-                    if not line.startswith("data:") or line == "data: [DONE]":
-                        continue
-                    d = json.loads(line[5:])
-                    if "bankml_receipt" in d:
-                        receipt = d["bankml_receipt"]
-                        continue
-                    piece = ((d.get("choices") or [{}])[0].get("delta") or {}).get("content") or ""
-                    if piece:
-                        text += piece
-                        self.wfile.write((json.dumps({"piece": piece}) + "\n").encode())
-                        self.wfile.flush()
-        except urllib.error.HTTPError as e:
-            err = e.read().decode("utf-8", "replace")[:500] or str(e)
-        except (OSError, ValueError) as e:
-            err = str(e)
-        last = ((_get("/bankml/metrics") or {}).get("records") or [{}])[-1]
+        text, receipt, err, t0, pieces = "", None, None, time.time(), 0
+        with D.span("engine.stream", max_tokens=body["max_tokens"], messages=len(body["messages"])) as es:
+            try:
+                r = urllib.request.Request(SERVE + "/v1/chat/completions", json.dumps(body).encode(), {"Content-Type": "application/json"})
+                with urllib.request.urlopen(r, timeout=1800) as resp:
+                    es.event("headers", status=resp.status)
+                    for raw in resp:
+                        line = raw.decode("utf-8", "replace").strip()
+                        if not line.startswith("data:") or line == "data: [DONE]":
+                            continue
+                        d = json.loads(line[5:])
+                        if "bankml_receipt" in d:
+                            receipt = d["bankml_receipt"]
+                            es.event("receipt")
+                            continue
+                        piece = ((d.get("choices") or [{}])[0].get("delta") or {}).get("content") or ""
+                        if piece:
+                            if not pieces:
+                                es.event("first piece")
+                            pieces += 1
+                            text += piece
+                            self.wfile.write((json.dumps({"piece": piece}) + "\n").encode())
+                            self.wfile.flush()
+            except urllib.error.HTTPError as e:
+                err = e.read().decode("utf-8", "replace")[:500] or str(e)
+            except (OSError, ValueError) as e:
+                err = str(e)
+            es.tags.update(pieces=pieces, chars=len(text))
+            es.error = err and err[:300]
+        with D.span("metrics"):
+            last = ((_get("/bankml/metrics") or {}).get("records") or [{}])[-1]
         if not PUBLIC:  # a public console keeps no record of its visitors' questions
-            rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb}
-            STATE.mkdir(parents=True, exist_ok=True)
-            with LOG.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            with D.span("log.write"):
+                rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb}
+                STATE.mkdir(parents=True, exist_ok=True)
+                with LOG.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with D.span("receipt.verify") as rv:
+            ok = receipt is not None and hashlib.sha256(text.encode()).hexdigest() == receipt.get("response_sha256")
+            rv.tags.update(receipt=receipt is not None, ok=ok)
+        root.tags.update(ok=ok, ttft_ms=last.get("ttft_ms"), eval_tps=last.get("eval_tps"))
         self.wfile.write((json.dumps({"done": True, "error": err, "receipt": receipt, "metrics": last,
-                                      "answer_sha256_ok": receipt is not None and hashlib.sha256(text.encode()).hexdigest() == receipt.get("response_sha256")}) + "\n").encode())
+                                      "answer_sha256_ok": ok}) + "\n").encode())
         self.wfile.flush()
 
 

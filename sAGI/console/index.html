@@ -14,6 +14,7 @@
     <button role="tab" data-tab="admin" aria-selected="false">Admin</button>
     <button role="tab" data-tab="receipts" aria-selected="false">Receipts</button>
     <button role="tab" data-tab="logs" aria-selected="false">Logs</button>
+    <button role="tab" data-tab="diagnostics" aria-selected="false">Diagnostics</button>
   </nav>
   <div class="switch" role="group" aria-label="interface">
     <a id="to-savante" href="http://127.0.0.1:7873/">Savante</a><span class="on" aria-current="page">bankML</span>
@@ -84,6 +85,22 @@
       <p class="quiet">bankml serve's own output, newest last</p>
     </div>
     <pre id="englog"></pre>
+  </section>
+
+  <!-- Diagnostics: measured checks, and each answer's trace (spans after LlamaIndex's instrumentation) -->
+  <section id="diagnostics" class="tab">
+    <div class="loghead">
+      <h2>Diagnostics</h2>
+      <p class="quiet"><button id="diag-refresh" class="ghost">Refresh</button></p>
+    </div>
+    <ul id="checks" class="checks"></ul>
+    <h2 class="sub">Traces — the newest answers, span by span</h2>
+    <div id="traces" class="traces"></div>
+    <details class="more">
+      <summary>As text</summary>
+      <pre id="trace-text"></pre>
+    </details>
+    <p id="diag-source" class="quiet"></p>
   </section>
 </main>
 <script src="/vendor/d3.v7.min.js"></script>

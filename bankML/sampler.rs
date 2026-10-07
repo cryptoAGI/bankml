@@ -276,6 +276,10 @@ pub struct Params {
     pub dry_sequence_breakers: Vec<String>,
     /// `n_probs`: how many top-token probabilities to report per generated token (0 = none).
     pub n_probs: usize,
+    /// llama-server's `cache_prompt` (default true). Not a sampler setting: it travels with the request's parameters,
+    /// as in llama-server's task params. False computes the whole prompt (`n_past = 0`, server-context.cpp), so the
+    /// answer is the one an empty slot gives.
+    pub cache_prompt: bool,
 }
 
 impl Default for Params {
@@ -285,7 +289,7 @@ impl Default for Params {
                  penalty_last_n: 64, penalty_repeat: 1.0, penalty_freq: 0.0, penalty_present: 0.0,
                  typical_p: 1.0, top_n_sigma: -1.0, xtc_probability: 0.0, xtc_threshold: 0.1, dynatemp_range: 0.0, dynatemp_exponent: 1.0,
                  dry_multiplier: 0.0, dry_base: 1.75, dry_allowed_length: 2, dry_penalty_last_n: 64,
-                 dry_sequence_breakers: ["\n", ":", "\"", "*"].map(String::from).to_vec(), n_probs: 0 }
+                 dry_sequence_breakers: ["\n", ":", "\"", "*"].map(String::from).to_vec(), n_probs: 0, cache_prompt: true }
     }
 }
 

@@ -234,7 +234,7 @@ impl Native {
         if prompt.len() >= self.n_ctx {
             return Err(format!("the prompt has {} tokens; the context is {}", prompt.len(), self.n_ctx));
         }
-        let n_probs = params.n_probs;
+        let (n_probs, cache_prompt) = (params.n_probs, params.cache_prompt);
         let mut probs = Vec::new();
         let mut sampler = Sampler::new(params)?;
         if sampler.wants_dry_breakers() {
@@ -258,8 +258,10 @@ impl Native {
             }
             pc.update();
         }
-        // the slot's prefix: the longest common prefix, less one when the whole prompt is cached
-        let mut n_past = slot.tokens.iter().zip(prompt).take_while(|(a, b)| a == b).count();
+        // the slot's prefix: the longest common prefix, less one when the whole prompt is cached; none at all when the
+        // request says `cache_prompt: false` (llama-server: "if we don't cache the prompt, we have to remove all
+        // previous tokens", n_past = 0)
+        let mut n_past = if cache_prompt { slot.tokens.iter().zip(prompt).take_while(|(a, b)| a == b).count() } else { 0 };
         if n_past == prompt.len() {
             n_past -= 1;
         }
@@ -541,6 +543,7 @@ pub fn sampling(defaults: Params, req: &Json) -> Result<Params, String> {
     if let Some(v) = num("min_keep") { p.min_keep = v as usize }
     if let Some(v) = num("seed") { p.seed = v as i64 as u32 }
     if let Some(v) = num("n_probs") { p.n_probs = v.max(0.0) as usize }
+    if let Some(Json::Bool(b)) = req.get("cache_prompt") { p.cache_prompt = *b }
     if let Some(v) = num("repeat_last_n") { p.penalty_last_n = v as i64 as i32 }
     if let Some(v) = num("repeat_penalty") { p.penalty_repeat = v as f32 }
     if let Some(v) = num("frequency_penalty") { p.penalty_freq = v as f32 }
@@ -958,6 +961,31 @@ mod tests {
             native_serve(stem);
             json_replay(stem, "json");
         }
+    }
+
+    /// `cache_prompt: false` computes the whole prompt (llama-server's n_past = 0): after a warm-up of the same prompt,
+    /// the answer, its tokens and its zero cache count are an empty slot's. (This is what made decode_ab.py's rounds
+    /// differ: llama-server honoured the flag, bankML reused the warm-up's prefix.)
+    #[test]
+    #[ignore = "needs .models/SmolLM2-135M-Instruct-F16.gguf; --release"]
+    fn cache_prompt_false_is_an_empty_slot() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".models");
+        let eng = Native::open(&dir.join("SmolLM2-135M-Instruct-F16.gguf"), 2048).unwrap();
+        let req = Json::parse(r#"{"messages": [{"role": "system", "content": "You are a careful assistant."},
+            {"role": "user", "content": "Explain in a short paragraph why the sky is blue, and what changes at sunset."}],
+            "temperature": 0, "cache_prompt": false}"#).unwrap();
+        let prompt = eng.prompt(req.get("messages").unwrap()).unwrap();
+        let params = eng.params(&req).unwrap();
+        assert!(!params.cache_prompt);
+        eng.reset();
+        let empty = eng.complete(&prompt, params.clone(), Some(32), None, |_| true).unwrap();
+        eng.complete(&prompt, params.clone(), Some(4), None, |_| true).unwrap(); // the warm-up fills the slot
+        let off = eng.complete(&prompt, params.clone(), Some(32), None, |_| true).unwrap();
+        assert_eq!((off.tokens.clone(), off.text.clone(), off.cached_tokens), (empty.tokens.clone(), empty.text.clone(), 0));
+        let on = eng.complete(&prompt, Params { cache_prompt: true, ..params }, Some(32), None, |_| true).unwrap();
+        assert_eq!(on.cached_tokens, prompt.len() - 1, "with the cache on, the whole prompt but one token is reused");
+        eprintln!("cache_prompt: false after a warm-up = an empty slot ({} tokens, cache_n 0); true reuses {} of {}",
+                  off.tokens.len(), on.cached_tokens, prompt.len());
     }
 
     fn native_serve(stem: &str) {

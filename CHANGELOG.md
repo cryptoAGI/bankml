@@ -27,6 +27,28 @@ decode speed, the third, is measured on an idle machine next.
   against 38.8 ms** (13×), p90 49.3 against 80.6 ms, over the oracle's 1,645 masks. The oracle now computes every
   mask both ways: **196 / 196 runs, 1,645 / 1,645 masks** identical to llama.cpp b11192 by each.
 
+### `cache_prompt: false`, as llama-server (found by `testing/decode_ab.py`)
+- The first pinned 1-bit A/B refused its first round: bankML's and llama-server's answers parted after about 40
+  tokens. The harness sends a warm-up, then the measured request with `cache_prompt: false`; llama-server b11192
+  then computes the whole prompt (`n_past = 0`, server-context.cpp), while bankML ignored the flag and reused the
+  warm-up's prefix, a different split of the prefill and so different bits. bankML now reads `cache_prompt` (default
+  true) and, when it is false, starts from position 0 as llama-server does (`Params::cache_prompt`,
+  `Native::complete_with`). Test: `cache_prompt_false_is_an_empty_slot` (after a warm-up, the answer, tokens and
+  `cache_n` 0 are an empty slot's; with the flag on, all but one prompt token are reused), in the release gate.
+
+### Diagnostics in the console (`sAGI/diagnostics.py`)
+- A **Diagnostics** tab beside Logs: measured checks (serve reachable and its latency, the model verified, metrics,
+  memory, CPU, the engine log's last error, failed spans) and the trace of each recent answer, span by span with
+  durations and timed events (`ask` › `self_block`, `engine.stream` with *headers*, *first piece* and *receipt*,
+  `metrics`, `log.write`, `receipt.verify`). The first live trace showed where a slow answer's time goes: the console
+  saw the first piece at 196,241 ms, bankML's own metrics said TTFT 196,240 ms, and the 524-token persona prompt
+  read at 2.67 tokens/s was nearly all of it.
+- The span model is LlamaIndex's instrumentation (run-llama/llama_index, MIT, `llama-index-instrumentation` at
+  ec837e5): SimpleSpan, BaseSpanHandler's open / completed / dropped spans, SimpleSpanHandler's tree building and its
+  repair of a missing parent. Ported to the standard library (no pydantic, no treelib); a contextvar holds the current
+  span, spans carry timed events, and only the newest 400 are kept. Spans hold counts and statuses, never a question.
+  `GET /api/diagnostics`; tested in `testing/test_console.py`.
+
 ### Your own bankML from a web page (`--allow-origin`)
 - `bankml serve … --allow-origin ORIGIN` lets one named web page call the gateway from a browser: its CORS preflight
   is answered (with Chrome's private-network grant, as a public page reaching a loopback address requires) and its

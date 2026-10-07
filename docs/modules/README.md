@@ -60,7 +60,7 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | **Training** | | |
 | [train.md](train.md) | `train/` | mindXtrain's author and score stages, identical to its Python |
 | **The console** | | |
-| [console.md](console.md) | `sAGI/console.py` | bankML as itself: four tabs (Interaction, Admin, Logging, Infotags), the measured SELF block |
+| [console.md](console.md) | `sAGI/console.py` | bankML as itself: five tabs (Ask, Admin, Receipts, Logs, Diagnostics), the measured SELF block, traces |
 
 Install and configure: [../install.md](../install.md). Use: [../usage.md](../usage.md). The checks:
 [../oracles.md](../oracles.md). Speed: [../PERFORMANCE.md](../PERFORMANCE.md).

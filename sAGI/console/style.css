@@ -102,7 +102,34 @@ svg .none { fill: var(--faint); font: 12px var(--sans); }
 .more button { margin: 12px 0; background: none; border: 1px solid var(--line); border-radius: 10px; padding: 7px 14px; cursor: pointer; }
 .none-yet { padding: 26px 2px; color: var(--muted); }
 
+/* Diagnostics — checks, and each answer's trace */
+.checks { list-style: none; margin: 0 0 26px; padding: 0; border-top: 1px solid var(--line); }
+.checks li { display: grid; grid-template-columns: 22px 180px 1fr; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.checks .mark { font-weight: 700; }
+.checks .ok .mark { color: var(--ok); }
+.checks .warn .mark { color: #d97706; }
+.checks .bad .mark { color: var(--bad); }
+.checks .seen { font: 12.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+h2.sub { margin-top: 8px; }
+.trace { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; }
+.trace .when { font: 12px var(--mono); color: var(--faint); margin-bottom: 4px; }
+.tree, .tree ul { list-style: none; margin: 0; padding-left: 16px; }
+.tree { padding-left: 0; }
+.tree ul { border-left: 1px solid var(--line); margin-left: 4px; }
+.span .row { display: grid; grid-template-columns: minmax(120px, 200px) 80px 1fr; gap: 10px; align-items: center; padding: 3px 0; }
+.span .name { font: 13px var(--mono); }
+.span .ms { font: 12px var(--mono); color: var(--muted); text-align: right; }
+.span .track { display: block; height: 6px; }
+.span .fill { display: block; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 55%, transparent); width: 0; min-width: 2px; }
+.span.bad > .row .name { color: var(--bad); }
+.span.open > .row .ms { color: #d97706; }
+.span .meta { font: 11.5px/1.5 var(--mono); color: var(--faint); padding: 0 0 4px; overflow-wrap: anywhere; }
+button.ghost { background: none; border: 1px solid var(--line); border-radius: 10px; padding: 5px 12px; cursor: pointer; }
+#diagnostics { padding-top: 28px; }
+
 @media (max-width: 640px) {
+  .checks li { grid-template-columns: 22px 1fr; }
+  .checks .seen { grid-column: 2; }
   .bar { flex-wrap: wrap; gap: 10px 16px; }
   .brand { flex-basis: 100%; }
   .mantra { display: none; }

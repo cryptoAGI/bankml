@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// bankML — the page over sAGI/console.py: Ask (the landing), Admin and Logs. Every value is rendered with textContent;
+// bankML — the page over sAGI/console.py: Ask (the landing), Admin, Receipts, Logs and Diagnostics. Every value is rendered with textContent;
 // nothing bankML did not measure is drawn or filled in ("not measured"); every receipt is checked in the browser.
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -22,6 +22,7 @@ function show(tab) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === tab));
   if (tab === "receipts") loadReceipts();
   if (tab === "logs") loadLogs();
+  if (tab === "diagnostics") loadDiagnostics();
   if (tab === "ask") $("q").focus();
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
@@ -184,6 +185,49 @@ async function loadLogs() {
   const j = await (await fetch("/api/log")).json();
   $("englog").textContent = (j.engine_log || []).join("\n") || "the engine has written nothing yet";
 }
+// ── Diagnostics ─────────────────────────────────────────────────────────────────────────────────────────────────
+function spanNode(n, total) {
+  const li = el("li", "span" + (n.error ? " bad" : "") + (n.open ? " open" : ""));
+  const row = el("div", "row");
+  const ms = n.open ? "open" : n.duration_ms === null ? "—" : `${n.duration_ms} ms`;
+  row.append(el("span", "name", n.name), el("span", "ms", ms));
+  const track = el("span", "track"), bar = el("span", "fill");
+  if (n.duration_ms && total) bar.style.width = Math.max(0.5, Math.min(100, (100 * n.duration_ms) / total)) + "%";
+  track.append(bar);
+  row.append(track);
+  li.append(row);
+  const tags = Object.entries(n.tags || {}).map(([k, v]) => `${k} ${v}`).join(" · ");
+  const evs = (n.events || []).map((e) => `${e.name} @ ${e.at_ms} ms`).join(" · ");
+  if (tags || evs || n.error) li.append(el("div", "meta", [n.error && "✗ " + n.error, tags, evs].filter(Boolean).join("  ·  ")));
+  if (n.children && n.children.length) {
+    const ul = el("ul");
+    n.children.forEach((c) => ul.append(spanNode(c, total)));
+    li.append(ul);
+  }
+  return li;
+}
+async function loadDiagnostics() {
+  const j = await (await fetch("/api/diagnostics")).json();
+  const ul = $("checks"); ul.textContent = "";
+  for (const c of j.checks) {
+    const li = el("li", c.level);
+    li.append(el("span", "mark", c.level === "ok" ? "✓" : c.level === "warn" ? "!" : "✗"), el("span", "name", c.check), el("span", "seen", c.seen));
+    ul.append(li);
+  }
+  const tr = $("traces"); tr.textContent = "";
+  if (!j.traces.length) tr.append(el("p", "none-yet", "No trace yet — ask on the Ask tab; each answer is traced span by span."));
+  for (const t of j.traces) {
+    const box = el("div", "trace");
+    box.append(el("div", "when", new Date(t.start * 1000).toLocaleTimeString()));
+    const ul2 = el("ul", "tree");
+    ul2.append(spanNode(t, t.duration_ms));
+    box.append(ul2);
+    tr.append(box);
+  }
+  $("trace-text").textContent = j.text || "";
+  $("diag-source").textContent = j.source || "";
+}
+$("diag-refresh").addEventListener("click", loadDiagnostics);
 $("download").addEventListener("click", () => {
   if (!info) return;
   const a = el("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(info, null, 1)], { type: "application/json" }));
