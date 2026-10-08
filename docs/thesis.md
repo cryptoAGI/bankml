@@ -305,9 +305,10 @@ Each proposition below is a claim anyone can re-test: the oracle named is in the
 | P10 | The kernels sit at the hardware's limit, not the memory floor | a measured 15–17 GB/s floor; five further bit-exact variants with no reliable gain | [TECHNICAL.md §IV.5](TECHNICAL.md#iv5-the-floor-and-the-limit-of-the-test-core) |
 | P11 | Exactness costs nothing on the grammar mask either | a trie mask 13× faster at the median (2.94 against 38.8 ms), every mask identical by both paths | [grammar.md](modules/grammar.md) |
 
-**Open proposition.** P12: *1-bit decode is at least at the reference's speed.* A loaded-machine pair read 2.30–2.59
-against 2.33–2.48 tokens/s after 0.3.4; the claim waits for the pinned, idle-machine measurement
-([`testing/decode_ab.py`](../testing/decode_ab.py)) and is not made here.
+**Proposition half-closed.** P12: *1-bit decode is at least at the reference's speed.* The pinned A/B
+([`testing/decode_ab.py`](../testing/decode_ab.py), 0.4.0) gave bankML ahead in 3 of 3 rounds, median 2.02 against
+0.77 tokens/s, with every answer identical ([PERFORMANCE.md](PERFORMANCE.md#1-bit-decode-against-llama-server-040)).
+The machine was loaded, not idle, so the claim is made for that load. The idle re-measurement is still owed.
 
 ---
 
@@ -363,10 +364,12 @@ The thesis does not depend on the gap staying open. It depends on the method tha
 
 ## VII. What remains: from 0.4.0 to 1.0
 
-**0.4.0, native serving complete.** Everything Savante and mindX ask of llama-server, answered by bankML's own engine.
-What remains is the open proposition P12 (1-bit decode at the reference's speed, measured pinned and idle), the
-engine setting's `auto` choosing bankML for both 1-bit and ternary files, and the milestone gate
-([TODO.md](TODO.md)).
+**0.4.0, native serving complete (released 2026-10-07).** Everything Savante and mindX ask of llama-server is
+answered by bankML's own engine, and `auto` chooses it for both 1-bit and ternary files. P12 was measured pinned
+under load (above); the idle re-measurement remains. **0.4.1** adds three things:
+- a request whose client has gone stops;
+- GPU objects are released on drop;
+- the ternary kernel is bit-exact on the GPU.
 
 **0.5.0, hardware.** NEON for ARM (phones and tablets), AVX-512 where present, and more graphics cards, each under its
 own oracle.

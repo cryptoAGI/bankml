@@ -21,7 +21,7 @@
 
 <p align="center">
   <a href="https://deltaverse.pythai.net/bankml"><b>Why bankML</b></a> (the short version, on the web) &middot;
-  <a href="docs/thesis.md"><b>the thesis</b></a> &middot; <a href="docs/usage.md"><b>usage</b></a> &middot;
+  <a href="docs/thesis.md"><b>the thesis</b></a> &middot; <a href="#summary-limitations-and-next-steps"><b>limits and next steps</b></a> &middot; <a href="docs/usage.md"><b>usage</b></a> &middot;
   <a href="CHANGELOG.md"><b>changelog</b></a> &middot;
   <a href="https://huggingface.co/spaces/PYTHAI/bankml"><b>on Hugging Face</b></a>
 </p>
@@ -67,6 +67,70 @@ every stage): native serving complete. What comes next is in [TODO.md](docs/TODO
 | **0.3.7** | **released** 2026-10-06 | llama-server's whole default sampler chain (DRY, XTC, top-n-σ, typical-p, dynamic temperature); bankML measures itself (time to first token, tokens/s, energy); a GPU limiter; the bankML console |
 | **0.3.8** | **released** 2026-10-06 | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
 | **0.4.0** | **released** 2026-10-07 — the milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)); with it: a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
+
+## Summary, limitations and next steps
+
+**In one paragraph.** bankML is a Rust runtime for 1-bit, ternary and F16 language models, in one crate with no
+dependencies. It computes exactly what llama.cpp b11192's compiled code computes, bit for bit, and it measures speed
+only after that is proven. Other Rust inference engines exist, among them llama-rs/`llm`, candle, mistral.rs and
+OxiLLaMa. What bankML adds is the standard it holds itself to: the same bits as the reference, checked by oracles in
+the gate, through the whole model and the server, not only the tokenizer. With those bits fixed, it found that the
+reference has no vectorised x86 kernel for ternary weights, and it closed that gap without changing a single answer.
+
+**What is proven** (each claim re-run by the gate, records in [testing/results](testing/results)):
+- **Kernels:** every weight of Bonsai-1.7B and Bonsai-8B (1-bit) and Ternary-Bonsai-8B is bit-exact. The ternary
+  matrix work runs 9.4–10.0× faster than llama.cpp's.
+- **The whole model:** every row of every layer and all 151,669 logits are bit-exact. Greedy and seeded answers are
+  the reference's tokens.
+- **Serving:** conversations, the prompt cache, JSON mode, grammars, schemas, the whole sampler chain and logprobs
+  all match llama-server, turn by turn and float by float. This holds through the OpenAI API, Ollama's API and the
+  C API.
+- **The GPU:** bankML writes its own shader code (SPIR-V, no SDK). A card does work only after `bankml gpu --verify`
+  shows on that card that it gives the CPU's bits.
+
+**Does the code conclude the thesis?** Not yet, and the thesis says when it will: at 1.0, when its six conditions
+hold ([TODO.md](docs/TODO.md#the-road-from-030-to-100)).
+
+| 1.0 condition | where it stands at 0.4.1 |
+|---|---|
+| llama.cpp only as the oracle, never at run time | **partly.** The native engine is the default for 1-bit and ternary files, but `install.sh` still fetches llama-server b11192 |
+| every architecture × format has its oracles and passes them | **met for what is supported:** Qwen3 and Llama × Q1_0, Q2_0_g64 and F16 |
+| at least the reference's speed on every format, on named machines | **partly.** Ternary is well ahead and 1-bit is level or ahead. F16 decode is about 0.93×, and everything was measured on one laptop |
+| stable interfaces under semver | **not yet** (0.x) |
+| signed receipts and a verifier anyone can run | **not yet.** Receipts are unsigned |
+| Savante and mindX run on bankML by default | **largely.** It has been mindX's default engine on its VPS since 0.3.6 |
+
+**Limitations, stated:**
+- **Narrow coverage.** Two architectures (Qwen3, Llama) and three weight types (`Q1_0`, `Q2_0_g64`, F16).
+  Everything else is refused with the reason. Llama 3.x is refused too, because its rope factors and pre-tokenizer
+  are not done.
+- **One reference build.** Bit-exactness is against b11192's haswell build on x86 with AVX2. Other builds and
+  instruction sets need their own oracles.
+- **Measured on one machine.** Speed figures come from one laptop (Ryzen 3 3200U, 5.8 GB). On that laptop the
+  whole-token ternary gain falls to 2.1–3.6× when the 2.3 GB model does not stay cached.
+- **The 1-bit decode lead was measured on a loaded machine.** The pinned A/B gave a median of 2.63× over 3 of 3
+  rounds, but the laptop was busy at the time; an idle re-run is still owed.
+- **One GPU.** The GPU is proven only on an integrated AMD Vega 3, and the ternary GPU kernel is not yet used for
+  inference.
+- **Serving limits.** One conversation slot (as `-np 1`), no continuous batching, unsigned receipts.
+
+**Next steps** (from [TODO.md](docs/TODO.md)):
+1. **0.4.x:**
+   - put the ternary kernel to work on the GPU (a share of each matrix, bit-exact);
+   - re-measure 1-bit decode on an idle machine.
+2. **0.5.0, hardware:**
+   - the F16 GPU kernel, and batched GPU submissions;
+   - a vendor matrix (AMD discrete, NVIDIA, Intel), each card proven by `--verify`;
+   - AVX-512/VNNI kernels, NEON for ARM, and CI on x86 without AVX2.
+3. **0.6.0, more models:**
+   - Qwen3.8, the ternary line beyond Bonsai-8B, then IBM Granite and GLM on GPU;
+   - Llama 3.x.
+4. **0.7.0–0.9.0:**
+   - mindXtrain in Rust, end to end;
+   - signed receipts and a public verifier;
+   - an installer that no longer fetches llama-server;
+   - the release candidate.
+5. **1.0.0:** all six conditions above met, each with its record.
 
 ## Why
 
