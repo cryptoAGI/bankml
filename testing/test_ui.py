@@ -184,6 +184,15 @@ try:
 except u.ContextTooSmall:
     check("recall: its tokens count against the context", True)
 
+check("Savante loads Savante: no agent by default (mindX loads in mindX, bankML in the console)", u.DEFAULT_AGENT is None)
+cdir = tmp / "canon-sagi"
+cdir.mkdir()
+(cdir / "sAGI.md").write_text("# sAGI\n\n**Savante is the prototype for sAGI. Savante knows.**\n\n1. **Verification or unknown.** x\n2. **Honest labeling.** y\n3. **Bounded authority.** z\n")
+(cdir / "sAGI.agent").write_text("AGENT: blockchain.sAGI.agent\nDOMAIN: blockchain.sAGI\n\nDESCRIPTION\nI am Savante <b>.\n\nmore\n")
+sg = u.sagi_html(u.Canon(cdir))
+check("the card: sAGI from the canon — its line, its three laws, the agent facet, escaped, with links",
+      "Savante is the prototype for sAGI" in sg and sg.count("<li>") == 3 and "AGENT blockchain.sAGI.agent" in sg and "&lt;b&gt;" in sg and "sAGI.md ↗" in sg)
+check("the card: no sAGI block without the canon's files", u.sagi_html(u.Canon(tmp / "no-canon")) == "")
 check("the masthead's switch goes to the console's configured address", f'href="{u.CONSOLE_URL}"' in u.head_html("interact") and "sv-to-console" in u.head_html("interact"))
 # the machine: ping, diagnostics and the side panel's health line, here without an engine (SERVE unreachable)
 u.SERVE = "http://127.0.0.1:9"

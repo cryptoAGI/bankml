@@ -495,7 +495,7 @@ poll(); setInterval(poll, 2000);
 if (window.BankmlUIF) {
   $("form").hidden = true;
   $("ask").classList.add("uif");
-  BankmlUIF.mount($("uif-landing"), { placeholder: "Ask bankML — T for terminal mode" });
+  BankmlUIF.mount($("uif-landing"), { placeholder: "Ask bankML — T for terminal mode", terminalPlaceholder: "Enter a command — help · > for ask mode" });
 } else {
   $("q").focus();
 }

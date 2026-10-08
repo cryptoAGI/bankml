@@ -79,7 +79,9 @@ def use_agent(slug):
 
 # The agent the UI starts with: BANKML_AGENT (default "mindx" — mindX's own persona, adopted with
 # `python3 sAGI/agents.py adopt …`), falling back to Savante when that agent is not installed.
-DEFAULT_AGENT = os.environ.get("BANKML_AGENT", "mindx").strip() or None
+# who Savante's page loads at start: Savante herself (the canon) unless BANKML_AGENT names an installed agent; mindX
+# loads in mindX and bankML in the bankML console, each from its own persona
+DEFAULT_AGENT = os.environ.get("BANKML_AGENT", "").strip() or None
 
 
 def _start_with_default_agent():
@@ -1645,6 +1647,33 @@ def chosen_image(canon: Canon):
     return (b, image_kind(b) if b else None, rel)
 
 
+def sagi_html(canon: Canon) -> str:
+    """sAGI on Savante's card, read from the canon (never written): the definition's first line and its laws
+    (sAGI.md), and the agent facet this persona is (sAGI.agent: savante === sAGI.agent)."""
+    md = (canon.file("sAGI.md") or b"").decode("utf-8", "replace")
+    ag = (canon.file("sAGI.agent") or b"").decode("utf-8", "replace")
+    if not md and not ag:
+        return ""
+    lead = next((l.strip("* ").strip() for l in md.splitlines() if l.startswith("**")), "")
+    laws = [re.sub(r"\*\*(.+?)\*\*.*", r"\1", l[3:]).strip() for l in md.splitlines() if re.match(r"^[1-9]\. \*\*", l)][:3]
+    head = {}
+    for l in ag.splitlines():
+        if not l.strip():
+            break
+        k, _, v = l.partition(":")
+        head[k.strip()] = v.strip()
+    desc = " ".join(ag.split("DESCRIPTION", 1)[1].strip().split("\n\n", 1)[0].split()) if "DESCRIPTION" in ag else ""
+    facet = " · ".join(E(f"{k} {head[k]}") for k in ("AGENT", "DOMAIN", "VERSION", "CLASS") if head.get(k))
+    gh = "https://github.com/cryptoAGI/savante/blob/main/"
+    return (f"<div class='bk-h'>sAGI — the discipline Savante is the prototype of</div><div class='bk-sagi'>"
+            + (f"<p class='bk-sagi-lead'>{E(lead)}</p>" if lead else "")
+            + (f"<ol>{''.join(f'<li>{E(x)}</li>' for x in laws)}</ol>" if laws else "")
+            + (f"<p class='bk-mono'>{facet}</p>" if facet else "")
+            + (f"<p>{E(desc[:420])}{'…' if len(desc) > 420 else ''}</p>" if desc else "")
+            + f"<p><a href='{gh}sAGI.md' target='_blank' rel='noopener'>sAGI.md ↗</a> · <a href='{gh}sAGI.agent' target='_blank' rel='noopener'>sAGI.agent ↗</a>"
+            " · <a href='https://github.com/cryptoAGI/sagi' target='_blank' rel='noopener'>the sAGI engine ↗</a></p></div>")
+
+
 LINKS = [("Savante on Hugging Face", "https://huggingface.co/spaces/PYTHAI/savante", "the public office: chat, canon, integrity"),
          ("sAGI on Hugging Face", "https://huggingface.co/spaces/PYTHAI/savante/blob/main/skills/sagi/SKILL.md", "the sAGI skill Savante runs"),
          ("Savante's loop", "https://huggingface.co/datasets/PYTHAI/savante-loop", "public questions and answers (dataset)"),
@@ -1793,7 +1822,7 @@ def aivatar_html(canon: Canon) -> str:
     voice = voice_html(p.get("voice_examples") or [], name)
     lead_btn = ("<button type='button' class='bk-lead' data-bk='lead' title='hear who she is'>▶ PLAY</button>" if not slug else "")
     intro = intro_html(canon) if not slug else ""
-    links = links_html(bool(slug))
+    links = links_html(bool(slug)) + (sagi_html(canon) if not slug else "")
     return f"""<div class='bk-av'>
 <input type='checkbox' id='bk-av-open' class='bk-av-t'>
 <label for='bk-av-open' class='bk-av-pic' title='open {E(name)}'s card'>{pic}<span class='bk-av-cap'>{E(name)} · open the card</span></label>
@@ -2914,7 +2943,7 @@ def main():
     canon = Canon(CANON)
     bad = [r for r in canon.rows if not r[2]]
     print(f"canon {CANON}: {len(canon.rows) - len(bad)}/{len(canon.rows)} ledger files verify" + (f"; FAILING: {bad}" if bad else ""))
-    _start_with_default_agent()  # mindX by default (BANKML_AGENT), Savante when it is not installed
+    _start_with_default_agent()  # Savante by default; BANKML_AGENT=<slug> starts with an installed agent instead
     demo = build(canon, a.mode)
     try:  # concurrency > 1 so the 1 s timer ticks while an answer streams (Gradio 3: concurrency_count)
         demo.queue(concurrency_count=4)

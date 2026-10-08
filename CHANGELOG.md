@@ -20,6 +20,20 @@
 - **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
 
 ### Savante: the machine, and more glass
+- **Savante loads Savante.** Her page started with the mindX agent (`BANKML_AGENT` defaulted to `mindx`), so the
+  side card read "mindX · open the card" with a letter for a face; now she starts as herself, from the canon, with
+  the portrait the canon names (`gfx/Savante3.png`, the operator's choice of 2026-09-16), and mindX loads in mindX,
+  bankML in the console. `BANKML_AGENT=<slug>` still starts with an installed agent.
+- **sAGI on her card**, read from the canon: "Savante is the prototype for sAGI. Savante knows.", the three laws,
+  the agent facet (`savante === sAGI.agent`) and links to sAGI.md, sAGI.agent and the sAGI engine.
+- **Fixed: the card opened inside the side column** instead of over the page. A `backdrop-filter` or `transform` on
+  an ancestor makes it the containing block of a `position: fixed` modal; the side column and its blocks now carry
+  neither (and a denser surface instead). This was in the first theme too.
+- **Fixed: the portrait washed out on a busy machine.** Gradio dims a component to 20 % while its update waits in
+  the queue; the side column's widgets refresh in the background, so they are no longer dimmed.
+- **When bankml serve does not answer**, Savante says why and gives the installer's commands (`./install.sh model`,
+  `restart`), and that a release gate is running when one is, instead of a hand-typed serve line with a placeholder
+  pin.
 - **The Savante | bankML switch works both ways, and says when the other side is not running.** Its targets were
   fixed ports (7873, 7875); now `BANKML_SAVANTE_URL` and `BANKML_CONSOLE_URL` (defaults unchanged). The console
   checks Savante server side (its CSP allows only itself; `/api/state` → `savante: {url, up}`), Savante checks the
@@ -37,6 +51,9 @@
 - `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
 
 ### The console: a real ping, and the machine in the terminal (`diag`)
+- **The mode hints are true both ways:** ask mode reads "T for terminal mode" and its button shows **T**; T mode
+  reads "> for ask mode" and its button shows **>**; sending `T` alone in ask mode, or `>` alone in T mode, switches
+  (`terminalPlaceholder`, ultimate-bankml-ui `console-mount`).
 - **Ping** (◎, `ping`): three round trips through the console to bankml serve (`GET /health`, no model run), timed in
   the page and in the console, min/avg/max, and why it failed when it did; `ping <output>` still flashes an output.
   `GET /api/ping`.

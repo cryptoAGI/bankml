@@ -88,6 +88,13 @@ body, body.dark { background: var(--sv-wash), var(--sv-bg) !important; backgroun
   background: var(--sv-surface) !important; border: 1px solid var(--sv-edge) !important; box-shadow: var(--sv-lift) !important;
   backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass);
 }
+/* The side column holds the aivatar card, whose modal is position: fixed. A backdrop-filter or a transform on any of
+   its ancestors makes that ancestor the modal's containing block and traps the card in the column, so the side
+   column and everything in it stay without either; a denser surface keeps it reading as glass. */
+#bk-side, #bk-side .block, #bk-side .form, #bk-side .panel, #bk-side .bk-card, #bk-side .bk-timer {
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important; transform: none !important;
+}
+#bk-side { background: color-mix(in srgb, var(--sv-surface) 70%, var(--sv-bg)) !important; }
 #bk-chat { border-radius: 16px !important; }
 #bk-side { border-radius: 16px !important; padding: 12px !important; }
 .bk-card { border-left: 3px solid var(--sv-gold) !important; border-radius: 12px !important; }
@@ -173,12 +180,12 @@ body.dark {
              linear-gradient(160deg, rgba(255,255,255,.02), rgba(0,0,0,.25));
 }
 /* Gradio's own blocks, forms and accordions: glass on an edge */
-.gradio-container .block, .gradio-container .form, .gradio-container .panel {
+.gradio-container .block:not(#bk-side .block), .gradio-container .form:not(#bk-side .form), .gradio-container .panel:not(#bk-side .panel) {
   backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass);
 }
 .gradio-container .block:not(#bk-head):not(#bk-chat) { border-radius: 14px !important; }
 #bk-head, #bk-chat, #bk-side, .bk-card, .bk-kpi, .bk-chart, .bk-ex, .bk-timer { transition: box-shadow .2s ease, transform .2s ease; }
-#bk-side:hover, .bk-card:hover, .bk-kpi:hover, .bk-chart:hover { transform: translateY(-1px); }
+.bk-card:not(#bk-side .bk-card):hover, .bk-kpi:hover, .bk-chart:hover { transform: translateY(-1px); }
 #bk-head { box-shadow: var(--sv-lift), 0 0 0 1px rgba(183,121,31,.18) inset !important; }
 body.dark #bk-head { box-shadow: var(--sv-lift), 0 0 0 1px rgba(227,180,90,.16) inset !important; }
 /* the side column stands a level above the conversation */
@@ -228,3 +235,13 @@ body.dark .sv-health .ok { color: #4ade80; } body.dark .sv-health .bad { color: 
 /* the switch: a console that is not running */
 #bk-head .sv-switch a.down { opacity: .5; text-decoration: line-through !important; }
 #bk-head .sv-switch a.down::after { content: " ○"; }
+/* the card: sAGI, the discipline Savante is the prototype of */
+.bk-sagi { border-left: 3px solid var(--sv-gold); padding: 6px 12px; margin: 4px 0 12px; border-radius: 0 10px 10px 0;
+           background: color-mix(in srgb, var(--sv-gold-soft) 70%, transparent); }
+.bk-sagi-lead { font: 600 16px/1.4 var(--sv-serif); margin: 4px 0 6px; }
+.bk-sagi ol { margin: 0 0 6px 1.2em; padding: 0; } .bk-sagi li { margin: 2px 0; }
+.bk-sagi .bk-mono { opacity: .8; }
+/* Gradio dims a component to 20 % while its update waits in the queue. The side column's widgets (the timer, the
+   health line, the aivatar) refresh in the background and already show something true, so on a busy machine they
+   stay legible instead of washing out (the portrait sat at 20 % while a release gate kept every core busy). */
+#bk-side .pending { opacity: 1 !important; }

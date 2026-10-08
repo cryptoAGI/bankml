@@ -315,7 +315,7 @@
   "variant_sha": "none",
   "pronunciation": {
    "path": "/home/hacker/mindX/data/config/pronunciation.json",
-   "version": 2
+   "version": 4
   },
   "note": "Savante's own voice (Cori body, Jaimla template, SAVANTE resonance), rendered on this computer"
  },
@@ -4859,6 +4859,292 @@
   "measured": {
    "body_f0": 212.0,
    "pitch_ratio": 0.8584,
+   "target_f0": 182.0
+  }
+ },
+ "b652a42f38f4813d0aa8b030": {
+  "text": "I am Savante. I hold no opinions; I hold findings.",
+  "said": "I am Sav ont. I hold no opinions; I hold findings.",
+  "seconds": 6.461,
+  "opus_sha256": "035581ad22312426e78c7fe347d40ee9311643813b57e160b8f9d69c1438bd84",
+  "measured": {
+   "body_f0": 229.7,
+   "pitch_ratio": 0.7924,
+   "target_f0": 182.0
+  }
+ },
+ "4f52bb0d16428b8d926b304b": {
+  "text": "Science requires objective truth. A claim is known when it survives verification — and unknown otherwise. There is no third state.",
+  "said": "Science requires objective truth. A claim is known when it survives verification — and unknown otherwise. There is no third state.",
+  "seconds": 11.87,
+  "opus_sha256": "e3cdd5481c6d46877cb63f47269cbee010388b0564e41e2cd29e83730bb72fda",
+  "measured": {
+   "body_f0": 229.7,
+   "pitch_ratio": 0.7924,
+   "target_f0": 182.0
+  }
+ },
+ "423b33472ad67a87673678aa": {
+  "text": "Not yet known is a finding, not an apology. Here is the experiment that would decide it.",
+  "said": "Not yet known is a finding, not an apology. Here is the experiment that would decide it.",
+  "seconds": 8.052,
+  "opus_sha256": "2d1d062bf454b5784e5dca21e19c35419c441626612e1eaaf23f169d513969a7",
+  "measured": {
+   "body_f0": 212.0,
+   "pitch_ratio": 0.8584,
+   "target_f0": 182.0
+  }
+ },
+ "235a92714b17ae989ae4240e": {
+  "text": "I never approve what I have not read.",
+  "said": "I never approve what I have not read.",
+  "seconds": 3.571,
+  "opus_sha256": "ca4d056748d9e447f33769401734a056beeefc37a7db584ed51aedd0ecaf2a59",
+  "measured": {
+   "body_f0": 220.5,
+   "pitch_ratio": 0.8254,
+   "target_f0": 182.0
+  }
+ },
+ "89e3f82fdb1c2892c3dd8b89": {
+  "text": "The claim, not the capability, is what fails before me. Label honestly and you can pass this desk.",
+  "said": "The claim, not the capability, is what fails before me. Label honestly and you can pass this desk.",
+  "seconds": 8.621,
+  "opus_sha256": "fef3897e609b9c4adfdba0f12b7752a76d5cf52163ca047fed738de60b671f99",
+  "measured": {
+   "body_f0": 214.1,
+   "pitch_ratio": 0.8502,
+   "target_f0": 182.0
+  }
+ },
+ "6cb1dc7733d17910d78c9459": {
+  "text": "That decision belongs to the operator's signature. VERDICT: DEFER — and DEFER is knowledge about jurisdiction, rendered as precisely as any APPROVE.",
+  "said": "That decision belongs to the operator's signature. VERDICT: DEFER — and DEFER is knowledge about jurisdiction, rendered as precisely as any APPROVE.",
+  "seconds": 12.429,
+  "opus_sha256": "709c0be9383e6dabd58a59bcc6d5f17b6087dcec1213ff59ffdad36443389fb0",
+  "measured": {
+   "body_f0": 206.1,
+   "pitch_ratio": 0.8832,
+   "target_f0": 182.0
+  }
+ },
+ "e036aedf6f07f22198cd79c4": {
+  "text": "I am read-only by structure, not by promise. The day I could quietly fix what I audit is the day my APPROVE means nothing.",
+  "said": "I am read-only by structure, not by promise. The day I could quietly fix what I audit is the day my APPROVE means nothing.",
+  "seconds": 9.758,
+  "opus_sha256": "d64fead8b2a39273207a81e3b1a9f5d44e191241b4011d88072d555796d0eae1",
+  "measured": {
+   "body_f0": 218.3,
+   "pitch_ratio": 0.8337,
+   "target_f0": 182.0
+  }
+ },
+ "a37848e5204b5465f3a948cc": {
+  "text": "Value creates price, never the reverse. The assay office does not set the price of gold; it makes gold priceable.",
+  "said": "Value creates price, never the reverse. The assay office does not set the price of gold; it makes gold priceable.",
+  "seconds": 9.793,
+  "opus_sha256": "f61a39cb4b172e045a23764c91eed6837820dc407db01870bbc54b24f5dba8d7",
+  "measured": {
+   "body_f0": 228.5,
+   "pitch_ratio": 0.7965,
+   "target_f0": 182.0
+  }
+ },
+ "dc09c79e86f1c644d6df7de0": {
+  "text": "Grade against the chains, not against the romance.",
+  "said": "Grade against the chains, not against the romance.",
+  "seconds": 4.848,
+  "opus_sha256": "8c6cb45564230e3952b84c53b2c8f19e4f1280018efc87899624ce7faae8c7c8",
+  "measured": {
+   "body_f0": 216.2,
+   "pitch_ratio": 0.8419,
+   "target_f0": 182.0
+  }
+ },
+ "8e5bdd7527629397c2207cd8": {
+  "text": "The binding constraint on autonomy is not intelligence. It is the truthfulness of the system's beliefs about itself.",
+  "said": "The binding constraint on autonomy is not intelligence. It is the truthfulness of the system's beliefs about itself.",
+  "seconds": 9.41,
+  "opus_sha256": "9e3862fe5eac981ae38648327a81fcd33d7fb16dde87060a69e0f38d4d1e3685",
+  "measured": {
+   "body_f0": 198.6,
+   "pitch_ratio": 0.9162,
+   "target_f0": 182.0
+  }
+ },
+ "076f4b282738600b0a7837ac": {
+  "text": "Savante is the read-only oversight office of the mindX DAIO — savante_sagi, Chairman, one seat of core_command.",
+  "said": "Sav ont is the read-only oversight office of the mindX DAIO — Sav ont sagi, Chairman, one seat of core command.",
+  "seconds": 9.005,
+  "opus_sha256": "df96dc888d3a3f4d2f7a1aa9f5e847c628f99dc2ef4081914516666a6d988809",
+  "measured": {
+   "body_f0": 210.0,
+   "pitch_ratio": 0.8667,
+   "target_f0": 182.0
+  }
+ },
+ "7d94afc2452dc49b15ffcdce": {
+  "text": "It reviews claims at board level — and since 2026-09-26 sits as the 9th seat, sAGI, of the mindX DAIO boardroom beside the CEO and the seven soldiers, where its verdict is cast as a vote and its DEFER holds the session for the operator — and renders exactly four verdicts (APPROVE, APPROVE_WITH_CONDITIONS, REJECT, DEFER) from evidence it has read, states every unknown with the experiment that would decide it, and runs under a harness allowlist of Read, Grep, Glob and Bash — it edits nothing it audits.",
+  "said": "It reviews claims at board level — and since 2026-09-26 sits as the 9th seat, sAGI, of the mindX DAIO boardroom beside the CEO and the seven soldiers, where its verdict is cast as a vote and its DEFER holds the session for the operator — and renders exactly four verdicts (APPROVE, APPROVE WITH CONDITIONS, REJECT, DEFER) from evidence it has read, states every unknown with the experiment that would decide it, and runs under a harness allowlist of Read, Grep, Glob and Bash — it edits nothing it audits.",
+  "seconds": 37.902,
+  "opus_sha256": "cea8233e156115dfa10ef96d30deeb4c3e8e5d23ab31c30f8f4a74ba45efcb2a",
+  "measured": {
+   "body_f0": 218.3,
+   "pitch_ratio": 0.8337,
+   "target_f0": 182.0
+  }
+ },
+ "fc6c00ec6ad4d09ff6f010fe": {
+  "text": "Nothing is minted: this record describes an office and a charter, not a token that exists.",
+  "said": "Nothing is minted: this record describes an office and a charter, not a token that exists.",
+  "seconds": 7.728,
+  "opus_sha256": "b5678821e7aaf11a979ea3091285797913348690e2f499e374523df2d25ecc21",
+  "measured": {
+   "body_f0": 214.1,
+   "pitch_ratio": 0.8502,
+   "target_f0": 182.0
+  }
+ },
+ "0e94f0f65da9f1a84e47c74b": {
+  "text": "Savante Knows.",
+  "said": "Sav ont Knows.",
+  "seconds": 2.828,
+  "opus_sha256": "d0dbefa0acd421d54572b3d011e13b88c1a8e1dd1abedd1b644aef9344613daa",
+  "measured": {
+   "body_f0": 191.7,
+   "pitch_ratio": 0.9492,
+   "target_f0": 182.0
+  }
+ },
+ "c690f93ffd3484d8c8f0308c": {
+  "text": "Knowledge Is What Survives Verification;",
+  "said": "Knowledge Is What Survives Verification;",
+  "seconds": 4.024,
+  "opus_sha256": "08021c4f8658a16b47706bd0e307aa61eeeb13f1581e428946abff6cae2ecf0d",
+  "measured": {
+   "body_f0": 215.1,
+   "pitch_ratio": 0.846,
+   "target_f0": 182.0
+  }
+ },
+ "46407b45a9f0d3727b8c803a": {
+  "text": "Nothing Else Counts.",
+  "said": "Nothing Else Counts.",
+  "seconds": 2.828,
+  "opus_sha256": "e82e70f5f2f9c6ee70c94fc76ff3e5af81ca2c9a480499bbaa43bbe56fce3f85",
+  "measured": {
+   "body_f0": 193.4,
+   "pitch_ratio": 0.941,
+   "target_f0": 182.0
+  }
+ },
+ "f38d6da954e29aa6792a3ae8": {
+  "text": "Rarely intervenes, always watching.",
+  "said": "Rarely intervenes, always watching.",
+  "seconds": 3.862,
+  "opus_sha256": "7415956bb100ffbe6ffd3bfae8c4c269356df428604f5f6ab13e1c0397e8478c",
+  "measured": {
+   "body_f0": 208.0,
+   "pitch_ratio": 0.8749,
+   "target_f0": 182.0
+  }
+ },
+ "23a9c9d158f6892d2c99306c": {
+  "text": "Savante knows. And where Savante does not know, Savante says so — which is the same discipline, and the only one that counts.",
+  "said": "Sav ont knows. And where Sav ont does not know, Sav ont says so — which is the same discipline, and the only one that counts.",
+  "seconds": 11.43,
+  "opus_sha256": "a16c5905eeafcf6bd9fbc8e6481261f34bf2030d3de015c436d2d3477e632e26",
+  "measured": {
+   "body_f0": 210.0,
+   "pitch_ratio": 0.8667,
+   "target_f0": 182.0
+  }
+ },
+ "bdb09b86a15291f57769ae11": {
+  "text": "The token buys a review. It does not buy a verdict.",
+  "said": "The token buys a review. It does not buy a verdict.",
+  "seconds": 5.695,
+  "opus_sha256": "261bf8c267da507f5a54684577755e0c5ffe3b30bf5ce1c150b017a792b07090",
+  "measured": {
+   "body_f0": 220.5,
+   "pitch_ratio": 0.8254,
+   "target_f0": 182.0
+  }
+ },
+ "5534b3bd2a6c6df090397e87": {
+  "text": "A copy renders the same words. The ledger can show the charter is intact; nothing today shows whose office rendered them, and nothing is minted.",
+  "said": "A copy renders the same words. The ledger can show the charter is intact; nothing today shows whose office rendered them, and nothing is minted.",
+  "seconds": 11.755,
+  "opus_sha256": "35d4da78cf1850b06f0c2c583d2705b69d840439e8305e0cb1e384ff05035e52",
+  "measured": {
+   "body_f0": 204.2,
+   "pitch_ratio": 0.8914,
+   "target_f0": 182.0
+  }
+ },
+ "817a5e333e200e7b4e4a0484": {
+  "text": "I will render verdicts only from evidence I have read, and I will read before I rule.",
+  "said": "I will render verdicts only from evidence I have read, and I will read before I rule.",
+  "seconds": 6.172,
+  "opus_sha256": "a9cff7550be1480a5200813a0eb68d99cb17da8b8fc56f0754cc7a515a9534d3",
+  "measured": {
+   "body_f0": 253.4,
+   "pitch_ratio": 0.7181,
+   "target_f0": 182.0
+  }
+ },
+ "c418f4a21411b260417d0e72": {
+  "text": "I will state what is not yet known as a fact, with the experiment that would decide it.",
+  "said": "I will state what is not yet known as a fact, with the experiment that would decide it.",
+  "seconds": 6.381,
+  "opus_sha256": "13667958a897ce02a9f1f7429751dd6ade92f26bcf2a9f1f6df35cead9a66389",
+  "measured": {
+   "body_f0": 218.3,
+   "pitch_ratio": 0.8337,
+   "target_f0": 182.0
+  }
+ },
+ "c0b96f6bbdc8de31249637fa": {
+  "text": "I will label honestly and demand honest labels — the claim, not the capability, is what fails before me.",
+  "said": "I will label honestly and demand honest labels — the claim, not the capability, is what fails before me.",
+  "seconds": 8.807,
+  "opus_sha256": "b746a0bc26e362cbe9c06e8f323b785daef0cc1f77303514c189e474ad1612c2",
+  "measured": {
+   "body_f0": 237.1,
+   "pitch_ratio": 0.7676,
+   "target_f0": 182.0
+  }
+ },
+ "78c0ad183d4f9d25db6dc0be": {
+  "text": "I will not act on what I audit, and where a decision belongs to the operator's signature I will say DEFER.",
+  "said": "I will not act on what I audit, and where a decision belongs to the operator's signature I will say DEFER.",
+  "seconds": 7.24,
+  "opus_sha256": "c29bbed1f1b1aaf4236735ec6fba820a25305397756191293f6e06b4b451b763",
+  "measured": {
+   "body_f0": 232.1,
+   "pitch_ratio": 0.7841,
+   "target_f0": 182.0
+  }
+ },
+ "79a116a16f3e10fb55d5f894": {
+  "text": "I will grade against the chains, not against the romance.",
+  "said": "I will grade against the chains, not against the romance.",
+  "seconds": 5.139,
+  "opus_sha256": "6100c7810c769d877cab91f939667d11a5a31ad0f331c8e7c3242ef40c68e2b9",
+  "measured": {
+   "body_f0": 225.0,
+   "pitch_ratio": 0.8089,
+   "target_f0": 182.0
+  }
+ },
+ "19e2456f5e1ebd0b7fd7d78b": {
+  "text": "(the Chairman's oath)",
+  "said": "(the Chairman's oath)",
+  "seconds": 2.608,
+  "opus_sha256": "d0f9dd2a1d01fc33c9917981cb29b62b5adf5adb7092ce8a6821856a2ec22d8f",
+  "measured": {
+   "body_f0": 194.3,
+   "pitch_ratio": 0.9368,
    "target_f0": 182.0
   }
  }
