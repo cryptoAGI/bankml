@@ -4,11 +4,11 @@
 .thesis-tools { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--line); }
 .thesis-tools .quiet { flex: 1; font-size: 13px; }
 .thesis-tools button { padding: 5px 12px; font-size: 13px; }
-.thesis-scroll { position: relative; max-height: min(72vh, 900px); overflow-y: auto; overscroll-behavior: contain; padding: 0 22px 22px;
-                 scroll-padding-top: 12px; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
-                 /* a soft fade at the bottom says there is more */
-                 mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
-.thesis-progress { position: sticky; top: 0; z-index: 1; height: 3px; margin: 0 -22px 14px; background: var(--q); }
+/* the thesis flows with the page: one scrollbar, every open section readable to its end; the progress bar stays under
+   the console's bar while the page scrolls */
+.thesis-scroll { position: relative; padding: 0 22px 22px; }
+.thesis-progress { position: sticky; top: 66px; z-index: 1; height: 3px; margin: 0 -22px 14px; background: var(--q); }
+#thesis .window { overflow: visible; }
 .thesis-progress span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
 
 .fold { border: 1px solid var(--line); border-radius: 12px; margin: 0 0 12px; background: var(--surface); box-shadow: var(--lift);
@@ -29,7 +29,7 @@
 @keyframes unfold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .fold-body, .fold summary::after, .thesis-progress span { animation: none; transition: none; } }
 @media (max-width: 640px) {
-  .thesis-scroll { max-height: none; overflow: visible; mask-image: none; padding: 0 14px 14px; }
+  .thesis-scroll { padding: 0 14px 14px; }
   .thesis-progress { margin: 0 -14px 10px; }
   .fold summary { font-size: 15px; padding: 12px 12px; }
   .fold-body { padding: 0 12px 4px; }

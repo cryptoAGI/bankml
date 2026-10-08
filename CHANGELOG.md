@@ -51,6 +51,10 @@
 - `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
 
 ### The console: Diagnostics as a desk, and an Inspector
+- **The Thesis reads to the end of an open section.** It was a scroll box inside the scrolling page: the wheel over
+  the page's margin moved the page, not the box, and sections opened by themselves as they scrolled by, moving the
+  end; a fade hid the last lines. It now flows with the page (one scrollbar, the progress bar under the console's
+  bar), and a section opens when the reader opens it (*Expand all* still opens every one).
 - **The Diagnostics windows move, resize and stack with depth** (`console/desk.js`): drag a window by its bar (a slot
   shows where it lands), resize it by its corner (its height, and one column or both), and the lights work — red
   collapses, amber widens, green focuses over a veil (Esc returns); double-click a bar to widen, Alt+↑/↓ to move.

@@ -373,27 +373,15 @@ async function loadThesis() {
   const items = fold($("thesis-body"));
   $("thesis-count").textContent = `${items.length} sections`;
   const scroller = $("thesis-scroll"), bar = $("thesis-bar");
-  // on a narrow screen the thesis scrolls with the page (thesis.css), so the page is what is watched
-  const narrow = matchMedia("(max-width: 640px)").matches;
-  // the reader's own choice wins over the scroll
-  items.forEach((d) => d.querySelector("summary").addEventListener("click", () => { d.dataset.chosen = "1"; }));
-  const io = new IntersectionObserver((es) => es.forEach((e) => {
-    const d = e.target;
-    if (e.isIntersecting && !d.dataset.chosen) d.open = true;
-  }), { root: narrow ? null : scroller, rootMargin: "0px 0px -35% 0px", threshold: 0 });
-  items.forEach((d) => io.observe(d));
+  // The thesis scrolls with the page (one scrollbar; a box inside the page left an open section unreachable from the
+  // page's margin), and a section opens when the reader opens it, not as it scrolls by (which kept moving the end).
   const progress = () => {
-    let f;
-    if (narrow) {
-      const r = scroller.getBoundingClientRect(), span = r.height - innerHeight;
-      f = span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 1;
-    } else {
-      const max = scroller.scrollHeight - scroller.clientHeight;
-      f = max > 0 ? scroller.scrollTop / max : 1;
-    }
-    bar.style.width = (100 * f).toFixed(1) + "%";
+    const r = scroller.getBoundingClientRect(), span = r.height - (innerHeight - 70);
+    bar.style.width = (100 * (span > 0 ? Math.min(1, Math.max(0, (70 - r.top) / span)) : 1)).toFixed(1) + "%";
   };
-  (narrow ? window : scroller).addEventListener("scroll", progress, { passive: true });
+  addEventListener("scroll", progress, { passive: true });
+  addEventListener("resize", progress, { passive: true });
+  items.forEach((d) => d.addEventListener("toggle", progress));
   progress();
   $("thesis-open").onclick = () => items.forEach((d) => { d.open = true; d.dataset.chosen = "1"; });
   $("thesis-close").onclick = () => items.forEach((d) => { d.open = false; d.dataset.chosen = "1"; });
