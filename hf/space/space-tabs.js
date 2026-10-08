@@ -57,7 +57,12 @@
     const t = e.target.closest('.tabs [role="tab"]'); if (t) { open(t.id.slice(4)); return; }
     const a = e.target.closest('a[href^="#"]'); if (!a) return;
     const name = a.getAttribute("href").slice(1);
-    if ($("tab-" + name)) { e.preventDefault(); open(name); $("tab-" + name).scrollIntoView({ block: "start", behavior: "smooth" }); }
+    if ($("tab-" + name)) { e.preventDefault(); open(name); $("tab-" + name).scrollIntoView({ block: "start", behavior: "smooth" }); return; }
+    // a link to an FAQ entry: open the FAQ tab, open the entry, and go to it
+    const d = $(name);
+    if (d && d.tagName === "DETAILS" && d.closest('[role="tabpanel"]')) {
+      e.preventDefault(); open(d.closest('[role="tabpanel"]').id.slice(6)); d.open = true; d.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
   });
   document.addEventListener("keydown", (e) => {
     const t = e.target.closest && e.target.closest('.tabs [role="tab"]'); if (!t) return;

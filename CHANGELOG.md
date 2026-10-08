@@ -75,7 +75,10 @@
 - **The landing is the conversation:** the Savante | bankML switch and the DeltaVerse banner, then the question box,
   then the highlights (verified, exact, fast, small, the latest release), which give way to the answers at the first
   question; who answers (your own bankML, or a provider) and how to start your own sit under it.
-- **Tabs underneath:** FAQ (eleven questions people ask, drawn from the page and the docs), **Logs** (this page's own
+- **A lean landing:** the switch and the banner (*deltaverse* links to deltaverse.pythai.net, *cryptoAGI* to
+  github.com/cryptoAGI), one line under the title, the question box, three short highlights; who answers and how to
+  start your own fold into one line. Everything else lives in the FAQ.
+- **Two tabs underneath:** FAQ (eleven questions people ask, then the release, the thesis, the advantages and the rest of the page as accordion entries; a link such as *What's new* opens its entry), **Logs** (this page's own
   log: connections, questions, the time to the first token, receipt checks, errors; copy and clear; it stays in the
   browser tab), Release (0.4.2 first, the 0.4.0 milestone after), Thesis, Advantages, About. Arrow keys move between
   them; the address keeps the open one (`#faq`, `#logs`…). `hf/space/space-tabs.js`.
