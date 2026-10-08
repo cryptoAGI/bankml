@@ -119,7 +119,8 @@ Nothing in it needs sudo. Unless steps are named, it runs `check build engine py
 | `model` | needs `build` and `engine` done. Runs `sAGI/models.py first-run`: imports Bonsai-8B if absent (checked against the publisher's sha256, guarded, pinned), then starts `bankml serve` on it with llama-server behind it. Then checks `http://127.0.0.1:18093/bankml` | `.models/Bonsai-8B-Q1_0.gguf`, its `FORK.json` in the forks directory, `logs/first-run.json`, `savante/carrier.log` |
 | `voice` | downloads Piper 2023.11.14-2 and the `en_GB-cori-high` voice (`.onnx`, `.onnx.json`, `MODEL_CARD`); each file is skipped if already there | `$BANKML_PIPER` (default `~/.local/share/bankml/piper/`) |
 | `start` | starts interact mode (`sAGI/savante.py --mode interact --port 7873`), and with `--view` also view mode (`sAGI/view.py --host 0.0.0.0 --port 7874`), each detached (`setsid nohup`), waiting up to 60 s for its port. A port that already listens is left as it is | `logs/interact.log`, `logs/view.log` |
-| `stop` | for ports 7874, 7873, 18093 and 18092, finds the process listening there (by `ss`, never by matching command lines) and sends it SIGTERM | nothing |
+| `stop` | for ports 7875, 7874, 7873, 18093 and 18092, finds the process listening there (by `ss`, never by matching command lines) and sends it SIGTERM | nothing |
+| `restart` | after a build or a pull: `sAGI/models.py restart` stops `bankml serve` and starts a fresh one on the model it serves now (the same pinned file, resources and origin; the whole file hashed and verified again; the default model when nothing serves), checks it is a new process answering verified, then restarts whichever UIs were running (7873, 7875, 7874). An answer being written is cut off: restart between answers | `logs/restart.json`, `savante/carrier.log` |
 | `status` | which of the four ports listen; `GET /bankml` (verified, model, sha256 prefix); `bankml version`; the engine and Python in use | `~/.local/share/bankml/.status.json` |
 | `power` (0.3.7, opt-in, **sudo**) | lets a `rapl` group your user joins read the CPU package energy counter, so bankML can report watts and joules per token; explains the side channel (PLATYPUS, CVE-2020-8694) and asks first (`BANKML_POWER_YES=1` to agree non-interactively); `./install.sh power --remove` restores root-only | `/etc/udev/rules.d/60-bankml-rapl.rules` |
 
@@ -193,7 +194,9 @@ hand, set the same variables yourself (§11).
 Every step checks before it acts, so a second run is quick and changes nothing that is already right. The tarball is
 re-verified, not re-downloaded; the model is imported only if absent; a running UI is not restarted. Run any steps
 alone, in any order: `./install.sh build`, `./install.sh engine python`, `./install.sh model start --view`.
-To rebuild after a `git pull`, run `./install.sh build`, then `./install.sh stop` and `./install.sh model start`.
+To rebuild after a `git pull`, run `./install.sh build restart`: the running model and UIs come back on the new code.
+(`./install.sh model` would not do it: it starts the default model, and only when nothing serves; `models.py use` of
+the file already served does nothing, as its sha256 is already the one answering.)
 
 ### The piped route
 
@@ -258,6 +261,7 @@ python3 sAGI/models.py import https://huggingface.co/OWNER/REPO[/blob|resolve/RE
 python3 sAGI/models.py import ollama:NAME[:TAG]
 python3 sAGI/models.py use FILE              # make FILE the carrier (verified switch, rollback on failure)
 python3 sAGI/models.py first-run             # what the installer's `model` step runs
+python3 sAGI/models.py restart               # what the installer's `restart` step runs: the same model, a fresh serve
 ```
 
 With no subcommand, `list` runs. The Models tab in Savante does the same things.
@@ -458,7 +462,7 @@ start. Without a saved budget, the context is `BANKML_CTX` (2048) and the thread
 | `python3 sAGI/savante.py` | `--mode interact\|view` (default `interact`); `--host` (default `127.0.0.1`; interact accepts only `127.0.0.1` or `localhost`); `--port` (default 7873). `--mode view` hands over to `view.py`, on `0.0.0.0:7874` unless a host and port are given |
 | `python3 sAGI/view.py` | `--host` (default `0.0.0.0`), `--port` (default 7874) |
 | `python3 sAGI/console.py` | (0.3.7) `--host` (default `127.0.0.1`; loopback only), `--port` (default 7875); reaches `bankml serve` at `BANKML_SERVE_LISTEN` |
-| `python3 sAGI/models.py` | `list`, `catalog`, `search Q`, `import ID\|URL\|ollama:NAME[:TAG]`, `use FILE`, `first-run` |
+| `python3 sAGI/models.py` | `list`, `catalog`, `search Q`, `import ID\|URL\|ollama:NAME[:TAG]`, `use FILE`, `restart`, `first-run` |
 | `python3 sAGI/agents.py` | `adopt PERSONA [--slug SLUG]` (install an existing `.persona` as its own agent), `list`, `verify SLUG` |
 | `python3 sAGI/speak.py` | renders every voice clip, then writes both exports; `--shard K/N` renders every N-th statement starting at K, for parallel renders, and skips the exports; `--prune` drops clips no current text uses |
 

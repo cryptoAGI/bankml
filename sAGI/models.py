@@ -835,6 +835,25 @@ def switch(file: str, busy=lambda: False) -> dict:
         raise
 
 
+def restart(busy=lambda: False) -> dict:
+    """Restart the carrier on the model it serves now (after a build or a pull): the same verified file, resources and
+    origin, hashed and verified again by a fresh bankml serve. `switch` to the same file does nothing (the sha256 is
+    already served), so this is the way to load a new binary. When nothing serves, the first-run start."""
+    _need_bankml()
+    if busy():
+        raise RuntimeError("an answer is being written; restart when it is done")
+    st = serve_status()
+    sha = (st.get("verified") or {}).get("model_sha256")
+    if not sha:
+        return first_run(busy)
+    path, fork = _pinned_path(sha, st.get("model"), forks())
+    if not path:
+        raise RuntimeError(f"the running model (sha256 {sha[:16]}…) has no pin here: start it with `use FILE`")
+    JOB["what"] = f"restarting the carrier on {path.name} (bankml hashes the whole file again)"
+    _stop_carrier()
+    return _start_carrier(path, fork, sha)
+
+
 def pin_converted(file: str) -> Path:
     """Pin a converted model (CONVERTED): the file must hash to the recorded conversion, and the source repository must
     still list the source safetensors with the recorded sha256 at the revision (read now). The FORK.json says how the
@@ -898,7 +917,7 @@ def first_run(busy=lambda: False) -> dict:
     return switch(c["file"], busy)
 
 
-if __name__ == "__main__":  # python3 sAGI/models.py [list | catalog | import ID|URL|ollama:NAME:TAG | use FILE | first-run | search Q]
+if __name__ == "__main__":  # python3 sAGI/models.py [list | catalog | import ID|URL|ollama:NAME:TAG | use FILE | restart | first-run | search Q]
     import sys
     a = sys.argv[1:] or ["list"]
     if a[0] == "list":
@@ -923,5 +942,7 @@ if __name__ == "__main__":  # python3 sAGI/models.py [list | catalog | import ID
         print(json.dumps(import_spec(spec), indent=1))
     elif a[0] == "use":
         print(json.dumps(switch(a[1]), indent=1))
+    elif a[0] == "restart":
+        print(json.dumps(restart(), indent=1))
     elif a[0] == "first-run":
         print(json.dumps(first_run(), indent=1))

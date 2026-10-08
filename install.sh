@@ -3,7 +3,9 @@
 # install.sh — bankml and Savante, from a fresh machine to a verified answer, in the order of docs/usage.md.
 #
 #   ./install.sh                 check, build, engine, python, canon, model, then start Savante
-#   ./install.sh <step> …        run chosen steps: check build engine python canon model voice start stop status
+#   ./install.sh <step> …        run chosen steps: check build engine python canon model voice start stop restart status
+#   ./install.sh restart         after a build or a pull: bankml serve again on the model it serves now (hashed and
+#                                verified again), then the UIs that were running
 #   curl -fsSL https://raw.githubusercontent.com/cryptoAGI/bankml/main/install.sh | bash
 #                                outside a checkout: clone bankml to $BANKML_DIR (default ~/bankml) and run from there
 #
@@ -91,8 +93,8 @@ for a in "$@"; do
     --remove)     POWER_REMOVE=1;;
     --space)      SPACE_CHOICE=on;;
     --no-space)   SPACE_CHOICE=off;;
-    -h|--help)    sed -n '3,21p' "$HERE/install.sh" | sed 's/^# \{0,1\}//'; exit 0;;
-    check|build|engine|python|canon|model|voice|start|stop|status|power) STEPS+=("$a");;
+    -h|--help)    sed -n '3,/^#   -h, --help/p' "$HERE/install.sh" | sed 's/^# \{0,1\}//'; exit 0;;
+    check|build|engine|python|canon|model|voice|start|stop|restart|status|power) STEPS+=("$a");;
     *) bm_die "unknown argument: $a (see ./install.sh --help)" 2;;
   esac
 done
@@ -318,6 +320,37 @@ step_stop() {
   done
 }
 
+# restart: a fresh bankml serve on the model it serves now (models.py restart: same file, resources and origin, hashed
+# and verified again; the default model when nothing serves), then the UIs that were running, so a build or a pull is
+# what answers. An answer being written is cut off: restart between answers.
+step_restart() {
+  [ -x "$BIN" ] || bm_die "no $BIN yet: run ./install.sh build"
+  [ -n "$LLAMA_SERVER" ] && [ -x "$LLAMA_SERVER" ] || bm_die "no llama-server yet: run ./install.sh engine"
+  mkdir -p "$LOGS"
+  local was=() port pid old new i
+  for port in 7873 7875 7874; do listening "$port" && was+=("$port"); done
+  old="$(pid_on 18093)"
+  bm_sub "bankml serve: stopped and started again on the same model; the whole file is hashed again ($("$BIN" version))"
+  importer restart > "$LOGS/restart.json" || bm_die "the restart failed: see $LOGS/restart.json and $DATA/savante/carrier.log"
+  new="$(pid_on 18093)"
+  if [ -n "$new" ] && [ "$new" != "$old" ] && curl -fsS --max-time 5 http://127.0.0.1:18093/bankml >/dev/null 2>&1; then
+    bm_ok "bankml serve answers on 127.0.0.1:18093, verified (pid ${old:-none} → $new)"
+  else
+    bm_die "bankml serve did not come back as a new process: see $LOGS/restart.json and $DATA/savante/carrier.log"
+  fi
+  for port in "${was[@]}"; do
+    pid="$(pid_on "$port")"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+    for i in $(seq 1 50); do listening "$port" || break; sleep 0.2; done
+    case "$port" in
+      7873) start_ui interact 7873 sAGI/savante.py --mode interact --port 7873;;
+      7875) start_ui console 7875 sAGI/console.py --port 7875;;
+      7874) start_ui view 7874 sAGI/view.py --host 0.0.0.0 --port 7874;;
+    esac
+  done
+  [ ${#was[@]} -gt 0 ] || bm_info "no UI was running: ./install.sh start starts them"
+}
+
 step_status() {
   local port name
   for port in 18092:llama-server 18093:"bankml serve" 7873:interact 7874:view 7875:"bankML console"; do
@@ -383,6 +416,7 @@ title() {
     voice)  echo "Savante's voice (Piper)";;
     start)  echo "starting Savante";;
     stop)   echo "stopping bankml and Savante";;
+    restart) echo "restarting bankml serve on the same model, and the UIs";;
     status) echo "status";;
     power)  echo "power measurement (RAPL), opt-in";;
   esac

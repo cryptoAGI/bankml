@@ -11,6 +11,13 @@
   quote was checked), so a top-20 entry whose token is a quote or a backslash failed the receipt check (18 / 19). Fixed
   in `logprobs_ollama_oracle.py`; the receipt was right.
 
+### `./install.sh restart` and `models.py restart`
+- **A fresh `bankml serve` on the model it serves now**, after a build or a pull: the same pinned file, resources and
+  origin, the whole file hashed and verified again, then the UIs that were running. Before, nothing did this:
+  `models.py use FILE` on the file already served returns at once (its sha256 already answers), and `install.sh
+  model` starts the default model, and only when nothing serves. Measured: 10 s on Bonsai-8B, pid replaced, verified.
+- `install.sh --help` prints up to its `-h` line instead of a fixed line range (two lines added had cut it short).
+
 ### The interfaces: one theme, a dark-mode switch, a way back, and a calculator
 - **Console and Savante share one look** (`sAGI/console/theme.css`, `sAGI/savante_theme.css`): depth from the border
   (an edge, an inset highlight, a near and a far shadow), glass surfaces over a faint wash, and a question field with
