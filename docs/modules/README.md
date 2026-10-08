@@ -61,6 +61,8 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [train.md](train.md) | `train/` | mindXtrain's author and score stages, identical to its Python |
 | **The console** | | |
 | [console.md](console.md) | `sAGI/console.py` | bankML as itself: five tabs (Ask, Admin, Receipts, Logs, Diagnostics), the measured SELF block, traces |
+| **Savante** | | |
+| [calc.md](calc.md) | `sAGI/calc.py` | the calculator: exact arithmetic, in a panel and inside every question |
 
 Install and configure: [../install.md](../install.md). Use: [../usage.md](../usage.md). The checks:
 [../oracles.md](../oracles.md). Speed: [../PERFORMANCE.md](../PERFORMANCE.md).

@@ -58,7 +58,11 @@ FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", 
          # the Ask landing: the ultimate input field, built (console/uif/README.md); the plain box when absent
          "/uif.js": ("uif/uif.js", "text/javascript; charset=utf-8"), "/uif.css": ("uif/uif.css", "text/css; charset=utf-8"),
          # the Thesis tab: a scroll whose sections open as an accordion
-         "/thesis.css": ("thesis.css", "text/css; charset=utf-8")}
+         "/thesis.css": ("thesis.css", "text/css; charset=utf-8"),
+         # the theme: depth, glass, the field's contrast, T mode, and the light/dark switch
+         "/theme.css": ("theme.css", "text/css; charset=utf-8"), "/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
+         # the DeltaVerse $ (deltaverse.pythai.net/favicon.ico, MIT), the one Savante and view use
+         "/favicon.ico": (HERE / "favicon.ico", "image/x-icon")}
 LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
 JOB = {"busy": False, "what": "", "error": "", "done": None}
 # --public HOST: the one extra host name the console answers as; None = loopback only

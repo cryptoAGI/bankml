@@ -48,6 +48,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # never leave a cache next to anything we import
 import embed  # noqa: E402 — bge-m3 via the local Ollama (optional; BM25 stands alone without it)
+import calc  # noqa: E402 — exact arithmetic for the answers a 1-bit model should not guess
 
 def _canon_default() -> Path:
     """Savante's canon: ~/cryptoAGI/savante (beside jaimla and luvai), or an older ~/savante if that is the only one."""
@@ -801,6 +802,21 @@ def stream(messages, max_tokens, temperature):
                "bankml serve .models/Bonsai-8B-Q1_0.gguf --fork FORK.json --upstream http://127.0.0.1:18092\n```"), {"error": True}
         return
     yield acc, receipt or {}
+
+
+def calc_line(worked: list) -> str:
+    """The calculator's exact results under an answer that used them (shown, never sent back to the model)."""
+    if not worked:
+        return ""
+    return "\n\n<span class='sv-calc-line'>🧮 " + " · ".join(f"{E(x)} = {E(r)}" for x, r in worked) + " — exact, sAGI/calc.py</span>"
+
+
+_CALC_LINE = re.compile(r"\s*<span class='sv-calc-line'>.*?</span>\s*$", re.S)
+
+
+def strip_calc(answer: str) -> str:
+    """An earlier answer as the model wrote it: the calculator's line under it is for the reader, not the prompt."""
+    return _CALC_LINE.sub("", answer or "")
 
 
 def show_answer(text: str) -> str:
@@ -1988,6 +2004,77 @@ LAYOUT_JS = """() => {
 
 
 KNOBS_JS = Path(__file__).resolve().parent / "voice" / "knobs" / "savante_knobs.js"
+THEME_CSS = Path(__file__).resolve().parent / "savante_theme.css"
+
+
+def theme_css() -> str:
+    """The theme layer (savante_theme.css): the bankML console's depth, glass and contrast in Savante's colours."""
+    try:
+        return THEME_CSS.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def head_html(mode: str) -> str:
+    """The masthead: the wordmark, what every answer is, the Savante | bankML switch (this computer only, so not on the
+    LAN view) and the light/dark button (bound by THEME_JS)."""
+    switch = ('<nav class="sv-switch" aria-label="interface"><span class="on" aria-current="page">Savante</span>'
+              '<a href="http://127.0.0.1:7875/" title="bankML: the engine itself — Ask · Admin · Engine · Receipts">bankML</a></nav>') if mode == "interact" else ""
+    return ('<div class="sv-bar"><div class="sv-brand"><span class="sv-mark">bankML · <em>Savante</em></span>'
+            '<span class="sv-sub">Every answer is a <b>draft</b>, carried by a local model behind bankML\'s guard and sha256 pin, '
+            'with a receipt; arithmetic is computed exactly. Savante\'s canon is read-only and checked against its ledger.</span></div>'
+            f'{switch}<button type="button" class="sv-theme" id="sv-theme" aria-label="Dark mode" title="Dark mode">☾</button></div>')
+
+
+def calc_html(expr: str, tape: list) -> tuple[str, list]:
+    """The calculator's display and tape: the exact result of `expr` (sAGI/calc.py), or why it was refused."""
+    expr = (expr or "").strip()
+    if not expr:
+        out = "<div class='sv-calc-out'><div class='sv-calc-x'>&nbsp;</div><div class='sv-calc-r'>0</div></div>"
+    else:
+        try:
+            r = calc.fmt(calc.evaluate(expr))
+            tape = ([[expr, r]] + [t for t in tape if t != [expr, r]])[:8]
+            out = f"<div class='sv-calc-out'><div class='sv-calc-x'>{E(expr)} =</div><div class='sv-calc-r'>{E(r)}</div></div>"
+        except calc.CalcError as e:
+            out = f"<div class='sv-calc-out sv-calc-err'><div class='sv-calc-x'>{E(expr)}</div><div class='sv-calc-r'>{E(str(e))}</div></div>"
+    rows = "".join(f"<li><span>{E(x)}</span><b>{E(r)}</b></li>" for x, r in tape)
+    return out + (f"<ul class='sv-calc-tape'>{rows}</ul>" if rows else ""), tape
+
+
+# light/dark (Gradio 3 puts `dark` on <body>; the choice is kept per browser) and the calculator's keypad
+THEME_JS = """() => {
+  const KEY = 'savante.theme', body = document.body, root = document.documentElement;
+  const stored = () => { try { return localStorage.getItem(KEY) } catch (e) { return null } };
+  const apply = (t) => {
+    body.classList.toggle('dark', t === 'dark'); root.dataset.theme = t;
+    const b = document.getElementById('sv-theme');
+    if (b) { const d = t === 'dark'; b.textContent = d ? '☀' : '☾'; b.title = d ? 'Light mode' : 'Dark mode'; b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', String(d)) }
+  };
+  const sys = () => (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  if (!window.svTheme) {
+    window.svTheme = true;
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#sv-theme')) return;
+      const next = body.classList.contains('dark') ? 'light' : 'dark';
+      try { localStorage.setItem(KEY, next) } catch (err) {}
+      apply(next);
+    });
+    // the keypad types into the calculator's field as a person would, so Gradio sees every change
+    document.addEventListener('click', (e) => {
+      const k = e.target.closest('.sv-keys button'); if (!k) return;
+      const ta = document.querySelector('#bk-calc-in textarea'); if (!ta) return;
+      const v = k.dataset.k;
+      if (v === '=') { const b = document.querySelector('#bk-calc-eq'); if (b) b.click(); return }
+      if (v === 'C') ta.value = '';
+      else if (v === 'BS') ta.value = ta.value.slice(0, -1);
+      else ta.value += v;
+      ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus();
+    });
+  }
+  apply(stored() || (new URL(location.href).searchParams.get('__theme')) || sys());
+  return [];
+}"""
 
 
 def layout_js() -> str:
@@ -2022,13 +2109,10 @@ def build(canon: Canon, mode: str):
 
     sid0, turns0 = history_load()
     theme = gr.themes.Base(primary_hue="teal", secondary_hue="amber", neutral_hue="slate") if hasattr(gr, "themes") else None
-    with gr.Blocks(title="bankML · Savante", css=CSS, theme=theme) as demo:
+    with gr.Blocks(title="bankML · Savante", css=CSS + theme_css(), theme=theme) as demo:
         session = gr.State({"id": sid0})
-        # the switch to bankML's own console (sAGI/console.py, :7875) — this computer only, so not on the LAN view
-        switch = " &nbsp;·&nbsp; **[bankML ↗](http://127.0.0.1:7875/)** — talk to the engine itself" if mode == "interact" else ""
-        gr.Markdown("## bankML · Savante — verified low-bit inference on this computer\n"
-                    "Every answer is a **draft**, carried by a local model behind bankML's guard and sha256 pin, "
-                    "with a receipt. Savante's canon is read-only and checked against its ledger." + switch, elem_id="bk-head")
+        # the masthead: the switch back to bankML's own console (sAGI/console.py, :7875) and the light/dark button
+        gr.HTML(head_html(mode), elem_id="bk-head")
         with gr.Tab("Interaction"):  # the question and the answer, nothing else: every setting is on the Admin tab
             with gr.Row(elem_id="bk-row"):
                 with gr.Column(scale=4, elem_id="bk-main"):
@@ -2039,6 +2123,23 @@ def build(canon: Canon, mode: str):
                 with gr.Column(scale=1, elem_id="bk-side"):
                     timer = gr.HTML(timer_md())
                     aiv = gr.HTML(aivatar_html(canon))
+                    with gr.Accordion("Calculator · exact", open=True, elem_id="bk-calc"):
+                        calc_in = gr.Textbox(placeholder="e.g. 18% of 64.50", show_label=False, lines=1, elem_id="bk-calc-in")
+                        calc_out = gr.HTML(calc_html("", [])[0])
+                        gr.HTML("<div class='sv-keys' role='group' aria-label='keypad'>" + "".join(
+                            f"<button type='button' class='{c}' data-k='{k}' aria-label='{t}'>{t}</button>" for k, t, c in (
+                                ("7", "7", ""), ("8", "8", ""), ("9", "9", ""), ("/", "÷", "op"), ("C", "C", "fn"),
+                                ("4", "4", ""), ("5", "5", ""), ("6", "6", ""), ("*", "×", "op"), ("BS", "⌫", "fn"),
+                                ("1", "1", ""), ("2", "2", ""), ("3", "3", ""), ("-", "−", "op"), ("^", "xʸ", "op"),
+                                ("0", "0", ""), (".", ".", ""), ("(", "(", "fn"), (")", ")", "fn"), ("+", "+", "op"),
+                                ("sqrt(", "√", "fn"), ("pi", "π", "fn"), ("!", "n!", "fn"), ("%", "mod", "fn"), ("=", "=", "eq"))) + "</div>")
+                        with gr.Row():
+                            calc_eq = gr.Button("=", variant="primary", elem_id="bk-calc-eq", scale=1)
+                            calc_ask = gr.Button("ask Savante about it", scale=2)
+                        gr.HTML("<p class='sv-calc-note'>Exact: integers and decimals stay exact, ratios show as <code>p/q</code>. "
+                                "In a question, arithmetic is computed here and handed to the model; start a message with "
+                                "<code>=</code> for the result alone.</p>")
+                    calc_tape = gr.State([])
         with gr.Tab("Admin"):
             gr.Markdown("**Everything that shapes an answer, and the machine that carries it.** The Interaction tab uses these as they are set here.")
             with gr.Row():
@@ -2094,6 +2195,16 @@ def build(canon: Canon, mode: str):
                     h[-1][1] = f"refused: {why}"
                     yield h, gr.update()
                     return
+                question = h[-1][0]
+                if question.lstrip().startswith("="):  # the calculator alone: no model, no tokens, nothing guessed
+                    expr = question.lstrip()[1:]
+                    try:
+                        h[-1][1] = f"{expr.strip()} = **{calc.fmt(calc.evaluate(expr))}**\n\n<span class='sv-calc-line'>🧮 sAGI/calc.py, exact — no model was asked</span>"
+                    except calc.CalcError as e:
+                        h[-1][1] = f"refused by the calculator: {e}"
+                    yield h, gr.update()
+                    return
+                worked = calc.find(question)
                 mem = memory_block() if use_mem else ""
                 if mem:
                     system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
@@ -2103,7 +2214,7 @@ def build(canon: Canon, mode: str):
                 warm = slot_restore(system)
                 win = {}
                 try:
-                    msgs = build_messages(system, [t for t in h[:-1] if t[1] is not None], h[-1][0], qwen3,
+                    msgs = build_messages(system, [[t[0], strip_calc(t[1])] for t in h[:-1] if t[1] is not None], question + calc.note(question), qwen3,
                                           ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens), info=win, session=sess["id"])
                 except ContextTooSmall as e:
                     h[-1][1] = f"refused: {e}. Raise the RAM budget on the Admin tab (a larger context), shorten the question, or lower max tokens."
@@ -2115,7 +2226,7 @@ def build(canon: Canon, mode: str):
                         first = time.time()
                         if PENDING["t0"] == t0:
                             PENDING["first"] = first
-                    h[-1][1] = show_answer(text)
+                    h[-1][1] = show_answer(text) + calc_line(worked)
                     rc = r if r is not None else rc
                     yield h, gr.update()
                 t1 = time.time()
@@ -2127,10 +2238,11 @@ def build(canon: Canon, mode: str):
                 foot = receipt_line(rc, text)
                 trimmed = (f"<br>history: {win['sent']} of {win['of']} exchanges fit the engine's {win['ctx']}-token context — "
                            "raise the RAM budget on the Admin tab for more") if win.get("trimmed") else ""
-                h[-1][1] = answer  # the answer alone: its clock, receipt and provenance are kept, on the Admin tab and in .history
+                h[-1][1] = answer + calc_line(worked)  # the answer alone (and the calculator's exact results, when it computed any): its clock, receipt and provenance are kept, on the Admin tab and in .history
                 trail = f"{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + trimmed
                 history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
-                                "assistant_raw": text, "shown": h[-1][1], "trail": trail, "prompt": which, "prompt_provenance": why, "receipt": rc}, hist)
+                                "assistant_raw": text, "shown": h[-1][1], "trail": trail, "prompt": which, "prompt_provenance": why, "receipt": rc,
+                                **({"calculator": [{"expression": x, "result": r} for x, r in worked]} if worked else {})}, hist)
                 slot_save(system)  # background; never in the way of the answer or its .history line
                 yield h, f"<div class='bk-card' style='font-size:13px'>{E(h[-1][0][:120])}<br><sub>{trail}</sub></div>"
             finally:
@@ -2148,6 +2260,10 @@ def build(canon: Canon, mode: str):
         demo.load(timer_md, None, timer, every=1, show_progress=False)
         demo.load(lambda: aivatar_html(canon), None, aiv, show_progress=False)  # the card reflects whatever has rendered by now
         demo.load(None, None, None, _js=layout_js())
+        demo.load(None, None, None, _js=THEME_JS)
+        calc_in.submit(calc_html, [calc_in, calc_tape], [calc_out, calc_tape])
+        calc_eq.click(calc_html, [calc_in, calc_tape], [calc_out, calc_tape])
+        calc_ask.click(lambda x: f"What is {x.strip()}? Explain the steps." if (x or "").strip() else "", calc_in, msg)
         with gr.Tab("Verifier"):
             out = gr.Textbox(label="bind/savante_verify.py (offline; exit 0 = APPROVE)", lines=14)
 

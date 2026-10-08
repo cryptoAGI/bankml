@@ -7,7 +7,7 @@ page, light or dark with the system, with six tabs over `bankml serve` — **Ask
 streamed answer, its receipt checked in the browser), **Admin** (CPU, RAM and GPU sliders, the measured "now", and D3
 charts), **Engine** (`GET /bankml/status` drawn by serve's own renderer: checks, CPU, memory, disk, GPU, the engine's log), **Receipts** (every answer's receipt, newest first, each re-checked and expandable to its JSON; the
 commitments an iNFT of the session carries), **Logs** (the engine's log) and **Diagnostics** (0.4.0: measured checks of the engine — reachable, verified, metrics, memory, the engine log's last error — and every answer's trace, span by span, with durations and timed events; `sAGI/diagnostics.py`, after LlamaIndex's instrumentation). A **Savante | bankML** switch in its bar
-and a **bankML ↗** link in Savante's header move between the two interfaces. It talks to bankML as itself — `sAGI/personas/bankml.persona` — and gives that
+and the same switch in Savante's header move between the two interfaces. A ☾/☀ button flips light and dark (kept per browser; `console/theme.js`), and `console/theme.css` gives every surface depth from its border, glass, a high-contrast question field and the input field's T mode in terminal green on black; the tab icon is the DeltaVerse $ (`sAGI/favicon.ico`, as Savante and view). It talks to bankML as itself — `sAGI/personas/bankml.persona` — and gives that
 persona a SELF block measured at each question, so what bankML says about its own tokens, speed, load and power is
 measurement, not invention.
 

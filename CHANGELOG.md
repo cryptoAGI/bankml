@@ -11,6 +11,21 @@
   quote was checked), so a top-20 entry whose token is a quote or a backslash failed the receipt check (18 / 19). Fixed
   in `logprobs_ollama_oracle.py`; the receipt was right.
 
+### The interfaces: one theme, a dark-mode switch, a way back, and a calculator
+- **Console and Savante share one look** (`sAGI/console/theme.css`, `sAGI/savante_theme.css`): depth from the border
+  (an edge, an inset highlight, a near and a far shadow), glass surfaces over a faint wash, and a question field with
+  strong contrast against its page and its text. T mode is terminal green on black in both themes. Savante keeps its
+  own colours (paper, ink, gold) and a serif wordmark.
+- **A ☾/☀ button** in each bar flips light and dark; the system's choice is the default and a click is remembered per
+  browser (Gradio's `dark` class on Savante; `data-theme` on the console).
+- **A way back:** Savante's masthead now carries the same **Savante | bankML** switch as the console.
+- **The DeltaVerse $** is the console's tab icon too (`/favicon.ico`, the file Savante and view already serve).
+- **Savante's calculator** (`sAGI/calc.py`, docs/modules/calc.md): exact arithmetic without `eval` (`ast`, bounded;
+  integers and typed decimals exact, `0.1 + 0.2` is `0.3`). A Calculator panel beside the conversation (keypad,
+  terminal display, a tape of results); arithmetic in a question is computed and handed to the model with it, and
+  shown under the answer (`🧮 … — exact`), recorded in `.history` under `calculator`; a message starting with `=` is
+  answered by the calculator alone. `testing/test_calc.py` (48 checks) runs in the gate.
+
 ### Logprobs on `/api/chat` and `/api/generate` (`logprobs_ollama_oracle_live`)
 - Ollama 0.20's request fields: `logprobs: true` and `top_logprobs` 0–20. Out of range is a 400 with Ollama's own
   message, before any model is loaded; without `logprobs`, `top_logprobs` is ignored, as Ollama ignores it.

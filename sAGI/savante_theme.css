@@ -1,0 +1,147 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+/* Savante theme: appended after savante.py's CSS. The bankML console's language (sAGI/console/theme.css) — depth from
+   the border, glass surfaces, a high-contrast question field, terminal green on black for code — in Savante's
+   colours: ink, paper and gold. Light by default; Gradio's `dark` class on <body> (the ☾ button) flips it. */
+body {
+  --sv-bg: #f3f0e9; --sv-surface: rgba(255, 255, 255, .74); --sv-ink: #121418; --sv-muted: #4d5462; --sv-faint: #858c98;
+  --sv-edge: rgba(17, 19, 23, .16); --sv-line: #d8d2c6; --sv-q: rgba(233, 228, 217, .78);
+  --sv-gold: #b7791f; --sv-gold-soft: rgba(183, 121, 31, .14); --sv-teal: #0f766e;
+  --sv-lift: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(17,19,23,.05) inset,
+             0 2px 4px rgba(16,24,40,.07), 0 14px 32px -10px rgba(16,24,40,.22);
+  --sv-lift-hover: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.9) inset, 0 4px 8px rgba(16,24,40,.09), 0 22px 46px -12px rgba(16,24,40,.30);
+  --sv-field-bg: #ffffff; --sv-field-ink: #07080a; --sv-field-edge: #a9a192; --sv-field-hint: #5f594d;
+  --sv-wash: radial-gradient(1200px 600px at 12% -10%, rgba(183,121,31,.09), transparent 60%),
+             radial-gradient(900px 500px at 110% 8%, rgba(15,118,110,.07), transparent 60%);
+  --sv-glass: blur(14px) saturate(140%);
+  --sv-term-bg: rgba(0, 0, 0, .9); --sv-term-ink: #33ff66; --sv-term-edge: rgba(51, 255, 102, .45);
+  --sv-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif;
+  --sv-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* Gradio's own tokens, so its blocks, inputs and buttons speak the same language */
+  --body-background-fill: var(--sv-bg); --body-text-color: var(--sv-ink); --body-text-color-subdued: var(--sv-muted);
+  --background-fill-primary: var(--sv-surface); --background-fill-secondary: var(--sv-q);
+  --block-background-fill: var(--sv-surface); --block-border-color: var(--sv-edge); --block-border-width: 1px;
+  --block-shadow: var(--sv-lift); --block-radius: 14px; --block-label-background-fill: var(--sv-q);
+  --block-label-text-color: var(--sv-muted); --block-title-text-color: var(--sv-muted);
+  --input-background-fill: var(--sv-field-bg); --input-border-color: var(--sv-field-edge); --input-border-width: 1.5px;
+  --input-placeholder-color: var(--sv-field-hint); --input-shadow: 0 1px 2px rgba(0,0,0,.10) inset;
+  --input-border-color-focus: var(--sv-gold); --input-shadow-focus: 0 0 0 3px var(--sv-gold-soft);
+  --border-color-primary: var(--sv-edge); --border-color-accent: var(--sv-gold);
+  --button-primary-background-fill: linear-gradient(to bottom, #c98a2a, #a86d17); --button-primary-background-fill-hover: linear-gradient(to bottom, #d4962f, #b0731a);
+  --button-primary-text-color: #fffdf8; --button-primary-border-color: rgba(120, 76, 10, .6);
+  --button-secondary-background-fill: var(--sv-surface); --button-secondary-background-fill-hover: var(--sv-q);
+  --button-secondary-border-color: var(--sv-edge); --button-secondary-text-color: var(--sv-ink);
+  --button-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 1px 2px rgba(0,0,0,.10); --button-shadow-hover: 0 1px 0 rgba(255,255,255,.35) inset, 0 4px 10px -2px rgba(0,0,0,.18);
+  --color-accent: var(--sv-gold); --color-accent-soft: var(--sv-gold-soft);
+  --checkbox-background-color-selected: var(--sv-gold); --slider-color: var(--sv-gold);
+  --link-text-color: var(--sv-teal); --link-text-color-hover: var(--sv-gold);
+}
+body.dark {
+  --sv-bg: #0a0c0f; --sv-surface: rgba(22, 26, 32, .70); --sv-ink: #eeece7; --sv-muted: #aab0bb; --sv-faint: #737b88;
+  --sv-edge: rgba(255, 255, 255, .11); --sv-line: #2a2f38; --sv-q: rgba(34, 39, 47, .75);
+  --sv-gold: #e3b45a; --sv-gold-soft: rgba(227, 180, 90, .16); --sv-teal: #5eead4;
+  --sv-lift: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.06) inset, 0 -1px 0 rgba(0,0,0,.5) inset,
+             0 2px 4px rgba(0,0,0,.45), 0 16px 36px -10px rgba(0,0,0,.75);
+  --sv-lift-hover: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.08) inset, 0 4px 10px rgba(0,0,0,.5), 0 26px 52px -12px rgba(0,0,0,.85);
+  --sv-field-bg: #020304; --sv-field-ink: #f8f7f3; --sv-field-edge: #565e6c; --sv-field-hint: #9aa2ae;
+  --sv-wash: radial-gradient(1200px 600px at 12% -10%, rgba(227,180,90,.07), transparent 60%),
+             radial-gradient(900px 500px at 110% 8%, rgba(94,234,212,.06), transparent 60%);
+  --button-primary-background-fill: linear-gradient(to bottom, #e3b45a, #c48d2e); --button-primary-background-fill-hover: linear-gradient(to bottom, #ecc06a, #cf9836);
+  --button-primary-text-color: #15110a; --button-primary-border-color: rgba(227, 180, 90, .6);
+  --button-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 1px 2px rgba(0,0,0,.4); --button-shadow-hover: 0 1px 0 rgba(255,255,255,.1) inset, 0 6px 14px -4px rgba(0,0,0,.6);
+  color-scheme: dark;
+}
+body, body.dark { background: var(--sv-wash), var(--sv-bg) !important; background-attachment: fixed !important; }
+.gradio-container { background: transparent !important; color: var(--sv-ink); }
+
+/* the masthead: glass on a gold edge, the serif wordmark, the Savante | bankML switch and the theme button */
+#bk-head { border: 1px solid var(--sv-edge) !important; border-left: 4px solid var(--sv-gold) !important; border-radius: 16px !important;
+           padding: 0 !important; background: var(--sv-surface) !important; box-shadow: var(--sv-lift) !important;
+           backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass); }
+#bk-head, #bk-head * { color: var(--sv-ink) !important; }
+.sv-bar { display: flex; align-items: center; gap: 18px; padding: 14px 18px; }
+.sv-brand { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.sv-mark { font: 600 26px/1.1 var(--sv-serif); letter-spacing: .01em; }
+#bk-head .sv-mark em { font-style: normal; color: var(--sv-gold) !important; }
+#bk-head .sv-sub { color: var(--sv-muted) !important; font-size: 14px; line-height: 1.45; }
+#bk-head .sv-sub b { color: var(--sv-ink) !important; font-weight: 600; }
+.sv-switch { flex: none; display: flex; border: 1px solid var(--sv-edge); border-radius: 999px; padding: 3px; font-size: 13px;
+             background: color-mix(in srgb, var(--sv-surface) 80%, transparent); box-shadow: 0 1px 2px rgba(0,0,0,.08) inset; }
+#bk-head .sv-switch a, #bk-head .sv-switch span { padding: 4px 13px; border-radius: 999px; text-decoration: none !important; color: var(--sv-muted) !important; }
+#bk-head .sv-switch a:hover { color: var(--sv-ink) !important; background: var(--sv-q); }
+#bk-head .sv-switch .on { background: var(--sv-ink); color: var(--sv-bg) !important; font-weight: 600; }
+.sv-theme { flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border-radius: 999px; cursor: pointer;
+            border: 1px solid var(--sv-edge); background: color-mix(in srgb, var(--sv-surface) 85%, transparent); box-shadow: var(--sv-lift);
+            font-size: 16px; line-height: 1; transition: box-shadow .18s ease, transform .18s ease; }
+.sv-theme:hover { box-shadow: var(--sv-lift-hover); transform: translateY(-1px); }
+.sv-theme:focus-visible { outline: 2px solid var(--sv-gold); outline-offset: 2px; }
+@media (max-width: 720px) { .sv-bar { flex-wrap: wrap; } .sv-brand { flex-basis: 100%; } }
+
+/* tabs: quiet labels, the selected one raised on a gold underline */
+.tab-nav { border-bottom: 1px solid var(--sv-edge) !important; gap: 2px; }
+.tab-nav button { color: var(--sv-muted) !important; border: 0 !important; border-radius: 9px 9px 0 0 !important; background: transparent !important; }
+.tab-nav button:hover { color: var(--sv-ink) !important; }
+.tab-nav button.selected { color: var(--sv-ink) !important; font-weight: 600; background: var(--sv-q) !important;
+                           box-shadow: 0 -1px 0 var(--sv-edge) inset, 0 -2px 0 var(--sv-gold) inset !important; }
+
+/* depth from the border: the chat, the side column and every card are glass on an edge */
+#bk-chat, #bk-side, .bk-card, .bk-ex, .bk-timer, .bk-kpi, .bk-chart {
+  background: var(--sv-surface) !important; border: 1px solid var(--sv-edge) !important; box-shadow: var(--sv-lift) !important;
+  backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass);
+}
+#bk-chat { border-radius: 16px !important; }
+#bk-side { border-radius: 16px !important; padding: 12px !important; }
+.bk-card { border-left: 3px solid var(--sv-gold) !important; border-radius: 12px !important; }
+.bk-card, .bk-card *, .bk-ex, .bk-ex * { color: var(--sv-ink) !important; }
+.bk-card dt, .bk-note, .bk-idle, #bk-prov, #bk-prov * { color: var(--sv-muted) !important; }
+.bk-card:hover, .bk-kpi:hover, .bk-chart:hover { box-shadow: var(--sv-lift-hover) !important; }
+.bk-timer { font-family: var(--sv-mono) !important; border-radius: 12px !important; }
+.bk-live { border: 1.5px solid var(--sv-gold) !important; color: var(--sv-gold) !important; background: var(--sv-gold-soft) !important; }
+.bk-t th { background: var(--sv-q) !important; }
+
+/* the conversation: the question on paper, the answer set like prose */
+#bk-chat .message { border-radius: 14px !important; line-height: 1.65; font-size: 15.5px; }
+#bk-chat .message.user { background: var(--sv-q) !important; border: 1px solid var(--sv-edge) !important; color: var(--sv-ink) !important;
+                         box-shadow: 0 6px 16px -10px rgba(0,0,0,.35); }
+#bk-chat .message.bot { background: color-mix(in srgb, var(--sv-surface) 60%, transparent) !important; border: 1px solid var(--sv-edge) !important;
+                        color: var(--sv-ink) !important; }
+#bk-chat .message code, #bk-chat .message pre { font-family: var(--sv-mono); }
+#bk-chat .message pre { background: var(--sv-term-bg) !important; color: var(--sv-term-ink) !important; border: 1px solid var(--sv-term-edge) !important;
+                        border-radius: 10px; padding: 10px 12px; }
+
+/* the question field: strong contrast between field, text and page */
+#bk-input textarea, #ragebar textarea, #bk-calc-in textarea {
+  background: var(--sv-field-bg) !important; color: var(--sv-field-ink) !important; border: 1.5px solid var(--sv-field-edge) !important;
+  border-radius: 12px !important; box-shadow: 0 1px 2px rgba(0,0,0,.10) inset, 0 10px 26px -14px rgba(0,0,0,.45) !important; font-size: 15.5px;
+}
+#bk-input textarea::placeholder, #ragebar textarea::placeholder, #bk-calc-in textarea::placeholder { color: var(--sv-field-hint) !important; opacity: 1; }
+#bk-input textarea:focus, #ragebar textarea:focus, #bk-calc-in textarea:focus {
+  border-color: var(--sv-gold) !important; box-shadow: 0 0 0 3px var(--sv-gold-soft), 0 10px 26px -14px rgba(0,0,0,.45) !important; }
+
+/* the calculator: a terminal-green display on black, a keypad of raised keys, a tape of exact results */
+#bk-calc { margin-top: 12px; }
+#bk-calc > .label-wrap, #bk-calc .label-wrap span { font: 600 12px var(--sv-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--sv-muted) !important; }
+#bk-calc-in textarea { font-family: var(--sv-mono) !important; font-size: 15px !important; text-align: right; }
+.sv-calc-out { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--sv-term-bg); border: 1px solid var(--sv-term-edge);
+               box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 16px -6px rgba(51,255,102,.35) inset; font-family: var(--sv-mono); text-align: right; }
+.sv-calc-out, .sv-calc-out * { color: var(--sv-term-ink) !important; }
+.sv-calc-out .sv-calc-x { font-size: 12px; opacity: .65; overflow-wrap: anywhere; }
+.sv-calc-out .sv-calc-r { font-size: 21px; font-weight: 600; text-shadow: 0 0 8px rgba(51,255,102,.35); overflow-wrap: anywhere; }
+.sv-calc-out.sv-calc-err .sv-calc-r { color: #ff6b6b !important; font-size: 13px; text-shadow: none; }
+.sv-calc-tape { margin: 8px 0 0; padding: 0; list-style: none; font: 12px/1.6 var(--sv-mono); max-height: 132px; overflow: auto; }
+.sv-calc-tape li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dashed var(--sv-edge); color: var(--sv-muted) !important; }
+.sv-calc-tape li b { color: var(--sv-ink) !important; font-weight: 600; }
+.sv-keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+.sv-keys button { height: 34px; border-radius: 9px; border: 1px solid var(--sv-edge); background: var(--sv-surface); color: var(--sv-ink);
+                  font: 600 14px var(--sv-mono); cursor: pointer; box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 1px 2px rgba(0,0,0,.12);
+                  transition: transform .08s ease, box-shadow .12s ease; }
+.sv-keys button:hover { box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 4px 10px -3px rgba(0,0,0,.25); }
+.sv-keys button:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(0,0,0,.2) inset; }
+.sv-keys button.op { color: var(--sv-gold); }
+.sv-keys button.eq { background: var(--button-primary-background-fill); color: var(--button-primary-text-color); border-color: var(--button-primary-border-color); }
+.sv-keys button.fn { font-size: 12px; color: var(--sv-muted); }
+.sv-calc-note { margin: 8px 0 0; font-size: 12px; color: var(--sv-muted) !important; line-height: 1.45; }
+.sv-calc-note code { font-family: var(--sv-mono); color: var(--sv-ink) !important; }
+/* the calculator's line above an answer */
+.sv-calc-line { font-family: var(--sv-mono); font-size: 12.5px; color: var(--sv-muted); }
+
+@media (prefers-reduced-motion: reduce) { .sv-theme, .sv-keys button { transition: none; } .sv-theme:hover { transform: none; } }
