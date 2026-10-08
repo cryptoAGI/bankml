@@ -174,6 +174,14 @@ $("rev-to-win").addEventListener("click", () => collect($("mem-win").value.trim(
 $("rev-to-col").addEventListener("click", () => collect("_collection"));
 $("advanced").addEventListener("toggle", () => { if ($("advanced").open) { loadMemory(); if (!revRows.length) review(); } });
 
+// the switch: a Savante that is not running says so instead of opening a dead page
+$("to-savante").addEventListener("click", (e) => {
+  const l = e.currentTarget;
+  if (!l.classList.contains("down")) return;
+  e.preventDefault();
+  $("engine").textContent = l.title;
+});
+
 // ── Admin ───────────────────────────────────────────────────────────────────────────────────────────────────────
 const sync = () => { $("threads-v").textContent = $("threads").value; $("ram-v").textContent = (+$("ram").value).toFixed(1) + " GB";
   $("gpu-v").textContent = +$("gpu").value === 0 ? "off" : $("gpu").value + " %"; };
@@ -208,7 +216,11 @@ async function poll() {
   $("advanced").hidden = publicMode;  // a public console keeps no memory and shows no history
   $("mantra").textContent = s.persona.mantra;
   // the switch: Savante beside this console on this machine, or Savante's public Space from a hosted console
-  $("to-savante").href = publicMode ? "https://huggingface.co/spaces/PYTHAI/savante" : `${location.protocol}//${location.hostname}:7873/`;
+  const sv = s.savante || {}, link = $("to-savante");
+  link.href = publicMode ? "https://huggingface.co/spaces/PYTHAI/savante" : (sv.url || `${location.protocol}//${location.hostname}:7873/`);
+  const down = !publicMode && sv.up === false;
+  link.classList.toggle("down", down);
+  link.title = down ? `Savante is not running at ${sv.url} — start it with ./install.sh start` : "Savante: the chat interface";
   const v = (s.serve || {}).verified || {};
   $("engine").textContent = "";
   $("engine").append(v.verdict === "play" ? el("span", "ok", "✓ verified ") : el("span", "bad", "no verified engine yet "),

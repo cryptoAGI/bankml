@@ -206,6 +206,10 @@ try:
     dk = SD.disk({"here": str(tmp)}, {"nvme": 41.0})
     check("sysdiag: free space of each path, the drive's temperature", "here" in dk["data"] and "drive temperature 41.0" in dk["lines"][-1])
     check("sysdiag: a path that cannot be read says so", "not read" in SD.disk({"gone": str(tmp / "nope")}, {})["lines"][0])
+    C.SAVANTE_URL = "http://127.0.0.1:9/"
+    st = json.loads(req("/api/state")[1])
+    check("the switch: where Savante lives, and that it does not answer (so the page marks it, not a dead link)",
+          st["savante"] == {"url": "http://127.0.0.1:9/", "up": False} and C.answers(base + "/") is True)
     pg = json.loads(req("/api/ping")[1])
     check("/api/ping: one timed round trip to the engine, and why it failed when it did", pg["engine_ok"] is False and pg["engine_ms"] >= 0 and pg["why"])
     sd = json.loads(req("/api/sysdiag")[1])
@@ -311,6 +315,7 @@ try:
           req("/api/resources", b'{"threads": 1, "ram_gb": 1, "gpu_limit": 0}', {**pub, "Content-Type": "application/json", "Origin": "https://demo.example"})[0] == 403)
     check("public: no exchange is shown, though a log exists", json.loads(req("/api/log", headers=pub)[1])["exchanges"] == []
           and {a["trait_type"]: a["value"] for a in json.loads(req("/api/infotags", headers=pub)[1])["attributes"]}["exchanges"] == 0)
+    check("public: no Savante link to this computer", json.loads(req("/api/state", headers=pub)[1])["savante"] is None)
     check("public: the machine is not described, but ping answers", req("/api/sysdiag", headers=pub)[0] == 403 and req("/api/ping", headers=pub)[0] == 200)
     check("public: no memory and no history (they are the operator's)",
           req("/api/memory", headers=pub)[0] == 403 and req("/api/history", headers=pub)[0] == 403

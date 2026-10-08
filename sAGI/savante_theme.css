@@ -224,3 +224,7 @@ body.dark .sv-health .ok { color: #4ade80; } body.dark .sv-health .bad { color: 
 #bk-health, #bk-health > div { min-height: 0 !important; padding: 0 !important; margin: 0 !important; background: transparent !important;
                                border: 0 !important; box-shadow: none !important; backdrop-filter: none !important; }
 .sv-health { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* the switch: a console that is not running */
+#bk-head .sv-switch a.down { opacity: .5; text-decoration: line-through !important; }
+#bk-head .sv-switch a.down::after { content: " ○"; }

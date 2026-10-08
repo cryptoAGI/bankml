@@ -2083,6 +2083,8 @@ LAYOUT_JS = """() => {
 
 KNOBS_JS = Path(__file__).resolve().parent / "voice" / "knobs" / "savante_knobs.js"
 THEME_CSS = Path(__file__).resolve().parent / "savante_theme.css"
+# where the bankML console answers on this computer (the switch in the masthead); install.sh starts it on 7875
+CONSOLE_URL = os.environ.get("BANKML_CONSOLE_URL", "http://127.0.0.1:7875/")
 
 
 def theme_css() -> str:
@@ -2097,7 +2099,7 @@ def head_html(mode: str) -> str:
     """The masthead: the wordmark, what every answer is, the Savante | bankML switch (this computer only, so not on the
     LAN view) and the light/dark button (bound by THEME_JS)."""
     switch = ('<nav class="sv-switch" aria-label="interface"><span class="on" aria-current="page">Savante</span>'
-              '<a href="http://127.0.0.1:7875/" title="bankML: the engine itself — Ask · Admin · Engine · Receipts">bankML</a></nav>') if mode == "interact" else ""
+              f'<a id="sv-to-console" href="{E(CONSOLE_URL)}" title="bankML: the engine itself — Ask · Admin · Engine · Receipts">bankML</a></nav>') if mode == "interact" else ""
     return ('<div class="sv-bar"><div class="sv-brand"><span class="sv-mark">bankML · <em>Savante</em></span>'
             '<span class="sv-sub">Every answer is a <b>draft</b>, carried by a local model behind bankML\'s guard and sha256 pin, '
             'with a receipt; arithmetic is computed exactly. Savante\'s canon is read-only and checked against its ledger.</span></div>'
@@ -2151,6 +2153,22 @@ THEME_JS = """() => {
     });
   }
   apply(stored() || (new URL(location.href).searchParams.get('__theme')) || sys());
+  // the switch: a console that is not running is marked, and a click says how to start it instead of a dead page
+  if (!window.svConsoleProbe) {
+    const probe = () => {
+      const a = document.getElementById('sv-to-console'); if (!a) return;
+      a.removeAttribute('target');  // Gradio opens every link in a new tab; a switch changes this tab, as the console's does
+      fetch(a.href, { mode: 'no-cors', cache: 'no-store' }).then(() => a.classList.remove('down'), () => a.classList.add('down'))
+        .finally(() => { a.title = a.classList.contains('down') ? `the bankML console is not running at ${a.href} — start it with ./install.sh start`
+                                                                : 'bankML: the engine itself — Ask · Admin · Engine · Receipts'; });
+    };
+    window.svConsoleProbe = setInterval(probe, 15000); probe();
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest('#sv-to-console');
+      if (a && a.classList.contains('down')) { e.preventDefault(); alertLine(a.title); }
+    });
+    const alertLine = (t) => { const s = document.querySelector('#bk-head .sv-sub'); if (s) { s.dataset.was = s.dataset.was || s.innerHTML; s.textContent = t; setTimeout(() => { s.innerHTML = s.dataset.was; }, 6000); } };
+  }
   return [];
 }"""
 

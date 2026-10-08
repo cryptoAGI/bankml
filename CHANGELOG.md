@@ -20,6 +20,12 @@
 - **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
 
 ### Savante: the machine, and more glass
+- **The Savante | bankML switch works both ways, and says when the other side is not running.** Its targets were
+  fixed ports (7873, 7875); now `BANKML_SAVANTE_URL` and `BANKML_CONSOLE_URL` (defaults unchanged). The console
+  checks Savante server side (its CSP allows only itself; `/api/state` → `savante: {url, up}`), Savante checks the
+  console from the page every 15 s; a side that does not answer is struck through, and a click says how to start it
+  (`./install.sh start`) instead of opening a dead page. Savante's switch now changes the tab, as the console's
+  does (Gradio opened it in a new one).
 - **Admin → the machine:** *ping bankML* (three round trips to `/health`, min/avg/max) and *diagnostics* — CPU,
   memory, disk, GPU and the engine as an accordion, the sections that need a look open (`savante.diag_html`,
   `ping_html`; the same `sAGI/sysdiag.py` as the console, which now shares its `ping`, `engine` and `to_html`).

@@ -53,6 +53,8 @@ PERSONA = HERE / "personas" / "bankml.persona"
 STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" / "bankml" / "savante")).expanduser()
 LOG = STATE / "console.jsonl"
 MEM = CM.Store(STATE / "console-memory")
+# where Savante answers on this computer (the switch in the bar); install.sh starts it on 7873
+SAVANTE_URL = os.environ.get("BANKML_SAVANTE_URL", "http://127.0.0.1:7873/")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8"), "/vendor/d3.v7.min.js": ("vendor/d3.v7.min.js", "text/javascript"),
          "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8"),
@@ -128,11 +130,23 @@ def self_text(sb: dict) -> str:
            + "; power " + v(sb["package_watts"], " watts") + ", energy per token I write " + v(sb["joules_per_token"], " joules", d=3))
     return who + "\n" + now
 
+def answers(url: str, timeout: float = 1.5) -> bool:
+    """Whether a page answers at `url` (any HTTP status counts: something is listening and speaking HTTP)."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def state() -> dict:
     p = persona()
     return {"serve": _get("/bankml"), "usage": _get("/bankml/usage"), "metrics": _get("/bankml/metrics"), "resources": models.resources(),
             "persona": {"name": p["name"], "mantra": p["mantra"], "doctrine_root": _doctrine_root(p)}, "job": JOB, "self": self_block(),
-            "public": PUBLIC is not None, "warm": WARM["state"]}
+            "public": PUBLIC is not None, "warm": WARM["state"],
+            "savante": None if PUBLIC else {"url": SAVANTE_URL, "up": answers(SAVANTE_URL)}}
 
 
 def _doctrine_root(p: dict) -> str | None:

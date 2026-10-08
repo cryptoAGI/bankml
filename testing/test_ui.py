@@ -184,6 +184,7 @@ try:
 except u.ContextTooSmall:
     check("recall: its tokens count against the context", True)
 
+check("the masthead's switch goes to the console's configured address", f'href="{u.CONSOLE_URL}"' in u.head_html("interact") and "sv-to-console" in u.head_html("interact"))
 # the machine: ping, diagnostics and the side panel's health line, here without an engine (SERVE unreachable)
 u.SERVE = "http://127.0.0.1:9"
 ph = u.ping_html(2)
