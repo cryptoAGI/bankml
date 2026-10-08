@@ -96,7 +96,7 @@
     #layer{z-index:1; opacity:0; transition:opacity 1.2s ease;}
     main,footer{position:relative; z-index:2;}
     main{max-width:780px; margin:0 auto; padding:56px 16px 24px;}
-    .hero{text-align:center; padding:6vh 0 4vh;}
+    .hero{text-align:center; padding:2.5vh 0 2vh;}
     .hero .delta{font-size:15px; letter-spacing:.5em; color:rgba(var(--cy),.75); text-transform:uppercase;}
     .hero h1{font-size:clamp(40px,9vw,76px); letter-spacing:.14em; margin:.2em 0 .1em; font-weight:300;
       text-shadow:0 0 28px rgba(var(--cy),.35);}
@@ -161,6 +161,49 @@
     .social a{display:inline-flex; align-items:center; gap:8px; border:none; color:var(--muted);}
     .social a:hover{color:#fff;}
     .social svg{width:24px; height:24px; fill:currentColor;}
+    /* the landing: the highlights until the first question, then the conversation */
+    #chat .failed{color:var(--quiet);font-style:italic}
+    #ask .who{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}
+    .highlights{margin:10px 0 6px;padding:14px 16px;border-radius:14px;border:1px solid var(--rule);
+      background:linear-gradient(160deg,rgba(var(--cy),.10),rgba(var(--vi),.08));box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 18px 40px -22px rgba(var(--cy),.45);
+      transition:opacity .35s ease,transform .35s ease,max-height .35s ease;max-height:900px;overflow:hidden}
+    .highlights ul{margin:0;padding-left:1.1em;display:grid;gap:6px 26px}
+    @media (min-width:760px){.highlights ul{grid-template-columns:1fr 1fr}}
+    .highlights li{color:var(--muted);font-size:14.5px;line-height:1.5}
+    .highlights b{color:#fff}
+    .highlights .hl-hint{margin:10px 0 0;font-size:13px;color:var(--quiet)}
+    .highlights.leaving{opacity:0;transform:translateY(-6px);max-height:0;padding-top:0;padding-bottom:0;margin:0;border-width:0}
+    /* the tabs under the conversation */
+    .tabs{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:4px;margin:26px 0 0;padding:6px;border-radius:14px 14px 0 0;
+      background:rgba(8,10,22,.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid var(--rule);border-bottom:0}
+    .tabs [role=tab]{flex:1 1 auto;background:transparent;border:1px solid transparent;color:var(--muted);border-radius:10px;padding:7px 12px;
+      font:600 14px system-ui,sans-serif;cursor:pointer;letter-spacing:.02em;position:relative}
+    .tabs [role=tab]:hover{color:#fff;background:rgba(255,255,255,.05)}
+    .tabs [role=tab][aria-selected=true]{color:#fff;background:rgba(var(--cy),.14);border-color:rgba(var(--cy),.35);box-shadow:0 0 18px -6px rgba(var(--cy),.6)}
+    .tabs [role=tab]:focus-visible{outline:2px solid rgba(var(--cy),.8);outline-offset:2px}
+    .tabs [role=tab].has-news::after{content:"";position:absolute;top:6px;right:7px;width:7px;height:7px;border-radius:50%;background:rgb(var(--am))}
+    .panel > section:first-child{margin-top:0;border-top-left-radius:0;border-top-right-radius:0}
+    .panel[hidden]{display:none}
+    /* FAQ */
+    .faq details{border-top:1px solid var(--rule);padding:10px 2px}
+    .faq details:first-of-type{border-top:0}
+    .faq summary{cursor:pointer;color:#fff;font-weight:600;list-style:none;display:flex;gap:10px;align-items:baseline}
+    .faq summary::-webkit-details-marker{display:none}
+    .faq summary::before{content:"+";color:rgba(var(--cy),.9);font:700 16px ui-monospace,monospace;transition:transform .2s ease}
+    .faq details[open] summary::before{transform:rotate(45deg)}
+    .faq details p{margin:.5em 0 0 1.4em}
+    /* Logs */
+    .logs .quiet-note{font-size:14px;color:var(--quiet)}
+    .logtools{display:flex;gap:8px;margin:6px 0 10px}
+    .logtools button{background:rgba(255,255,255,.06);color:#fff;border:1px solid var(--rule);border-radius:8px;padding:4px 12px;cursor:pointer;font:13px system-ui}
+    .pagelog{list-style:none;margin:0;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,.55);border:1px solid rgba(var(--cy),.25);
+      font:12.5px/1.6 ui-monospace,Menlo,monospace;max-height:420px;overflow:auto}
+    .pagelog li{display:grid;grid-template-columns:auto 4.5em 1fr;gap:10px;color:#a7f3d0}
+    .pagelog li time{color:var(--quiet)}
+    .pagelog li .k{color:rgba(var(--cy),.9)}
+    .pagelog li.is-error,.pagelog li.is-error .k{color:#fca5a5} .pagelog li.is-warn .k{color:rgb(var(--am))} .pagelog li.is-ok .k{color:#86efac}
+    .pagelog li.empty{display:block;color:var(--quiet)}
+    @media (prefers-reduced-motion:reduce){.highlights{transition:none}.faq summary::before{transition:none}}
     @media (max-width:560px){ body{font-size:16px;} section{padding:18px 16px;} .table td:first-child{width:auto;} .table td{display:block; border-top:none; padding:4px 0;} .table tr{display:block; border-top:1px solid var(--rule); padding:8px 0;} }
   </style>
 </head>
@@ -175,11 +218,142 @@
       <h1>bankML</h1>
       <p>Verified 1-bit and ternary language models on the CPU you already have: exactly the same answers as
         llama.cpp, checked bit for bit, then faster.</p>
-      <p class="date">Updated 7 October 2026: bankML 0.4.0, the milestone, is the latest release.</p>
+      <p class="date">Updated 8 October 2026: bankML 0.4.2 is the latest release, after 0.4.0, the milestone.</p>
     </header>
 
-    <section class="release">
-      <h2>Latest release: v0.4.0 — native serving complete</h2>
+    <section id="ask">
+      <h2>Ask bankML</h2>
+      <p class="mantra" id="mantra"></p>
+      
+      
+      
+      
+      <div class="row ask">
+        <textarea id="message" rows="2" placeholder="Ask bankML about itself, its exactness, its precision, its speed… (Ctrl+Enter)"></textarea>
+        <button id="send" type="button">Ask</button>
+      </div>
+      <p id="askstatus" class="status"></p>
+      <div id="highlights" class="highlights" aria-label="bankML at a glance">
+        <ul>
+          <li><b>Verified before it speaks.</b> The model file's sha256 is checked against its pin before bankML answers,
+            and every answer carries a receipt whose hash this page checks.</li>
+          <li><b>The same bits as the reference.</b> Token for token what llama.cpp b11192 answers, proven by oracles in
+            every release, then made faster.</li>
+          <li><b>Fast on the CPU you have.</b> The ternary kernel 8.9× llama.cpp's; 1-bit at least at llama-server's
+            speed (median 2.02 against 0.77 tokens per second, pinned 8B, answers identical).</li>
+          <li><b>Small, and speaks your tools' language.</b> One Rust crate with no dependencies; Ollama's and OpenAI's
+            APIs, a C library, receipts on all of them.</li>
+          <li><b>Latest: v0.4.2.</b> Logprobs on Ollama's API with llama-server's numbers, receipts that hash them,
+            <code>max_tokens: 0</code> as llama-server answers it. <a href="#release">What changed</a></li>
+        </ul>
+        <p class="hl-hint">Ask above: these give way to the answers.</p>
+      </div>
+      <div id="chat" aria-live="polite"></div>
+      
+      
+      <div class="who" aria-label="who answers">
+        <div class="modes" role="radiogroup" aria-label="who answers">
+        <label><input type="radio" name="mode" value="local" checked> <b>Your own bankML</b> — verified, with a receipt, on your CPU (free)</label>
+        <label><input type="radio" name="mode" value="hf"> <b>A Hugging Face provider</b> — not bankML, no receipt, your inference quota</label>
+      </div>
+        <p class="modenote" id="modenote"></p>
+        <div id="localrow" class="row">
+        <input id="endpoint" aria-label="your bankml serve address" spellcheck="false">
+        <button id="connect" type="button">connect</button>
+        <span id="localstatus" class="status"></span>
+        <details>
+          <summary>Start your own bankML for this page (Linux, AVX2; free)</summary>
+          <ol>
+            <li><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code> — builds bankML,
+              imports and verifies Bonsai-8B, and starts it so this page (<span id="origin"></span>) may talk to it. Already installed?
+              <code>git pull &amp;&amp; ./install.sh build start --space</code></li>
+            <li>Press <b>connect</b>. Your browser may ask to let this page reach devices on your local network: that is the
+              request for your own bankML on 127.0.0.1, and nothing else.</li>
+            <li><code>./install.sh start --no-space</code> takes the permission back.</li>
+          </ol>
+        </details>
+      </div>
+        <div id="hfrow" class="row" hidden>
+        <input id="model" aria-label="provider model (owner/name)" spellcheck="false">
+        <button id="signin" type="button">Sign in with Hugging Face</button>
+        <button id="signout" type="button" hidden>sign out</button>
+        <span id="who" class="status"></span>
+      </div>
+      </div>
+    </section>
+
+    <nav class="tabs" role="tablist" aria-label="more about bankML"><button type="button" role="tab" id="tab-faq" aria-controls="panel-faq" aria-selected="true" tabindex="0">FAQ</button><button type="button" role="tab" id="tab-logs" aria-controls="panel-logs" aria-selected="false" tabindex="-1">Logs</button><button type="button" role="tab" id="tab-release" aria-controls="panel-release" aria-selected="false" tabindex="-1">Release</button><button type="button" role="tab" id="tab-thesis" aria-controls="panel-thesis" aria-selected="false" tabindex="-1">Thesis</button><button type="button" role="tab" id="tab-advantages" aria-controls="panel-advantages" aria-selected="false" tabindex="-1">Advantages</button><button type="button" role="tab" id="tab-about" aria-controls="panel-about" aria-selected="false" tabindex="-1">About</button></nav>
+    <div class="panel" role="tabpanel" id="panel-faq" aria-labelledby="tab-faq">
+      <section class="faq">
+        <h2>Questions people ask</h2>
+        <details open><summary>What is bankML?</summary><p>A runtime for 1-bit and ternary language models, written in Rust,
+          that runs them on an ordinary CPU and answers exactly as llama.cpp does — checked bit for bit — before any
+          speed counts. It serves the APIs your tools already use (Ollama's and OpenAI's) and puts a receipt on every answer.</p></details>
+        <details><summary>What does “verified” mean here?</summary><p>Before it listens, bankML hashes the whole model
+          file and compares it with a pin (a FORK.json naming its sha256 and where it came from); a guard refuses files
+          that would answer in nonsense. Every answer then carries a receipt: the sha256 of the model, the request and
+          the answer. This page recomputes the answer's hash and shows ✓ when it matches.</p></details>
+        <details><summary>How do I know it is exact?</summary><p>Each release runs a gate: oracles that record llama.cpp
+          b11192's own answers — tensors, dot products, whole conversations, sampled tokens, JSON grammars, logprobs —
+          and require bankML to match every one. The record of every run is published beside the release.
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md">The oracles</a>.</p></details>
+        <details><summary>Which answers on this page are bankML's?</summary><p>Only those in <b>Your own bankML</b> mode:
+          your browser talks to <code>bankml serve</code> on your machine, and each answer comes with a receipt. In
+          <b>A Hugging Face provider</b> mode a hosted model speaks with bankML's persona, without its arithmetic or a
+          receipt, and every answer says so.</p></details>
+        <details><summary>How do I run my own bankML for this page?</summary><p>On Linux with AVX2:
+          <code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code>.
+          It builds bankML, imports and verifies Bonsai-8B (1.16&nbsp;GB), and lets this page reach it. Then press
+          <b>connect</b>. <code>./install.sh start --no-space</code> takes the permission back.</p></details>
+        <details><summary>Does my question leave my computer?</summary><p>Not in <b>Your own bankML</b> mode: the page talks
+          to 127.0.0.1, and bankML sends nothing anywhere. In provider mode, the question goes to the provider you chose,
+          on your Hugging Face account.</p></details>
+        <details><summary>Why is the first answer slow?</summary><p>A 1-bit 8B model reads its prompt at a few tokens per
+          second on a small CPU, and the first answer of a session reads the whole persona. Later turns reuse what was
+          read (the prompt cache), so they start much sooner.</p></details>
+        <details><summary>What machine do I need?</summary><p>Linux on x86-64 with AVX2 for the fast kernels (others fall
+          back to exact scalar code), about 2&nbsp;GB of free memory for the 1-bit 8B model, and 1.5&nbsp;GB of disk.
+          CI also builds and tests natively on ARM.</p></details>
+        <details><summary>Which models?</summary><p>Bonsai-8B (1-bit, Q1_0), Ternary-Bonsai-8B (Q2_0), Bonsai-1.7B,
+          SmolLM2-135M and mindX's own lineage model, each answered by bankML's own forward pass; other GGUF files through
+          llama.cpp behind the same gate. Imported models must carry an open licence.</p></details>
+        <details><summary>What does it cost?</summary><p>Your own bankML is free: your CPU, your electricity. bankML is
+          MIT or Apache-2.0. Provider mode uses your Hugging Face inference quota.</p></details>
+        <details><summary>Where is everything else?</summary><p>In the tabs here, and in
+          <a href="https://github.com/cryptoAGI/bankml">the repository</a>: the
+          <a href="https://cryptoagi.github.io/bankml/">documentation</a>, the
+          <a href="https://github.com/cryptoAGI/bankml/blob/main/CHANGELOG.md">changelog</a> and the
+          <a href="https://github.com/cryptoAGI/bankml/tree/main/testing/results">gate records</a>.</p></details>
+      </section>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-logs" aria-labelledby="tab-logs" hidden>
+      <section class="logs">
+        <h2>This page's log</h2>
+        <p class="quiet-note">What this page did, newest last: connections to your bankML, questions, the time to the
+          first token, receipt checks, errors. It stays in this browser tab; nothing is sent anywhere.</p>
+        <div class="logtools"><button type="button" id="logcopy">copy</button><button type="button" id="logclear">clear</button></div>
+        <ol id="pagelog" class="pagelog"><li class="empty">nothing yet — connect, or ask a question</li></ol>
+      </section>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-release" aria-labelledby="tab-release" hidden>
+      <section class="release">
+      <h2>Latest release: v0.4.2</h2>
+      <p>Released 8 October 2026 with 0.4.1, which was never tagged. Each item was checked against llama-server b11192
+        in the release gate.</p>
+      <ul>
+        <li><strong>Logprobs on Ollama's API.</strong> <code>/api/chat</code> and <code>/api/generate</code> take
+          <code>logprobs</code> and <code>top_logprobs</code> and return llama-server's numbers in Ollama's shape (19 of 19).</li>
+        <li><strong>Receipts that cover them.</strong> An answer with logprobs carries <code>logprobs_sha256</code>, the
+          hash of exactly what was received.</li>
+        <li><strong><code>max_tokens: 0</code> as llama-server answers it</strong> — one token and its probabilities (7 of 7).</li>
+        <li><strong>A request whose client has gone stops</strong>, and keeps what it computed; the ternary kernel runs on
+          the GPU bit for bit; CI builds and tests on ARM.</li>
+        <li><strong>The console and Savante:</strong> one theme with a dark-mode switch, Savante's exact calculator, and
+          <code>install.sh restart</code>.</li>
+      </ul>
+      <p class="more"><a href="https://github.com/cryptoAGI/bankml/releases/tag/v0.4.2">the release</a> ·
+        <a href="https://github.com/cryptoAGI/bankml/blob/main/testing/results/0.4.2.txt">the gate record</a></p>
+      <h2>The milestone: v0.4.0 — native serving complete</h2>
       <p>Released 7 October 2026, after one run of the full release gate in which every stage passed. Everything Savante
         and mindX ask of llama-server is now answered by bankML's own engine, identical to llama-server b11192.</p>
       <ul>
@@ -202,8 +376,9 @@
         <a href="https://github.com/cryptoAGI/bankml/blob/main/testing/results/0.4.0.txt">the gate record</a> ·
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/PERFORMANCE.md#1-bit-decode-against-llama-server-040">the speed test, with the machine's load</a></p>
     </section>
-
-    <section class="thesis">
+    </div>
+    <div class="panel" role="tabpanel" id="panel-thesis" aria-labelledby="tab-thesis" hidden>
+      <section class="thesis">
       <h2>The thesis — Professor Codephreak and Gregory L. Magnusson</h2>
       <p>bankML is built to test its authors' design intent, stated in their own words over the course of the project.
         Every release is measured against it. <strong>Exact and precise first, then efficient and optimized:</strong>
@@ -232,91 +407,9 @@
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">the argument, with the contemporary field</a> ·
         <a href="https://rage.pythai.net/bankML-thesis">hear it read</a></p>
     </section>
-
-
-    <section id="ask">
-      <h2>Ask bankML</h2>
-      <p class="mantra" id="mantra"></p>
-      <div class="modes" role="radiogroup" aria-label="who answers">
-        <label><input type="radio" name="mode" value="local" checked> <b>Your own bankML</b> — verified, with a receipt, on your CPU (free)</label>
-        <label><input type="radio" name="mode" value="hf"> <b>A Hugging Face provider</b> — not bankML, no receipt, your inference quota</label>
-      </div>
-      <p class="modenote" id="modenote"></p>
-      <div id="localrow" class="row">
-        <input id="endpoint" aria-label="your bankml serve address" spellcheck="false">
-        <button id="connect" type="button">connect</button>
-        <span id="localstatus" class="status"></span>
-        <details>
-          <summary>Start your own bankML for this page (Linux, AVX2; free)</summary>
-          <ol>
-            <li><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code> — builds bankML,
-              imports and verifies Bonsai-8B, and starts it so this page (<span id="origin"></span>) may talk to it. Already installed?
-              <code>git pull &amp;&amp; ./install.sh build start --space</code></li>
-            <li>Press <b>connect</b>. Your browser may ask to let this page reach devices on your local network: that is the
-              request for your own bankML on 127.0.0.1, and nothing else.</li>
-            <li><code>./install.sh start --no-space</code> takes the permission back.</li>
-          </ol>
-        </details>
-      </div>
-      <div id="hfrow" class="row" hidden>
-        <input id="model" aria-label="provider model (owner/name)" spellcheck="false">
-        <button id="signin" type="button">Sign in with Hugging Face</button>
-        <button id="signout" type="button" hidden>sign out</button>
-        <span id="who" class="status"></span>
-      </div>
-      <div id="chat" aria-live="polite"></div>
-      <div class="row ask">
-        <textarea id="message" rows="2" placeholder="Ask bankML about itself, its exactness, its precision, its speed… (Ctrl+Enter)"></textarea>
-        <button id="send" type="button">Ask</button>
-      </div>
-      <p id="askstatus" class="status"></p>
-    </section>
-
-    <section>
-      <h2>bankML in one paragraph</h2>
-      <p>bankML runs language models on the computer you already have: a laptop, a small server, no graphics card
-        needed. It specialises in <strong>1-bit and ternary models</strong>, which store each weight in one or two
-        bits instead of sixteen. An 8-billion-parameter model then fits in 1.2 GB (1-bit) or 2.3 GB (ternary). bankML
-        gives <strong>exactly the same answers as llama.cpp</strong>, the reference engine, and checks that it does,
-        bit for bit, before it is allowed to be faster. Every answer carries a <strong>receipt</strong> that says
-        which model file produced it.</p>
-      <div class="stats">
-        <div class="stat"><b>9.4–10×</b><span>faster per ternary matrix than llama.cpp</span></div>
-        <div class="stat"><b>≈ 8×</b><span>whole ternary answers vs llama-server</span></div>
-        <div class="stat"><b>0</b><span>external dependencies</span></div>
-        <div class="stat"><b>bit-exact</b><span>against llama.cpp b11192</span></div>
-      </div>
-      <p class="more">the full story: <a href="https://github.com/cryptoAGI/bankml#readme">README</a> · the technical
-        report: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md">TECHNICAL.md</a></p>
-    </section>
-
-
-    <section>
-      <h2>bankML, in its own words</h2>
-      <p>The console that talks to bankML speaks as bankML itself, from its persona file,
-        <a href="https://huggingface.co/spaces/PYTHAI/bankml/blob/main/sAGI/personas/bankml.persona"><code>sAGI/personas/bankml.persona</code></a>.
-        It knows its own use only from measurement: each question carries a SELF block of what bankML measured at that moment, and a value it did not measure it says it did not measure.</p>
-      <p style="font-size:22px;color:#fff;margin:.6em 0">“The same bits first, then the speed.”</p>
-      <p><strong>Its oath.</strong> I answer only from verified weights. What I cannot reproduce exactly I refuse, with the reason. Every answer carries its receipt, and what I say about my own use I have measured.</p>
-      <p class="more">the persona's sources: README's design goals and the thesis ·
-        <a href="https://huggingface.co/spaces/PYTHAI/bankml/blob/main/sAGI/console.py">the console (<code>sAGI/console.py</code>)</a></p>
-    </section>
-
-    <section>
-      <h2>This Space is the source</h2>
-      <p>Every file of bankML is here: the Rust engine (<code>bankML/</code>), the C API (<code>capi/</code>), the oracles and
-        the release gate (<code>testing/</code>), the tools, the docs and Savante's UI (<code>sAGI/</code>) —
-        <a href="https://huggingface.co/spaces/PYTHAI/bankml/tree/main">browse the files</a>. The source of record is
-        <a href="https://github.com/cryptoAGI/bankml">github.com/cryptoAGI/bankml</a>.</p>
-      <p><strong>Talk to bankML yourself.</strong> On a Linux machine with AVX2:</p>
-      <p><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh</code><br>
-        then <code>python3 sAGI/console.py</code> and open <code>http://127.0.0.1:7875</code>.</p>
-      <p class="more">the live engine here: this Space already carries its <code>Dockerfile</code> and
-        <code>hf/start.sh</code> (bankML serving the ternary Bonsai-8B, the console in front, public and read-only);
-        it runs once the Space is switched to Docker hardware</p>
-    </section>
-
-    <section>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-advantages" aria-labelledby="tab-advantages" hidden>
+      <section>
       <h2>The advantages</h2>
 
       <h3>1. It is fast where it matters most</h3>
@@ -375,8 +468,49 @@
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/console.md">console.md</a> · the GPU:
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/modules/gpu.md">gpu.md</a></p>
     </section>
-
-    <section>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-about" aria-labelledby="tab-about" hidden>
+      <section>
+      <h2>bankML in one paragraph</h2>
+      <p>bankML runs language models on the computer you already have: a laptop, a small server, no graphics card
+        needed. It specialises in <strong>1-bit and ternary models</strong>, which store each weight in one or two
+        bits instead of sixteen. An 8-billion-parameter model then fits in 1.2 GB (1-bit) or 2.3 GB (ternary). bankML
+        gives <strong>exactly the same answers as llama.cpp</strong>, the reference engine, and checks that it does,
+        bit for bit, before it is allowed to be faster. Every answer carries a <strong>receipt</strong> that says
+        which model file produced it.</p>
+      <div class="stats">
+        <div class="stat"><b>9.4–10×</b><span>faster per ternary matrix than llama.cpp</span></div>
+        <div class="stat"><b>≈ 8×</b><span>whole ternary answers vs llama-server</span></div>
+        <div class="stat"><b>0</b><span>external dependencies</span></div>
+        <div class="stat"><b>bit-exact</b><span>against llama.cpp b11192</span></div>
+      </div>
+      <p class="more">the full story: <a href="https://github.com/cryptoAGI/bankml#readme">README</a> · the technical
+        report: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md">TECHNICAL.md</a></p>
+    </section>
+<section>
+      <h2>bankML, in its own words</h2>
+      <p>The console that talks to bankML speaks as bankML itself, from its persona file,
+        <a href="https://huggingface.co/spaces/PYTHAI/bankml/blob/main/sAGI/personas/bankml.persona"><code>sAGI/personas/bankml.persona</code></a>.
+        It knows its own use only from measurement: each question carries a SELF block of what bankML measured at that moment, and a value it did not measure it says it did not measure.</p>
+      <p style="font-size:22px;color:#fff;margin:.6em 0">“The same bits first, then the speed.”</p>
+      <p><strong>Its oath.</strong> I answer only from verified weights. What I cannot reproduce exactly I refuse, with the reason. Every answer carries its receipt, and what I say about my own use I have measured.</p>
+      <p class="more">the persona's sources: README's design goals and the thesis ·
+        <a href="https://huggingface.co/spaces/PYTHAI/bankml/blob/main/sAGI/console.py">the console (<code>sAGI/console.py</code>)</a></p>
+    </section>
+<section>
+      <h2>This Space is the source</h2>
+      <p>Every file of bankML is here: the Rust engine (<code>bankML/</code>), the C API (<code>capi/</code>), the oracles and
+        the release gate (<code>testing/</code>), the tools, the docs and Savante's UI (<code>sAGI/</code>) —
+        <a href="https://huggingface.co/spaces/PYTHAI/bankml/tree/main">browse the files</a>. The source of record is
+        <a href="https://github.com/cryptoAGI/bankml">github.com/cryptoAGI/bankml</a>.</p>
+      <p><strong>Talk to bankML yourself.</strong> On a Linux machine with AVX2:</p>
+      <p><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh</code><br>
+        then <code>python3 sAGI/console.py</code> and open <code>http://127.0.0.1:7875</code>.</p>
+      <p class="more">the live engine here: this Space already carries its <code>Dockerfile</code> and
+        <code>hf/start.sh</code> (bankML serving the ternary Bonsai-8B, the console in front, public and read-only);
+        it runs once the Space is switched to Docker hardware</p>
+    </section>
+<section>
       <h2>What people use it for</h2>
       <table class="table">
         <tr><td>A private assistant on your own machine</td><td>Savante, a chat page on <code>127.0.0.1:7873</code>, answered by bankML —
@@ -404,8 +538,7 @@
       <p class="more">new here? start with <code>./install.sh</code>:
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md#1-install">usage.md §1</a></p>
     </section>
-
-    <section>
+<section>
       <h2>How Rust helps bankML go fast and stay exact</h2>
       <p>Rust lets bankML write code as close to the hardware as C, while the compiler checks much of what C leaves
         to the programmer.</p>
@@ -438,8 +571,7 @@
           <a href="https://github.com/cryptoAGI/bankml/blob/main/rust-toolchain.toml"><code>rust-toolchain.toml</code></a></li>
       </ul>
     </section>
-
-    <section class="road">
+<section class="road">
       <h2>Where it is going</h2>
       <p>The road is laid out release by release in
         <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/TODO.md">TODO.md</a>, and each step counts only once
@@ -462,8 +594,7 @@
           signed.</li>
       </ul>
     </section>
-
-    <section class="hope">
+<section class="hope">
       <h2>Our hope for bankML</h2>
       <p>We hope bankML shows that a capable, private AI does not need a data centre or a graphics card: that an
         eight-billion-parameter model can run on the laptop in front of you and give answers you can check. We want
@@ -477,9 +608,9 @@
         among other engines and papers: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/research.md">research.md</a> ·
         how it was built: <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/BUILD_HISTORY.md">BUILD_HISTORY.md</a></p>
     </section>
-  </main>
+    </div>
 
-  <footer>
+    <footer>
     <div class="social">
       <a href="https://github.com/cryptoAGI/bankml" rel="noopener" aria-label="bankML on GitHub">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -548,6 +679,7 @@
     mount(layer);
   })();
   </script>
+  <script src="space-tabs.js"></script>
   <script type="module" src="bankml-chat.js"></script>
 </body>
 </html>

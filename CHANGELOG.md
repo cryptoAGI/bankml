@@ -50,6 +50,18 @@
   question tray; the side column a level above the conversation.
 - `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
 
+### The Hugging Face Space: a landing to talk to bankML, and tabs for the rest
+- **The landing is the conversation:** the Savante | bankML switch and the DeltaVerse banner, then the question box,
+  then the highlights (verified, exact, fast, small, the latest release), which give way to the answers at the first
+  question; who answers (your own bankML, or a provider) and how to start your own sit under it.
+- **Tabs underneath:** FAQ (eleven questions people ask, drawn from the page and the docs), **Logs** (this page's own
+  log: connections, questions, the time to the first token, receipt checks, errors; copy and clear; it stays in the
+  browser tab), Release (0.4.2 first, the 0.4.0 milestone after), Thesis, Advantages, About. Arrow keys move between
+  them; the address keeps the open one (`#faq`, `#logs`…). `hf/space/space-tabs.js`.
+- **Your own bankML answers sooner:** the page sent SELF inside the system prompt and a window that slid every turn;
+  now the persona first, SELF just before the question, the conversation trimmed four exchanges at a time, as the
+  console does. A question that fails stops its clock and says so, instead of "reading the prompt" for ever.
+
 ### The console: Diagnostics as a desk, and an Inspector
 - **The Thesis reads to the end of an open section.** It was a scroll box inside the scrolling page: the wheel over
   the page's margin moved the page, not the box, and sections opened by themselves as they scrolled by, moving the
