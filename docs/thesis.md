@@ -179,6 +179,12 @@ rotation bankML reproduced for llama.cpp's quantized cache (§III.4).
 
 #### II.5.2 Kernels and engines for ternary and 1-bit weights
 
+Ternary is a field with several engines, in C++ above all, and now a handful in Rust. bankML did not invent ternary
+inference. Its contribution is narrower: the same bits as the reference's compiled ternary kernel. One naming point
+prevents a common misreading. In `Q2_0_g64`, the 64 is the group size (64 weights share one f16 scale), not a 64-bit
+arithmetic. The arithmetic is ggml's: exact integer sums, then f32. Wider floats would round less, but they would
+give answers no external reference reproduces (objection 1, §V).
+
 | work | what it is | relation to bankML |
 |---|---|---|
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) upstream | `Q1_0` ([#21273](https://github.com/ggml-org/llama.cpp/pull/21273); x86 AVX2+FMA in [#21636](https://github.com/ggml-org/llama.cpp/pull/21636)); `Q2_0` ([#24448](https://github.com/ggml-org/llama.cpp/pull/24448), NEON and scalar); an x86 `Q2_0` kernel needing AVX-VNNI ([#26348](https://github.com/ggml-org/llama.cpp/pull/26348), open); the older `TQ1_0`/`TQ2_0` ([#10010](https://github.com/ggml-org/llama.cpp/pull/10010)) | the reference: bankML reproduces b11192's compiled code bit for bit and adds the plain-AVX2 `Q2_0` kernel it lacks |
@@ -186,6 +192,7 @@ rotation bankML reproduced for llama.cpp's quantized cache (§III.4).
 | [bitnet.cpp](https://github.com/microsoft/BitNet) (Wang, Zhou, Song et al. 2024; 2025) | lookup-table and I2_S kernels for BitNet b1.58 on CPU; reports 2.37–6.17× on x86 | a different weight format (BitNet's), and a different exactness claim (lossless to its own model, not to an external reference) |
 | [T-MAC](https://github.com/microsoft/T-MAC) (Wei et al. 2025) | lookup-table mixed-precision GEMM on CPU and NPU | the table-lookup alternative to bankML's `maddubs` arithmetic |
 | Vec-LUT (Li et al. 2025) | vector table lookup for parallel ultra-low-bit inference on edge devices | the same direction as T-MAC, parallelised |
+| [Collabora: BitNet in ExecuTorch over Vulkan](https://www.collabora.com/news-and-blog/blog/2026/04/17/bringing-bitnet-to-executorch-via-vulkan/) (April 2026) | ternary BitNet kernels on mobile and embedded GPUs through Vulkan | the same API bankML's GPU kernels use; BitNet's format, no exactness claim against an external reference |
 | Spectra 1.1's TriRun (Vaidhya et al. 2025) | a GPU kernel for packed ternary weights | GPU, not CPU |
 
 #### II.5.3 Inference engines written in Rust
@@ -201,6 +208,7 @@ rotation bankML reproduced for llama.cpp's quantized cache (§III.4).
 | [Cera](https://github.com/hyeons-lab/cera) | a Rust-native GGUF engine (AVX2/AVX-512, NEON dotprod/i8mm, optional wgpu) | crate 0.6.3, 2026-09-25 | none stated |
 | [llama-gguf](https://github.com/Lexmata/llama-gguf), [lm.rs](https://github.com/samuel-vitorino/lm.rs) | small engines, correctness-first / minimal | llama-gguf 2026-04; lm.rs inactive since 2024-10 | none stated |
 | [bitnet-rs](https://github.com/lilyco-42/bitnet-rs), [bitnet-toy](https://github.com/tidynest/bitnet-toy) | BitNet b1.58 in Rust (a port of bitnet.cpp; a from-scratch teaching engine) | 2026-09 | unit tests against its own C++ baseline |
+| BitLlama, [burn-bitnet](https://docs.rs/crate/burn-bitnet), [ternlang-ml](https://docs.rs/crate/ternlang-ml), [tritter-accel](https://docs.rs/tritter-accel) | Rust ternary (BitNet b1.58-style) engines and kernel crates; BitLlama serves Llama, Gemma, Mistral, Qwen and BitNet models | found 2026-10-07 by search; their repositories not yet checked | none found |
 | [alice-aegis](https://github.com/Aefinity-AI/alice-aegis) | a `no_std` UEFI ternary engine with frozen integer semantics and SHA-256 receipts chaining the logits | 2026-10 | bit-identical across its own ISAs, not against an external reference |
 | [ratchet](https://github.com/huggingface/ratchet), [tract](https://github.com/sonos/tract), [rten](https://github.com/robertknight/rten) | browser/WebGPU and ONNX inference | active | not GGUF engines |
 | [rustformers/llm](https://github.com/rustformers/llm), [llama-cpp-rs](https://github.com/utilityai/llama-cpp-rs) | the first, archived (2024); the second, bindings to llama.cpp's C++ | — | inherit llama.cpp's arithmetic by calling it |
