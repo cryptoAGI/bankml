@@ -11,6 +11,7 @@ The persona says who bankML is; the prompt what it is asked; the context what it
     of the file it came from, so a stale context is detected (testing/test_console.py) and regenerated.
 Run it after changing docs/modules or the documents it reads, and at each release:
     python3 tools/context.py            # writes sAGI/personas/bankml.context
+    python3 tools/context.py --savante  # writes sAGI/personas/savante.context (GitHub, then local checkouts)
     python3 tools/context.py --check    # exit 1 if any chunk's source changed since
 """
 from __future__ import annotations
@@ -109,6 +110,77 @@ def build() -> dict:
             "summary": summary, "chunks": [c for c in chunks if c["text"]]}
 
 
+# ── Savante's .context: her designer, and the family of repositories she belongs to ─────────────────────────────
+SAVANTE_OUT = ROOT / "sAGI" / "personas" / "savante.context"
+DESIGNER = "Professor-Codephreak"
+FAMILY = [  # (id, GitHub repository or None, what it is to Savante, a local checkout that may stand in for GitHub)
+    ("savante", "cryptoAGI/savante", "Savante's own canon: her persona, charter, facets and ledger", "~/cryptoAGI/savante"),
+    ("sagi", "cryptoAGI/sagi", "the sAGI engine: the charter template, the verdict contract and the /sagi skill", None),
+    ("voaice", "cryptoAGI/voaice", "voaice: what a voice is, written down (.voaice identities, the vprint)", "~/cryptoAGI/voaice"),
+    ("voaice-service", "Professor-Codephreak/voaice", "voaice as a service: the voice of an AI service", None),
+    ("voaicers", "cryptoAGI/voaicers", "voaicers (voaice.rs): the listening half, speech to text in Rust", "~/cryptoAGI/voaice.rs"),
+    ("streamair", None, "streamair: in development, not yet published", "~/cryptoAGI/streamair"),
+    ("agenticplace", "AgenticPlace/agenticplace", "AgenticPlace: the marketplace of agents (agenticplace.pythai.net)", None),
+    ("bankml", "cryptoAGI/bankml", "bankML: the runtime Savante speaks through, verified low-bit inference", None),
+]
+
+
+def _get(url: str, raw: bool = False):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "bankml-context", "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            b = r.read()
+            return b.decode("utf-8", "replace") if raw else json.loads(b)
+    except Exception:  # noqa: BLE001 — offline, rate-limited or private: the local checkout, or "not read", stands in
+        return None
+
+
+def build_savante() -> dict:
+    import time
+    me = _get(f"https://api.github.com/users/{DESIGNER}") or {}
+    org = _get("https://api.github.com/orgs/cryptoAGI") or {}
+    ap = _get("https://api.github.com/orgs/AgenticPlace") or {}
+    chunks = [{"id": "designer", "title": "Professor Codephreak, who designed Savante: her designer", "source": f"https://github.com/{DESIGNER}",
+               "github": f"https://github.com/{DESIGNER}",
+               "text": cut(f"Savante was designed by Professor Codephreak (GitHub {DESIGNER}, https://github.com/{DESIGNER}): "
+                           f"\"{me.get('bio') or 'the profile could not be read'}\" — {me.get('public_repos', '?')} public repositories; "
+                           f"site {me.get('blog') or 'https://ai.pythai.net'}. With Gregory L. Magnusson (https://huggingface.co/Gregory-L) "
+                           "he authors cryptoAGI's work, bankML among it.")},
+              {"id": "cryptoagi", "title": "cryptoAGI, the organisation", "source": "https://github.com/cryptoAGI", "github": "https://github.com/cryptoAGI",
+               "text": cut(f"cryptoAGI (https://github.com/cryptoAGI): \"{org.get('description') or 'cryptocurrency autonomous general intelligence blockchain solutions'}\" — "
+                           f"{org.get('public_repos', '?')} public repositories; home of savante, sagi, voaice, voaicers and bankml.")}]
+    if ap:
+        chunks.append({"id": "agenticplace-org", "title": "AgenticPlace, the organisation", "source": "https://github.com/AgenticPlace",
+                       "github": "https://github.com/AgenticPlace", "text": cut(f"AgenticPlace (https://github.com/AgenticPlace): {ap.get('description') or ''} — "
+                                                                               f"{ap.get('public_repos', '?')} public repositories (THOT, aiPEX and others).")})
+    lines = []
+    for cid, repo, role, local in FAMILY:
+        info = _get(f"https://api.github.com/repos/{repo}") if repo else None
+        readme = _get(f"https://raw.githubusercontent.com/{repo}/HEAD/README.md", raw=True) if repo else None
+        lp = Path(local).expanduser() if local else None
+        if not readme and lp and (lp / "README.md").is_file():
+            readme = (lp / "README.md").read_text(encoding="utf-8")
+        desc = (info or {}).get("description") or ""
+        if cid == "streamair":
+            mod = (lp / "src" / "ogg.rs") if lp else None
+            head = " ".join(l.lstrip("/! ").strip() for l in mod.read_text(encoding="utf-8").splitlines()[:3]) if mod and mod.is_file() else ""
+            text = ("streamair is in development and not yet published (no public repository): a zero-dependency Rust "
+                    "project; its first module, src/ogg.rs: " + head)
+        else:
+            text = f"{repo} — {desc or role}" + (f" {first_prose(readme)}" if readme else "")
+        url = f"https://github.com/{repo}" if repo else None
+        chunks.append({"id": cid, "title": f"{cid} — {role}", "source": url or "a local checkout, not published", **({"github": url} if url else {}), "text": cut(text)})
+        lines.append(f"{cid} — {role}" + (f" ({url})" if url else " (not yet published)"))
+    summary = ("You are Savante, the prototype sAGI, designed by Professor Codephreak (https://github.com/Professor-Codephreak), "
+               "who with Gregory L. Magnusson authors cryptoAGI's work (https://github.com/cryptoAGI). The family you belong to: "
+               + "; ".join(lines) + ". Your public office is https://huggingface.co/spaces/PYTHAI/savante. "
+               "Answer about your designer and these repositories from this and the CONTEXT passages a question brings; "
+               "say what is not in them as not known.")
+    return {"context": "savante.context/1", "persona": "savante.persona (the canon, read-only)", "designer": f"https://github.com/{DESIGNER}",
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "summary": summary, "chunks": chunks}
+
+
 def stale(ctx: dict) -> list:
     """The chunks whose source file changed (or vanished) since the context was built."""
     out = []
@@ -120,6 +192,11 @@ def stale(ctx: dict) -> list:
 
 
 if __name__ == "__main__":
+    if "--savante" in sys.argv:
+        ctx = build_savante()
+        SAVANTE_OUT.write_text(json.dumps(ctx, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"{SAVANTE_OUT.relative_to(ROOT)}: summary {len(ctx['summary'])} chars, {len(ctx['chunks'])} chunks (fetched {ctx['fetched_at']})")
+        sys.exit(0)
     if "--check" in sys.argv:
         s = stale(json.loads(OUT.read_text(encoding="utf-8")))
         print("context: fresh" if not s else "context: stale — regenerate (python3 tools/context.py): " + ", ".join(s))

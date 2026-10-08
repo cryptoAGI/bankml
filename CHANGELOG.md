@@ -51,6 +51,14 @@
 - `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
 
 ### `.context`: bankML knows its own codebase
+- **Savante's `.context`** (`sAGI/personas/savante.context`, `tools/context.py --savante`, from GitHub's own records
+  with the local checkouts as a fallback): her designer, **Professor Codephreak** (https://github.com/Professor-Codephreak),
+  attributed with his profile, and the family she belongs to — savante, sagi, voaice (cryptoAGI and the service),
+  voaicers (voaice.rs), streamair (in development, not yet published: said so, never given an invented address),
+  AgenticPlace and bankml — each with its description and README's opening. The summary follows her system prompt
+  before her slot is keyed (so it stays cached); the matching passages ride before the question (Admin → *.context*,
+  0–4, 2 by default); only when she speaks as herself, not as an installed agent. `sAGI/selfcontext.py` holds the
+  reading and the scoring for both personas.
 - **`sAGI/personas/bankml.context`**, beside the persona, built from the repository by `tools/context.py`: a summary
   (the version, what bankML is, the path of a request through its modules, where the source lives on GitHub and on
   Hugging Face) and 37 passages (each module page's Summary, the module map, the opening of the main documents), each

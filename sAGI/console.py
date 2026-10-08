@@ -47,6 +47,7 @@ import models  # noqa: E402  (stdlib-only)
 import savante as S  # noqa: E402  (stdlib-only at import; its Merkle tree and CIDv1)
 import console_memory as CM  # noqa: E402  (stdlib-only: .memory per response window, the collection, recall)
 import sysdiag  # noqa: E402  (stdlib-only: CPU, memory, disk and GPU from /proc and /sys)
+import selfcontext as SC  # noqa: E402  (stdlib-only: a persona's .context — summary and passages)
 
 SERVE = "http://" + models.LISTEN
 STATIC = HERE / "console"
@@ -87,55 +88,25 @@ def persona() -> dict:
     return json.loads(PERSONA.read_text(encoding="utf-8"))
 
 
-# ── .context: what bankML knows of its own codebase (tools/context.py builds it from the repository) ──────────────
+# ── .context: what bankML knows of its own codebase (tools/context.py builds it; sAGI/selfcontext.py reads it) ─────
 CONTEXT = PERSONA.with_suffix(".context")
-_CTX: dict = {"mtime": None, "value": None}
+STOP = SC.STOP
 
 
 def context() -> dict:
     """The persona's .context, read again when the file changes; {} when there is none."""
-    try:
-        m = CONTEXT.stat().st_mtime
-    except OSError:
-        return {}
-    if _CTX["mtime"] != m:
-        try:
-            _CTX.update(mtime=m, value=json.loads(CONTEXT.read_text(encoding="utf-8")))
-        except ValueError:
-            _CTX.update(mtime=m, value={})
-    return _CTX["value"] or {}
+    return SC.load(CONTEXT)
 
 
 def base_system() -> str:
     """The first system message: the persona's system prompt, then the context's summary of bankML's own codebase.
     Both change only with a release, so they are the prefix the engine keeps cached (and the warmer prepares)."""
-    s = context().get("summary")
-    return persona()["system_prompt"] + (f"\n\nCONTEXT — your own codebase, generated from the repository:\n{s}" if s else "")
-
-
-STOP = set("the and for are was were this that with from what which who whom how why when where does did doing done "
-           "can could would should will shall may might must have has had having been being into onto over under about "
-           "your yours you you're its it's they them their there here then than also just only very more most some any "
-           "all not but yes our ours ask tell me my mine please".split())
+    return persona()["system_prompt"] + SC.summary_block(context(), "CONTEXT — your own codebase, generated from the repository:")
 
 
 def context_passages(q: str, k: int) -> tuple[str, list]:
-    """The `k` passages of the context that best match `q` (BM25 over title and text, a match required), with their
-    sources, as text for the late system message; ("", []) when none matches."""
-    chunks = context().get("chunks") or []
-    if k <= 0 or not chunks or not (q or "").strip():
-        return "", []
-    idx = S._BM25()
-    for i, c in enumerate(chunks):
-        idx.add(f"{c['title']} {c['title']} {c['text']}", str(i))
-    # the question's own words only: common words matched every passage a little (scores near 1.3 for "a recipe
-    # for banana bread"), while a passage about the question scores 3.5 and more
-    words = " ".join(w for w in re.findall(r"[a-z0-9_.]+", q.lower()) if w not in STOP and len(w) > 2)
-    hits = [chunks[int(src)] for sc, src, _ in idx.search(words, k=k) if sc >= 2.5] if words else []
-    if not hits:
-        return "", []
-    body = "\n".join(f"- [{c['source']}] {c['title']}: {c['text']} (GitHub {c['github']} · Hugging Face {c['huggingface']})" for c in hits)
-    return "CONTEXT — passages from your own codebase that match this question:\n" + body, [c["id"] for c in hits]
+    """The `k` passages of the context that best match `q`, with their sources, for the late system message."""
+    return SC.passages(context(), q, k, "CONTEXT — passages from your own codebase that match this question:")
 
 
 def _get(path: str, timeout: float = 5.0):

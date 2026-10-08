@@ -193,6 +193,16 @@ sg = u.sagi_html(u.Canon(cdir))
 check("the card: sAGI from the canon — its line, its three laws, the agent facet, escaped, with links",
       "Savante is the prototype for sAGI" in sg and sg.count("<li>") == 3 and "AGENT blockchain.sAGI.agent" in sg and "&lt;b&gt;" in sg and "sAGI.md ↗" in sg)
 check("the card: no sAGI block without the canon's files", u.sagi_html(u.Canon(tmp / "no-canon")) == "")
+import selfcontext as SC  # noqa: E402
+svc = SC.load(u.SAVANTE_CONTEXT)
+check("savante.context: her designer, attributed with his GitHub, and her family of repositories in the summary",
+      "Professor Codephreak" in svc.get("summary", "") and "https://github.com/Professor-Codephreak" in svc["summary"]
+      and all(n in svc["summary"] for n in ("savante", "sagi", "voaice", "voaicers", "streamair", "AgenticPlace", "bankml")))
+check("savante.context: streamair is said to be unpublished, never given an invented address",
+      "not yet published" in next(c["text"] for c in svc["chunks"] if c["id"] == "streamair") and not any(c.get("github", "").endswith("/streamair") for c in svc["chunks"]))
+check("savante.context: a question about her designer or a repository brings its passage; an unrelated one none",
+      SC.passages(svc, "who designed you?", 2, "H")[1][:1] == ["designer"] and "streamair" in SC.passages(svc, "what is streamair?", 2, "H")[1]
+      and SC.passages(svc, "a recipe for banana bread", 2, "H") == ("", []))
 check("the masthead's switch goes to the console's configured address", f'href="{u.CONSOLE_URL}"' in u.head_html("interact") and "sv-to-console" in u.head_html("interact"))
 # the machine: ping, diagnostics and the side panel's health line, here without an engine (SERVE unreachable)
 u.SERVE = "http://127.0.0.1:9"

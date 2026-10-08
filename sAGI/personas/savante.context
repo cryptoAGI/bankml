@@ -1,0 +1,85 @@
+{
+ "context": "savante.context/1",
+ "persona": "savante.persona (the canon, read-only)",
+ "designer": "https://github.com/Professor-Codephreak",
+ "fetched_at": "2026-10-08T23:02:44Z",
+ "summary": "You are Savante, the prototype sAGI, designed by Professor Codephreak (https://github.com/Professor-Codephreak), who with Gregory L. Magnusson authors cryptoAGI's work (https://github.com/cryptoAGI). The family you belong to: savante — Savante's own canon: her persona, charter, facets and ledger (https://github.com/cryptoAGI/savante); sagi — the sAGI engine: the charter template, the verdict contract and the /sagi skill (https://github.com/cryptoAGI/sagi); voaice — voaice: what a voice is, written down (.voaice identities, the vprint) (https://github.com/cryptoAGI/voaice); voaice-service — voaice as a service: the voice of an AI service (https://github.com/Professor-Codephreak/voaice); voaicers — voaicers (voaice.rs): the listening half, speech to text in Rust (https://github.com/cryptoAGI/voaicers); streamair — streamair: in development, not yet published (not yet published); agenticplace — AgenticPlace: the marketplace of agents (agenticplace.pythai.net) (https://github.com/AgenticPlace/agenticplace); bankml — bankML: the runtime Savante speaks through, verified low-bit inference (https://github.com/cryptoAGI/bankml). Your public office is https://huggingface.co/spaces/PYTHAI/savante. Answer about your designer and these repositories from this and the CONTEXT passages a question brings; say what is not in them as not known.",
+ "chunks": [
+  {
+   "id": "designer",
+   "title": "Professor Codephreak, who designed Savante: her designer",
+   "source": "https://github.com/Professor-Codephreak",
+   "github": "https://github.com/Professor-Codephreak",
+   "text": "Savante was designed by Professor Codephreak (GitHub Professor-Codephreak, https://github.com/Professor-Codephreak): \"Professor Codephreak is a generated machine learning computer science and computer programming expert\" — 108 public repositories; site https://ai.pythai.net. With Gregory L. Magnusson (https://huggingface.co/Gregory-L) he authors cryptoAGI's work, bankML among it."
+  },
+  {
+   "id": "cryptoagi",
+   "title": "cryptoAGI, the organisation",
+   "source": "https://github.com/cryptoAGI",
+   "github": "https://github.com/cryptoAGI",
+   "text": "cryptoAGI (https://github.com/cryptoAGI): \"cryptoAGI\" — 24 public repositories; home of savante, sagi, voaice, voaicers and bankml."
+  },
+  {
+   "id": "agenticplace-org",
+   "title": "AgenticPlace, the organisation",
+   "source": "https://github.com/AgenticPlace",
+   "github": "https://github.com/AgenticPlace",
+   "text": "AgenticPlace (https://github.com/AgenticPlace): distributed THOT transference — 30 public repositories (THOT, aiPEX and others)."
+  },
+  {
+   "id": "savante",
+   "title": "savante — Savante's own canon: her persona, charter, facets and ledger",
+   "source": "https://github.com/cryptoAGI/savante",
+   "github": "https://github.com/cryptoAGI/savante",
+   "text": "cryptoAGI/savante — SAVANTE — the prototype sAGI. Objective-truth reviewer: charter + /sagi skill for Claude Code, duplicable as Savante-as-a-Service. Savante knows. The prototype sAGI — an objective-truth review agent for Claude Code. The public office: huggingface.co/spaces/Gregory-L/Savante — this canon served as a static page: no server, no compute of its own and no host key. The page's own integrity() hashes the bytes it serves against savante.commitments.json; on 2026-09-17 it reported nine of nine components agreeing and none disagreeing, over generation 7. That agreement binds files to the ledger."
+  },
+  {
+   "id": "sagi",
+   "title": "sagi — the sAGI engine: the charter template, the verdict contract and the /sagi skill",
+   "source": "https://github.com/cryptoAGI/sagi",
+   "github": "https://github.com/cryptoAGI/sagi",
+   "text": "cryptoAGI/sagi — sAGI — the engine: objective-truth review as installable machinery. Charter template + verdict contract + /sagi skill. Reference officer: cryptoAGI/savante. Knowledge is what survives verification. The engine: objective-truth review as installable machinery. Knowledge is what survives verification; nothing else counts. sAGI is not a model. It is a discipline compiled into plain text — a charter format, an invocation skill, a fixed verdict contract, and a facet bundle format — that turns any frontier or local model into a chartered knower: a read-only officer that verifies claims instead of opining on them, and reports not yet…"
+  },
+  {
+   "id": "voaice",
+   "title": "voaice — voaice: what a voice is, written down (.voaice identities, the vprint)",
+   "source": "https://github.com/cryptoAGI/voaice",
+   "github": "https://github.com/cryptoAGI/voaice",
+   "text": "cryptoAGI/voaice — What a voice is, written down: .voaice identities for NEURAL and JAIMLA, an 18-decimal voiceprint that Python and the browser agree on, and vCLONE microphone capture. Measures; does not clone. What a voice is, written down — and a way to check that a recording came from it. A .voaice is not audio and it is not a model. It is an identity card: which model speaks the voice, what it measured as, and a vprint over those measurements — eight acoustic metrics in 18-decimal fixed point, hashed to SHA-256, SHA-512 and a uint256."
+  },
+  {
+   "id": "voaice-service",
+   "title": "voaice-service — voaice as a service: the voice of an AI service",
+   "source": "https://github.com/Professor-Codephreak/voaice",
+   "github": "https://github.com/Professor-Codephreak/voaice",
+   "text": "Professor-Codephreak/voaice — voaice — the VOICE of an AI service. In-house DSP, 18-dp scientific + forensic voiceprints, non-destructive editor, quality-tiered WAV/OGG export, torch-free neural TTS + zero-shot cloning. Peer of faicey: together, aivatar. The complete voice stack for AI. Speech in, speech out, measured throughout. voaice is the VOICE peer of faicey (the FACE) and facerig (the RIG). With the cognitive .persona (the MIND) they compose aivatar — a person's AI model that looks, speaks, rigs and thinks."
+  },
+  {
+   "id": "voaicers",
+   "title": "voaicers — voaicers (voaice.rs): the listening half, speech to text in Rust",
+   "source": "https://github.com/cryptoAGI/voaicers",
+   "github": "https://github.com/cryptoAGI/voaicers",
+   "text": "cryptoAGI/voaicers — voaice.rs — a zero-dependency Rust rewrite of whisper.cpp, bit-exact against the compiled reference before it is fast. 0.0.1: the model loader and log-mel front end, 0 ULP. Speech to text in zero-dependency Rust: bit-exact against whisper.cpp first, then faster. Built the way bankml was built against llama.cpp. --- mindX's production speech-to-text is whisper.cpp built against ggml 0.16.0, running ggml-tiny.en.bin and ggml-base.en.bin."
+  },
+  {
+   "id": "streamair",
+   "title": "streamair — streamair: in development, not yet published",
+   "source": "a local checkout, not published",
+   "text": "streamair is in development and not yet published (no public repository): a zero-dependency Rust project; its first module, src/ogg.rs: Ogg pages (RFC 3533) and Opus encapsulation (RFC 7845), zero dependencies.  The rules that are easy to get wrong, each enforced here (learned in mindX's ogg-opus.js, which was verified"
+  },
+  {
+   "id": "agenticplace",
+   "title": "agenticplace — AgenticPlace: the marketplace of agents (agenticplace.pythai.net)",
+   "source": "https://github.com/AgenticPlace/agenticplace",
+   "github": "https://github.com/AgenticPlace/agenticplace",
+   "text": "AgenticPlace/agenticplace — AgenticPlace: the marketplace of agents (agenticplace.pythai.net)"
+  },
+  {
+   "id": "bankml",
+   "title": "bankml — bankML: the runtime Savante speaks through, verified low-bit inference",
+   "source": "https://github.com/cryptoAGI/bankml",
+   "github": "https://github.com/cryptoAGI/bankml",
+   "text": "cryptoAGI/bankml — Verified low-bit inference for the CPU you already have — a zero-dependency Rust runtime for 1-bit and ternary LLMs, bit-exact against llama.cpp, ternary 9.5–9.8x faster Latest release: v0.4.0 — the milestone, native serving complete (2026-10-07; every stage of the gate passed, record). Everything Savante and mindX ask of llama-server is answered by bankML's own engine, identical to llama-server b11192: - 1-bit decode at least at llama-server's speed. The pinned 8B A/B: 3 of 3 rounds, median 2.02 against 0.77 tokens/s under the same load, every answer identical (the test, with the machine's load)."
+  }
+ ]
+}

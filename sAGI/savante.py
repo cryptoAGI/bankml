@@ -50,6 +50,8 @@ sys.dont_write_bytecode = True  # never leave a cache next to anything we import
 import embed  # noqa: E402 — bge-m3 via the local Ollama (optional; BM25 stands alone without it)
 import calc  # noqa: E402 — exact arithmetic for the answers a 1-bit model should not guess
 import sysdiag  # noqa: E402 — the machine now: CPU, memory, disk, GPU (stdlib, /proc and /sys)
+import selfcontext as SC  # noqa: E402 — a persona's .context: its summary and passages
+SAVANTE_CONTEXT = Path(__file__).resolve().parent / "personas" / "savante.context"  # her designer and family (tools/context.py --savante)
 
 def _canon_default() -> Path:
     """Savante's canon: ~/cryptoAGI/savante (beside jaimla and luvai), or an older ~/savante if that is the only one."""
@@ -2290,6 +2292,8 @@ def build(canon: Canon, mode: str):
                     use_mem = gr.Checkbox(value=True, label="use .memory (the operator's notes, appended to the system prompt)")
                     mem_budget = gr.Slider(0, 6000, value=MEMORY_BUDGET, step=200,
                                            label=".memory budget, characters — the newest notes that fit, listed oldest first so a new note keeps the cache")
+                    context_k = gr.Slider(0, 4, value=2, step=1,
+                                          label=".context — passages about her designer and her family of repositories that match the question")
                     recall_k = gr.Slider(0, 4, value=0, step=1,
                                          label="recall from .history — earlier exchanges (other sessions) that match the question, sent just before it; "
                                                "each adds its tokens to read, so it is off by default")
@@ -2331,7 +2335,7 @@ def build(canon: Canon, mode: str):
             PENDING.update(t0=time.time(), first=None)  # the clock starts at the press of Send
             return "", (h or []) + [[m, None]]
 
-        def respond(h, which, max_tokens, temperature, sess, use_mem, mem_budget=MEMORY_BUDGET, recall_k=0):
+        def respond(h, which, max_tokens, temperature, sess, use_mem, mem_budget=MEMORY_BUDGET, recall_k=0, context_k=2):
             if not h or h[-1][1] is not None:
                 yield h, gr.update()
                 return
@@ -2361,10 +2365,21 @@ def build(canon: Canon, mode: str):
                 st = serve_status()
                 arch = str((st.get("verified") or {}).get("arch") or "").lower()
                 qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
+                # .context: Savante's designer and family, after her system prompt — before the slot is keyed on it
+                sc = SC.load(SAVANTE_CONTEXT) if not ACTIVE["slug"] else {}
+                if sc:
+                    system, why = system + SC.summary_block(sc, "CONTEXT — your designer and the family you belong to:"), why + " + .context"
                 warm = slot_restore(system)
                 win = {}
+                # .context: Savante's designer and family — the summary after her system prompt (cached), the passages
+                # that match the question just before it; only when she speaks as herself, not as an installed agent
+                ctx_text, cited = (SC.passages(sc, question, int(context_k), "CONTEXT — passages that match this question:")
+                                   if sc else ("", []))
+                if cited:
+                    why += f" ({len(cited)} .context passages)"
                 # recall from .history: the earlier exchanges that match, sent just before the question (after the cache)
                 recall, recalled = recall_block(question, int(recall_k), sess["id"])
+                recall = "\n\n".join(x for x in (ctx_text, recall) if x)
                 if recalled:
                     why += f" + recall from .history ({len(recalled)} earlier exchanges)"
                 try:
@@ -2397,7 +2412,7 @@ def build(canon: Canon, mode: str):
                 history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
                                 "assistant_raw": text, "shown": h[-1][1], "trail": trail, "prompt": which, "prompt_provenance": why, "receipt": rc,
                                 **({"calculator": [{"expression": x, "result": r} for x, r in worked]} if worked else {}),
-                                **({"recall": recalled} if recalled else {})}, hist)
+                                **({"recall": recalled} if recalled else {}), **({"context": cited} if cited else {})}, hist)
                 slot_save(system)  # background; never in the way of the answer or its .history line
                 yield h, f"<div class='bk-card' style='font-size:13px'>{E(h[-1][0][:120])}<br><sub>{trail}</sub></div>"
             finally:
@@ -2405,8 +2420,8 @@ def build(canon: Canon, mode: str):
                 if PENDING["t0"] == t0:  # only this request's clock; another tab's stays
                     PENDING.update(t0=None, first=None)
 
-        ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem, mem_budget, recall_k], [chat, last])
-        ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem, mem_budget, recall_k], [chat, last])
+        ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem, mem_budget, recall_k, context_k], [chat, last])
+        ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem, mem_budget, recall_k, context_k], [chat, last])
         stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])  # a cancelled respond runs its finally
         which.change(lambda w: system_prompt(canon, w)[1], which, prov)
         new.click(lambda: ([], {"id": uuid.uuid4().hex[:12]}), None, [chat, session])
