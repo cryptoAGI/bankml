@@ -177,11 +177,101 @@ try:
     dg = json.loads(req("/api/diagnostics")[1])
     ask = dg["traces"][0]
     kids = [c["name"] for c in ask["children"]]
-    check("/api/diagnostics: an answer is traced span by span", ask["name"] == "ask" and kids[:2] == ["self_block", "engine.stream"] and "receipt.verify" in kids)
-    check("/api/diagnostics: the engine's failure is on its span", bool(ask["children"][1]["error"]) and ask["tags"]["ok"] is False)
+    check("/api/diagnostics: an answer is traced span by span (SELF, the window's memory, the engine)",
+          ask["name"] == "ask" and kids[:3] == ["self_block", "memory", "engine.stream"] and "receipt.verify" in kids)
+    check("/api/diagnostics: the engine's failure is on its span", bool(ask["children"][kids.index("engine.stream")]["error"]) and ask["tags"]["ok"] is False)
     check("/api/diagnostics: no question text in any trace", secret not in json.dumps(dg))
     check("/api/diagnostics: without an engine the first check is bad, and says where it looked",
           dg["checks"][0]["level"] == "bad" and "127.0.0.1:9" in dg["checks"][0]["seen"])
+    # .memory per response window, the collection, review of .history, recall (sAGI/console_memory.py)
+    CM = C.CM
+    check("memory: a window's name from its title (survives a reload; the field's ids do not)",
+          CM.slug("Output 1") == "output-1" and CM.slug("") == "main" and CM.slug("../../etc/passwd") == "etc-passwd" and CM.slug(CM.COLLECTION) == CM.COLLECTION)
+    M = CM.Store(tmp / "mem-unit")
+    for bad in ("", "   "):
+        try:
+            M.add("w", bad); check("memory: an empty note is refused", False)
+        except CM.MemoryError_:
+            check("memory: an empty note is refused", True)
+    M.add("w", "first note"); M.add("w", "second note"); M.add("w", "first note")
+    check("memory: the same note twice is one note", [n["text"] for n in M.notes("w")] == ["first note", "second note"])
+    M.add("w", "x" * 5000)
+    check("memory: a long note is cut to the limit", len(M.notes("w")[-1]["text"]) == CM.LIMITS["note_chars"])
+    M.remove("w", 3)
+    b1 = M.block("w", 2400, "H")
+    M.add("w", "third note")
+    check("memory: listed oldest first, a new note appended (the cached prefix holds)",
+          b1 == "H\n- first note\n- second note" and M.block("w", 2400, "H").startswith(b1))
+    check("memory: over budget the newest are kept", M.block("w", 30, "H") == "H\n- second note\n- third note")
+    M.add(CM.COLLECTION, "collected idea")
+    ctx = M.context("w", CM.clamp({}))
+    check("memory: the collection first, then the window's notes", 0 < ctx.index("collected idea") < ctx.index("first note"))
+    check("memory: each can be switched off", "collected" not in M.context("w", CM.clamp({"use_collection": False}))
+          and M.context("w", CM.clamp({"use_collection": False, "use_memory": False})) == "")
+    check("memory: windows listed without the collection", [w["name"] for w in M.windows()] == ["w"])
+    lim = dict(CM.LIMITS); CM.LIMITS["notes_per_window"] = 3
+    try:
+        M.add("w", "fourth"); check("memory: a full window refuses a note", False)
+    except CM.MemoryError_:
+        check("memory: a full window refuses a note", True)
+    CM.LIMITS.update(lim)
+    st = M.save_settings({"recall_k": 99, "memory_budget": -5, "use_memory": "off", "recall_source": "nowhere", "junk": 1})
+    check("memory: options clamped to their limits and types, unknown keys dropped",
+          st == {**CM.DEFAULTS, "recall_k": 4, "memory_budget": 0, "use_memory": False} and M.settings() == st)
+    check("memory: the defaults are sane (memory and collection on, recall off)",
+          CM.DEFAULTS["use_memory"] and CM.DEFAULTS["use_collection"] and CM.DEFAULTS["recall_k"] == 0 and CM.DEFAULTS["memory_budget"] <= 3000)
+    recs = [{"at": 1790000000, "question": "how fast is ternary decode", "answer": "about 0.2 s a token"},
+            {"at": 1790000100, "question": "what is a receipt", "answer": "the sha256 of the weights, request and answer"},
+            {"at": 1790000200, "question": "unanswered", "answer": ""}]
+    txt, ids = CM.recall(recs, "ternary decode speed", 2, set(), S._BM25)
+    check("recall: the matching exchange, dated, as context", ids == [0] and "RECALL" in txt and "0.2 s a token" in txt)
+    check("recall: skips what the conversation already holds, and is off at 0",
+          CM.recall(recs, "ternary decode", 2, {"how fast is ternary decode"}, S._BM25) == ("", []) and CM.recall(recs, "ternary", 0, set(), S._BM25) == ("", []))
+    # the endpoints
+    J = {"Content-Type": "application/json"}
+    post = lambda body: req("/api/memory", json.dumps(body).encode(), J)  # noqa: E731
+    check("/api/memory: add to a window by its title", json.loads(post({"action": "add", "window": "Output 1", "text": "keep answers short"})[1])["window"] == "output-1")
+    got = json.loads(req("/api/memory?window=Output%201")[1])
+    check("/api/memory: the window's notes and the context a question carries",
+          got["notes"][0]["text"] == "keep answers short" and "keep answers short" in got["context"] and got["settings"] == C.MEM.settings())
+    hist = json.loads(req("/api/history?q=")[1])
+    check("/api/history: the console's exchanges, newest first", hist["source"] == "console" and hist["of"] == len(hist["exchanges"]) >= 2)
+    i0 = hist["exchanges"][0]["i"]
+    check("/api/memory collect: exchanges of .history into the collection",
+          json.loads(post({"action": "collect", "window": CM.COLLECTION, "source": "console", "indices": [i0]})[1])["ok"]
+          and len(C.MEM.notes(CM.COLLECTION)) == 1 and "asked" in C.MEM.notes(CM.COLLECTION)[0]["text"])
+    check("/api/memory: refusals are 400 with the reason", post({"action": "collect", "indices": []})[0] == 400 and post({"action": "nope"})[0] == 400
+          and post({"action": "remove", "window": "Output 1", "n": 9})[0] == 400)
+    check("/api/memory settings: saved, clamped", json.loads(post({"action": "settings", "settings": {"recall_k": 1}})[1])["settings"]["recall_k"] == 1)
+    # what a question carries: the persona, the collection, the window's notes; recall and SELF just before the question
+    import http.server as hs2
+    sent = []
+    class Eng(hs2.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_POST(self):
+            sent.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            b = b"data: [DONE]\n\n"
+            self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    eng = hs2.ThreadingHTTPServer(("127.0.0.1", 0), Eng)
+    threading.Thread(target=eng.serve_forever, daemon=True).start()
+    real_serve = C.SERVE
+    C.SERVE = f"http://127.0.0.1:{eng.server_address[1]}"
+    try:
+        req("/api/ask", json.dumps({"message": "and the ternary one?", "window": "Output 1"}).encode(), J)
+        m = sent[-1]["messages"]
+        check("ask: the window's memory and the collection follow the persona in the first system message",
+              m[0]["role"] == "system" and m[0]["content"].startswith(C.persona()["system_prompt"])
+              and "keep answers short" in m[0]["content"] and "asked" in m[0]["content"])
+        check("ask: another window does not carry this window's notes",
+              (req("/api/ask", json.dumps({"message": "hello", "window": "Output 2"}).encode(), J) and "keep answers short" not in sent[-1]["messages"][0]["content"]))
+        check("ask: the exchange is logged with its window", json.loads(C.log_lines()[-1])["window"] == "output-2")
+        check("ask: per-request options override the saved ones (no memory)",
+              (req("/api/ask", json.dumps({"message": "x", "window": "Output 1", "options": {"use_memory": False, "use_collection": False}}).encode(), J)
+               and sent[-1]["messages"][0]["content"] == C.persona()["system_prompt"]))
+    finally:
+        C.SERVE = real_serve
+        eng.shutdown()
+        post({"action": "settings", "settings": CM.DEFAULTS})
     # public mode (a hosted demo): its one host name is served, read-only, and no visitor's question is shown
     C.PUBLIC = "demo.example"
     pub = {"Host": "demo.example"}
@@ -192,6 +282,9 @@ try:
           req("/api/resources", b'{"threads": 1, "ram_gb": 1, "gpu_limit": 0}', {**pub, "Content-Type": "application/json", "Origin": "https://demo.example"})[0] == 403)
     check("public: no exchange is shown, though a log exists", json.loads(req("/api/log", headers=pub)[1])["exchanges"] == []
           and {a["trait_type"]: a["value"] for a in json.loads(req("/api/infotags", headers=pub)[1])["attributes"]}["exchanges"] == 0)
+    check("public: no memory and no history (they are the operator's)",
+          req("/api/memory", headers=pub)[0] == 403 and req("/api/history", headers=pub)[0] == 403
+          and req("/api/memory", b'{"action": "add", "text": "x"}', {**pub, **{"Content-Type": "application/json", "Origin": "https://demo.example"}})[0] == 403)
     C.PUBLIC = None
 finally:
     srv.shutdown()

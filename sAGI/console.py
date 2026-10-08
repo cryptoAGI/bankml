@@ -44,12 +44,14 @@ sys.path.insert(0, str(HERE))
 import diagnostics as D  # noqa: E402  (stdlib-only)
 import models  # noqa: E402  (stdlib-only)
 import savante as S  # noqa: E402  (stdlib-only at import; its Merkle tree and CIDv1)
+import console_memory as CM  # noqa: E402  (stdlib-only: .memory per response window, the collection, recall)
 
 SERVE = "http://" + models.LISTEN
 STATIC = HERE / "console"
 PERSONA = HERE / "personas" / "bankml.persona"
 STATE = Path(os.environ.get("BANKML_UI_STATE", Path.home() / ".local" / "share" / "bankml" / "savante")).expanduser()
 LOG = STATE / "console.jsonl"
+MEM = CM.Store(STATE / "console-memory")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8"), "/vendor/d3.v7.min.js": ("vendor/d3.v7.min.js", "text/javascript"),
          "/vendor/d3.LICENSE": ("vendor/d3.LICENSE", "text/plain; charset=utf-8"),
@@ -233,13 +235,29 @@ SELF_HEAD = "SELF (measured by bankML just now):\n"
 WARM: dict = {"key": None, "state": "idle", "conn": None}
 
 
-def messages(system: str, hist: list, q: str, self_txt: str) -> list:
+def messages(system: str, hist: list, q: str, self_txt: str, recall: str = "") -> list:
     """The prompt as sent. The persona's system prompt comes first and never changes, so the engine reuses it, and the
     conversation before this question, from its prompt cache; SELF changes with every question, so it comes last, as a
     second system message just before the question. Inside the first system message it made the engine recompute
-    everything after it on every turn (376 of 551 tokens reused, 66 s to the first token, Bonsai-8B on the laptop)."""
-    return [{"role": "system", "content": system}, *hist, {"role": "system", "content": SELF_HEAD + self_txt},
-            {"role": "user", "content": q}]
+    everything after it on every turn (376 of 551 tokens reused, 66 s to the first token, Bonsai-8B on the laptop).
+    Recall from .history, when asked for, rides in the same late message: it changes with every question too."""
+    late = SELF_HEAD + self_txt + ("\n\n" + recall if recall else "")
+    return [{"role": "system", "content": system}, *hist, {"role": "system", "content": late}, {"role": "user", "content": q}]
+
+
+def records(source: str) -> list:
+    """The exchanges of a .history as {"at", "question", "answer", "window"}: the console's own log, or Savante's."""
+    if source == "savante":
+        return [{"at": r.get("ts"), "question": r.get("user", ""), "answer": r.get("assistant", ""), "window": r.get("session")}
+                for r in S.history_all()]
+    out = []
+    for l in log_lines():
+        try:
+            r = json.loads(l)
+        except ValueError:
+            continue
+        out.append({"at": r.get("at"), "question": r.get("question", ""), "answer": r.get("answer", ""), "window": r.get("window")})
+    return out
 
 
 def window(hist: list, keep: int = 12, step: int = 8) -> list:
@@ -372,6 +390,27 @@ class H(BaseHTTPRequestHandler):
             return self._json(diagnostics())
         if path == "/api/thesis":
             return self._json(thesis())
+        if path in ("/api/memory", "/api/history"):
+            if PUBLIC:
+                return self._send(403, b"a public console keeps no memory and shows no history", "text/plain")
+            qs = dict(p.split("=", 1) for p in (self.path.split("?", 1)[1].split("&") if "?" in self.path else []) if "=" in p)
+            from urllib.parse import unquote_plus
+            qs = {k: unquote_plus(v) for k, v in qs.items()}
+            if path == "/api/memory":
+                w = qs.get("window")
+                body = {"settings": MEM.settings(), "defaults": CM.DEFAULTS, "limits": CM.LIMITS, "windows": MEM.windows(),
+                        "collection": len(MEM.notes(CM.COLLECTION))}
+                if w:
+                    body.update(window=CM.slug(w), notes=MEM.notes(w), context=MEM.context(w, MEM.settings()))
+                return self._json(body)
+            src = qs.get("source") if qs.get("source") in CM.SOURCES else "console"
+            recs = records(src)
+            try:
+                lim = max(1, min(int(qs.get("limit") or 40), 200))
+            except ValueError:
+                lim = 40
+            hits = CM.search(recs, qs.get("q", ""), lim, S._BM25)
+            return self._json({"source": src, "of": len(recs), "exchanges": [{"i": i, **r} for i, r in hits]})
         if path == "/api/engine":
             s = _get("/bankml/status", 10)
             return self._json(s) if s is not None else self._json({"error": f"bankml serve does not answer at {SERVE}"}, 502)
@@ -408,7 +447,36 @@ class H(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": str(e)}, 400)
         if path == "/api/ask":
             return self._ask(req)
+        if path == "/api/memory":
+            if PUBLIC:
+                return self._send(403, b"a public console keeps no memory", "text/plain")
+            return self._memory(req)
         self._send(404, b"not found", "text/plain")
+
+    def _memory(self, req: dict):
+        """.memory per window: add, remove, the options, and collect exchanges of a .history into a window or the
+        collection."""
+        a, w = req.get("action"), req.get("window") or "main"
+        try:
+            if a == "add":
+                n = MEM.add(w, req.get("text", ""))
+            elif a == "remove":
+                n = MEM.remove(w, int(req.get("n", 0)))
+            elif a == "settings":
+                return self._json({"ok": True, "settings": MEM.save_settings(req.get("settings") or {})})
+            elif a == "collect":
+                src = req.get("source") if req.get("source") in CM.SOURCES else "console"
+                recs = records(src)
+                picked = [recs[i] for i in req.get("indices") or [] if isinstance(i, int) and 0 <= i < len(recs)]
+                if not picked:
+                    raise CM.MemoryError_("no exchange chosen")
+                for r in picked:
+                    n = MEM.add(w, CM.exchange_note(r), {"kind": "history", "source": src, "at": r.get("at")})
+            else:
+                raise CM.MemoryError_("action: add, remove, settings or collect")
+        except (CM.MemoryError_, ValueError, TypeError) as e:
+            return self._json({"ok": False, "error": str(e)}, 400)
+        return self._json({"ok": True, "window": CM.slug(w), "notes": n})
 
     def _ask(self, req: dict):
         """Stream an answer as NDJSON lines {"piece"} … then {"done", "receipt", "timings", "self"}; log the exchange.
@@ -429,7 +497,17 @@ class H(BaseHTTPRequestHandler):
         with D.span("self_block"):
             sb = self_block()
         hist = window(req.get("history") or [])
-        body = {"messages": messages(persona()["system_prompt"], hist, q, self_text(sb)), "stream": True,
+        win = CM.slug(req.get("window"))
+        system, recalled, recall_text = persona()["system_prompt"], [], ""
+        if not PUBLIC:  # a public console uses no memory and recalls nothing: they are the operator's
+            opts = CM.clamp({**MEM.settings(), **{k: v for k, v in (req.get("options") or {}).items() if k in CM.DEFAULTS}})
+            with D.span("memory", window=win):
+                system += MEM.context(win, opts)
+            if opts["recall_k"]:
+                with D.span("recall", k=opts["recall_k"], source=opts["recall_source"]):
+                    recall_text, recalled = CM.recall(records(opts["recall_source"]), q, opts["recall_k"],
+                                                      {m.get("content") for m in hist if m.get("role") == "user"}, S._BM25)
+        body = {"messages": messages(system, hist, q, self_text(sb), recall_text), "stream": True,
                 "max_tokens": min(int(req.get("max_tokens") or 256), PUBLIC_MAX_TOKENS if PUBLIC else 1 << 30)}
         for k in ("temperature", "top_k", "top_p", "min_p", "repeat_penalty", "seed"):
             if req.get(k) is not None:
@@ -471,7 +549,8 @@ class H(BaseHTTPRequestHandler):
             last = ((_get("/bankml/metrics") or {}).get("records") or [{}])[-1]
         if not PUBLIC:  # a public console keeps no record of its visitors' questions
             with D.span("log.write"):
-                rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb}
+                rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb,
+                       "window": win, **({"recall": recalled} if recalled else {})}
                 STATE.mkdir(parents=True, exist_ok=True)
                 with LOG.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")

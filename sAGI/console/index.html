@@ -34,6 +34,48 @@
   <!-- Ask: the landing — one question, one answer, its receipt -->
   <section id="ask" class="tab active">
     <p id="engine" class="engine">connecting to bankml serve…</p>
+    <details id="advanced" class="advanced window">
+      <summary class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Advanced</b><span>.memory per response window · the collection · recall from .history</span></summary>
+      <div class="adv-grid">
+        <section class="window-body">
+          <h3>Window</h3>
+          <label class="adv-row">memory of <input id="mem-win" list="mem-wins" value="main" spellcheck="false" autocomplete="off" aria-label="window"></label>
+          <datalist id="mem-wins"></datalist>
+          <p class="quiet adv-hint">A response window's memory is named after its title (<code>Output 1</code> → <code>output-1</code>); the plain question box is <code>main</code>; <code>_collection</code> is shared by every window.</p>
+          <ol id="mem-notes" class="mem-notes"></ol>
+          <form id="mem-add" class="adv-add">
+            <textarea id="mem-text" rows="2" placeholder="a note for this window" aria-label="new note"></textarea>
+            <button type="submit" class="ghost">Add</button>
+          </form>
+          <p id="mem-note" class="quiet"></p>
+        </section>
+        <section class="window-body">
+          <h3>Options</h3>
+          <label class="adv-check"><input type="checkbox" id="opt-use_memory"> use the window's .memory</label>
+          <label class="adv-check"><input type="checkbox" id="opt-use_collection"> use the collection</label>
+          <label>window budget <output id="opt-memory_budget-v"></output><input type="range" id="opt-memory_budget" min="0" max="6000" step="200"></label>
+          <label>collection budget <output id="opt-collection_budget-v"></output><input type="range" id="opt-collection_budget" min="0" max="6000" step="200"></label>
+          <label>recall from .history <output id="opt-recall_k-v"></output><input type="range" id="opt-recall_k" min="0" max="4" step="1"></label>
+          <label class="adv-row">recall from <select id="opt-recall_source"><option value="console">the console's .history</option><option value="savante">Savante's .history</option></select></label>
+          <div class="adv-row"><button id="opt-save" class="ghost" type="button">Save options</button><button id="opt-reset" class="ghost" type="button">Defaults</button></div>
+          <p id="opt-note" class="quiet adv-hint">Notes go in after the persona, oldest first, so a new note keeps the cache. Recall adds its tokens to read before the first token; it is off by default.</p>
+        </section>
+      </div>
+      <section class="window-body adv-review">
+        <h3>Review .history → .memory</h3>
+        <div class="adv-row">
+          <input id="rev-q" type="search" placeholder="search the exchanges — empty: the newest" aria-label="search .history">
+          <select id="rev-src" aria-label="which .history"><option value="console">the console</option><option value="savante">Savante</option></select>
+          <button id="rev-go" class="ghost" type="button">Search</button>
+        </div>
+        <ol id="rev-list" class="rev-list"></ol>
+        <div class="adv-row">
+          <button id="rev-to-win" class="ghost" type="button">Add chosen to this window's .memory</button>
+          <button id="rev-to-col" class="ghost" type="button">Add chosen to the collection</button>
+          <span id="rev-note" class="quiet"></span>
+        </div>
+      </section>
+    </details>
     <div id="uif-landing"></div>
     <div id="chat" class="chat" aria-live="polite">
       <div class="empty" id="empty">

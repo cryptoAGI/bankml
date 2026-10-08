@@ -17,6 +17,11 @@ from turn to turn. When a newly started engine appears, the console restores the
 once and saves it, so the first question does not pay for it; a question during that prefill cancels it. The
 conversation is trimmed four exchanges at a time (`window`), so the cached prefix survives long conversations.
 
+**Memory per response window (0.4.3, Ask → Advanced).** Each response window keeps a `.memory` named after its title
+(`main` for the plain box), and a *collection* above them holds higher-level notes every window shares. Notes are
+added by hand or gathered by reviewing `.history` (the console's or Savante's). Options: use each, their budgets,
+recall from `.history` (0–4, off by default). Storage and limits: `sAGI/console_memory.py`.
+
 ## Technical usage
 
 ```sh

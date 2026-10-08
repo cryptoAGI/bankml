@@ -94,6 +94,86 @@ $("form").addEventListener("submit", async (ev) => {
   $("send").disabled = false; $("q").focus();
 });
 
+// ── Advanced: .memory per response window, the collection, recall, review of .history ───────────────────────────
+const OPTS = ["use_memory", "use_collection", "memory_budget", "collection_budget", "recall_k", "recall_source"];
+let memDefaults = null, revRows = [];
+const postJSON = async (path, body) => {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+};
+const optSync = () => {
+  $("opt-memory_budget-v").textContent = `${$("opt-memory_budget").value} characters`;
+  $("opt-collection_budget-v").textContent = `${$("opt-collection_budget").value} characters`;
+  $("opt-recall_k-v").textContent = +$("opt-recall_k").value === 0 ? "off" : `${$("opt-recall_k").value} exchanges`;
+};
+const optSet = (s) => {
+  for (const k of OPTS) { const e = $("opt-" + k); if (!e) continue; if (e.type === "checkbox") e.checked = !!s[k]; else e.value = s[k]; }
+  optSync();
+};
+const optGet = () => Object.fromEntries(OPTS.map((k) => { const e = $("opt-" + k); return [k, e.type === "checkbox" ? e.checked : e.type === "range" ? +e.value : e.value]; }));
+["opt-memory_budget", "opt-collection_budget", "opt-recall_k"].forEach((id) => $(id).addEventListener("input", optSync));
+
+async function loadMemory() {
+  const w = $("mem-win").value.trim() || "main";
+  let d;
+  try { d = await (await fetch("/api/memory?window=" + encodeURIComponent(w))).json(); } catch (e) { $("mem-note").textContent = "the console does not answer"; return; }
+  memDefaults = d.defaults;
+  if (!loadMemory.set) { optSet(d.settings); loadMemory.set = true; }
+  const dl = $("mem-wins"); dl.textContent = "";
+  for (const name of ["main", "_collection", ...d.windows.map((x) => x.name).filter((n) => n !== "main")]) { const o = document.createElement("option"); o.value = name; dl.append(o); }
+  const list = $("mem-notes"); list.textContent = "";
+  (d.notes || []).forEach((n, i) => {
+    const li = el("li", null); const t = el("span", "mem-t", n.text);
+    const rm = el("button", "ghost mem-rm", "✕"); rm.type = "button"; rm.title = "remove this note"; rm.setAttribute("aria-label", "remove note " + (i + 1));
+    rm.addEventListener("click", async () => { try { await postJSON("/api/memory", { action: "remove", window: w, n: i + 1 }); loadMemory(); } catch (e) { $("mem-note").textContent = e.message; } });
+    li.append(t, rm); list.append(li);
+  });
+  $("mem-note").textContent = `${d.window}: ${(d.notes || []).length} notes · the collection: ${d.collection} · ${d.windows.length} windows with notes`;
+}
+$("mem-win").addEventListener("change", loadMemory);
+$("mem-add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("mem-text").value.trim(); if (!text) return;
+  try { await postJSON("/api/memory", { action: "add", window: $("mem-win").value.trim() || "main", text }); $("mem-text").value = ""; loadMemory(); }
+  catch (err) { $("mem-note").textContent = err.message; }
+});
+$("opt-save").addEventListener("click", async () => {
+  try { optSet((await postJSON("/api/memory", { action: "settings", settings: optGet() })).settings); $("opt-note").textContent = "saved: every question uses these"; }
+  catch (e) { $("opt-note").textContent = e.message; }
+});
+$("opt-reset").addEventListener("click", () => { if (memDefaults) { optSet(memDefaults); $("opt-note").textContent = "defaults shown: Save options to keep them"; } });
+
+async function review() {
+  const q = $("rev-q").value.trim(), src = $("rev-src").value;
+  let d;
+  try { d = await (await fetch(`/api/history?source=${src}&limit=40&q=` + encodeURIComponent(q))).json(); } catch (e) { $("rev-note").textContent = "the console does not answer"; return; }
+  revRows = d.exchanges || [];
+  const list = $("rev-list"); list.textContent = "";
+  for (const r of revRows) {
+    const li = el("li", null); const lab = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = r.i;
+    const when = typeof r.at === "number" ? new Date(r.at * 1000).toISOString().slice(0, 10) : String(r.at || "").slice(0, 10);
+    lab.append(cb, el("span", "rev-when", when + (r.window ? " · " + r.window : "")), el("span", "rev-q", r.question || "—"), el("span", "rev-a", (r.answer || "").slice(0, 240)));
+    li.append(lab); list.append(li);
+  }
+  $("rev-note").textContent = `${revRows.length} of ${d.of} exchanges${q ? " matching" : ", newest first"}`;
+}
+const collect = async (into) => {
+  const indices = [...$("rev-list").querySelectorAll("input:checked")].map((c) => +c.value);
+  if (!indices.length) { $("rev-note").textContent = "choose an exchange first"; return; }
+  try {
+    const d = await postJSON("/api/memory", { action: "collect", window: into, source: $("rev-src").value, indices });
+    $("rev-note").textContent = `${indices.length} added to ${d.window} (${d.notes} notes)`; loadMemory();
+  } catch (e) { $("rev-note").textContent = e.message; }
+};
+$("rev-go").addEventListener("click", review);
+$("rev-q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); review(); } });
+$("rev-to-win").addEventListener("click", () => collect($("mem-win").value.trim() || "main"));
+$("rev-to-col").addEventListener("click", () => collect("_collection"));
+$("advanced").addEventListener("toggle", () => { if ($("advanced").open) { loadMemory(); if (!revRows.length) review(); } });
+
 // ── Admin ───────────────────────────────────────────────────────────────────────────────────────────────────────
 const sync = () => { $("threads-v").textContent = $("threads").value; $("ram-v").textContent = (+$("ram").value).toFixed(1) + " GB";
   $("gpu-v").textContent = +$("gpu").value === 0 ? "off" : $("gpu").value + " %"; };
@@ -125,6 +205,7 @@ async function poll() {
   let s;
   try { s = await (await fetch("/api/state")).json(); } catch (e) { $("engine").textContent = "the console is not answering: " + e; return; }
   publicMode = !!s.public;
+  $("advanced").hidden = publicMode;  // a public console keeps no memory and shows no history
   $("mantra").textContent = s.persona.mantra;
   // the switch: Savante beside this console on this machine, or Savante's public Space from a hosted console
   $("to-savante").href = publicMode ? "https://huggingface.co/spaces/PYTHAI/savante" : `${location.protocol}//${location.hostname}:7873/`;

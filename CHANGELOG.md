@@ -19,6 +19,24 @@
   `console-mount` 8c88972, `consoleEngine.ts`).
 - **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
 
+### The console: `.memory` per response window, a collection, recall, a review of `.history` (Ask → Advanced)
+- **A `.memory` for each response window**, named after the window's title (the field's ids change with every page
+  load, its titles do not): `Output 1` → `output-1`; the plain question box is `main`. A question carries the
+  persona, then the **collection** (higher-level notes every window shares), then its window's notes, each the newest
+  that fit a budget and listed oldest first, so the cached prefix holds and switching windows keeps the persona and
+  the collection cached.
+- **Review `.history` → `.memory`:** search the console's exchanges or Savante's (BM25; empty: the newest), choose
+  some, and add them to the window's `.memory` or to the collection, each as a dated note (`asked … — answered …`).
+- **Options**, saved for every question (`settings.json`) and overridable per request (`options`): use the window's
+  `.memory` and the collection, their budgets (2,400 and 1,600 characters), recall from `.history` (0–4, off) and its
+  source. Defaults kept sane: notes up to 1,000 characters, 200 per window, 64 windows, duplicates folded, every file
+  written whole and atomically under `$BANKML_UI_STATE/console-memory/`.
+- `GET /api/memory[?window=]`, `POST /api/memory` (`add`, `remove`, `settings`, `collect`), `GET /api/history`
+  (`source`, `q`, `limit`); a public console refuses all three and uses no memory. Each exchange is logged with its
+  window (and `recall` when used); the trace has a `memory` span (and `recall`).
+- `sAGI/console_memory.py`; `test_console.py`: names, notes, budgets, order, limits, options, recall, the endpoints,
+  what a question carries per window, and the public refusals.
+
 ### Savante: `.memory` and `.history` as context, with options
 - **`.memory` listed oldest first.** The newest notes that fit the budget were listed newest first, so every new
   note went to the top of the block and the engine read the whole block again; now a new note is appended and the
