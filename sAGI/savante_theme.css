@@ -145,3 +145,82 @@ body, body.dark { background: var(--sv-wash), var(--sv-bg) !important; backgroun
 .sv-calc-line { font-family: var(--sv-mono); font-size: 12.5px; color: var(--sv-muted); }
 
 @media (prefers-reduced-motion: reduce) { .sv-theme, .sv-keys button { transition: none; } .sv-theme:hover { transform: none; } }
+
+/* ── more glass, more depth ──────────────────────────────────────────────────────────────────────────────────────
+   Thinner surfaces over a richer wash, so the page shows through; three-layer shadows (an edge, a near one, a far
+   one) and a lift on hover, so each surface sits at its own height. */
+body {
+  --sv-surface: rgba(255, 255, 255, .58); --sv-q: rgba(236, 231, 220, .62);
+  --sv-glass: blur(18px) saturate(160%);
+  --sv-lift: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.95) inset, 0 -1px 0 rgba(17,19,23,.06) inset,
+             0 2px 5px rgba(16,24,40,.08), 0 10px 20px -8px rgba(16,24,40,.16), 0 28px 56px -18px rgba(16,24,40,.30);
+  --sv-lift-hover: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.95) inset, 0 4px 10px rgba(16,24,40,.10),
+             0 16px 30px -10px rgba(16,24,40,.22), 0 40px 72px -20px rgba(16,24,40,.36);
+  --sv-wash: radial-gradient(1100px 620px at 8% -12%, rgba(183,121,31,.16), transparent 62%),
+             radial-gradient(900px 560px at 108% 4%, rgba(15,118,110,.12), transparent 60%),
+             radial-gradient(800px 600px at 50% 112%, rgba(99,102,241,.08), transparent 62%),
+             linear-gradient(160deg, rgba(255,255,255,.35), rgba(0,0,0,.02));
+}
+body.dark {
+  --sv-surface: rgba(24, 28, 35, .54); --sv-q: rgba(38, 43, 52, .62);
+  --sv-lift: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.07) inset, 0 -1px 0 rgba(0,0,0,.55) inset,
+             0 2px 6px rgba(0,0,0,.45), 0 12px 24px -8px rgba(0,0,0,.55), 0 32px 64px -18px rgba(0,0,0,.8);
+  --sv-lift-hover: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.09) inset, 0 4px 12px rgba(0,0,0,.5),
+             0 18px 34px -10px rgba(0,0,0,.65), 0 44px 80px -20px rgba(0,0,0,.9);
+  --sv-wash: radial-gradient(1100px 620px at 8% -12%, rgba(227,180,90,.12), transparent 62%),
+             radial-gradient(900px 560px at 108% 4%, rgba(94,234,212,.09), transparent 60%),
+             radial-gradient(800px 600px at 50% 112%, rgba(129,140,248,.08), transparent 62%),
+             linear-gradient(160deg, rgba(255,255,255,.02), rgba(0,0,0,.25));
+}
+/* Gradio's own blocks, forms and accordions: glass on an edge */
+.gradio-container .block, .gradio-container .form, .gradio-container .panel {
+  backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass);
+}
+.gradio-container .block:not(#bk-head):not(#bk-chat) { border-radius: 14px !important; }
+#bk-head, #bk-chat, #bk-side, .bk-card, .bk-kpi, .bk-chart, .bk-ex, .bk-timer { transition: box-shadow .2s ease, transform .2s ease; }
+#bk-side:hover, .bk-card:hover, .bk-kpi:hover, .bk-chart:hover { transform: translateY(-1px); }
+#bk-head { box-shadow: var(--sv-lift), 0 0 0 1px rgba(183,121,31,.18) inset !important; }
+body.dark #bk-head { box-shadow: var(--sv-lift), 0 0 0 1px rgba(227,180,90,.16) inset !important; }
+/* the side column stands a level above the conversation */
+#bk-side { box-shadow: var(--sv-lift-hover) !important; }
+/* tabs: a glass rail */
+.tab-nav { background: color-mix(in srgb, var(--sv-surface) 70%, transparent); backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass);
+           border-radius: 12px 12px 0 0; padding: 4px 6px 0; box-shadow: 0 1px 0 rgba(255,255,255,.4) inset; }
+/* messages float a little off the conversation */
+#bk-chat .message { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+                    box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 8px 22px -12px rgba(0,0,0,.35) !important; }
+/* the question field sits raised in its tray */
+#bk-input { background: color-mix(in srgb, var(--sv-surface) 80%, transparent) !important; border-radius: 16px !important;
+            box-shadow: var(--sv-lift) !important; padding: 8px !important; }
+/* buttons: raised, pressed */
+.gradio-container button.lg, .gradio-container button.sm { transition: transform .08s ease, box-shadow .15s ease; }
+.gradio-container button.lg:active, .gradio-container button.sm:active { transform: translateY(1px); }
+
+/* ── the machine: ping, diagnostics, the side panel's health line ─────────────────────────────────────────────── */
+.sv-diag-head { font: 600 12.5px var(--sv-mono); letter-spacing: .04em; color: var(--sv-muted); margin: 2px 0 8px; }
+.sv-diag-head.is-warn { color: #b45309; } .sv-diag-head.is-bad { color: #b91c1c; }
+body.dark .sv-diag-head.is-warn { color: #fbbf24; } body.dark .sv-diag-head.is-bad { color: #f87171; }
+.sv-diag { display: flex; flex-direction: column; gap: 8px; }
+.sv-diag-s { background: var(--sv-surface); border: 1px solid var(--sv-edge); border-left: 3px solid var(--sv-teal); border-radius: 12px;
+             box-shadow: var(--sv-lift); backdrop-filter: var(--sv-glass); -webkit-backdrop-filter: var(--sv-glass); padding: 0 12px; }
+.sv-diag-s.is-warn { border-left-color: #d97706; } .sv-diag-s.is-bad { border-left-color: #dc2626; }
+.sv-diag-s > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; padding: 9px 0; font-weight: 600; color: var(--sv-ink); }
+.sv-diag-s > summary::-webkit-details-marker { display: none; }
+.sv-diag-s > summary::before { content: "▸"; color: var(--sv-faint); transition: transform .15s ease; }
+.sv-diag-s[open] > summary::before { transform: rotate(90deg); }
+.sv-diag-m { width: 1.2em; text-align: center; }
+.sv-diag-s.is-ok .sv-diag-m { color: #15803d; } .sv-diag-s.is-warn .sv-diag-m { color: #d97706; } .sv-diag-s.is-bad .sv-diag-m { color: #dc2626; }
+.sv-diag-lv { margin-left: auto; font: 600 11px var(--sv-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--sv-faint); }
+.sv-diag-l { font: 12.5px/1.55 var(--sv-mono); color: var(--sv-muted); padding: 0 0 2px 1.6em; overflow-wrap: anywhere; }
+.sv-diag-s[open] { padding-bottom: 8px; }
+.sv-ping { font: 13px var(--sv-mono); padding: 10px 12px; border-radius: 12px; background: var(--sv-surface); border: 1px solid var(--sv-edge); box-shadow: var(--sv-lift); }
+.sv-ping.is-ok { border-left: 3px solid #15803d; } .sv-ping.is-bad { border-left: 3px solid #dc2626; }
+.sv-health { margin: 8px 0 2px; font: 12px var(--sv-mono); color: var(--sv-muted); text-align: center; padding: 6px 8px; border-radius: 10px;
+             background: color-mix(in srgb, var(--sv-surface) 70%, transparent); box-shadow: 0 0 0 1px var(--sv-edge), 0 1px 0 rgba(255,255,255,.3) inset; }
+.sv-health .ok { color: #15803d; } .sv-health .bad { color: #dc2626; } .sv-health .warn { color: #d97706; }
+body.dark .sv-health .ok { color: #4ade80; } body.dark .sv-health .bad { color: #f87171; } body.dark .sv-health .warn { color: #fbbf24; }
+@media (prefers-reduced-motion: reduce) { #bk-side:hover, .bk-card:hover, .bk-kpi:hover, .bk-chart:hover { transform: none; } }
+/* the health line: one line under the timer, no empty block around it */
+#bk-health, #bk-health > div { min-height: 0 !important; padding: 0 !important; margin: 0 !important; background: transparent !important;
+                               border: 0 !important; box-shadow: none !important; backdrop-filter: none !important; }
+.sv-health { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

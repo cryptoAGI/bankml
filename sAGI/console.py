@@ -248,16 +248,7 @@ def messages(system: str, hist: list, q: str, self_txt: str, recall: str = "") -
 
 def ping() -> dict:
     """One round trip from the console to bankml serve (`GET /health`, which runs no model), timed here."""
-    t0 = time.perf_counter()
-    try:
-        with urllib.request.urlopen(SERVE + "/health", timeout=5) as r:
-            r.read()
-            ok, why = r.status == 200, f"HTTP {r.status}"
-    except urllib.error.HTTPError as e:
-        ok, why = False, f"HTTP {e.code}"
-    except OSError as e:
-        ok, why = False, str(getattr(e, "reason", e))
-    return {"engine": SERVE, "engine_ok": ok, "engine_ms": round((time.perf_counter() - t0) * 1000, 2), "why": why, "at": time.time()}
+    return sysdiag.ping(SERVE)
 
 
 def sysdiag_sections() -> list:
@@ -265,24 +256,7 @@ def sysdiag_sections() -> list:
     st, u = _get("/bankml/status") or {}, _get("/bankml/usage") or {}
     disk = st.get("disk") or {}
     paths = {"models": disk.get("path") or str(models.MODELS), "state": str(STATE)}
-    secs = sysdiag.collect({k: v for k, v in paths.items() if v})
-    p = ping()
-    if not st:
-        secs.append({"title": "Engine", "level": "bad", "lines": [f"bankml serve does not answer at {SERVE} ({p['why']})"], "data": {"ping": p}})
-        return secs
-    v, sv = st.get("verified") or {}, st.get("serve") or {}
-    lim = u.get("gpu_limiter") or {}
-    lines = [f"{v.get('name') or 'model'} · sha256 {str(v.get('model_sha256') or '')[:16]}… · verified {v.get('verdict') or v.get('guard') or '—'}",
-             f"bankML {v.get('bankml') or st.get('bankml') or '—'} · {'native' if sv.get('native') else 'llama-server behind it'} · pid {sv.get('pid')} · up {sv.get('uptime_s')} s · threads {sv.get('threads')}",
-             f"ping {p['engine_ms']} ms ({p['why']})",
-             "engine CPU " + (f"{u['cpu_percent']:.0f} % of one core" if u.get("cpu_percent") is not None else "not measured")
-             + " · memory held " + (f"{u['rss_bytes'] / 1e9:.2f} GB" if u.get("rss_bytes") is not None else "not measured"),
-             "engine reads " + (f"{disk['read_bytes'] / 1e9:.2f} GB" if disk.get("read_bytes") is not None else "not measured")
-             + " from disk · model file " + (f"{disk['model_bytes'] / 1e9:.2f} GB" if disk.get("model_bytes") is not None else "not read"),
-             "GPU limit " + (f"{lim['limit'] * 100:.0f} %" if lim.get("limit") is not None else "none")
-             + " · GPU memory held " + (f"{lim['allocated_bytes'] / 1e6:.0f} MB" if lim.get("allocated_bytes") is not None else "not measured")]
-    secs.append({"title": "Engine", "level": "ok" if p["engine_ok"] else "bad", "lines": lines, "data": {"ping": p}})
-    return secs
+    return sysdiag.collect({k: v for k, v in paths.items() if v}) + [sysdiag.engine(st, u, ping())]
 
 
 def records(source: str) -> list:

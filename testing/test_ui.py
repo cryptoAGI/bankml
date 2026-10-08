@@ -184,6 +184,17 @@ try:
 except u.ContextTooSmall:
     check("recall: its tokens count against the context", True)
 
+# the machine: ping, diagnostics and the side panel's health line, here without an engine (SERVE unreachable)
+u.SERVE = "http://127.0.0.1:9"
+ph = u.ping_html(2)
+check("ping: without an engine it says so, never a time", "does not answer" in ph and "is-bad" in ph and " ms " not in ph)
+dh = u.diag_html()
+check("diagnostics: CPU, memory, disk, GPU and the engine as an accordion, the engine's section open and bad",
+      all(f">{t}<" in dh for t in ("CPU", "Memory", "Disk", "GPU", "Engine")) and "sv-diag-s is-bad' open" in dh)
+check("health line: the engine down, cheap reads only", "engine down" in u.health_html())
+import sysdiag  # noqa: E402
+check("diagnostics: every text escaped", "&lt;b&gt;" in sysdiag.to_html([{"title": "<b>", "level": "ok", "lines": ["x"]}]))
+
 # custom agents: keccak256, the doctrine root, derive / verify / save, preflight, the template untouched
 os.environ["BANKML_AGENTS"] = str(tmp / "agents")
 import importlib, agents  # noqa: E402

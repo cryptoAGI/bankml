@@ -9,8 +9,11 @@ Linux only; elsewhere the sections say what could not be read. Details: docs/mod
 """
 from __future__ import annotations
 
+import html
 import os
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 THRESHOLDS = {"temp_warn_c": 85.0, "temp_bad_c": 95.0, "mem_warn_bytes": 1_000_000_000, "mem_bad_bytes": 400_000_000,
@@ -184,3 +187,50 @@ def collect(paths: dict, sample_s: float = 0.2) -> list:
     """The sections, in reading order: CPU, memory, disk, GPU."""
     t = temps()
     return [cpu(t, cpu_busy(sample_s)), memory(), disk(paths, t), gpu(t)]
+
+
+def ping(base: str, path: str = "/health", timeout: float = 5.0) -> dict:
+    """One round trip to bankml serve (`GET /health` runs no model), timed here: {"engine", "engine_ok", "engine_ms",
+    "why", "at"}."""
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(base + path, timeout=timeout) as r:
+            r.read()
+            ok, why = r.status == 200, f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        ok, why = False, f"HTTP {e.code}"
+    except OSError as e:
+        ok, why = False, str(getattr(e, "reason", e))
+    return {"engine": base, "engine_ok": ok, "engine_ms": round((time.perf_counter() - t0) * 1000, 2), "why": why, "at": time.time()}
+
+
+def engine(st: dict, u: dict, p: dict) -> dict:
+    """The engine's own view (`GET /bankml/status`, `/bankml/usage`) and a ping, as a section."""
+    if not st:
+        return {"title": "Engine", "level": "bad", "lines": [f"bankml serve does not answer at {p.get('engine')} ({p.get('why')})"], "data": {"ping": p}}
+    v, sv, disk = st.get("verified") or {}, st.get("serve") or {}, st.get("disk") or {}
+    lim = u.get("gpu_limiter") or {}
+    lines = [f"{v.get('name') or 'model'} · sha256 {str(v.get('model_sha256') or '')[:16]}… · verified {v.get('verdict') or v.get('guard') or '—'}",
+             f"bankML {v.get('bankml') or st.get('bankml') or '—'} · {'native' if sv.get('native') else 'llama-server behind it'}"
+             f" · pid {sv.get('pid')} · up {sv.get('uptime_s')} s · threads {sv.get('threads')}",
+             f"ping {p.get('engine_ms')} ms ({p.get('why')})",
+             "engine CPU " + (f"{u['cpu_percent']:.0f} % of one core" if u.get("cpu_percent") is not None else "not measured")
+             + " · memory held " + (f"{u['rss_bytes'] / GB:.2f} GB" if u.get("rss_bytes") is not None else "not measured"),
+             "engine reads " + (f"{disk['read_bytes'] / GB:.2f} GB" if disk.get("read_bytes") is not None else "not measured")
+             + " from disk · model file " + (f"{disk['model_bytes'] / GB:.2f} GB" if disk.get("model_bytes") is not None else "not read"),
+             "GPU limit " + (f"{lim['limit'] * 100:.0f} %" if lim.get("limit") is not None else "none")
+             + " · GPU memory held " + (f"{lim['allocated_bytes'] / 1e6:.0f} MB" if lim.get("allocated_bytes") is not None else "not measured")]
+    return {"title": "Engine", "level": "ok" if p.get("engine_ok") else "bad", "lines": lines, "data": {"ping": p}}
+
+
+def to_html(sections: list, cls: str = "sv-diag") -> str:
+    """The sections as an accordion for a page: <details> per section, its mark and level, those that need a look
+    open. Every text escaped."""
+    mark = {"ok": "✓", "warn": "!", "bad": "✗"}
+    out = []
+    for s in sections:
+        lv = s.get("level", "ok")
+        lines = "".join(f"<div class='{cls}-l'>{html.escape(str(l))}</div>" for l in s.get("lines", []))
+        out.append(f"<details class='{cls}-s is-{lv}'{' open' if lv != 'ok' else ''}><summary><span class='{cls}-m'>{mark.get(lv, '?')}</span>"
+                   f"{html.escape(str(s.get('title', '')))}<span class='{cls}-lv'>{lv}</span></summary>{lines}</details>")
+    return f"<div class='{cls}'>" + "".join(out) + "</div>"

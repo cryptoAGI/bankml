@@ -19,6 +19,17 @@
   `console-mount` 8c88972, `consoleEngine.ts`).
 - **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
 
+### Savante: the machine, and more glass
+- **Admin → the machine:** *ping bankML* (three round trips to `/health`, min/avg/max) and *diagnostics* — CPU,
+  memory, disk, GPU and the engine as an accordion, the sections that need a look open (`savante.diag_html`,
+  `ping_html`; the same `sAGI/sysdiag.py` as the console, which now shares its `ping`, `engine` and `to_html`).
+- **A health line** in the side panel, under the timer: the engine (up, its ping), the CPU's temperature and the
+  memory available, refreshed every 15 s from cheap reads only (`health_html`).
+- **More semi-transparency and depth:** thinner surfaces (58 % light, 54 % dark) over a richer wash, a stronger blur,
+  three-layer shadows and a lift on hover; glass on Gradio's blocks, the tab rail, the messages and the raised
+  question tray; the side column a level above the conversation.
+- `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
+
 ### The console: a real ping, and the machine in the terminal (`diag`)
 - **Ping** (◎, `ping`): three round trips through the console to bankml serve (`GET /health`, no model run), timed in
   the page and in the console, min/avg/max, and why it failed when it did; `ping <output>` still flashes an output.

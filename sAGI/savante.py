@@ -49,6 +49,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # never leave a cache next to anything we import
 import embed  # noqa: E402 — bge-m3 via the local Ollama (optional; BM25 stands alone without it)
 import calc  # noqa: E402 — exact arithmetic for the answers a 1-bit model should not guess
+import sysdiag  # noqa: E402 — the machine now: CPU, memory, disk, GPU (stdlib, /proc and /sys)
 
 def _canon_default() -> Path:
     """Savante's canon: ~/cryptoAGI/savante (beside jaimla and luvai), or an older ~/savante if that is the only one."""
@@ -1073,6 +1074,52 @@ def installed_choices() -> list:
     """Chat models only: an embedding model (bge-m3 and the like) is listed in the table, not offered as a carrier."""
     import models
     return [m["file"] for m in models.installed() if (m["pinned"] or m["catalog"]) and models.guard(Path(m["path"])).get("arch") not in models.EMBEDDING_ARCHS]
+
+
+def _serve_json(path: str):
+    try:
+        with urllib.request.urlopen(SERVE + path, timeout=5) as r:
+            return json.loads(r.read())
+    except (OSError, ValueError):
+        return None
+
+
+def diag_html() -> str:
+    """The machine under Savante now (sysdiag: CPU, memory, disk, GPU) and the engine's own view, as an accordion."""
+    import models
+    st, u = _serve_json("/bankml/status") or {}, _serve_json("/bankml/usage") or {}
+    paths = {"models": (st.get("disk") or {}).get("path") or str(models.MODELS), "state": str(STATE)}
+    secs = sysdiag.collect(paths) + [sysdiag.engine(st, u, sysdiag.ping(SERVE))]
+    worst = "bad" if any(x["level"] == "bad" for x in secs) else "warn" if any(x["level"] == "warn" for x in secs) else "ok"
+    return (f"<div class='sv-diag-head is-{worst}'>{E(os.uname().nodename)} · {time.strftime('%H:%M:%S')} · {worst}</div>"
+            + sysdiag.to_html(secs))
+
+
+def ping_html(n: int = 3) -> str:
+    """`n` round trips to bankml serve's /health (no model run), min/avg/max."""
+    ps = [sysdiag.ping(SERVE) for _ in range(n)]
+    ms = [p["engine_ms"] for p in ps]
+    ok = all(p["engine_ok"] for p in ps)
+    return (f"<div class='sv-ping is-{'ok' if ok else 'bad'}'>{'✓' if ok else '✗'} bankml serve {E(SERVE)} "
+            + (f"answers · {min(ms):.1f} / {sum(ms) / len(ms):.1f} / {max(ms):.1f} ms (min / avg / max of {n})" if ok
+               else f"does not answer ({E(ps[-1]['why'])})") + "</div>")
+
+
+def health_html() -> str:
+    """One quiet line for the side panel: the engine (and its ping), the CPU's temperature, the memory available.
+    Cheap reads only (no CPU sampling), so it can refresh often."""
+    p = sysdiag.ping(SERVE, timeout=2)
+    t = sysdiag.temps()
+    temp = t.get("k10temp", t.get("coretemp"))
+    mem = sysdiag.memory()
+    avail = (mem["data"] or {}).get("available_bytes")
+    hot = temp is not None and temp >= sysdiag.THRESHOLDS["temp_warn_c"]
+    parts = [f"<span class='{'ok' if p['engine_ok'] else 'bad'}'>{'●' if p['engine_ok'] else '○'} engine "
+             + (f"{p['engine_ms']:.0f} ms" if p["engine_ok"] else "down") + "</span>",
+             f"<span class='{'warn' if hot else ''}'>CPU {temp:.0f} °C</span>" if temp is not None else "",
+             f"<span class='{'warn' if mem['level'] != 'ok' else ''}'>{avail / 1e9:.1f} GB free</span>" if avail is not None else ""]
+    line = " · ".join(x for x in parts if x)
+    return f"<div class='sv-health' title='{E(re.sub(r'<[^>]+>', '', line))}'>{line}</div>"
 
 
 def carrier_md() -> str:
@@ -2153,6 +2200,7 @@ def build(canon: Canon, mode: str):
                         send, stop, new = gr.Button("Send", variant="primary"), gr.Button("Stop"), gr.Button("New session")
                 with gr.Column(scale=1, elem_id="bk-side"):
                     timer = gr.HTML(timer_md())
+                    health = gr.HTML(health_html(), elem_id="bk-health")
                     aiv = gr.HTML(aivatar_html(canon))
                     with gr.Accordion("Calculator · exact", open=True, elem_id="bk-calc"):
                         calc_in = gr.Textbox(placeholder="e.g. 18% of 64.50", show_label=False, lines=1, elem_id="bk-calc-in")
@@ -2190,6 +2238,13 @@ def build(canon: Canon, mode: str):
                     temperature = gr.Slider(0.0, 1.5, value=0.3, step=0.05, label="temperature")
                     gr.Markdown(f"`.history` → `{HISTORY}` (outside the canon) · session `{sid0}`")
                 with gr.Column(scale=1):
+                    gr.Markdown("### the machine · ping and diagnostics")
+                    with gr.Row():
+                        b_ping = gr.Button("ping bankML")
+                        b_diag = gr.Button("diagnostics", variant="primary")
+                    machine_out = gr.HTML("<div class='bk-note'>ping: three round trips to bankml serve (no model run) · diagnostics: CPU, memory, disk, GPU and the engine, measured now</div>")
+                    b_ping.click(ping_html, None, machine_out)
+                    b_diag.click(diag_html, None, machine_out)
                     gr.Markdown("### the carrier")
                     carrier = gr.HTML(carrier_md())
                     gr.Button("refresh carrier").click(carrier_md, None, carrier)
@@ -2299,6 +2354,7 @@ def build(canon: Canon, mode: str):
         stage, mach, log, ci = view_tabs(gr, canon)
         demo.load(lambda: (live_stage(), machine(), live_tail(), ci_status()), None, [stage, mach, log, ci], every=2, show_progress=False)
         demo.load(timer_md, None, timer, every=1, show_progress=False)
+        demo.load(health_html, None, health, every=15, show_progress=False)
         demo.load(lambda: aivatar_html(canon), None, aiv, show_progress=False)  # the card reflects whatever has rendered by now
         demo.load(None, None, None, _js=layout_js())
         demo.load(None, None, None, _js=THEME_JS)
