@@ -93,7 +93,7 @@ button.primary, .composer button { box-shadow: 0 1px 0 rgba(255,255,255,.25) ins
 .ultimate-textarea.terminal-mode:focus { box-shadow: 0 0 0 1.5px var(--term-ink), 0 0 0 4px rgba(51, 255, 102, .18); }
 .ultimate-textarea.terminal-mode::placeholder { color: var(--term-dim); }
 .uif-prompt-sigil { color: var(--term-ink); }
-.uif-termlog { background: rgba(0, 0, 0, .88); border-color: var(--term-edge); color: var(--term-ink); font-family: var(--mono);
+.uif-termlog { background: rgba(0, 0, 0, .95); border-color: var(--term-edge); color: var(--term-ink); font-family: var(--mono);
                box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 12px 30px -10px rgba(0,0,0,.7); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); }
 .uif-termline.is-cmd { color: #7dff9a; }
 .uif-termline.is-dim { color: var(--term-dim); }

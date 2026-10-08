@@ -19,6 +19,20 @@
   `console-mount` 8c88972, `consoleEngine.ts`).
 - **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
 
+### The console: a real ping, and the machine in the terminal (`diag`)
+- **Ping** (◎, `ping`): three round trips through the console to bankml serve (`GET /health`, no model run), timed in
+  the page and in the console, min/avg/max, and why it failed when it did; `ping <output>` still flashes an output.
+  `GET /api/ping`.
+- **Diagnostics** (⚕, `diag`, T mode's face): CPU (model, clock per core, the machine's busy share, load,
+  temperature), memory (available, swap), disk (free space where the models and the UI's state live, SSD or spinning,
+  the drive's temperature), GPU (each card's busy share, VRAM and GTT, temperature) and the engine (model, pid,
+  uptime, threads, ping, its CPU, memory, disk reads, GPU limit), printed as an accordion in the T-mode log, the
+  sections that need a look (warn, bad) open. Read by the console from /proc, /sys and statvfs (`sAGI/sysdiag.py`),
+  so it answers without an engine; fixed thresholds (85 °C hot, 95 °C bad; under 1 GB of memory, 5 GB of disk).
+  `GET /api/sysdiag`; a public console refuses it (it describes the machine), ping still answers.
+- The input field: `printSections` (a report as an accordion in the T-mode log); the console registers `ping` and
+  `diag` (ultimate-bankml-ui `console-mount`). The T-mode log is 95 % opaque, so a report reads over the page.
+
 ### The console: `.memory` per response window, a collection, recall, a review of `.history` (Ask → Advanced)
 - **A `.memory` for each response window**, named after the window's title (the field's ids change with every page
   load, its titles do not): `Output 1` → `output-1`; the plain question box is `main`. A question carries the

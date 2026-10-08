@@ -45,6 +45,7 @@ import diagnostics as D  # noqa: E402  (stdlib-only)
 import models  # noqa: E402  (stdlib-only)
 import savante as S  # noqa: E402  (stdlib-only at import; its Merkle tree and CIDv1)
 import console_memory as CM  # noqa: E402  (stdlib-only: .memory per response window, the collection, recall)
+import sysdiag  # noqa: E402  (stdlib-only: CPU, memory, disk and GPU from /proc and /sys)
 
 SERVE = "http://" + models.LISTEN
 STATIC = HERE / "console"
@@ -245,6 +246,45 @@ def messages(system: str, hist: list, q: str, self_txt: str, recall: str = "") -
     return [{"role": "system", "content": system}, *hist, {"role": "system", "content": late}, {"role": "user", "content": q}]
 
 
+def ping() -> dict:
+    """One round trip from the console to bankml serve (`GET /health`, which runs no model), timed here."""
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(SERVE + "/health", timeout=5) as r:
+            r.read()
+            ok, why = r.status == 200, f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        ok, why = False, f"HTTP {e.code}"
+    except OSError as e:
+        ok, why = False, str(getattr(e, "reason", e))
+    return {"engine": SERVE, "engine_ok": ok, "engine_ms": round((time.perf_counter() - t0) * 1000, 2), "why": why, "at": time.time()}
+
+
+def sysdiag_sections() -> list:
+    """The machine now (sysdiag: CPU, memory, disk, GPU), then the engine's own view when bankml serve answers."""
+    st, u = _get("/bankml/status") or {}, _get("/bankml/usage") or {}
+    disk = st.get("disk") or {}
+    paths = {"models": disk.get("path") or str(models.MODELS), "state": str(STATE)}
+    secs = sysdiag.collect({k: v for k, v in paths.items() if v})
+    p = ping()
+    if not st:
+        secs.append({"title": "Engine", "level": "bad", "lines": [f"bankml serve does not answer at {SERVE} ({p['why']})"], "data": {"ping": p}})
+        return secs
+    v, sv = st.get("verified") or {}, st.get("serve") or {}
+    lim = u.get("gpu_limiter") or {}
+    lines = [f"{v.get('name') or 'model'} · sha256 {str(v.get('model_sha256') or '')[:16]}… · verified {v.get('verdict') or v.get('guard') or '—'}",
+             f"bankML {v.get('bankml') or st.get('bankml') or '—'} · {'native' if sv.get('native') else 'llama-server behind it'} · pid {sv.get('pid')} · up {sv.get('uptime_s')} s · threads {sv.get('threads')}",
+             f"ping {p['engine_ms']} ms ({p['why']})",
+             "engine CPU " + (f"{u['cpu_percent']:.0f} % of one core" if u.get("cpu_percent") is not None else "not measured")
+             + " · memory held " + (f"{u['rss_bytes'] / 1e9:.2f} GB" if u.get("rss_bytes") is not None else "not measured"),
+             "engine reads " + (f"{disk['read_bytes'] / 1e9:.2f} GB" if disk.get("read_bytes") is not None else "not measured")
+             + " from disk · model file " + (f"{disk['model_bytes'] / 1e9:.2f} GB" if disk.get("model_bytes") is not None else "not read"),
+             "GPU limit " + (f"{lim['limit'] * 100:.0f} %" if lim.get("limit") is not None else "none")
+             + " · GPU memory held " + (f"{lim['allocated_bytes'] / 1e6:.0f} MB" if lim.get("allocated_bytes") is not None else "not measured")]
+    secs.append({"title": "Engine", "level": "ok" if p["engine_ok"] else "bad", "lines": lines, "data": {"ping": p}})
+    return secs
+
+
 def records(source: str) -> list:
     """The exchanges of a .history as {"at", "question", "answer", "window"}: the console's own log, or Savante's."""
     if source == "savante":
@@ -390,6 +430,13 @@ class H(BaseHTTPRequestHandler):
             return self._json(diagnostics())
         if path == "/api/thesis":
             return self._json(thesis())
+        if path == "/api/ping":
+            return self._json(ping())
+        if path == "/api/sysdiag":
+            if PUBLIC:
+                return self._send(403, b"a public console does not describe its machine", "text/plain")
+            with D.span("sysdiag"):
+                return self._json({"at": time.time(), "host": os.uname().nodename, "sections": sysdiag_sections()})
         if path in ("/api/memory", "/api/history"):
             if PUBLIC:
                 return self._send(403, b"a public console keeps no memory and shows no history", "text/plain")

@@ -183,6 +183,35 @@ try:
     check("/api/diagnostics: no question text in any trace", secret not in json.dumps(dg))
     check("/api/diagnostics: without an engine the first check is bad, and says where it looked",
           dg["checks"][0]["level"] == "bad" and "127.0.0.1:9" in dg["checks"][0]["seen"])
+    # the machine, measured (sAGI/sysdiag.py): fake /sys trees for the thresholds, then this machine through the console
+    import sysdiag as SD
+    hw = tmp / "hwmon"
+    for i, (name, mc) in enumerate([("k10temp", 96000), ("amdgpu", 70000), ("nvme", 41000), ("BAT0", None)]):
+        (hw / f"hwmon{i}").mkdir(parents=True)
+        (hw / f"hwmon{i}" / "name").write_text(name + "\n")
+        if mc is not None:
+            (hw / f"hwmon{i}" / "temp1_input").write_text(f"{mc}\n")
+    tt = SD.temps(str(hw))
+    check("sysdiag: temperatures by sensor, a sensor without one skipped", tt == {"k10temp": 96.0, "amdgpu": 70.0, "nvme": 41.0})
+    check("sysdiag: a CPU at 96 °C is bad (throttling), at 70 °C ok",
+          SD.cpu(tt, 50.0)["level"] == "bad" and "throttling" in SD.cpu(tt, 50.0)["lines"][3] and SD.cpu({"k10temp": 70.0}, None)["level"] == "ok")
+    drm = tmp / "drm"
+    (drm / "card0" / "device").mkdir(parents=True); (drm / "card0-eDP-1" / "device").mkdir(parents=True)
+    for f, v in (("vendor", "0x1002"), ("device", "0x15d8"), ("gpu_busy_percent", "37"), ("mem_info_vram_used", "500000000"), ("mem_info_vram_total", "2000000000")):
+        (drm / "card0" / "device" / f).write_text(v + "\n")
+    g = SD.gpu(tt, str(drm))
+    check("sysdiag: a card's busy share and memory; a connector is not a card",
+          len(g["data"]["cards"]) == 1 and g["data"]["cards"][0]["busy_percent"] == 37 and "AMD" in g["lines"][0] and "VRAM 0.50 GB of 2.00 GB" in g["lines"][0])
+    check("sysdiag: no card says so", "no card found" in SD.gpu({}, str(tmp / "nodrm"))["lines"][-1])
+    dk = SD.disk({"here": str(tmp)}, {"nvme": 41.0})
+    check("sysdiag: free space of each path, the drive's temperature", "here" in dk["data"] and "drive temperature 41.0" in dk["lines"][-1])
+    check("sysdiag: a path that cannot be read says so", "not read" in SD.disk({"gone": str(tmp / "nope")}, {})["lines"][0])
+    pg = json.loads(req("/api/ping")[1])
+    check("/api/ping: one timed round trip to the engine, and why it failed when it did", pg["engine_ok"] is False and pg["engine_ms"] >= 0 and pg["why"])
+    sd = json.loads(req("/api/sysdiag")[1])
+    check("/api/sysdiag: CPU, memory, disk, GPU and the engine, each with a level and lines",
+          [x["title"] for x in sd["sections"]] == ["CPU", "Memory", "Disk", "GPU", "Engine"]
+          and all(x["level"] in ("ok", "warn", "bad") and x["lines"] for x in sd["sections"]) and sd["sections"][-1]["level"] == "bad")
     # .memory per response window, the collection, review of .history, recall (sAGI/console_memory.py)
     CM = C.CM
     check("memory: a window's name from its title (survives a reload; the field's ids do not)",
@@ -282,6 +311,7 @@ try:
           req("/api/resources", b'{"threads": 1, "ram_gb": 1, "gpu_limit": 0}', {**pub, "Content-Type": "application/json", "Origin": "https://demo.example"})[0] == 403)
     check("public: no exchange is shown, though a log exists", json.loads(req("/api/log", headers=pub)[1])["exchanges"] == []
           and {a["trait_type"]: a["value"] for a in json.loads(req("/api/infotags", headers=pub)[1])["attributes"]}["exchanges"] == 0)
+    check("public: the machine is not described, but ping answers", req("/api/sysdiag", headers=pub)[0] == 403 and req("/api/ping", headers=pub)[0] == 200)
     check("public: no memory and no history (they are the operator's)",
           req("/api/memory", headers=pub)[0] == 403 and req("/api/history", headers=pub)[0] == 403
           and req("/api/memory", b'{"action": "add", "text": "x"}', {**pub, **{"Content-Type": "application/json", "Origin": "https://demo.example"}})[0] == 403)

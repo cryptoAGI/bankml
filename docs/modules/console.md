@@ -22,6 +22,10 @@ conversation is trimmed four exchanges at a time (`window`), so the cached prefi
 added by hand or gathered by reviewing `.history` (the console's or Savante's). Options: use each, their budgets,
 recall from `.history` (0–4, off by default). Storage and limits: `sAGI/console_memory.py`.
 
+**Ping and diagnostics (0.4.3).** In T mode, ◎ `ping` times three round trips to bankml serve (`/api/ping`), and ⚕
+`diag` prints the machine now — CPU, memory, disk, GPU and the engine — as an accordion in the terminal log
+(`/api/sysdiag`, `sAGI/sysdiag.py`), the sections that need a look open.
+
 ## Technical usage
 
 ```sh
