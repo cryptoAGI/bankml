@@ -327,7 +327,7 @@ pub fn attend_heads_tiled(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], s
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma,f16c")]
-unsafe fn attend_heads_tiled_avx2(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize, scale: f32, outs: &mut [&mut [f32]]) {
+fn attend_heads_tiled_avx2(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize, scale: f32, outs: &mut [&mut [f32]]) {
     tiled_body(qs, n_kv, k, v, stride, scale, outs)
 }
 
@@ -479,7 +479,7 @@ pub fn swiglu(gate: &[f32], up: &[f32], out: &mut [f32]) {
 /// `swiglu` compiled with FMA (the polynomial's `mul_add`s become instructions, not libm calls): the same bits.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn swiglu_avx2(gate: &[f32], up: &[f32], out: &mut [f32]) {
+fn swiglu_avx2(gate: &[f32], up: &[f32], out: &mut [f32]) {
     swiglu_body(gate, up, out)
 }
 

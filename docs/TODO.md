@@ -275,7 +275,11 @@ passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a 
 - [ ] AVX-512 and VNNI kernels where present (Zen 4, Intel), bit-exact; Zen 3 and Zen 4 rows in PERFORMANCE.md. (O8)
 - [ ] **NEON kernels for ARM** (P5), with the oracle against llama.cpp's ARM build on an ARM machine: the first step of
   the handheld track below.
-- [ ] The target-feature 1.1 clean-up: the same bits with fewer `unsafe`.
+- [x] The target-feature 1.1 clean-up, where it applies (**0.4.1**). The functions whose only unsafety was the CPU
+  feature are now safe `#[target_feature]` functions: `attend_heads_tiled_avx2`, `swiglu_avx2` and a test helper.
+  Their call sites keep one `unsafe` for the detected feature. The q1_0/q2_0/f16/sha256 kernels keep `unsafe fn`:
+  their loads are raw-pointer loads whose bounds the caller checks, so making them safe would only move `unsafe` onto
+  every load. Next: slice-based loads where they cost nothing.
 - [x] CI builds and unit-tests on x86-64 and natively on aarch64 (**0.4.1**: `ubuntu-24.04-arm`; build, unit tests, clippy `-D warnings`, the guard; the first run found that ARM's `/proc/cpuinfo` names no `model name`). Still to add: the x86 variants without AVX2, forced.
 
 ### 0.6.0 — more models

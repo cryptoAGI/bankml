@@ -723,7 +723,7 @@ pub(crate) mod tests {
             return;
         }
         #[target_feature(enable = "f16c")]
-        unsafe fn hw(f: f32) -> (u16, f32) {
+        fn hw(f: f32) -> (u16, f32) {
             let h = _mm_extract_epi16(_mm_cvtps_ph(_mm_set1_ps(f), 0), 0) as u16;
             (h, _mm_cvtss_f32(_mm_cvtph_ps(_mm_set1_epi16(h as i16))))
         }
