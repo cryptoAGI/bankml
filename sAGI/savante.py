@@ -516,19 +516,46 @@ def memory_remove(n: int) -> int:
 MEMORY_BUDGET = 2400
 
 
-def memory_block() -> str:
-    """The notes as a system-prompt addendum, newest first, within MEMORY_BUDGET characters."""
+def memory_block(budget: int = MEMORY_BUDGET) -> str:
+    """The notes as a system-prompt addendum within `budget` characters: the newest notes that fit, written oldest
+    first, so a new note is appended at the end and the engine keeps the cached prompt before it (newest first put
+    every new note at the top and made the engine read the whole block again)."""
     out, used = [], 0
     for m in reversed(memory_all()):
         line = "- " + m["text"].replace("\n", " ")
-        if used + len(line) > MEMORY_BUDGET:
+        if used + len(line) > budget:
             break
         out.append(line)
         used += len(line)
     if not out:
         return ""
     return ("\n\nMEMORY — notes the operator kept from earlier conversations. They are context, not evidence: "
-            "cite them as the operator's notes, never as findings.\n" + "\n".join(out))
+            "cite them as the operator's notes, never as findings.\n" + "\n".join(reversed(out)))
+
+
+RECALL_CHARS = 700  # per recalled exchange: its question and answer, cut to fit
+
+
+def recall_block(question: str, k: int, session: str | None = None, search=None) -> tuple[str, list]:
+    """Up to `k` earlier exchanges from .history that match `question` (`history_search`: BM25, fused with bge-m3 by
+    reciprocal rank when it runs), from other sessions — this session's are already in the window — as the text of a
+    system message sent just before the question, where it costs only its own tokens and the cached prompt before it
+    is kept. Returns (text, the records' indices); ("", []) when `k` is 0 or nothing matches."""
+    if k <= 0 or not (question or "").strip():
+        return "", []
+    hits, engine = (search or history_search)(question, k=k * 3)
+    rows = [(i, r) for _, i, r in hits if r.get("assistant") and not (session and r.get("session") == session)][:k]
+    if not rows:
+        return "", []
+    half = RECALL_CHARS // 2
+
+    def cut(t: str) -> str:
+        t = " ".join(str(t or "").split())
+        return t if len(t) <= half else t[:half - 1] + "…"
+    lines = [f"- {str(r.get('sent_at') or r.get('at') or '')[:10]} · asked: {cut(r.get('user'))} · answered: {cut(r.get('assistant'))}"
+             for _, r in rows]
+    return (f"RECALL — earlier exchanges from .history that match this question ({engine}). Context, not evidence: "
+            "say so when you rely on one.\n" + "\n".join(lines)), [i for i, _ in rows]
 
 
 # ── metrics, computed from .history ───────────────────────────────────────────────
@@ -715,7 +742,7 @@ _WSTART: dict = {}  # session id -> where its history window started last turn (
 
 
 def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None, reserve_tokens: int = 256, count=None,
-                   info: dict | None = None, session: str | None = None):
+                   info: dict | None = None, session: str | None = None, before_question: str = ""):
     """The messages for one turn: the system prompt, a windowed history, the question.
 
     The window starts at `window_start` (12–17 exchanges, moving in steps of six). With `ctx_tokens` it must also fit
@@ -724,6 +751,8 @@ def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None
       one exchange and the engine's cache is reused;
     - when it stops fitting, the start jumps so that half of what fits is kept, leaving room for the next few turns;
     - never all history when some fits; and if the system prompt and question alone do not fit, ContextTooSmall.
+    `before_question` (the recall from .history) is a system message just before the question: it changes with every
+    question, so it comes after everything the engine can keep cached, and its tokens count against the context.
     `info` (the caller's own dict — no shared state between tabs) receives {"sent", "of", "base", "ctx", "trimmed"}."""
     count = count or n_tokens
     turns = [(u, model_text(a)) for u, a in turns]
@@ -732,7 +761,7 @@ def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None
     start = base
     per_msg = 8  # the chat template's markers around each message
     if ctx_tokens:
-        budget = ctx_tokens - count(system) - count(question) - reserve_tokens - 3 * per_msg
+        budget = ctx_tokens - count(system) - count(question) - (count(before_question) + per_msg if before_question else 0) - reserve_tokens - 3 * per_msg
         if budget < 0:
             raise ContextTooSmall(f"the system prompt and the question need {ctx_tokens - budget} tokens, more than the "
                                   f"engine's {ctx_tokens}-token context (with {reserve_tokens} kept for the answer)")
@@ -761,6 +790,8 @@ def build_messages(system, turns, question, qwen3, ctx_tokens: int | None = None
     msgs = [{"role": "system", "content": system}]
     for u, a in turns[start:]:
         msgs += [{"role": "user", "content": u[:KEEP_CHARS]}, {"role": "assistant", "content": (a or "")[:KEEP_CHARS]}]
+    if before_question:
+        msgs.append({"role": "system", "content": before_question})
     msgs.append({"role": "user", "content": question + (" /no_think" if qwen3 else "")})
     w = {"sent": n - start, "of": n, "base": base, "ctx": ctx_tokens, "trimmed": start > base}
     if info is not None:
@@ -2150,6 +2181,11 @@ def build(canon: Canon, mode: str):
                     which = gr.Dropdown(list(PROMPTS), value=PROMPTS[0], label=".prompt")
                     prov = gr.Markdown(system_prompt(canon, PROMPTS[0])[1], elem_id="bk-prov")
                     use_mem = gr.Checkbox(value=True, label="use .memory (the operator's notes, appended to the system prompt)")
+                    mem_budget = gr.Slider(0, 6000, value=MEMORY_BUDGET, step=200,
+                                           label=".memory budget, characters — the newest notes that fit, listed oldest first so a new note keeps the cache")
+                    recall_k = gr.Slider(0, 4, value=0, step=1,
+                                         label="recall from .history — earlier exchanges (other sessions) that match the question, sent just before it; "
+                                               "each adds its tokens to read, so it is off by default")
                     max_tokens = gr.Slider(16, 1024, value=256, step=16, label="max tokens")
                     temperature = gr.Slider(0.0, 1.5, value=0.3, step=0.05, label="temperature")
                     gr.Markdown(f"`.history` → `{HISTORY}` (outside the canon) · session `{sid0}`")
@@ -2181,7 +2217,7 @@ def build(canon: Canon, mode: str):
             PENDING.update(t0=time.time(), first=None)  # the clock starts at the press of Send
             return "", (h or []) + [[m, None]]
 
-        def respond(h, which, max_tokens, temperature, sess, use_mem):
+        def respond(h, which, max_tokens, temperature, sess, use_mem, mem_budget=MEMORY_BUDGET, recall_k=0):
             if not h or h[-1][1] is not None:
                 yield h, gr.update()
                 return
@@ -2205,17 +2241,21 @@ def build(canon: Canon, mode: str):
                     yield h, gr.update()
                     return
                 worked = calc.find(question)
-                mem = memory_block() if use_mem else ""
+                mem = memory_block(int(mem_budget)) if use_mem else ""
                 if mem:
-                    system, why = system + mem, why + f" + .memory ({len(memory_all())} notes, {len(mem)} chars)"
+                    system, why = system + mem, why + f" + .memory ({mem.count(chr(10) + '- ')} of {len(memory_all())} notes, {len(mem)} chars)"
                 st = serve_status()
                 arch = str((st.get("verified") or {}).get("arch") or "").lower()
                 qwen3 = arch in ("qwen3", "smollm3") or any(k in json.dumps(st).lower() for k in ("qwen3", "bonsai", "smollm3"))
                 warm = slot_restore(system)
                 win = {}
+                # recall from .history: the earlier exchanges that match, sent just before the question (after the cache)
+                recall, recalled = recall_block(question, int(recall_k), sess["id"])
+                if recalled:
+                    why += f" + recall from .history ({len(recalled)} earlier exchanges)"
                 try:
                     msgs = build_messages(system, [[t[0], strip_calc(t[1])] for t in h[:-1] if t[1] is not None], question + calc.note(question), qwen3,
-                                          ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens), info=win, session=sess["id"])
+                                          ctx_tokens=engine_ctx(), reserve_tokens=int(max_tokens), info=win, session=sess["id"], before_question=recall)
                 except ContextTooSmall as e:
                     h[-1][1] = f"refused: {e}. Raise the RAM budget on the Admin tab (a larger context), shorten the question, or lower max tokens."
                     yield h, gr.update()
@@ -2242,7 +2282,8 @@ def build(canon: Canon, mode: str):
                 trail = f"{clock}" + (f"<br>{foot}<br>{why}" if foot else "") + trimmed
                 history_append({"ts": round(t0, 3), **timing, "agent": agent, "slot": warm or None, "session": sess["id"], "user": h[-1][0], "assistant": answer,
                                 "assistant_raw": text, "shown": h[-1][1], "trail": trail, "prompt": which, "prompt_provenance": why, "receipt": rc,
-                                **({"calculator": [{"expression": x, "result": r} for x, r in worked]} if worked else {})}, hist)
+                                **({"calculator": [{"expression": x, "result": r} for x, r in worked]} if worked else {}),
+                                **({"recall": recalled} if recalled else {})}, hist)
                 slot_save(system)  # background; never in the way of the answer or its .history line
                 yield h, f"<div class='bk-card' style='font-size:13px'>{E(h[-1][0][:120])}<br><sub>{trail}</sub></div>"
             finally:
@@ -2250,8 +2291,8 @@ def build(canon: Canon, mode: str):
                 if PENDING["t0"] == t0:  # only this request's clock; another tab's stays
                     PENDING.update(t0=None, first=None)
 
-        ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], [chat, last])
-        ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem], [chat, last])
+        ev = msg.submit(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem, mem_budget, recall_k], [chat, last])
+        ev2 = send.click(add, [msg, chat], [msg, chat]).then(respond, [chat, which, max_tokens, temperature, session, use_mem, mem_budget, recall_k], [chat, last])
         stop.click(lambda: PENDING.update(t0=None, first=None), None, None, cancels=[ev, ev2])  # a cancelled respond runs its finally
         which.change(lambda w: system_prompt(canon, w)[1], which, prov)
         new.click(lambda: ([], {"id": uuid.uuid4().hex[:12]}), None, [chat, session])

@@ -18,6 +18,17 @@
   start moves once every four turns. The input field's source changed the same way (ultimate-bankml-ui
   `console-mount` 8c88972, `consoleEngine.ts`).
 - **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
+
+### Savante: `.memory` and `.history` as context, with options
+- **`.memory` listed oldest first.** The newest notes that fit the budget were listed newest first, so every new
+  note went to the top of the block and the engine read the whole block again; now a new note is appended and the
+  block before it stays cached. The budget is an Admin option (*.memory budget*, 0–6,000 characters; 2,400 by
+  default), and the provenance counts the notes actually sent.
+- **Recall from `.history`** (Admin, 0–4 exchanges, off by default): the earlier exchanges from other sessions that
+  best match the question (`history_search`: BM25, fused with bge-m3 when it runs), cut to 700 characters each, as a
+  system message just before the question (`build_messages(before_question=…)`), counted against the context. The
+  provenance and the `.history` record (`recall`) say which were used.
+- `test_ui.py`: the order and the budget, a new note keeping the prefix, recall's filters, its place and its cost.
 - `test_console.py`: the prompt's order and stable prefix, the window, the warmer against a fake engine (prefill and
   save, restore, once per engine, left alone once it has answered, closed by a question).
 

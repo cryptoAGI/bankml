@@ -152,8 +152,37 @@ check("metrics: prefill = prompt tokens / first token", abs(m["prefill_tok_s"]["
 u.memory_add("the operator prefers verdicts", {"kind": "typed"})
 u.memory_add("second note", {"kind": "response"})
 check(".memory holds 2 notes and a prompt block", len(u.memory_all()) == 2 and "second note" in u.memory_block() and "not evidence" in u.memory_block())
+blk2 = u.memory_block()
+check(".memory: listed oldest first", blk2.index("the operator prefers verdicts") < blk2.index("second note"))
+u.memory_add("third note", {"kind": "typed"})
+check(".memory: a new note is appended, so the block before it stays the same prefix (the engine keeps it cached)",
+      u.memory_block().startswith(blk2) and u.memory_block().endswith("- third note"))
+check(".memory: over budget, the newest notes are kept", "third note" in u.memory_block(budget=30) and "prefers verdicts" not in u.memory_block(budget=30))
+check(".memory: budget 0 sends nothing", u.memory_block(budget=0) == "")
+u.memory_remove(3)
 u.memory_remove(1)
 check(".memory remove by number", [x["text"] for x in u.memory_all()] == ["second note"])
+
+# recall from .history: other sessions' exchanges that match, answered ones only, at most k, before the question
+fake = [(9.0, 0, {"session": "now", "user": "same session", "assistant": "x"}),
+        (8.0, 1, {"session": "old", "user": "no answer", "assistant": ""}),
+        (7.0, 2, {"session": "old", "sent_at": "2026-10-01T10:00:00", "user": "how fast is ternary " * 40, "assistant": "about 0.2 s a token"}),
+        (6.0, 3, {"session": "older", "user": "and the 1-bit?", "assistant": "2 tokens a second"})]
+srch = lambda q, k: (fake, "test engine")  # noqa: E731
+txt, ids = u.recall_block("ternary speed", 2, "now", search=srch)
+check("recall: this session's and unanswered exchanges skipped, at most k, best first", ids == [2, 3])
+check("recall: dated, cut to fit, says it is context", "2026-10-01" in txt and "…" in txt and "not evidence" in txt and len(txt) < 2 * u.RECALL_CHARS + 300)
+check("recall: off at 0, and for an empty question", u.recall_block("ternary", 0, search=srch) == ("", []) and u.recall_block("  ", 2, search=srch) == ("", []))
+real_txt, real_ids = u.recall_block("ternary kernels", 1, None)
+check("recall: through history_search on the real .history", len(real_ids) == 1 and "ternary kernels" in real_txt)
+mb = u.build_messages("S", [("q1", "a1")], "Q", False, before_question="RECALL x")
+check("recall: a system message just before the question, after the cached prefix",
+      [m["role"] for m in mb] == ["system", "user", "assistant", "system", "user"] and mb[-2]["content"] == "RECALL x" and mb[0]["content"] == "S")
+try:
+    u.build_messages("s", [], "Q", False, ctx_tokens=300, reserve_tokens=10, count=len, before_question="r" * 400)
+    check("recall: its tokens count against the context", False)
+except u.ContextTooSmall:
+    check("recall: its tokens count against the context", True)
 
 # custom agents: keccak256, the doctrine root, derive / verify / save, preflight, the template untouched
 os.environ["BANKML_AGENTS"] = str(tmp / "agents")

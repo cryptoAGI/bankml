@@ -521,6 +521,13 @@ Nothing is ever written into the canon (`~/cryptoAGI/savante`). What the UI writ
   up, grep it, or delete it.
 - **`savante.memory`**: one JSON object per note: `{"ts", "at", "text", "sha256", "source": {"kind": "typed" |
   "response", "session", "sent_at", "response_sha256"}}`.
+  In the prompt (Admin: *use .memory*, *.memory budget*): the newest notes that fit the budget (2,400 characters by
+  default), listed oldest first, so a new note is appended and the engine keeps the cached prompt before it.
+- **Recall from `.history`** (Admin: *recall from .history*, 0–4, off by default): the earlier exchanges from other
+  sessions that best match the question (BM25, fused with bge-m3 when it runs, as the ragebar searches), each cut to
+  700 characters, sent as a system message just before the question, so it costs only its own tokens and the
+  cached prompt is kept. The answer's provenance says how many were recalled, and its `.history` record lists them
+  under `recall`. On a slow CPU each recalled exchange adds its tokens to read before the first token.
 - **`Savante.prompt`**: the Space template's prompt, cached the first time it is chosen.
 
 **The history the model sees.**
