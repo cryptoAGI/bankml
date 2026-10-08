@@ -102,7 +102,7 @@ try:
         C.WARM.update(key=None, state="idle", conn=None)
         st1 = C.warm()
         check("warm: a fresh engine with no saved slot is prefilled with the persona alone (one token), then its slot saved",
-              st1 == "prefilled and saved" and len(seen) == 1 and seen[0]["messages"] == [{"role": "system", "content": C.persona()["system_prompt"]}]
+              st1 == "prefilled and saved" and len(seen) == 1 and seen[0]["messages"] == [{"role": "system", "content": C.base_system()}]
               and seen[0]["max_tokens"] == 1 and calls == [("save", C._slot_key(engine)[1])])
         check("warm: once per engine (nothing sent again)", C.warm() == st1 and len(seen) == 1)
         (C.models.SLOTS / C._slot_key(engine)[1]).write_bytes(b"kv")
@@ -178,7 +178,7 @@ try:
     ask = dg["traces"][0]
     kids = [c["name"] for c in ask["children"]]
     check("/api/diagnostics: an answer is traced span by span (SELF, the window's memory, the engine)",
-          ask["name"] == "ask" and kids[:3] == ["self_block", "memory", "engine.stream"] and "receipt.verify" in kids)
+          ask["name"] == "ask" and kids[:2] == ["self_block", "memory"] and "engine.stream" in kids and "receipt.verify" in kids)
     check("/api/diagnostics: the engine's failure is on its span", bool(ask["children"][kids.index("engine.stream")]["error"]) and ask["tags"]["ok"] is False)
     check("/api/diagnostics: no question text in any trace", secret not in json.dumps(dg))
     check("/api/diagnostics: without an engine the first check is bad, and says where it looked",
@@ -216,6 +216,19 @@ try:
     check("/api/sysdiag: CPU, memory, disk, GPU and the engine, each with a level and lines",
           [x["title"] for x in sd["sections"]] == ["CPU", "Memory", "Disk", "GPU", "Engine"]
           and all(x["level"] in ("ok", "warn", "bad") and x["lines"] for x in sd["sections"]) and sd["sections"][-1]["level"] == "bad")
+    # .context: bankML's own codebase (tools/context.py) — the summary in the cached prefix, passages per question
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import context as CX  # noqa: E402
+    ctxf = C.context()
+    check(".context: generated, with a summary and chunks that each name their GitHub and Hugging Face source",
+          ctxf.get("summary") and len(ctxf.get("chunks") or []) > 20
+          and all(c["github"].startswith("https://github.com/cryptoAGI/bankml/blob/main/") and c["huggingface"].startswith("https://huggingface.co/spaces/PYTHAI/bankml/blob/main/") for c in ctxf["chunks"]))
+    check(".context: fresh — every chunk's source unchanged since it was built (else: python3 tools/context.py)", CX.stale(ctxf) == [])
+    check(".context: the summary follows the persona in the first system message (the cached prefix)",
+          C.base_system().startswith(C.persona()["system_prompt"]) and ctxf["summary"] in C.base_system())
+    t1, ids1 = C.context_passages("how does the sampler draw tokens, and what are the penalties?", 2)
+    check(".context: a question about a module brings that module's passage, with its sources", "sampler" in ids1 and "github.com" in t1 and "huggingface.co" in t1)
+    check(".context: an unrelated question brings none, and k 0 none", C.context_passages("a recipe for banana bread", 2) == ("", []) and C.context_passages("sampler", 0) == ("", []))
     # .memory per response window, the collection, review of .history, recall (sAGI/console_memory.py)
     CM = C.CM
     check("memory: a window's name from its title (survives a reload; the field's ids do not)",
@@ -300,7 +313,7 @@ try:
         check("ask: the exchange is logged with its window", json.loads(C.log_lines()[-1])["window"] == "output-2")
         check("ask: per-request options override the saved ones (no memory)",
               (req("/api/ask", json.dumps({"message": "x", "window": "Output 1", "options": {"use_memory": False, "use_collection": False}}).encode(), J)
-               and sent[-1]["messages"][0]["content"] == C.persona()["system_prompt"]))
+               and sent[-1]["messages"][0]["content"] == C.base_system()))
     finally:
         C.SERVE = real_serve
         eng.shutdown()

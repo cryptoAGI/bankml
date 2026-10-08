@@ -95,7 +95,7 @@ $("form").addEventListener("submit", async (ev) => {
 });
 
 // ── Advanced: .memory per response window, the collection, recall, review of .history ───────────────────────────
-const OPTS = ["use_memory", "use_collection", "memory_budget", "collection_budget", "recall_k", "recall_source"];
+const OPTS = ["use_memory", "use_collection", "memory_budget", "collection_budget", "recall_k", "recall_source", "context_k"];
 let memDefaults = null, revRows = [];
 const postJSON = async (path, body) => {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -107,13 +107,14 @@ const optSync = () => {
   $("opt-memory_budget-v").textContent = `${$("opt-memory_budget").value} characters`;
   $("opt-collection_budget-v").textContent = `${$("opt-collection_budget").value} characters`;
   $("opt-recall_k-v").textContent = +$("opt-recall_k").value === 0 ? "off" : `${$("opt-recall_k").value} exchanges`;
+  $("opt-context_k-v").textContent = +$("opt-context_k").value === 0 ? "off" : `up to ${$("opt-context_k").value} passages`;
 };
 const optSet = (s) => {
   for (const k of OPTS) { const e = $("opt-" + k); if (!e) continue; if (e.type === "checkbox") e.checked = !!s[k]; else e.value = s[k]; }
   optSync();
 };
 const optGet = () => Object.fromEntries(OPTS.map((k) => { const e = $("opt-" + k); return [k, e.type === "checkbox" ? e.checked : e.type === "range" ? +e.value : e.value]; }));
-["opt-memory_budget", "opt-collection_budget", "opt-recall_k"].forEach((id) => $(id).addEventListener("input", optSync));
+["opt-memory_budget", "opt-collection_budget", "opt-recall_k", "opt-context_k"].forEach((id) => $(id).addEventListener("input", optSync));
 
 async function loadMemory() {
   const w = $("mem-win").value.trim() || "main";

@@ -50,6 +50,19 @@
   question tray; the side column a level above the conversation.
 - `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
 
+### `.context`: bankML knows its own codebase
+- **`sAGI/personas/bankml.context`**, beside the persona, built from the repository by `tools/context.py`: a summary
+  (the version, what bankML is, the path of a request through its modules, where the source lives on GitHub and on
+  Hugging Face) and 37 passages (each module page's Summary, the module map, the opening of the main documents), each
+  with its GitHub and Hugging Face links and the sha256 of its source.
+- **The summary follows the persona** in the first system message, so it sits in the cached prefix the console keeps
+  warm; **the passages that match a question** (BM25 over the question's own words, a match required; an unrelated
+  question brings none) ride just before it, with their sources, so an answer can name the file. Advanced →
+  *codebase context*, 0–4 passages (2 by default). The Space's chat uses the same file and the same scoring, in both
+  modes.
+- **Kept true:** `test_console` fails when any passage's source changed since the context was built
+  (`python3 tools/context.py --check`); regenerate it at each release.
+
 ### The Hugging Face Space: a landing to talk to bankML, and tabs for the rest
 - **The landing is the conversation:** the Savante | bankML switch and the DeltaVerse banner, then the question box,
   then the highlights (verified, exact, fast, small, the latest release), which give way to the answers at the first

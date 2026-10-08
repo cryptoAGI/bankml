@@ -21,9 +21,9 @@ from pathlib import Path
 
 COLLECTION = "_collection"
 DEFAULTS = {"use_memory": True, "use_collection": True, "memory_budget": 2400, "collection_budget": 1600,
-            "recall_k": 0, "recall_source": "console"}
+            "recall_k": 0, "recall_source": "console", "context_k": 2}
 LIMITS = {"note_chars": 1000, "notes_per_window": 200, "windows": 64, "memory_budget": 6000, "collection_budget": 6000,
-          "recall_k": 4, "collect_chars": 600, "recall_chars": 700}
+          "recall_k": 4, "context_k": 4, "collect_chars": 600, "recall_chars": 700}
 SOURCES = ("console", "savante")
 
 

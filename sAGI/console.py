@@ -30,6 +30,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -84,6 +85,57 @@ _LOCK = threading.Lock()
 
 def persona() -> dict:
     return json.loads(PERSONA.read_text(encoding="utf-8"))
+
+
+# ── .context: what bankML knows of its own codebase (tools/context.py builds it from the repository) ──────────────
+CONTEXT = PERSONA.with_suffix(".context")
+_CTX: dict = {"mtime": None, "value": None}
+
+
+def context() -> dict:
+    """The persona's .context, read again when the file changes; {} when there is none."""
+    try:
+        m = CONTEXT.stat().st_mtime
+    except OSError:
+        return {}
+    if _CTX["mtime"] != m:
+        try:
+            _CTX.update(mtime=m, value=json.loads(CONTEXT.read_text(encoding="utf-8")))
+        except ValueError:
+            _CTX.update(mtime=m, value={})
+    return _CTX["value"] or {}
+
+
+def base_system() -> str:
+    """The first system message: the persona's system prompt, then the context's summary of bankML's own codebase.
+    Both change only with a release, so they are the prefix the engine keeps cached (and the warmer prepares)."""
+    s = context().get("summary")
+    return persona()["system_prompt"] + (f"\n\nCONTEXT — your own codebase, generated from the repository:\n{s}" if s else "")
+
+
+STOP = set("the and for are was were this that with from what which who whom how why when where does did doing done "
+           "can could would should will shall may might must have has had having been being into onto over under about "
+           "your yours you you're its it's they them their there here then than also just only very more most some any "
+           "all not but yes our ours ask tell me my mine please".split())
+
+
+def context_passages(q: str, k: int) -> tuple[str, list]:
+    """The `k` passages of the context that best match `q` (BM25 over title and text, a match required), with their
+    sources, as text for the late system message; ("", []) when none matches."""
+    chunks = context().get("chunks") or []
+    if k <= 0 or not chunks or not (q or "").strip():
+        return "", []
+    idx = S._BM25()
+    for i, c in enumerate(chunks):
+        idx.add(f"{c['title']} {c['title']} {c['text']}", str(i))
+    # the question's own words only: common words matched every passage a little (scores near 1.3 for "a recipe
+    # for banana bread"), while a passage about the question scores 3.5 and more
+    words = " ".join(w for w in re.findall(r"[a-z0-9_.]+", q.lower()) if w not in STOP and len(w) > 2)
+    hits = [chunks[int(src)] for sc, src, _ in idx.search(words, k=k) if sc >= 2.5] if words else []
+    if not hits:
+        return "", []
+    body = "\n".join(f"- [{c['source']}] {c['title']}: {c['text']} (GitHub {c['github']} · Hugging Face {c['huggingface']})" for c in hits)
+    return "CONTEXT — passages from your own codebase that match this question:\n" + body, [c["id"] for c in hits]
 
 
 def _get(path: str, timeout: float = 5.0):
@@ -305,7 +357,7 @@ def _slot_key(st: dict | None):
     v = (st or {}).get("verified") or {}
     if not v.get("model_sha256"):
         return None
-    h = hashlib.sha256(f"{v['model_sha256']}|{S.engine_ctx()}|{persona()['system_prompt']}".encode()).hexdigest()[:24]
+    h = hashlib.sha256(f"{v['model_sha256']}|{S.engine_ctx()}|{base_system()}".encode()).hexdigest()[:24]
     return st.get("hashed_at"), f"console-{h}.bin"
 
 
@@ -334,7 +386,7 @@ def warm() -> str:
     host, port = models.LISTEN.rsplit(":", 1)
     conn = http.client.HTTPConnection(host, int(port), timeout=1800)
     WARM["conn"] = conn
-    body = {"messages": [{"role": "system", "content": persona()["system_prompt"]}], "max_tokens": 1, "temperature": 0, "stream": False}
+    body = {"messages": [{"role": "system", "content": base_system()}], "max_tokens": 1, "temperature": 0, "stream": False}
     try:
         conn.request("POST", "/v1/chat/completions", json.dumps(body), {"Content-Type": "application/json"})
         conn.getresponse().read()
@@ -535,15 +587,21 @@ class H(BaseHTTPRequestHandler):
             sb = self_block()
         hist = window(req.get("history") or [])
         win = CM.slug(req.get("window"))
-        system, recalled, recall_text = persona()["system_prompt"], [], ""
+        system, recalled, recall_text, cited = base_system(), [], "", []
         if not PUBLIC:  # a public console uses no memory and recalls nothing: they are the operator's
             opts = CM.clamp({**MEM.settings(), **{k: v for k, v in (req.get("options") or {}).items() if k in CM.DEFAULTS}})
             with D.span("memory", window=win):
                 system += MEM.context(win, opts)
+            if opts["context_k"]:
+                with D.span("context", k=opts["context_k"]):
+                    ctx_text, cited = context_passages(q, opts["context_k"])
+                    if ctx_text:
+                        recall_text = ctx_text
             if opts["recall_k"]:
                 with D.span("recall", k=opts["recall_k"], source=opts["recall_source"]):
-                    recall_text, recalled = CM.recall(records(opts["recall_source"]), q, opts["recall_k"],
-                                                      {m.get("content") for m in hist if m.get("role") == "user"}, S._BM25)
+                    rtext, recalled = CM.recall(records(opts["recall_source"]), q, opts["recall_k"],
+                                                {m.get("content") for m in hist if m.get("role") == "user"}, S._BM25)
+                    recall_text = "\n\n".join(x for x in (recall_text, rtext) if x)
         body = {"messages": messages(system, hist, q, self_text(sb), recall_text), "stream": True,
                 "max_tokens": min(int(req.get("max_tokens") or 256), PUBLIC_MAX_TOKENS if PUBLIC else 1 << 30)}
         for k in ("temperature", "top_k", "top_p", "min_p", "repeat_penalty", "seed"):
@@ -587,7 +645,7 @@ class H(BaseHTTPRequestHandler):
         if not PUBLIC:  # a public console keeps no record of its visitors' questions
             with D.span("log.write"):
                 rec = {"at": int(t0), "question": q, "answer": text, "error": err, "receipt": receipt, "metrics": last, "self_before": sb,
-                       "window": win, **({"recall": recalled} if recalled else {})}
+                       "window": win, **({"recall": recalled} if recalled else {}), **({"context": cited} if cited else {})}
                 STATE.mkdir(parents=True, exist_ok=True)
                 with LOG.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")

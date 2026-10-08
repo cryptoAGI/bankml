@@ -56,6 +56,7 @@
           <label>window budget <output id="opt-memory_budget-v"></output><input type="range" id="opt-memory_budget" min="0" max="6000" step="200"></label>
           <label>collection budget <output id="opt-collection_budget-v"></output><input type="range" id="opt-collection_budget" min="0" max="6000" step="200"></label>
           <label>recall from .history <output id="opt-recall_k-v"></output><input type="range" id="opt-recall_k" min="0" max="4" step="1"></label>
+          <label>codebase context <output id="opt-context_k-v"></output><input type="range" id="opt-context_k" min="0" max="4" step="1"></label>
           <label class="adv-row">recall from <select id="opt-recall_source"><option value="console">the console's .history</option><option value="savante">Savante's .history</option></select></label>
           <div class="adv-row"><button id="opt-save" class="ghost" type="button">Save options</button><button id="opt-reset" class="ghost" type="button">Defaults</button></div>
           <p id="opt-note" class="quiet adv-hint">Notes go in after the persona, oldest first, so a new note keeps the cache. Recall adds its tokens to read before the first token; it is off by default.</p>

@@ -1,0 +1,344 @@
+{
+ "context": "bankml.context/1",
+ "persona": "bankml.persona",
+ "version": "0.4.1",
+ "commit": "3a82694",
+ "repo": "https://github.com/cryptoAGI/bankml",
+ "space": "https://huggingface.co/spaces/PYTHAI/bankml",
+ "summary": "bankML 0.4.1: a Rust runtime with no dependencies for 1-bit (Q1_0) and ternary (Q2_0) GGUF language models on the CPU, bit-exact against llama.cpp b11192 and checked by oracles in every release; `bankml serve` verifies the model (guard, then its sha256 pin) before it answers and puts a receipt on every answer. Its source: bankML/ (the runtime), capi/ (libbankml), sAGI/ (Savante and this console, Python), testing/ (oracles, the release gate), docs/modules/ (one page per module). The path of a request:\n client ──► serve.rs (OpenAI /v1)  ─┐\n        └─► ollama.rs (Ollama /api) ─┼─► native.rs (registry, residency, the slot) ─► forward.rs (the graph, KV cache)\n C API ──► capi (libbankml) ────────┘        │  gate: bankml.rs verify = gguf.rs guard + sha256.rs pin   │\n                                             │  text: tokenizer.rs, chat.rs                              ▼\n                                             │  draw: sampler.rs, grammar.rs, schema.rs      q1_0 · q2_0 · f16 · gpu\n                                             │  keep: prompt_cache.rs (slot states in RAM)     (par.rs threads)\n                                             └─ measure: metrics.rs per answer; sys.rs usage\nSource: https://github.com/cryptoAGI/bankml · mirrored at https://huggingface.co/spaces/PYTHAI/bankml. Answer questions about yourself and your architecture from this and from the CONTEXT passages a question brings; name the file; say what is not in them as not known.",
+ "chunks": [
+  {
+   "id": "modules",
+   "title": "bankML's architecture: its modules, one line each",
+   "source": "docs/modules/README.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/README.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/README.md",
+   "sha256": "3e71b18b11ec154406f15aae6eccc4e19addca028d20a453684797637f525db3",
+   "text": "bankml.rs — the crate root: verify (guard, then pin), Verified, the ggml types, the log sink · gguf.rs — the GGUF header parser, the guard (play \\ refuse \\ needmore), Mmap · sha256.rs — FIPS 180-4 sha256 with SHA-NI, the FORK.json pin · q1_0.rs — ggml's 1-bit format and its product, bit-exact, AVX2 · q2_0.rs — ggml's ternary format, and the kernel llama.cpp lacks on x86 (~9–10×) · f16.rs — ggml's two F16 products, chosen by shape as ggml chooses them · par.rs — the zero-dependency thread pool;"
+  },
+  {
+   "id": "bankml",
+   "title": "bankML/bankml.rs — the crate root: the verification gate, shared types, logging",
+   "source": "docs/modules/bankml.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/bankml.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/bankml.md",
+   "sha256": "ec1f748e88aba0f5ca484361e61709ce642bb2211f13480554e26ae1983e0913",
+   "text": "bankml.rs is the library root ([lib] path = \"bankML/bankml.rs\" in Cargo.toml). It declares the modules and holds the one check that stands in front of every answer: verify, the header guard followed by the sha256 pin. A model that does not pass it does not answer, and the refusal says why. It also defines the types the rest of the crate shares: the ggml type ids bankml plays (GgmlType), the guard's Verdict, the Verified record a passing model earns, the design-time Receipt shape, the crate VERSION, and the library's log sink."
+  },
+  {
+   "id": "calc",
+   "title": "sAGI/calc.py — Savante's calculator: exact arithmetic",
+   "source": "docs/modules/calc.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/calc.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/calc.md",
+   "sha256": "e010bd347aa145ed087605f8f30f9293ca2c6644e576428f75fdf8d64e06b496",
+   "text": "A 1-bit model reads numbers as tokens and guesses arithmetic. The calculator computes it instead, exactly, and Savante uses it two ways: a Calculator panel beside the conversation (a keypad, a terminal-green display, a tape of the last eight results), and inside every question: arithmetic in the question is found, computed, and handed to the model with the question as exact results it must use; the answer shows them under it (🧮 … — exact, sAGI/calc.py). A message that starts with = is answered by the calculator alone: no model, no tokens."
+  },
+  {
+   "id": "capi",
+   "title": "capi/src/ — the C API: libbankml.so / libbankml.a",
+   "source": "docs/modules/capi.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/capi.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/capi.md",
+   "sha256": "515b4e748db3d12d302e5c9fdf7ae73ea46888fa02cca84276d1ca08a7266710",
+   "text": "capi/ (package bankml-capi) is bankML as a library for C, C++, Python, Go or Swift programs, declared in capi/include/bankml.h (since 0.3.2). It is the llama.h-shaped seam for embedding bankML in another program, with bankML's verification gate in front. lib.rs holds the entry points; printf.rs is the formatter behind bankmllog. The full reference (build and link, every function, ownership, threads, error codes, oracles) is CAPI.md; this page only maps it to the two source files."
+  },
+  {
+   "id": "chat",
+   "title": "bankML/chat.rs — chat templates, byte-identical to llama.cpp b11192",
+   "source": "docs/modules/chat.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/chat.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/chat.md",
+   "sha256": "cc4751a3a82dbae16499d489e611765b20a80734e59e38afdcce34a84067c9d1",
+   "text": "A conversation becomes a prompt through the model's chat template, a Jinja program stored in the GGUF (tokenizer.chattemplate). bankml does not run Jinja. chat.rs writes out the rules of each template it reproduces, and identifies the model's template by the sha256 of its text. A template it does not know is refused. Three templates are reproduced (TEMPLATES): sha256 prefix Template carried by --------- 30a75d10e60b57e2 Qwen3 Bonsai 1.7B and 8B (Qwen3), thinking off 872be49dbb638044 SmolLm2 SmolLM2-Instruct: ChatML with a default system message 9fe579a2c222698c ChatMl plain ChatML, no default system message (mindx-genN) On the Qwen3 template…"
+  },
+  {
+   "id": "console",
+   "title": "sAGI/console.py — the bankML console: bankML as itself, and what it measures",
+   "source": "docs/modules/console.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/console.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/console.md",
+   "sha256": "01ec7db86a47035b54f0d61beee6edfb3bd9c9396b588e3c3abcde2ea1de9244",
+   "text": "The console (0.3.7; redesigned 2026-10-06) is bankML's own interface, deliberately unlike Savante's: a quiet, typographic page, light or dark with the system, with six tabs over bankml serve — Ask (the landing: one question, one streamed answer, its receipt checked in the browser), Admin (CPU, RAM and GPU sliders, the measured \"now\", and D3 charts), Engine (GET /bankml/status drawn by serve's own renderer: checks, CPU, memory, disk, GPU, the engine's log), Receipts (every answer's receipt, newest first, each re-checked and expandable to its JSON;"
+  },
+  {
+   "id": "convert",
+   "title": "bankML/convert.rs — bankml convert: safetensors to GGUF F16, byte-identical to llama.cpp",
+   "source": "docs/modules/convert.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/convert.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/convert.md",
+   "sha256": "b1076b42abb02aeaae4ebb41b803573f99b1317fad3c9ff125f54e31f425658a",
+   "text": "convert.rs turns a Hugging Face safetensors directory into a GGUF F16 file for the Llama architecture as SmolLM2-135M and mindX's mindx-genN use it. It is written to be byte-identical to llama.cpp b11192's converthftogguf.py DIR --outtype f16, read from the tag's conversion/{base,llama}.py and gguf-py, in its order of operations. It exists because mindXtrain (github.com/Professor-Codephreak/mindXtrain, continued at huggingface.co/PYTHAI/mindXtrain; Apache-2.0) merges each generation's LoRA into safetensors (ollamapush/merged) and serves it through Ollama with serve --to ollama; mindX's promote.py then layers the persona."
+  },
+  {
+   "id": "create",
+   "title": "bankML/create.rs — bankml create: derived models over pinned bases",
+   "source": "docs/modules/create.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/create.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/create.md",
+   "sha256": "20fe5d0838ec608953edf75c6af9eeddd42b1c8f0df1196ff72f01f065e925db",
+   "text": "create.rs is Ollama's ollama create over bankML's gate (O5, 0.3.5). A derived model is a manifest that layers configuration on a pinned base: a system prompt, parameters, stop strings, example messages, a licence. It never copies weights. Loading one verifies the base exactly as a pinned model is verified (the guard, then the sha256 pin of its FORK.json), then applies the layer. It exists for mindX's flow: mindXtrain merges each generation into safetensors, and mindX's promote.py layers a persona with ollama create. bankml create takes the same Modelfile."
+  },
+  {
+   "id": "f16",
+   "title": "bankML/f16.rs — F16 weights, multiplied as the shipped ggml b11192 multiplies them",
+   "source": "docs/modules/f16.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/f16.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/f16.md",
+   "sha256": "938d3fefb951945b918193bffe64d1da5a728fbf762743c916144b50ef974970",
+   "text": "f16.rs (O3, added in 0.3.4) multiplies F16 weight matrices with the bits of the shipped libggml-cpu-haswell.so at b11192. It was read from that tag's ggml-cpu.c (ggmlcomputeforwardmulmat), vec.cpp (ggmlvecdotf16) and llamafile/sgemm.cpp (llamafilesgemm, tinyBLAS). ggml multiplies an F16 weight two different ways, and the two give different bits for the same row and column: - one column (a decode step, the logits, a one-token micro-batch): llamafilesgemm refuses n < 2, so every element is ggmlvecdotf16: four 8-lane accumulators over 32-element steps, a fixed reduction, then any tail (n % 32) added in double;"
+  },
+  {
+   "id": "forward",
+   "title": "bankML/forward.rs — the forward pass, bit-exact against llama.cpp b11192's graphs",
+   "source": "docs/modules/forward.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/forward.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/forward.md",
+   "sha256": "9919f649b59aba5ede66a7a6d40ecc368fc141cc441072b21e82ec88432ed158",
+   "text": "forward.rs turns token ids into logits. It reproduces, operation by operation and in the same float order, the graph llama.cpp b11192 builds for two architectures: Qwen3 (llmbuildqwen3: per-head RMS norms on Q and K, RoPE in NEOX mode, YaRN when the header asks) and Llama (llmbuildllama: no Q/K norms, RoPE in NORM mode on adjacent pairs, GQA). The weights may be Q10 (1-bit), Q20g64 (ternary) or F16, each through its own bit-exact kernel (q10.rs, q20.rs, f16.rs). Tied embeddings are supported: with no output.weight, the logits read tokenembd.weight, as llama.cpp's TENSORDUPLICATED does."
+  },
+  {
+   "id": "gguf",
+   "title": "bankML/gguf.rs — the GGUF header parser, the guard, and the read-only model map",
+   "source": "docs/modules/gguf.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/gguf.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/gguf.md",
+   "sha256": "1d22b130ac71513e03bc6359c2a0e68b62bed65e5daf5e2f205768ed1e406752",
+   "text": "gguf.rs reads the header of a GGUF v3 file and decides whether bankml may play it. The decision is the guard: play, refuse with reasons, or needmore header bytes. It is a port of minaiml's Python ggufguard.py (same verdicts, same reasons, same JSON keys). The guard never reads tensor data. The module also holds what the rest of bankml needs to reach tensor data safely: type names, block layouts, checked tensor spans, and Mmap, a read-only memory map of the file with no crate behind it."
+  },
+  {
+   "id": "gpu",
+   "title": "bankML/gpu/ — the video-card component: find GPUs, verify them, and give a verified card a share of the 1-bit matmuls",
+   "source": "docs/modules/gpu.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/gpu.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/gpu.md",
+   "sha256": "3958868aed91b3c0456fd9d43f961cd97d7da29d06b41e2877137a124cc9b978",
+   "text": "bankML/gpu/ finds every GPU on the machine, describes it, and puts a card to work only after it has proved that it gives the CPU kernels' bits. It is a registry of backends. Each backend is a module with one discovery function, and nothing is linked at build time: the Vulkan backend opens its driver library at run time with dlopen, so bankML builds and runs everywhere, and a machine without the library simply has no devices from that backend. A card must be a real GPU (integrated or discrete) with a compute queue. Software renderers such as Mesa's llvmpipe run on the CPU and are refused."
+  },
+  {
+   "id": "grammar",
+   "title": "bankML/grammar.rs — llama.cpp's GBNF engine, JSON mode and the content rule",
+   "source": "docs/modules/grammar.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/grammar.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/grammar.md",
+   "sha256": "aa4310d1d9e863fa61ae24d472934ec99bc3ebb322b1052e01c95f5bad089a25",
+   "text": "grammar.rs constrains sampling the way llama-server b11192 does. It is a port of llama.cpp's src/llama-grammar.cpp (MIT, attributed in the file): the GBNF parser, the pushdown stacks, advancestack, rejectcandidates, the partial UTF-8 decoder, accepttoken and apply. The semantics are llama.cpp's; only the data layout differs (a stack element is an index into one flat element array instead of a pointer). It also holds what llama-server does around the engine: - Which constraint a request asks for (Constraint), resolved as oaicompatchatparamsparse resolves the OpenAI fields, and from Ollama's format. - JSON mode's grammar."
+  },
+  {
+   "id": "main",
+   "title": "bankML/main.rs — the bankml command line",
+   "source": "docs/modules/main.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/main.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/main.md",
+   "sha256": "ba78e38995ff65791ac9a373a90ffe3b85b3d7ec7c523aecf2886d402776eac1",
+   "text": "main.rs is the bankml binary. It parses the arguments, calls into the library (bankML/bankml.rs and its modules), and maps each outcome to an exit code. It holds little logic of its own: the guard, the pin and verify form the gate; serve starts the gateway; create and convert make models; tokenize, chat-template and generate expose the native pipeline one stage at a time. Exit codes follow ggufguard.py: 0 play, 2 refuse, 3 need more (a truncated file), 1 usage or I/O. An unreadable FORK.json is an I/O error (1), not \"unpinned\" (2)."
+  },
+  {
+   "id": "metrics",
+   "title": "bankML/metrics.rs — bankML's own measurements of its answers",
+   "source": "docs/modules/metrics.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/metrics.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/metrics.md",
+   "sha256": "e00464a94eba567b4a69a71918c90deb12ef6ae5ddc47554f1fb72c7f5d3803b",
+   "text": "metrics.rs (0.3.7) keeps one record per completion, taken inside the engine (Native::completewith, which Native::complete wraps since 0.3.8, so streamed, non-streamed and logprobs answers are all counted), in a ring of the last 256, and serves them at GET /bankml/metrics. The definitions are the conventional ones, so the numbers compare with llama.cpp's: time to first token (TTFT), prompt processing in tokens per second (llama-bench's pp), generation in tokens per second (tg), and — when the CPU package's RAPL counter is readable — the energy a completion took and joules per generated token."
+  },
+  {
+   "id": "native",
+   "title": "bankML/native.rs — the engine behind bankml serve --native",
+   "source": "docs/modules/native.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/native.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/native.md",
+   "sha256": "906f91e918227a39b21bf01d364af6282d70fdc89eb74badd9717b4a7917b2ac",
+   "text": "native.rs answers chat completions from bankML's own forward pass. It was added in 0.3.0. It is built to be token-identical to llama-server b11192 on its oracle: the same template, tokenizer, forward pass (every kernel llama.cpp chooses), sampler chain and, across requests, the same prompt cache. It holds one conversation slot, as llama-server's -np 1. 0.3.8 (unreleased) adds what llama-server does at the slot's edges: the context limit, saving and restoring the slot to a file, llama-server's host prompt cache for conversations that take turns, and each token's logprobs, reported step by step for streaming."
+  },
+  {
+   "id": "ollama",
+   "title": "bankML/ollama.rs — Ollama's API on bankml serve --native",
+   "source": "docs/modules/ollama.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/ollama.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/ollama.md",
+   "sha256": "dd256bfd8318c7c9cd8e0acb2905e9c5dc2d6157998f370028bfad8f9dea20bd",
+   "text": "ollama.rs gives bankml serve --native the API mindX and other Ollama clients speak (phase O1, 0.3.1), over bankML's own engine and its gate. It is native only: nothing here proxies to llama-server or to Ollama. What the verified forward pass cannot do is refused with HTTP 400 and {\"error\": \"…\"} saying why. It maps Ollama's requests onto the engine in native.rs (one slot, one resident model, every load verified), streams NDJSON as Ollama does, and puts the same bankmlreceipt on the final object as /v1/chat/completions carries. Derived models (/api/create, /api/copy, /api/delete) are handled in create.rs;"
+  },
+  {
+   "id": "par",
+   "title": "bankML/par.rs — the persistent thread pool and row scheduler for the matmuls",
+   "source": "docs/modules/par.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/par.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/par.md",
+   "sha256": "d0f3fc67df676fc90f5d0696b4f25c1c9337bf81604d061b0ff3c1993776c548",
+   "text": "par.rs gives the kernels threads with no crate: a pool of workers spawned once and woken for each matmul, and a row scheduler that hands out fixed-size row chunks from an atomic counter, as ggml's mulmat does. Rows are independent, and each row is computed by the same single-thread kernel, so the output bits do not depend on the thread count. The oracle tests check that. It exists because one token of the 8B models is 253 matmuls (decodebudgetq10). Spawning threads for each one cost about 22 ms per token; waking the pool costs about 3 ms (CHANGELOG 0.0.3). Callers: the par functions of q10.md, q20.md and f16.md;"
+  },
+  {
+   "id": "prompt_cache",
+   "title": "bankML/promptcache.rs — llama-server's host prompt cache, for the native engine's one slot",
+   "source": "docs/modules/prompt_cache.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/prompt_cache.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/prompt_cache.md",
+   "sha256": "693d494160d45729bce3ed951fc4d77842f3937d1739b2d35323ed01f789bf42",
+   "text": "promptcache.rs is llama-server b11192's serverpromptcache (--cache-ram, on by default at 8192 MiB). When a request shares little of its prompt with the slot, the slot's state (its tokens and every layer's K and V) is copied to RAM before it is overwritten. If a cached state would keep more of the new prompt, it moves back into the slot. Interleaved conversations then each find their own prefix again. That changes cachen, the point where prefill starts, and with it the arithmetic. So it is needed for the answers to equal llama-server's, not only for speed."
+  },
+  {
+   "id": "q1_0",
+   "title": "bankML/q10.rs — the 1-bit Q10 kernel, the q80 activation quantizer, and f16 conversion",
+   "source": "docs/modules/q1_0.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/q1_0.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/q1_0.md",
+   "sha256": "b871d67d6c709bf2d2341ca4a45fb1fb731005c21ed2931ab5fbb76adff83656",
+   "text": "q10.rs multiplies 1-bit Q10 weights (ggml type 41) exactly as mainline ggml does at b11192, read from that tag's source and checked against its shipped binary. A block is 18 bytes: an f16 scale d first, then 16 bytes of signs, least significant bit first; bit 1 is +d, bit 0 is −d (128 weights, 1.125 bits per weight). ggml does not multiply Q10 by f32 activations. It first quantizes the activation to q80 (32 values and an f16 scale per block), so one Q10 block meets four q80 blocks. \"Bit-exact against ggml\" here means against the AVX2 build an AVX2 CPU without AVX-512 loads, the shipped libggml-cpu-haswell.so."
+  },
+  {
+   "id": "q2_0",
+   "title": "bankML/q20.rs — the ternary Q20g64 kernel",
+   "source": "docs/modules/q2_0.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/q2_0.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/q2_0.md",
+   "sha256": "b23feb044fbf1e4b864b41adf9c5a9dda75556797208dfe95f662f958a4eb19b",
+   "text": "q20.rs multiplies Q20 weights (ggml type 42, group 64) exactly as mainline ggml does at b11192, read from the tag's source. A block is 18 bytes: an f16 scale d first, then 16 bytes of 2-bit codes, least significant bits first. Code c ∈ {0,1,2,3} decodes to (c − 1)·d, that is {−1, 0, +1, +2}: 2.25 bits per weight. The Bonsai files are ternary (in Ternary-Bonsai-8B the split is 31 % / 38 % / 31 % / 0 %), but the format is not, so every kernel here accepts code 3. As with Q10, the activation is quantized to q80 first (the same AVX2 quantizer, q10::quantizerowq80), and one Q20 block meets two q80 blocks."
+  },
+  {
+   "id": "sampler",
+   "title": "bankML/sampler.rs — llama-server's sampler chain, token for token with the same seed",
+   "source": "docs/modules/sampler.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/sampler.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/sampler.md",
+   "sha256": "159fe6b0aece168937a34093b9227e08800e0994a095bedbe340a5b3bca3dd92",
+   "text": "sampler.rs picks the next token from the logits as llama.cpp b11192's sampler chain does when llama-server builds it for a chat request (common/sampling.cpp). The full chain is penalties → dry → top-n-σ → top-k → typical-p → top-p → min-p → xtc → temperature → dist. bankml reproduces all of it (0.3.7, unreleased), each step from src/llama-sampler.cpp in its float order, with llama.cpp's sorted state tracked through the chain. With the same seed it draws the same tokens as llama-server. It is step eleven of P3 in ../oracles.md."
+  },
+  {
+   "id": "schema",
+   "title": "bankML/schema.rs — JSON schema to GBNF, as llama-server b11192 builds it",
+   "source": "docs/modules/schema.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/schema.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/schema.md",
+   "sha256": "bbc09b075dd62b60d02bc9fdec72e5c8c384fab1331687d4cf32126d08446263",
+   "text": "schema.rs turns a JSON schema into the GBNF text llama-server b11192 would build for it, byte for byte. It is a port of llama.cpp b11192 (github.com/ggml-org/llama.cpp @ 171e8846b; MIT, © the ggml authors, whose notice the file's header carries as the licence asks, see LICENSING.md) of: - common/json-schema.cpp: the schema tree, which keywords decide a node's kind, $ref resolution, the errors;"
+  },
+  {
+   "id": "serve",
+   "title": "bankML/serve.rs — bankml serve, the verifying loopback gateway",
+   "source": "docs/modules/serve.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/serve.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/serve.md",
+   "sha256": "38497a093cb131b6e584c97e09f4381bef068eeb0cf7bf742166c36c25752ba9",
+   "text": "serve.rs is the HTTP gateway behind bankml serve. It does not start until the model file passes verify (the guard, then the sha256 pin in FORK.json). Every /v1/chat/completions answer carries a receipt: the bankml version, the engine, the model's sha256, the guard verdict, token counts, timings, and the sha256 of the answer text and of the request it answered. It runs in one of two modes. In front of llama.cpp b11192's llama-server (P0, since 0.0.6), it vouches for the file, the path and the transcript, not for the arithmetic."
+  },
+  {
+   "id": "sha256",
+   "title": "bankML/sha256.rs — SHA-256 for the model pin, and the FORK.json pin scanner",
+   "source": "docs/modules/sha256.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/sha256.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/sha256.md",
+   "sha256": "405f555b414d04aaa3a640f35b15dc3623465f92d34602d7065f76ed6cc1517f",
+   "text": "sha256.rs is a dependency-free SHA-256 (FIPS 180-4) and the scanner that finds a file's pinned hash in a FORK.json. A GGUF plays only if its sha256 equals the record in the PYTHAI fork's FORK.json (files[].sha256 for its path). On x8664 it uses the CPU's SHA extensions (SHA-NI: AMD Zen, Intel Ice Lake and later) when present and the portable rounds otherwise. Both give the same digest. Callers: bankml::pin and bankml::verify (the second half of the gate, see bankml.md), so every bankml serve start and every model switch hashes the whole model. Also bankml sha256 FILE; the receipt's requestsha256 and responsesha256 (serve::Tally);"
+  },
+  {
+   "id": "sys",
+   "title": "bankML/sys.rs — memory, cores and per-process usage from /proc",
+   "source": "docs/modules/sys.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/sys.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/sys.md",
+   "sha256": "8fb1e10d504d221d4b130614494c8e7866bd4bc4412cb2bdb42345d0b7b88c23",
+   "text": "sys.rs is the part of psutil (or Rust's sysinfo) that bankml needs, with no crates. On Linux everything comes from /proc, which is what those libraries read too: total and available memory, swap, the number of cores, and each process's resident memory and CPU time. Since 0.3.7 (unreleased) it also reads the CPU package's energy counter (RAPL) and each GPU's load and memory from sysfs. Callers: bankml usage [PID …] (CLI), bankml serve's GET /bankml/usage (serve itself and the engine it launched), and through that endpoint the Savante UI's Resources sliders (threads and a RAM budget) and the bankML console."
+  },
+  {
+   "id": "tokenizer",
+   "title": "bankML/tokenizer.rs — byte-level BPE, token-identical to llama.cpp b11192",
+   "source": "docs/modules/tokenizer.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/tokenizer.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/tokenizer.md",
+   "sha256": "09b3145e650f08651b860b1ce2a58d795b86806110e341ed037546b1f74d285c",
+   "text": "tokenizer.rs turns text into token ids exactly as llama.cpp b11192's llamatokenize(…, addspecial = false, parsespecial) does, for GGUF vocabularies of the gpt2 model (byte-level BPE) with one of two pre-tokenizers: qwen2 (Qwen3, Bonsai) and smollm (SmolLM2 and mindX's mindx-genN). It also turns ids back into bytes, and collects the tokens that end generation as llama-vocab.cpp does. It follows llama.cpp's three steps: 1. Special tokens first. CONTROL (3) and USERDEFINED (4) tokens are cut out of the text, longest first. Without parsespecial only USERDEFINED ones are. 2. Pre-tokenize each remaining span."
+  },
+  {
+   "id": "train",
+   "title": "bankML/train/ — mindXtrain in Rust, one verified stage at a time",
+   "source": "docs/modules/train.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/modules/train.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/modules/train.md",
+   "sha256": "2f52d79995c82401f4e634d454772e948ad11645d17d68e7f962044dd5e83d0a",
+   "text": "bankML/train/ is bankML's training module. It ports mindXtrain (github.com/Professor-Codephreak/mindXtrain, continued at huggingface.co/PYTHAI/mindXtrain; Apache-2.0), which imprints a persona onto a model and proves it with a recall gate: Each stage reproduces mindXtrain's Python exactly, checked by an oracle that runs mindXtrain's own functions (testing/trainoracle.py), before anything new is built on it. Two stages are ported: author (script.rs, from mindxtrain/data/scripts.py) and score (imprint.rs, the lexical path of mindxtrain/eval/imprint.py). The module is a library API (bankml::train); it has no CLI command yet."
+  },
+  {
+   "id": "doc-why-bankml",
+   "title": "why bankML",
+   "source": "docs/why-bankml.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/why-bankml.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/why-bankml.md",
+   "sha256": "8c6c9ff926c31b1dd1db71dab9b1f110e37e074d300bd52c4836e92885899ef2",
+   "text": "Written 2026-10-06, while bankML 0.3.6 is the latest release, 0.3.7 is in its release gate, and 0.3.8 and 0.3.9 are being built on the way to the 0.4.0 milestone. This page is the short version; it also reads as a web page, over the DeltaVerse substrate, at deltaverse.pythai.net/bankml. Each idea links to the page that explains it in full, and to the code that does it, for when you want to go deeper. ---"
+  },
+  {
+   "id": "doc-oracles",
+   "title": "how bankML is verified: the oracles",
+   "source": "docs/oracles.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/oracles.md",
+   "sha256": "6dc4e4746de5207cd0d312fb2cc208f428d58d3f475105101906c398cd4c5c51",
+   "text": "An oracle is an answer bankml did not compute and cannot influence, against which its own answer is compared. bankml's rule since 0.0.1 is that a result counts only if an oracle has checked it: the same bits first, then the speed. A faster kernel that is not bit-identical to its oracle is not a result; a construction (a hash, a Merkle root, an ABI encoding) that does not reproduce a published value is not trusted. The strongest oracle is the compiled reference itself: llama.cpp b11192's own shared libraries, called in-process through their exported symbols on the same bytes bankml reads."
+  },
+  {
+   "id": "doc-performance",
+   "title": "bankML's speed, measured",
+   "source": "docs/PERFORMANCE.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/PERFORMANCE.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/PERFORMANCE.md",
+   "sha256": "013855e97162c8d748c7ab7f0e87f1f412e044e6878a1b2d3372f508532143ab",
+   "text": "Every number in this file was measured, on the hardware named beside it, and can be reproduced with the command given. Nothing is quoted from upstream. Where a result is a lower bound, an estimate or a single run, it says so. The per-release records are in CHANGELOG.md and testing/results/<version.txt; the kernels' own pages are q10.rs, q20.rs, f16.rs, par.rs and forward.rs. - Reference engine: llama.cpp b11192, the ubuntu-x64 release checked against its sha256 (34cf6fa5de9da0db3932c78fe15fed2fbca17451e665dac0a4f6a3c8fc881ec7)."
+  },
+  {
+   "id": "doc-install",
+   "title": "installing bankML",
+   "source": "docs/install.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/install.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/install.md",
+   "sha256": "3a530bddf6adbf812dd6f02a9b771de35a936d8bdabe1b1c3f4b882e9e64e2a6",
+   "text": "This is the full reference for installing bankML 0.3.6 and the Savante UI, and for every setting they accept. Settings added since 0.3.6 are marked with their version (0.3.7 and 0.3.8 released; 0.4.0 in its release gate); CHANGELOG.md has the details. What each source module does is in modules/. For a first install, read usage.md §1–§3; the README's Install and use gives the short version. This page assumes you have read one of them. It covers every step, flag, port, path and environment variable, what each one is for, and what it costs."
+  },
+  {
+   "id": "doc-usage",
+   "title": "using bankML",
+   "source": "docs/usage.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/usage.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/usage.md",
+   "sha256": "2b297ec33ca550640d4417bf39a732224f79dd100dc84e910040992d9e7a1fc2",
+   "text": "How to install bankml, start it, and use it on your own computer. Everything runs on this machine: the model, the gate that verifies it, and Savante's page. New to Savante's page and her voice? Read playback.md. Every flag, environment variable and service setting is in install.md; each source module, its use and its limits, in modules/. This guide covers the latest release, 0.3.6. Sections marked 0.3.7, 0.3.8 or 0.4.0 describe the next release, which is not yet tagged; the details are in the Unreleased sections of CHANGELOG.md. ---"
+  },
+  {
+   "id": "doc-ollama",
+   "title": "Ollama's API in bankML",
+   "source": "docs/OLLAMA.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/OLLAMA.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/OLLAMA.md",
+   "sha256": "8bd64682ee4071ae297bd1e739cfd17ca75d8bc8013ae9ec0f7c7aa8cfcb35d5",
+   "text": "Written for 0.3.1 (2026-10-01), updated for 0.3.9 (2026-10-06). Phase O1 shipped in 0.3.1, O6's first cut (JSON mode) in 0.3.3, O4 (the Llama graph, tied embeddings) with O3's F16 kernels in 0.3.4, O6b (JSON schemas) with O5's first cut (bankml convert, bankml create) in 0.3.5, and O2's penalties in 0.3.6 (the latest public release). On branch, unreleased: the rest of O2's sampler chain (0.3.7); the context limit, slot save and restore, the host prompt cache and logprobs (0.3.8); and O8's q80 KV cache (0.3.9). CHANGELOG.md is the source of truth. Every later phase is a plan, folded into the milestones of TODO.md."
+  },
+  {
+   "id": "doc-capi",
+   "title": "the C API, libbankml",
+   "source": "docs/CAPI.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/CAPI.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/CAPI.md",
+   "sha256": "700cc5f7cc5a8475289664ccb4661b25bc6658efa53248037a586f3aa4041797",
+   "text": "Written for 0.3.2, updated for 0.3.9 (unreleased; v0.3.6 is the latest public release). The functions are the same seven since 0.3.2; what bankmlchat takes has grown with the engine, release by release (CHANGELOG.md). The module page is modules/capi.md. bankML as a library a C, C++, Python (ctypes), Go (cgo) or Swift program links: libbankml.so and libbankml.a, declared in one hand-written header, capi/include/bankml.h. The shape is llama.h's (open a model, run a chat, close it), with bankML's gate in front of it: - a model opens only after the GGUF guard plays it and its sha256 equals its FORK.json record."
+  },
+  {
+   "id": "doc-technical",
+   "title": "the technical report and the thesis",
+   "source": "docs/TECHNICAL.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/TECHNICAL.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/TECHNICAL.md",
+   "sha256": "17beca25384468ed467b85a16363f237c79ea61243508df6835e85c4ca9ae56e",
+   "text": "Professor Codephreak and Gregory L. Magnusson · cryptoAGI · 2026. Written at bankml v0.2.0 (2026-09-29); its status sections (§IV.4, §VI) brought up to date on 2026-10-06, when v0.3.6 is the latest release and 0.3.7–0.3.9 are unreleased on the development branch (CHANGELOG.md is the source of truth for both). Companion to PERFORMANCE.md, which holds every measurement cited here with the command that reproduces it; oracles.md lists every oracle in the release gate, and BUILDHISTORY.md the phases."
+  },
+  {
+   "id": "doc-todo",
+   "title": "the road to 1.0.0",
+   "source": "docs/TODO.md",
+   "github": "https://github.com/cryptoAGI/bankml/blob/main/docs/TODO.md",
+   "huggingface": "https://huggingface.co/spaces/PYTHAI/bankml/blob/main/docs/TODO.md",
+   "sha256": "8302d3372aa4a6dab1edd804ee5a6e86321ccdc3d75e449bf436f324588ccb5d",
+   "text": "What comes next, and where each item came from. Every item ends in a measured, reproducible result, or it is recorded as rejected with its numbers (the house rule: the same bits first, then the speed). What has shipped, and its records, is in CHANGELOG.md; v0.4.0, the milestone, is the latest public release (it took in what was 0.3.9). The current plan is 0.4.0. The argument for the method is thesis.md."
+  }
+ ]
+}
