@@ -198,8 +198,9 @@ svc = SC.load(u.SAVANTE_CONTEXT)
 check("savante.context: her designer, attributed with his GitHub, and her family of repositories in the summary",
       "Professor Codephreak" in svc.get("summary", "") and "https://github.com/Professor-Codephreak" in svc["summary"]
       and all(n in svc["summary"] for n in ("savante", "sagi", "voaice", "voaicers", "streamair", "AgenticPlace", "bankml")))
-check("savante.context: streamair is said to be unpublished, never given an invented address",
-      "not yet published" in next(c["text"] for c in svc["chunks"] if c["id"] == "streamair") and not any(c.get("github", "").endswith("/streamair") for c in svc["chunks"]))
+check("savante.context: streamair with its real address (cryptoAGI/streamair) and what its README says",
+      next(c for c in svc["chunks"] if c["id"] == "streamair").get("github") == "https://github.com/cryptoAGI/streamair"
+      and "Ogg" in next(c["text"] for c in svc["chunks"] if c["id"] == "streamair"))
 check("savante.context: a question about her designer or a repository brings its passage; an unrelated one none",
       SC.passages(svc, "who designed you?", 2, "H")[1][:1] == ["designer"] and "streamair" in SC.passages(svc, "what is streamair?", 2, "H")[1]
       and SC.passages(svc, "a recipe for banana bread", 2, "H") == ("", []))

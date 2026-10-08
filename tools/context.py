@@ -119,7 +119,7 @@ FAMILY = [  # (id, GitHub repository or None, what it is to Savante, a local che
     ("voaice", "cryptoAGI/voaice", "voaice: what a voice is, written down (.voaice identities, the vprint)", "~/cryptoAGI/voaice"),
     ("voaice-service", "Professor-Codephreak/voaice", "voaice as a service: the voice of an AI service", None),
     ("voaicers", "cryptoAGI/voaicers", "voaicers (voaice.rs): the listening half, speech to text in Rust", "~/cryptoAGI/voaice.rs"),
-    ("streamair", None, "streamair: in development, not yet published", "~/cryptoAGI/streamair"),
+    ("streamair", "cryptoAGI/streamair", "streamair: streaming audio, text to sound in real time in Ogg Opus, early", "~/cryptoAGI/streamair"),
     ("agenticplace", "AgenticPlace/agenticplace", "AgenticPlace: the marketplace of agents (agenticplace.pythai.net)", None),
     ("bankml", "cryptoAGI/bankml", "bankML: the runtime Savante speaks through, verified low-bit inference", None),
 ]
@@ -162,13 +162,15 @@ def build_savante() -> dict:
         if not readme and lp and (lp / "README.md").is_file():
             readme = (lp / "README.md").read_text(encoding="utf-8")
         desc = (info or {}).get("description") or ""
-        if cid == "streamair":
+        if cid == "streamair" and not readme:
             mod = (lp / "src" / "ogg.rs") if lp else None
             head = " ".join(l.lstrip("/! ").strip() for l in mod.read_text(encoding="utf-8").splitlines()[:3]) if mod and mod.is_file() else ""
             text = ("streamair is in development and not yet published (no public repository): a zero-dependency Rust "
                     "project; its first module, src/ogg.rs: " + head)
         else:
-            text = f"{repo} — {desc or role}" + (f" {first_prose(readme)}" if readme else "")
+            fp = first_prose(readme) if readme else ""
+            # a description that is the README's own first line is said once
+            text = f"{repo} — {fp}" if fp and desc and desc[:40] in fp else f"{repo} — {desc or role}" + (f" {fp}" if fp else "")
         url = f"https://github.com/{repo}" if repo else None
         chunks.append({"id": cid, "title": f"{cid} — {role}", "source": url or "a local checkout, not published", **({"github": url} if url else {}), "text": cut(text)})
         lines.append(f"{cid} — {role}" + (f" ({url})" if url else " (not yet published)"))

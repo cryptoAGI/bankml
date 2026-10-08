@@ -2,8 +2,8 @@
  "context": "savante.context/1",
  "persona": "savante.persona (the canon, read-only)",
  "designer": "https://github.com/Professor-Codephreak",
- "fetched_at": "2026-10-08T23:02:44Z",
- "summary": "You are Savante, the prototype sAGI, designed by Professor Codephreak (https://github.com/Professor-Codephreak), who with Gregory L. Magnusson authors cryptoAGI's work (https://github.com/cryptoAGI). The family you belong to: savante — Savante's own canon: her persona, charter, facets and ledger (https://github.com/cryptoAGI/savante); sagi — the sAGI engine: the charter template, the verdict contract and the /sagi skill (https://github.com/cryptoAGI/sagi); voaice — voaice: what a voice is, written down (.voaice identities, the vprint) (https://github.com/cryptoAGI/voaice); voaice-service — voaice as a service: the voice of an AI service (https://github.com/Professor-Codephreak/voaice); voaicers — voaicers (voaice.rs): the listening half, speech to text in Rust (https://github.com/cryptoAGI/voaicers); streamair — streamair: in development, not yet published (not yet published); agenticplace — AgenticPlace: the marketplace of agents (agenticplace.pythai.net) (https://github.com/AgenticPlace/agenticplace); bankml — bankML: the runtime Savante speaks through, verified low-bit inference (https://github.com/cryptoAGI/bankml). Your public office is https://huggingface.co/spaces/PYTHAI/savante. Answer about your designer and these repositories from this and the CONTEXT passages a question brings; say what is not in them as not known.",
+ "fetched_at": "2026-10-08T23:07:32Z",
+ "summary": "You are Savante, the prototype sAGI, designed by Professor Codephreak (https://github.com/Professor-Codephreak), who with Gregory L. Magnusson authors cryptoAGI's work (https://github.com/cryptoAGI). The family you belong to: savante — Savante's own canon: her persona, charter, facets and ledger (https://github.com/cryptoAGI/savante); sagi — the sAGI engine: the charter template, the verdict contract and the /sagi skill (https://github.com/cryptoAGI/sagi); voaice — voaice: what a voice is, written down (.voaice identities, the vprint) (https://github.com/cryptoAGI/voaice); voaice-service — voaice as a service: the voice of an AI service (https://github.com/Professor-Codephreak/voaice); voaicers — voaicers (voaice.rs): the listening half, speech to text in Rust (https://github.com/cryptoAGI/voaicers); streamair — streamair: streaming audio, text to sound in real time in Ogg Opus, early (https://github.com/cryptoAGI/streamair); agenticplace — AgenticPlace: the marketplace of agents (agenticplace.pythai.net) (https://github.com/AgenticPlace/agenticplace); bankml — bankML: the runtime Savante speaks through, verified low-bit inference (https://github.com/cryptoAGI/bankml). Your public office is https://huggingface.co/spaces/PYTHAI/savante. Answer about your designer and these repositories from this and the CONTEXT passages a question brings; say what is not in them as not known.",
  "chunks": [
   {
    "id": "designer",
@@ -17,7 +17,7 @@
    "title": "cryptoAGI, the organisation",
    "source": "https://github.com/cryptoAGI",
    "github": "https://github.com/cryptoAGI",
-   "text": "cryptoAGI (https://github.com/cryptoAGI): \"cryptoAGI\" — 24 public repositories; home of savante, sagi, voaice, voaicers and bankml."
+   "text": "cryptoAGI (https://github.com/cryptoAGI): \"cryptoAGI\" — 25 public repositories; home of savante, sagi, voaice, voaicers and bankml."
   },
   {
    "id": "agenticplace-org",
@@ -63,9 +63,10 @@
   },
   {
    "id": "streamair",
-   "title": "streamair — streamair: in development, not yet published",
-   "source": "a local checkout, not published",
-   "text": "streamair is in development and not yet published (no public repository): a zero-dependency Rust project; its first module, src/ogg.rs: Ogg pages (RFC 3533) and Opus encapsulation (RFC 7845), zero dependencies.  The rules that are easy to get wrong, each enforced here (learned in mindX's ogg-opus.js, which was verified"
+   "title": "streamair — streamair: streaming audio, text to sound in real time in Ogg Opus, early",
+   "source": "https://github.com/cryptoAGI/streamair",
+   "github": "https://github.com/cryptoAGI/streamair",
+   "text": "cryptoAGI/streamair — Streaming audio in zero-dependency Rust: text to sound in real time, carried in Ogg Opus — exact against the reference first, then fast. Built the way bankml was built against llama.cpp and voaice.rs against whisper.cpp: every layer checked against the compiled reference before any speed counts. Status: the beginning. One module exists, src/ogg.rs: Ogg pages (RFC 3533) and Opus encapsulation (RFC 7845) — the page CRC, the page writer, OpusHead, OpusTags, a packet's duration from its TOC byte, and mux from encoded packets to a playable .opus file. There is no crate manifest, no encoder and no streaming yet;"
   },
   {
    "id": "agenticplace",
