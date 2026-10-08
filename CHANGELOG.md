@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased (0.4.2) — logprobs on Ollama's API; receipts that cover logprobs (to merge with the 0.4.2 GPU work)
+
+### Measured (2026-10-08, Bonsai-1.7B-Q1_0, against llama-server b11192)
+- `logprobs_ollama_oracle_live` **19 / 19**: `/api/chat` and `/api/generate`, streamed and not, entries and receipts.
+- `maxzero_oracle_live` **7 / 7**: the six `max_tokens: 0` cases (recorded from llama-server: it samples one token) and
+  `num_predict: 0` answered as `-1`.
+- `logprobs_oracle_live` (`/v1`) **14 / 14** unchanged; `cargo test --release` 106 passed; clippy clean.
+- The oracle's own extraction of the logprobs array ended a string at `\"` (its escape flag was recomputed before the
+  quote was checked), so a top-20 entry whose token is a quote or a backslash failed the receipt check (18 / 19). Fixed
+  in `logprobs_ollama_oracle.py`; the receipt was right.
+
+### Logprobs on `/api/chat` and `/api/generate` (`logprobs_ollama_oracle_live`)
+- Ollama 0.20's request fields: `logprobs: true` and `top_logprobs` 0–20. Out of range is a 400 with Ollama's own
+  message, before any model is loaded; without `logprobs`, `top_logprobs` is ignored, as Ollama ignores it.
+- The answer takes the per-token path `/v1` takes (`NativeChat::run_steps_while`), so the entries are llama-server
+  b11192's: the same tokens, texts, bytes and 32-bit floats, written in Ollama's shape (no `id`; `bytes` and
+  `top_logprobs` left out when empty). Not streamed, the list is the top-level `logprobs`; streamed, each line carries
+  its tokens' entries.
+- `top_logprobs: 0` is the chosen token only, computed as llama-server's `n_probs` 1: the chosen token's float depends
+  on how many top tokens are sorted, so the oracle compares it with llama-server's top-1 answer.
+- Requests without logprobs keep the answer path they had.
+- Asked for by mindX: its Augur (calibrated yes/no forecasts) reads P(yes) from one forward pass instead of sampling
+  three answers.
+
+### `max_tokens: 0` as llama-server answers it; Ollama's `num_predict: 0` (`maxzero_oracle_live`)
+- llama-server b11192 checks the generation limit only once a token is generated (`n_gen > 0`), so `max_tokens: 0`
+  still samples one token, and with logprobs that token's entry is the next-token distribution after the prompt.
+  bankML stopped before the first token and answered nothing; it now checks the limit as llama-server does.
+  Recorded against llama-server (greedy, seeded, plain, streamed) before it was accepted.
+- Ollama's runner limits only when `numPredict > 0` (0.20.0), so `num_predict: 0` means no limit, as -1 does; bankML
+  had read it as zero tokens.
+
+### `logprobs_sha256` on the receipt
+- `response_sha256` hashes the text, not the numbers a client may act on. An answer with logprobs now also carries
+  `logprobs_sha256`: the sha256 of the logprobs array exactly as written (the body's substring when not streamed; when
+  streamed, every entry the chunks carried, as one array). On `/v1` and on Ollama's API.
+- Without logprobs the receipt is unchanged, byte for byte.
+- `receipts_cover_logprobs_as_written` and `logprobs_as_ollama_asks_and_answers` (unit); live in the oracle above,
+  which also checks the `/v1` receipts.
+
 ## Unreleased (0.4.1) — a request whose client has gone stops; GPU objects released; ternary on the GPU; CI on ARM
 
 **The first steps towards 0.5.0 (hardware), and the two 0.4.x items.**

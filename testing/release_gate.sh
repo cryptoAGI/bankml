@@ -84,6 +84,14 @@ out=testing/results/$v.txt
     python3 -B testing/disconnect_oracle.py Bonsai-1.7B-Q1_0 || { echo "FAILED: disconnect_oracle_live"; exit 1; }
     echo "## logprobs_oracle_live"
     python3 -B testing/logprobs_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: logprobs_oracle_live"; exit 1; }
+    # 0.4.2: logprobs on Ollama's API (/api/chat, /api/generate, streamed and not) carry llama-server b11192's entries in
+    # Ollama's shape; top_logprobs 0 is the chosen token only; the receipt's logprobs_sha256 hashes what was received
+    echo "## logprobs_ollama_oracle_live"
+    python3 -B testing/logprobs_ollama_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: logprobs_ollama_oracle_live"; exit 1; }
+    # 0.4.2: max_tokens 0 samples one token as llama-server b11192 does (its limit applies once n_gen > 0), with its
+    # logprobs: the next-token distribution; and Ollama's num_predict 0 is no limit, as its runner reads it
+    echo "## maxzero_oracle_live"
+    python3 -B testing/maxzero_oracle.py --bankml Bonsai-1.7B-Q1_0 || { echo "FAILED: maxzero_oracle_live"; exit 1; }
     # 0.3.3: JSON mode and grammars live — /v1 response_format (streamed once) and grammar, /api/chat format "json"
     echo "## json_oracle_live"
     python3 -B testing/json_oracle.py --bankml || { echo "FAILED: json_oracle_live"; exit 1; }

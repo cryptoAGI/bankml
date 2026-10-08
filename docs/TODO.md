@@ -245,6 +245,12 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   socket before each micro-batch (a non-blocking peek, or the write of a keep-alive comment on a stream) and stop the
   run, keeping the slot's cache up to the last computed token.
 - [x] **A compact SELF** (**0.4.1**): two lines — who is speaking (the A/B's wording, 3 / 3), then every measurement on one line.
+- [x] **Logprobs on Ollama's API** (**0.4.2**, `logprobs_ollama_oracle_live`): `/api/chat` and `/api/generate` with
+  Ollama 0.20's `logprobs` / `top_logprobs`, llama-server b11192's entries in Ollama's shape (asked for by mindX's Augur).
+- [x] **Receipts that cover logprobs** (**0.4.2**): `logprobs_sha256`, the sha256 of the logprobs array as written.
+- [x] **`max_tokens: 0`** (**0.4.2**, `maxzero_oracle_live`): llama-server b11192 samples one token (its limit applies
+  once `n_gen > 0`), so with logprobs it returns the next-token distribution; bankML now does the same. Ollama's
+  `num_predict: 0` is no limit, as its runner reads it.
 
 ### 0.5.0 — hardware
 

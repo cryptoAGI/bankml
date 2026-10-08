@@ -721,13 +721,19 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
         // with logprobs, llama-server's shape: the first token's partial opens with the role delta, and each token's
         // entry rides on the last delta its partial sends (no delta, no entry)
         let logprobs = nc.params.n_probs > 0;
-        let send = |c: &mut TcpStream, ch: Chunk| -> bool {
+        // the entries the chunks carried, in order: what the receipt's `logprobs_sha256` covers
+        let mut sent_lp: Vec<crate::native::TokenLogprob> = Vec::new();
+        let mut send = |c: &mut TcpStream, ch: Chunk| -> bool {
             let delta = |d: &str, lp: &str| format!("data: {{\"choices\": [{{\"index\": 0, \"delta\": {d}, \"finish_reason\": null{lp}}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\"}}\n\n",
                                                    crate::gguf::jstr(&model_id));
             let lp = match &ch.entry {
                 Some(e) if logprobs => format!(", \"logprobs\": {{\"content\": {}}}", logprobs_json(std::slice::from_ref(e))),
                 _ => String::new(),
             };
+            // an entry is sent on the role delta (first, no text) or on its text's delta; no delta, no entry
+            if let Some(e) = ch.entry.as_ref().filter(|_| logprobs && (ch.first || !ch.text.is_empty())) {
+                sent_lp.push(e.clone());
+            }
             let mut out = String::new();
             if logprobs && ch.first {
                 out += &delta("{\"role\": \"assistant\", \"content\": null}", if ch.text.is_empty() { &lp } else { "" });
@@ -742,9 +748,10 @@ fn native_chat(c: &mut TcpStream, rs: &crate::native::Residency, body: &[u8]) ->
             Ok(d) => d,
             Err(e) => return write!(c, "data: {{\"error\": {}}}\n\n", crate::gguf::jstr(&e)),
         };
+        let lp_all = (!sent_lp.is_empty()).then(|| logprobs_json(&sent_lp));
         write!(c, "data: {{\"choices\": [{{\"index\": 0, \"delta\": {{}}, \"finish_reason\": \"{}\"}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion.chunk\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {{\"cache_n\": {}}}}}\n\n",
                d.finish_reason, crate::gguf::jstr(&model_id), d.completion_tokens, d.prompt_tokens, d.completion_tokens + d.prompt_tokens, d.cached_tokens)?;
-        write!(c, "data: {{\"bankml_receipt\": {}}}\n\ndata: [DONE]\n\n", t.receipt(&l.engine, &l.verified))?;
+        write!(c, "data: {{\"bankml_receipt\": {}}}\n\ndata: [DONE]\n\n", t.receipt_lp(&l.engine, &l.verified, lp_all.as_deref()))?;
         c.flush()
     } else {
         let probe = c.try_clone()?;
@@ -894,10 +901,11 @@ pub struct Chunk {
 ///
 /// OpenAI's `chat.completion` object with `logprobs` when asked for, llama-server's `timings`, and `bankml_receipt`.
 pub fn completion_json(created: u64, model_id: &str, d: &crate::native::Done, t: &Tally, engine: &str, v: &Verified) -> String {
-    let lp = if d.probs.is_empty() { String::new() } else { format!(", \"logprobs\": {{\"content\": {}}}", logprobs_json(&d.probs)) };
+    let lp_json = (!d.probs.is_empty()).then(|| logprobs_json(&d.probs));
+    let lp = lp_json.as_ref().map(|j| format!(", \"logprobs\": {{\"content\": {j}}}")).unwrap_or_default();
     format!("{{\"choices\": [{{\"index\": 0, \"message\": {{\"role\": \"assistant\", \"content\": {}}}, \"finish_reason\": \"{}\"{lp}}}], \"created\": {created}, \"model\": {}, \"object\": \"chat.completion\", \"usage\": {{\"completion_tokens\": {}, \"prompt_tokens\": {}, \"total_tokens\": {}}}, \"timings\": {}, \"bankml_receipt\": {}}}",
             crate::gguf::jstr(&t.text), d.finish_reason, crate::gguf::jstr(model_id), d.completion_tokens, d.prompt_tokens,
-            d.completion_tokens + d.prompt_tokens, timings_json(d), t.receipt(engine, v))
+            d.completion_tokens + d.prompt_tokens, timings_json(d), t.receipt_lp(engine, v, lp_json.as_deref()))
 }
 
 /// llama-server's error object (`format_error_response`): `{"error": {"code", "message", "type"}}`.
@@ -1010,18 +1018,37 @@ pub fn utf8_complete_len(b: &[u8]) -> usize {
     len
 }
 
+/// One logprob entry's parts as llama-server writes them: `token` as JSON (an incomplete trailing character cut, as
+/// `validate_utf8` cuts it; any other invalid byte U+FFFD, as nlohmann's `dump` with `error_handler_t::replace`), the
+/// raw bytes as a comma list, and `ln p` (`f32::MIN` when `p` is 0, since JSON has no −∞) widened to f64 for printing.
+/// `logprobs_json` (llama-server's shape) and `ollama::logprobs_json` (Ollama's) both write these, so the two
+/// shapes carry the same text and the same floats.
+pub fn logprob_parts(p: f32, piece: &[u8]) -> (String, String, f64) {
+    let lp = if p == 0.0 { f32::MIN } else { p.ln() };
+    let text = String::from_utf8_lossy(&piece[..utf8_complete_len(piece)]);
+    (crate::gguf::jstr(&text), piece.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", "), lp as f64)
+}
+
+/// The sha256 a receipt carries for an answer's logprobs (`logprobs_sha256`): of the exact array text written.
+///
+/// Not streamed, that is the `logprobs` array as it appears in the body (`choices[0].logprobs.content` on `/v1`,
+/// top-level `logprobs` on Ollama's API), so a client checks it by hashing that substring as received, without
+/// re-encoding a float. Streamed, it is every entry the chunks carried, in order, written as one array the same way
+/// (each chunk's array without its brackets, joined with `", "`, inside `[` `]`).
+pub fn logprobs_sha256(array_json: &str) -> String {
+    let mut h = crate::sha256::Sha256::default();
+    h.update(array_json.as_bytes());
+    crate::sha256::hex(&h.finish())
+}
+
 /// llama-server's `probs_vector_to_json` for pre-sampling probabilities.
 ///
 /// Per token `{"id", "token", "bytes", "logprob", "top_logprobs": [{"id", "token", "bytes", "logprob"}]}`: `bytes` is
 /// the raw piece, `logprob` is `ln p`, or `f32::MIN` when `p` is 0 (JSON has no −∞).
 pub fn logprobs_json(probs: &[crate::native::TokenLogprob]) -> String {
-    // `token`, as llama-server writes it: an incomplete trailing character is cut (`validate_utf8`), any other
-    // invalid byte becomes U+FFFD (nlohmann's `dump` with `error_handler_t::replace`)
     fn entry(id: u32, p: f32, piece: &[u8]) -> String {
-        let lp = if p == 0.0 { f32::MIN } else { p.ln() };
-        let text = String::from_utf8_lossy(&piece[..utf8_complete_len(piece)]);
-        format!("\"id\": {id}, \"token\": {}, \"bytes\": [{}], \"logprob\": {}", crate::gguf::jstr(&text),
-                piece.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", "), lp as f64)
+        let (token, bytes, lp) = logprob_parts(p, piece);
+        format!("\"id\": {id}, \"token\": {token}, \"bytes\": [{bytes}], \"logprob\": {lp}")
     }
     let rows: Vec<String> = probs.iter().map(|t| {
         let top: Vec<String> = t.top.iter().map(|(id, p, piece)| format!("{{{}}}", entry(*id, *p, piece))).collect();
@@ -1062,10 +1089,17 @@ impl Tally {
     /// The `bankml_receipt` JSON: version, engine, model sha256, guard, counts, `ttft_ms`, `wall_ms`, the sha256 of the
     /// text and of the request body, `signed: false`.
     pub fn receipt(&self, engine: &str, v: &Verified) -> String {
+        self.receipt_lp(engine, v, None)
+    }
+
+    /// `receipt`, and when the answer carried logprobs, `logprobs_sha256` over them (`logprobs_sha256`): the text hash
+    /// alone does not cover the numbers a client may act on. Without logprobs the receipt is `receipt`'s, byte for byte.
+    pub fn receipt_lp(&self, engine: &str, v: &Verified, logprobs: Option<&str>) -> String {
         let mut h = crate::sha256::Sha256::default();
         h.update(self.text.as_bytes());
+        let lp = logprobs.map(|j| format!("\"logprobs_sha256\": \"{}\", ", logprobs_sha256(j))).unwrap_or_default();
         format!(
-            "{{\"bankml\": \"{}\", \"engine\": {}, \"model_sha256\": \"{}\", \"guard\": \"{}\", \"prompt_tokens\": {}, \"completion_tokens\": {}, \"ttft_ms\": {}, \"wall_ms\": {}, \"response_sha256\": \"{}\", \"request_sha256\": \"{}\", \"signed\": false}}",
+            "{{\"bankml\": \"{}\", \"engine\": {}, \"model_sha256\": \"{}\", \"guard\": \"{}\", \"prompt_tokens\": {}, \"completion_tokens\": {}, \"ttft_ms\": {}, \"wall_ms\": {}, \"response_sha256\": \"{}\", \"request_sha256\": \"{}\", {lp}\"signed\": false}}",
             crate::VERSION, crate::gguf::jstr(engine), v.model_sha256, v.guard, self.prompt, self.completion,
             self.ttft.map(|d| d.as_millis().to_string()).unwrap_or("null".into()), self.t0.elapsed().as_millis(), crate::sha256::hex(&h.finish()),
             self.request_sha256
@@ -1366,6 +1400,33 @@ mod tests {
         assert_eq!(e.iter().map(|e| (e.id, e.piece.clone())).collect::<Vec<_>>(),
                    vec![(0, b"a".to_vec()), (2, "é".as_bytes().to_vec()), (3, vec![]), (4, vec![])]);
         assert_eq!(logprob_entries(raw, &sent, 2).len(), 2); // a stop word of two tokens drops two entries
+    }
+
+    #[test]
+    fn receipts_cover_logprobs_as_written() {
+        use crate::native::{Done, TokenLogprob};
+        let v = Verified { model_sha256: "ab".repeat(32), guard: "play", engine: "native", arch: None, name: None, types: vec![] };
+        let mut t = Tally::new(b"{}");
+        t.text = "Yes".into();
+        // without logprobs the receipt is unchanged, byte for byte, and names no logprobs hash
+        let plain = t.receipt_lp("native", &v, None);
+        assert!(!plain.contains("logprobs_sha256"));
+        let strip = |r: &str| r.split("\"wall_ms\"").next().unwrap().to_string();
+        assert_eq!(strip(&plain), strip(&t.receipt("native", &v)));
+        // with them: the sha256 of the exact array text that the body carries
+        let e = TokenLogprob { id: 9454, p: 0.58, piece: b" Yes".to_vec(), top: vec![(9454, 0.58, b" Yes".to_vec()), (2308, 0.34, b" No".to_vec())],
+                               emitted: true, complete: true };
+        let d = Done { probs: vec![e], finish_reason: "length", completion_tokens: 1, prompt_tokens: 11, ..Default::default() };
+        let body = completion_json(0, "m", &d, &t, "native", &v);
+        let arr = logprobs_json(&d.probs);
+        assert!(body.contains(&format!("\"logprobs\": {{\"content\": {arr}}}")), "{body}");
+        let r = Json::parse(&body).unwrap();
+        let got = r.get("bankml_receipt").and_then(|x| x.get("logprobs_sha256")).and_then(Json::as_str).map(str::to_string);
+        assert_eq!(got.as_deref(), Some(logprobs_sha256(&arr).as_str()));
+        assert_eq!(logprobs_sha256("[]"), "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945");
+        // the parts both shapes write: text cut at an incomplete character, ln p, f32::MIN for 0
+        assert_eq!(logprob_parts(1.0, b"a\xF0\x9F").0, "\"a\"");
+        assert_eq!(logprob_parts(0.0, b"x").2, f32::MIN as f64);
     }
 
     #[test]

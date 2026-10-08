@@ -299,7 +299,9 @@ impl Native {
         let (mut pending, mut text, mut n, mut finish) = (Vec::<u8>::new(), String::new(), 0usize, "length");
         let (mut out, mut grammar_ns, mut resampled) = (Vec::new(), 0u64, 0usize);
         loop {
-            if max_tokens.is_some_and(|m| n >= m) {
+            // llama-server b11192 checks the limit only once a token is generated (`n_gen > 0`, server-context.cpp
+            // "check the limits"), so max_tokens 0 still samples one token, with its logprobs when asked for
+            if n > 0 && max_tokens.is_some_and(|m| n >= m) {
                 break;
             }
             let logits = self.w.logits(&rn)?;

@@ -68,6 +68,14 @@ gateway received from the engine serving the verified file, for this request. Fi
 `bankml`, `engine`, `model_sha256`, `guard`, `prompt_tokens`, `completion_tokens`, `ttft_ms`, `wall_ms`,
 `response_sha256` (of the answer text exactly as produced), `request_sha256` (of the request body), `signed: false`.
 
+Since 0.4.2, an answer that carried logprobs adds `logprobs_sha256` before `signed` (`Tally::receipt_lp`,
+`logprobs_sha256`): the sha256 of the logprobs array exactly as written, because `response_sha256` covers the text and
+not the numbers a client may act on. Not streamed, that is the array's substring in the body
+(`choices[0].logprobs.content` on `/v1`, the top-level `logprobs` on Ollama's API), so a client hashes what it received
+without re-encoding a float. Streamed, it is every entry the chunks carried, in order, as one array: each chunk's
+array without its brackets, joined with `", "`, inside `[` `]`. Without logprobs the receipt is unchanged, byte for
+byte. Checked by `receipts_cover_logprobs_as_written` and live by `logprobs_ollama_oracle_live`.
+
 Receipts are not signed. They prove integrity between a client and its own `bankml serve`, not to a third party.
 In `--native` mode `ttft_ms` is measured for non-streamed answers too (0.3.7; before, it was `null`).
 

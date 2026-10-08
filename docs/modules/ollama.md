@@ -84,6 +84,19 @@ a stop is held back until it is known not to be one, and released at the end if 
 same filter. `StopFilter::matched` records the stop string that ended the answer, so `/v1` can drop that stop's own
 tokens from the logprobs as llama-server does (0.3.8).
 
+### Logprobs (0.4.2)
+
+`logprobs: true` with `top_logprobs` 0–20, as Ollama 0.20 asks for them (`logprobs_req`; out of range: 400 with Ollama's
+own message, "top_logprobs must be between 0 and 20", checked before any model is loaded; without `logprobs`,
+`top_logprobs` is ignored, as Ollama ignores it). The answer goes through `serve::NativeChat::run_steps_while`, the
+per-token path `/v1` uses, so the entries are `/v1`'s — llama-server b11192's tokens, texts and floats — written in
+Ollama's shape (`logprobs_json`): per token `{"token", "logprob", "bytes", "top_logprobs"}`, no `id`, `bytes` and
+`top_logprobs` left out when empty. `top_logprobs` 0 means the chosen token only; it is computed as llama-server's
+`n_probs` 1, because the chosen token's float depends on how many top tokens are sorted (`sampler::token_probs`).
+Not streamed: the whole list is the response's top-level `logprobs`. Streamed: each line carries the entries of the
+tokens whose text it carries (a line for logprobs alone when a token released no text), as `/v1`'s chunks do. The
+receipt adds `logprobs_sha256` over what was written. Requests without logprobs keep the answer path they had.
+
 ## How it is verified
 
 - Unit tests: `keep_alive_as_ollama_reads_it`, `options_map_onto_the_engine` (including the penalties and, since
@@ -125,7 +138,8 @@ Refused, with the reason in the source:
 - `/api/embed`: "embeddings need an encoder graph (bge-m3 is XLM-R …) … (O7)"; `/api/pull`: models are imported
   sha256-pinned with open licences only; `/api/push`: bankml publishes nothing.
 - One resident model and one slot (see [native.md](native.md)).
-- DRY, XTC, top-n-σ and dynamic temperature are not Ollama options, and logprobs (0.3.8) are wired only on `/v1`.
+- DRY, XTC, top-n-σ and dynamic temperature are not Ollama options. Logprobs: on `/v1` since 0.3.8, and on
+  `/api/chat` and `/api/generate` since 0.4.2 (below).
   For any of them, use `/v1/chat/completions`.
 
 ## See also

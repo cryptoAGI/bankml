@@ -170,7 +170,9 @@ pub fn options(o: Option<&Json>, n_ctx: usize) -> Result<Opts, String> {
             k if SAMPLING.contains(&k) => flat.push((k.to_string(), Json::Num(num(k, v)?))),
             "num_predict" => {
                 let n = num(k, v)?;
-                max = (n >= 0.0).then_some(n as usize); // -1: until the turn ends; -2: until the context is full
+                // -1: until the turn ends; -2: until the context is full; 0 too: Ollama's runner limits only when
+                // numPredict > 0 (runner/ollamarunner, 0.20.0), so 0 means no limit, not no tokens
+                max = (n > 0.0).then_some(n as usize);
             }
             "num_ctx" => {
                 let n = num(k, v)?;
@@ -281,12 +283,63 @@ pub fn piece_line(model: &str, chat: bool, piece: &str) -> String {
 /// The last object: the whole text when not streamed (empty when streamed), Ollama's counts and durations, the receipt.
 #[allow(clippy::too_many_arguments)]
 pub fn final_line(model: &str, chat: bool, text: &str, reason: &str, total_ns: u64, load_ns: u64, d: Option<&crate::native::Done>, receipt: Option<&str>) -> String {
+    final_line_lp(model, chat, text, reason, total_ns, load_ns, d, receipt, None)
+}
+
+/// `final_line` with the answer's logprobs (top-level `logprobs`, as Ollama's non-streamed response carries them).
+#[allow(clippy::too_many_arguments)]
+pub fn final_line_lp(model: &str, chat: bool, text: &str, reason: &str, total_ns: u64, load_ns: u64, d: Option<&crate::native::Done>, receipt: Option<&str>,
+                     logprobs: Option<&str>) -> String {
     let body = if chat { format!("\"message\": {{\"role\": \"assistant\", \"content\": {}}}", jstr(text)) } else { format!("\"response\": {}", jstr(text)) };
     let counts = d.map(|d| format!(", \"prompt_eval_count\": {}, \"prompt_eval_duration\": {}, \"eval_count\": {}, \"eval_duration\": {}, \"bankml_cache_n\": {}",
                                     d.prompt_tokens, d.prompt_ns, d.completion_tokens, d.eval_ns, d.cached_tokens)).unwrap_or_default();
     let r = receipt.map(|r| format!(", \"bankml_receipt\": {r}")).unwrap_or_default();
-    format!("{{\"model\": {}, \"created_at\": \"{}\", {body}, \"done\": true, \"done_reason\": {}, \"total_duration\": {total_ns}, \"load_duration\": {load_ns}{counts}{r}}}\n",
+    let lp = logprobs.map(|j| format!(", \"logprobs\": {j}")).unwrap_or_default();
+    format!("{{\"model\": {}, \"created_at\": \"{}\", {body}, \"done\": true, \"done_reason\": {}, \"total_duration\": {total_ns}, \"load_duration\": {load_ns}{counts}{lp}{r}}}\n",
             jstr(model), rfc3339(SystemTime::now()), jstr(reason))
+}
+
+/// Ollama's `logprobs` and `top_logprobs` (0.20): `None` when logprobs were not asked for, else how many top tokens
+/// per position (0 = the chosen token's logprob only). `top_logprobs` is bounded whether or not `logprobs` is set, with
+/// Ollama's own message (`server/routes.go`); without `logprobs` it is ignored, as Ollama ignores it.
+pub fn logprobs_req(req: &Json) -> Result<Option<usize>, String> {
+    let top = match req.get("top_logprobs") {
+        None | Some(Json::Null) => 0,
+        Some(Json::Num(n)) if n.fract() == 0.0 && (0.0..=20.0).contains(n) => *n as usize,
+        Some(Json::Num(n)) if n.fract() == 0.0 => return Err("top_logprobs must be between 0 and 20".into()),
+        Some(_) => return Err("top_logprobs: a whole number from 0 to 20".into()),
+    };
+    match req.get("logprobs") {
+        None | Some(Json::Null) | Some(Json::Bool(false)) => Ok(None),
+        Some(Json::Bool(true)) => Ok(Some(top)),
+        Some(_) => Err("logprobs: true or false".into()),
+    }
+}
+
+/// Logprob entries in Ollama's shape (`api.Logprob`): per token `{"token", "logprob", "bytes", "top_logprobs"}` — no
+/// `id`, `bytes` and `top_logprobs` left out when empty (Go's `omitempty`; `top` 0 = the chosen token only). Text and
+/// floats are written exactly as on `/v1` (`serve::logprob_parts`), so the numbers are llama-server b11192's.
+pub fn logprobs_json(probs: &[crate::native::TokenLogprob], top: usize) -> String {
+    fn entry(p: f32, piece: &[u8]) -> String {
+        let (token, bytes, lp) = crate::serve::logprob_parts(p, piece);
+        let b = if piece.is_empty() { String::new() } else { format!(", \"bytes\": [{bytes}]") };
+        format!("\"token\": {token}, \"logprob\": {lp}{b}")
+    }
+    let rows: Vec<String> = probs.iter().map(|t| {
+        let tops: Vec<String> = t.top.iter().take(top).map(|(_, p, piece)| format!("{{{}}}", entry(*p, piece))).collect();
+        let tl = if tops.is_empty() { String::new() } else { format!(", \"top_logprobs\": [{}]", tops.join(", ")) };
+        format!("{{{}{tl}}}", entry(t.p, &t.piece))
+    }).collect();
+    format!("[{}]", rows.join(", "))
+}
+
+/// `piece_line` with the logprobs of the tokens this piece carries (Ollama sends a line for logprobs alone too).
+pub fn piece_line_lp(model: &str, chat: bool, piece: &str, logprobs: Option<&str>) -> String {
+    let line = piece_line(model, chat, piece);
+    match logprobs {
+        None => line,
+        Some(j) => format!("{}, \"logprobs\": {j}}}\n", line.trim_end().strip_suffix('}').unwrap_or(&line)),
+    }
 }
 
 fn err(c: &mut TcpStream, code: u16, msg: &str) -> std::io::Result<()> {
@@ -447,6 +500,10 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
     if let Err(m) = refusals(&req) {
         return err(c, 400, &m);
     }
+    let lp = match logprobs_req(&req) {
+        Ok(lp) => lp,
+        Err(m) => return err(c, 400, &m),
+    };
     // the schema's numbers are read from the raw body, as llama-server reads them
     let constraint = match crate::grammar::from_ollama_text(&req, &String::from_utf8_lossy(body)) {
         Ok(k) => k,
@@ -476,13 +533,14 @@ fn generate(c: &mut TcpStream, rs: &Residency, default_ka: KeepAlive, body: &[u8
         Err((code, m)) => return err(c, code, &m),
     };
     rs.shown_as(&model, o.num_ctx.unwrap_or(rs.n_ctx), load_ns > 0);
-    let r = answer(c, &l, &req, msgs.as_ref(), o, constraint, chat, stream, load_ns, &model, t);
+    let r = answer(c, &l, &req, msgs.as_ref(), o, constraint, lp, chat, stream, load_ns, &model, t);
     rs.touch(&e.name, ka);
     r
 }
 
 #[allow(clippy::too_many_arguments)]
-fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opts, constraint: crate::grammar::Constraint, chat: bool, stream: bool, load_ns: u64, model: &str, mut t: Tally) -> std::io::Result<()> {
+fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opts, constraint: crate::grammar::Constraint, lp: Option<usize>,
+          chat: bool, stream: bool, load_ns: u64, model: &str, mut t: Tally) -> std::io::Result<()> {
     let eng = &l.native;
     // under a num_ctx the conversation is fitted as Ollama's chatPrompt fits it (generate too)
     let prompt = match msgs {
@@ -515,6 +573,13 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
         Ok(p) => p,
         Err(m) => return err(c, 400, &m),
     };
+    if let Some(top) = lp {
+        // Ollama's top_logprobs 0 (the chosen token only) is computed as llama-server's n_probs 1: the sampled token's
+        // probability depends on how many top tokens are sorted (`sampler::token_probs`), so 1 is the oracle's case
+        let params = crate::sampler::Params { n_probs: top.max(1), ..params };
+        let nc = crate::serve::NativeChat { prompt, params, max: o.max, stops: o.stops, constraint };
+        return answer_logprobs(c, l, nc, top, chat, stream, load_ns, model, t);
+    }
     let mut stop = StopFilter::new(o.stops);
     let grammar = match eng.grammar(&constraint) {
         Ok(g) => g,
@@ -563,10 +628,95 @@ fn answer(c: &mut TcpStream, l: &Loaded, req: &Json, msgs: Option<&Json>, o: Opt
     respond(c, 200, "application/json", line.trim_end().as_bytes())
 }
 
+/// An answer with logprobs: `serve::NativeChat::run_steps_while`, the per-token path `/v1` uses, so the entries are
+/// `/v1`'s — the same tokens, texts and floats as llama-server b11192 — written in Ollama's shape. Streamed, a line goes
+/// out for each piece of text and for an entry whose token released none (Ollama sends a line for logprobs alone),
+/// with the entry on it; not streamed, the whole list is the response's top-level `logprobs`. The receipt's
+/// `logprobs_sha256` covers what was written (`serve::logprobs_sha256`).
+#[allow(clippy::too_many_arguments)]
+fn answer_logprobs(c: &mut TcpStream, l: &Loaded, nc: crate::serve::NativeChat, top: usize, chat: bool, stream: bool, load_ns: u64, model: &str,
+                   mut t: Tally) -> std::io::Result<()> {
+    let eng = &l.native;
+    let probe = c.try_clone()?;
+    let alive = || crate::serve::client_alive(&probe);
+    if stream {
+        write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\n{}Connection: close\r\n\r\n", crate::serve::cors_headers())?;
+        let mut sent: Vec<crate::native::TokenLogprob> = Vec::new();
+        let d = nc.run_steps_while(eng, &mut t, true, &alive, |ch| {
+            // the entries /v1 sends (on the first chunk, or with text); no line for an empty chunk without one
+            let entry = ch.entry.filter(|_| ch.first || !ch.text.is_empty());
+            if ch.text.is_empty() && entry.is_none() {
+                return true;
+            }
+            let j = entry.map(|e| {
+                let j = logprobs_json(std::slice::from_ref(&e), top);
+                sent.push(e);
+                j
+            });
+            c.write_all(piece_line_lp(model, chat, &ch.text, j.as_deref()).as_bytes()).and_then(|_| c.flush()).is_ok()
+        });
+        let d = match d {
+            Ok(d) => d,
+            Err(m) => return writeln!(c, "{{\"error\": {}}}", jstr(&m)),
+        };
+        let all = (!sent.is_empty()).then(|| logprobs_json(&sent, top));
+        let line = final_line(model, chat, "", d.finish_reason, t.t0.elapsed().as_nanos() as u64, load_ns, Some(&d),
+                              Some(&t.receipt_lp(&l.engine, &l.verified, all.as_deref())));
+        c.write_all(line.as_bytes())?;
+        return c.flush();
+    }
+    let d = match nc.run_steps_while(eng, &mut t, false, &alive, |_| true) {
+        Ok(d) => d,
+        Err(m) => return err(c, 500, &m),
+    };
+    let j = (!d.probs.is_empty()).then(|| logprobs_json(&d.probs, top));
+    let line = final_line_lp(model, chat, &t.text, d.finish_reason, t.t0.elapsed().as_nanos() as u64, load_ns, Some(&d),
+                             Some(&t.receipt_lp(&l.engine, &l.verified, j.as_deref())), j.as_deref());
+    respond(c, 200, "application/json", line.trim_end().as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::native::{Info, Registry};
+
+    #[test]
+    fn logprobs_as_ollama_asks_and_answers() {
+        let r = |j: &str| logprobs_req(&Json::parse(j).unwrap());
+        assert_eq!(r(r#"{}"#), Ok(None));
+        assert_eq!(r(r#"{"logprobs": false, "top_logprobs": 5}"#), Ok(None)); // ignored without logprobs, as Ollama does
+        assert_eq!(r(r#"{"logprobs": true}"#), Ok(Some(0)));
+        assert_eq!(r(r#"{"logprobs": true, "top_logprobs": 20}"#), Ok(Some(20)));
+        for bad in [r#"{"logprobs": true, "top_logprobs": 21}"#, r#"{"top_logprobs": -1}"#] {
+            assert_eq!(r(bad), Err("top_logprobs must be between 0 and 20".to_string()), "{bad}"); // Ollama's message
+        }
+        assert!(r(r#"{"logprobs": true, "top_logprobs": 2.5}"#).is_err() && r(r#"{"logprobs": "yes"}"#).is_err());
+        use crate::native::TokenLogprob;
+        let e = TokenLogprob { id: 9454, p: 0.5, piece: b" Yes".to_vec(), top: vec![(9454, 0.5, b" Yes".to_vec()), (2308, 0.25, b" No".to_vec())],
+                               emitted: true, complete: true };
+        let eog = TokenLogprob { id: 151645, p: 1.0, piece: vec![], top: vec![(151645, 1.0, vec![])], emitted: false, complete: true };
+        // Ollama's shape: no id; top_logprobs up to `top`, left out at 0; bytes left out when empty; same text and floats as /v1
+        let two = Json::parse(&logprobs_json(std::slice::from_ref(&e), 2)).unwrap();
+        let x = two.idx(0).unwrap();
+        assert!(x.get("id").is_none());
+        assert_eq!(x.get("token").and_then(Json::as_str), Some(" Yes"));
+        assert_eq!(x.get("logprob"), Some(&Json::Num(0.5f32.ln() as f64)));
+        assert_eq!(x.get("top_logprobs").and_then(|t| t.idx(1)).and_then(|t| t.get("token")).and_then(Json::as_str), Some(" No"));
+        let one = Json::parse(&logprobs_json(std::slice::from_ref(&e), 1)).unwrap();
+        assert!(one.idx(0).and_then(|x| x.get("top_logprobs")).and_then(|t| t.idx(1)).is_none());
+        let zero = Json::parse(&logprobs_json(&[e.clone(), eog], 0)).unwrap();
+        assert!(zero.idx(0).unwrap().get("top_logprobs").is_none());
+        assert!(zero.idx(1).unwrap().get("bytes").is_none());
+        // the lines: a piece with its entry, and the final answer with all of them; both still JSON
+        let j = logprobs_json(std::slice::from_ref(&e), 2);
+        let line = Json::parse(piece_line_lp("m", true, " Yes", Some(&j)).trim_end()).unwrap();
+        assert_eq!(line.get("logprobs"), Some(&two));
+        assert_eq!(line.get("message").and_then(|m| m.get("content")).and_then(Json::as_str), Some(" Yes"));
+        assert!(Json::parse(piece_line_lp("m", false, "x", None).trim_end()).unwrap().get("logprobs").is_none());
+        let f = Json::parse(final_line_lp("m", false, " Yes", "stop", 1, 0, None, None, Some(&j)).trim_end()).unwrap();
+        assert_eq!(f.get("logprobs"), Some(&two));
+        assert!(Json::parse(final_line("m", false, " Yes", "stop", 1, 0, None, None).trim_end()).unwrap().get("logprobs").is_none());
+    }
 
     #[test]
     fn keep_alive_as_ollama_reads_it() {
@@ -601,6 +751,7 @@ mod tests {
         assert_eq!((p.temp, p.top_k, p.top_p, p.min_p, p.seed), (0.3, 20, 0.9, 0.1, 42));
         // num_predict -1 (until the turn ends) and no options at all
         assert_eq!(options(Json::parse(r#"{"num_predict": -1}"#).as_ref(), 4096).unwrap().max, None);
+        assert_eq!(options(Json::parse(r#"{"num_predict": 0}"#).as_ref(), 4096).unwrap().max, None); // Ollama: no limit
         assert_eq!(options(None, 4096).unwrap().max, None);
         // the penalties map onto the engine (the coach's repeat_penalty 1.3 included), and typical_p
         let pen = options(Json::parse(r#"{"repeat_penalty": 1.3, "repeat_last_n": 32, "presence_penalty": 0.5, "frequency_penalty": -0.25}"#).as_ref(), 4096).unwrap();
