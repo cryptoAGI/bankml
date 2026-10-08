@@ -149,3 +149,69 @@ button.primary, .composer button { box-shadow: 0 1px 0 rgba(255,255,255,.25) ins
 /* inside T mode the field's pills speak terminal too */
 .ultimate-input-field.is-terminal .bk-uif-pill { color: var(--term-ink); border-color: var(--term-edge); background: rgba(0, 0, 0, .4); }
 .ultimate-input-field.is-terminal .bk-uif-pill.bad { color: #ff6b6b; border-color: rgba(255, 107, 107, .5); }
+
+/* ── the Diagnostics desk: windows that move, resize, collapse, widen and focus, with depth ─────────────────────── */
+main:has(#diagnostics.active) { max-width: 1240px; }
+.desk-hint { margin: -6px 0 14px; font-size: 12.5px; }
+.desk { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .desk { grid-template-columns: minmax(0, 1fr); } }
+.desk > .window { position: relative; margin: 0; display: flex; flex-direction: column; min-height: 0;
+  box-shadow: 0 0 0 1px var(--edge), 0 1px 0 rgba(255,255,255,.55) inset, 0 2px 6px rgba(16,24,40,.08),
+              0 14px 28px -12px rgba(16,24,40,.22), 0 34px 64px -26px rgba(16,24,40,.30);
+  transition: box-shadow .2s ease, transform .2s ease; }
+:root[data-theme="dark"] .desk > .window { box-shadow: 0 0 0 1px var(--edge), 0 1px 0 rgba(255,255,255,.06) inset, 0 3px 8px rgba(0,0,0,.45),
+  0 16px 32px -12px rgba(0,0,0,.6), 0 40px 72px -26px rgba(0,0,0,.75); }
+.desk > .window:hover { transform: translateY(-1px); }
+.desk > .window.span-2 { grid-column: 1 / -1; }
+.desk > .window > :not(.window-bar):not(.win-grip) { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.desk > .window.collapsed > :not(.window-bar) { display: none; }
+.desk .window-bar { cursor: grab; user-select: none; touch-action: none; }
+.desk .window-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+body.desk-dragging, body.desk-dragging * { cursor: grabbing !important; user-select: none; }
+.desk > .window.dragging { transform: rotate(.35deg) scale(1.015); opacity: .97; transition: none;
+  box-shadow: 0 0 0 1px var(--accent), 0 30px 60px -12px rgba(0,0,0,.45), 0 60px 120px -30px rgba(0,0,0,.45); }
+.win-slot { border: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: 0 0 24px -6px color-mix(in srgb, var(--accent) 45%, transparent) inset; }
+.win-slot.span-2 { grid-column: 1 / -1; }
+/* the lights: red collapses, amber widens, green focuses; their marks show on hover */
+.lights .light { width: 12px; height: 12px; padding: 0; border-radius: 50%; border: 0; cursor: pointer; position: relative;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 1px 1px rgba(0,0,0,.12); }
+.lights .light.red { background: #ff5f57; } .lights .light.amber { background: #febc2e; } .lights .light.green { background: #28c840; }
+.lights .light::after { position: absolute; inset: 0; display: grid; place-items: center; font: 700 9px/1 var(--sans); color: rgba(0,0,0,.55); opacity: 0; }
+.lights .light.red::after { content: "–"; } .lights .light.amber::after { content: "↔"; } .lights .light.green::after { content: "⤢"; }
+.window-bar:hover .light::after, .light:focus-visible::after { opacity: 1; }
+.light:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* the corner grip */
+.win-grip { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; opacity: .55;
+  background: linear-gradient(135deg, transparent 0 55%, var(--faint) 55% 60%, transparent 60% 70%, var(--faint) 70% 75%, transparent 75%); }
+.desk > .window:hover .win-grip, .desk > .window.resizing .win-grip { opacity: 1; }
+.desk > .window.resizing { transition: none; box-shadow: 0 0 0 1px var(--accent), 0 20px 40px -14px rgba(0,0,0,.4); }
+/* focus: one window over a veil */
+.desk-veil { position: fixed; inset: 0; z-index: 70; background: rgba(8,10,14,.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+.desk-veil.on { opacity: 1; pointer-events: auto; }
+.desk > .window.focused { position: fixed; inset: 5vh 5vw; z-index: 80; height: auto !important; transform: none;
+  box-shadow: 0 0 0 1px var(--edge), 0 40px 100px -20px rgba(0,0,0,.6); }
+.desk > .window.is-flash { box-shadow: 0 0 0 2px var(--accent), 0 0 28px -4px color-mix(in srgb, var(--accent) 60%, transparent); }
+@media (prefers-reduced-motion: reduce) { .desk > .window, .desk-veil { transition: none; } .desk > .window:hover, .desk > .window.dragging { transform: none; } }
+
+/* choosing, and the Inspector */
+#diagnostics .comp, #diagnostics #checks li, #diagnostics .span > .row { cursor: pointer; }
+#diagnostics .comp.is-chosen { box-shadow: 0 0 0 2px var(--accent), var(--lift) !important; }
+#diagnostics #checks li.is-chosen, #diagnostics .span > .row.is-chosen { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 6px; }
+#diagnostics .comp:focus-visible, #diagnostics #checks li:focus-visible, #diagnostics .span > .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inspector .insp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.inspector .insp-head h3 { margin: 0; font-size: 17px; }
+.inspector .insp-kind { margin-left: auto; font: 11px var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
+.inspector .insp-s { border-top: 1px solid var(--edge); padding: 10px 0 4px; }
+.inspector .insp-s h4 { margin: 0 0 6px; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.inspector .insp-s p { margin: 0 0 6px; font-size: 14px; }
+.inspector .insp-mono { font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; color: var(--muted); }
+.inspector .insp-err { color: var(--bad); font: 12.5px var(--mono); }
+.inspector .insp-note { font-size: 12.5px; color: var(--muted); }
+.inspector .insp-raw summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.inspector .insp-raw pre { font: 11.5px/1.45 var(--mono); background: var(--q); border-radius: 8px; padding: 8px; max-height: 220px; overflow: auto; }
+.inspector .insp-do { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.inspector .insp-do li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.inspector .insp-do code { font: 12.5px var(--mono); background: var(--term-bg); color: var(--term-ink); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--term-edge); }
+.inspector .insp-copy { padding: 2px 9px !important; font-size: 12px; }

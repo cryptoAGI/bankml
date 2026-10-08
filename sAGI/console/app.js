@@ -420,6 +420,7 @@ function spanNode(n, total) {
   if (n.duration_ms && total) bar.style.width = Math.max(0.5, Math.min(100, (100 * n.duration_ms) / total)) + "%";
   track.append(bar);
   row.append(track);
+  row.__diag = { kind: "span", data: n, total }; row.tabIndex = 0;
   li.append(row);
   const tags = Object.entries(n.tags || {}).map(([k, v]) => `${k} ${v}`).join(" · ");
   const evs = (n.events || []).map((e) => `${e.name} @ ${e.at_ms} ms`).join(" · ");
@@ -438,6 +439,7 @@ function componentCard(c) {
     el("h3", null, c.component), el("span", "ms", c.ms + " ms"));
   card.append(head, el("p", "role", c.role), el("code", "file", c.file));
   if (c.seen) card.append(el("p", "seen", c.seen));
+  card.__diag = { kind: "component", data: c }; card.tabIndex = 0;  // the Inspector reads what was chosen
   return card;
 }
 async function loadDiagnostics() {
@@ -451,6 +453,7 @@ async function loadDiagnostics() {
   for (const c of j.checks) {
     const li = el("li", c.level);
     li.append(el("span", "mark", c.level === "ok" ? "✓" : c.level === "warn" ? "!" : "✗"), el("span", "name", c.check), el("span", "seen", c.seen));
+    li.__diag = { kind: "check", data: c }; li.tabIndex = 0;
     ul.append(li);
   }
   const tr = $("traces"); tr.textContent = "";

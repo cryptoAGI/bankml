@@ -50,6 +50,17 @@
   question tray; the side column a level above the conversation.
 - `test_ui.py`: ping, diagnostics and the health line without an engine; the accordion escapes its text.
 
+### The console: Diagnostics as a desk, and an Inspector
+- **The Diagnostics windows move, resize and stack with depth** (`console/desk.js`): drag a window by its bar (a slot
+  shows where it lands), resize it by its corner (its height, and one column or both), and the lights work — red
+  collapses, amber widens, green focuses over a veil (Esc returns); double-click a bar to widen, Alt+↑/↓ to move.
+  Kept per browser; *Reset layout* restores it. Two columns on a wide screen, one on a narrow one; layered shadows,
+  a lift on hover, the dragged window raised.
+- **The Inspector** (`console/inspect.js`): choose a component, an engine check or a trace span (click, or Enter) and
+  it says what that is, what was measured (and the raw record), what its level means, and, when something needs
+  doing, how to deal with it — the commands (copyable), the tab or document to look at, a refresh; a long
+  `engine.stream` span says where the time went.
+
 ### The console: a real ping, and the machine in the terminal (`diag`)
 - **The mode hints are true both ways:** ask mode reads "T for terminal mode" and its button shows **T**; T mode
   reads "> for ask mode" and its button shows **>**; sending `T` alone in ask mode, or `>` alone in T mode, switches

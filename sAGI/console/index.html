@@ -152,27 +152,34 @@
   <section id="diagnostics" class="tab">
     <div class="loghead">
       <h2>Diagnostics</h2>
-      <p class="quiet"><span id="diag-sum"></span> <button id="diag-refresh" class="ghost">Refresh</button></p>
+      <p class="quiet"><span id="diag-sum"></span> <button id="diag-refresh" class="ghost">Refresh</button> <button class="ghost" type="button" data-desk-reset="diagnostics" title="the windows back to their places and sizes">Reset layout</button></p>
     </div>
-    <div class="window">
+    <p class="quiet desk-hint">Choose anything below to inspect it · drag a window by its bar · resize it by its corner · the lights collapse, widen and focus it</p>
+    <div class="desk" data-desk="diagnostics">
+    <div class="window" data-win="components">
       <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>sAGI</b><span>every component, asked now</span></div>
       <div id="components" class="components"></div>
     </div>
-    <div class="window">
+    <div class="window" data-win="inspector">
+      <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Inspector</b><span>what you chose, what it means, what to do</span></div>
+      <div id="inspector" class="window-body inspector"><p class="quiet">Choose a component, a check or a span: it is explained here, with how to deal with it when something needs doing.</p></div>
+    </div>
+    <div class="window" data-win="checks">
       <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Engine checks</b><span>what bankml serve measures</span></div>
       <ul id="checks" class="checks"></ul>
     </div>
-    <div class="window">
+    <div class="window" data-win="scientific">
       <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>scientific.diagnostic</b><span>bankML against llama.cpp b11192, to 18 decimals</span></div>
       <div id="scientific" class="window-body"><p class="quiet">none yet — run testing/scientific_diagnostic.py</p></div>
     </div>
-    <div class="window">
+    <div class="window" data-win="traces">
       <div class="window-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><b>Traces</b><span>the newest answers, span by span</span></div>
       <div id="traces" class="traces window-body"></div>
       <details class="more window-body">
         <summary>As text</summary>
         <pre id="trace-text"></pre>
       </details>
+    </div>
     </div>
     <p id="diag-source" class="quiet"></p>
   </section>
@@ -197,5 +204,7 @@
 <script src="/engine.js"></script>
 <script src="/uif.js"></script>
 <script src="/app.js"></script>
+<script src="/desk.js"></script>
+<script src="/inspect.js"></script>
 </body>
 </html>
