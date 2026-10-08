@@ -193,6 +193,9 @@ dh = u.diag_html()
 check("diagnostics: CPU, memory, disk, GPU and the engine as an accordion, the engine's section open and bad",
       all(f">{t}<" in dh for t in ("CPU", "Memory", "Disk", "GPU", "Engine")) and "sv-diag-s is-bad' open" in dh)
 check("health line: the engine down, cheap reads only", "engine down" in u.health_html())
+ed = u.engine_down("refused")
+check("engine down: why, and the installer's commands (no hand-typed serve line with a placeholder pin)",
+      "refused" in ed and "./install.sh model" in ed and "FORK.json" not in ed)
 import sysdiag  # noqa: E402
 check("diagnostics: every text escaped", "&lt;b&gt;" in sysdiag.to_html([{"title": "<b>", "level": "ok", "lines": ["x"]}]))
 

@@ -830,10 +830,22 @@ def stream(messages, max_tokens, temperature):
         yield f"bankml serve refused: {e.read().decode('utf-8', 'replace')[:500]}", {"error": True}
         return
     except urllib.error.URLError as e:
-        yield (f"Cannot reach bankml serve at `{SERVE}` ({e.reason}).\n\nStart it:\n\n```sh\n"
-               "bankml serve .models/Bonsai-8B-Q1_0.gguf --fork FORK.json --upstream http://127.0.0.1:18092\n```"), {"error": True}
+        yield engine_down(e.reason), {"error": True}
         return
     yield acc, receipt or {}
+
+
+def engine_down(reason) -> str:
+    """What Savante says when bankml serve does not answer: why, and the commands that bring it back as the installer
+    does (the model verified, pinned and served; the UIs left as they are). A gate in progress says so."""
+    gate = any((p / "cmdline").is_file() and b"release_gate.sh" in (p / "cmdline").read_bytes()
+               for p in Path("/proc").glob("[0-9]*") if p.name.isdigit()) if Path("/proc").is_dir() else False
+    note = ("\n\nA release gate is running on this machine, and the engine is stopped while it runs (the gate needs the "
+            "CPU and the memory). It comes back after the gate: `./install.sh model start`.") if gate else ""
+    return (f"Cannot reach bankml serve at `{SERVE}` ({reason}).{note}\n\nStart it from the bankml checkout:\n\n```sh\n"
+            "./install.sh model     # the verified model, served (the default Bonsai-8B when none was chosen)\n"
+            "./install.sh restart   # or: a fresh serve on the model it served last, and the UIs\n```\n"
+            "Then check it: `curl -s 127.0.0.1:18093/bankml` · Admin → the machine → diagnostics.")
 
 
 def calc_line(worked: list) -> str:
