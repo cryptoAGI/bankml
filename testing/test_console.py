@@ -4,7 +4,7 @@
 POSTs, CSP), the SELF block as the model reads it (every value with its unit, "not measured" for a null), the
 persona's doctrine root, and the Infotags metadata (ERC-721 attributes, an RFC 6962 root over the log's lines).
 run: python3 testing/test_console.py"""
-import json, os, sys, tempfile, threading, urllib.error, urllib.request
+import json, os, sys, tempfile, threading, time, urllib.error, urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -60,6 +60,75 @@ try:
     check("SELF without an engine says not measured, never a number", t.count("not measured") >= 8 and "tokens per second" not in t)
     t2 = C.self_text({**sb, "last_eval_tps": 8.56, "completion_tokens_total": 75, "package_watts": 12.25, "gpu_limit": 0.8})
     check("SELF names each value with its unit", "8.6 tokens per second" in t2 and "75" in t2 and "12.2 watts" in t2 and "80 percent" in t2)
+    # the first answer: the persona's prefix first and unchanged, SELF last, so the engine's prompt cache keeps the rest
+    m1 = C.messages("PERSONA", [], "q1", "self one")
+    m2 = C.messages("PERSONA", [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}], "q2", "self two")
+    check("the prompt: persona first, SELF as a system message just before the question",
+          [m["role"] for m in m1] == ["system", "system", "user"] and m1[0]["content"] == "PERSONA" and m1[1]["content"].startswith(C.SELF_HEAD)
+          and m1[-1]["content"] == "q1")
+    check("the prompt: the persona and the conversation so far are the same prefix turn after turn (SELF never in it)",
+          m2[0] == m1[0] and m2[1:3] == [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}] and "self" not in m2[0]["content"])
+    convo = [{"role": "user" if i % 2 == 0 else "assistant", "content": str(i)} for i in range(40)]
+    starts = [C.window(convo[:n])[0]["content"] if C.window(convo[:n]) else None for n in range(2, 41, 2)]
+    check("the window keeps at least 12 messages and starts on a question", all(len(C.window(convo[:n])) >= min(n, 12) and int(C.window(convo[:n])[0]["content"]) % 2 == 0 for n in range(2, 41, 2)))
+    check("the window's start moves once every four exchanges, not every turn", len(set(starts)) <= 1 + (40 - 12) // 8 and starts[:6] == ["0"] * 6)
+    check("a max_tokens that is not a number is refused (400), not a dropped connection",
+          req("/api/ask", b'{"message": "hi", "max_tokens": "lots"}', {"Content-Type": "application/json"})[0] == 400)
+    check("/api/state says what the warmer did", "warm" in json.loads(req("/api/state")[1]))
+    # the warmer against a fake engine: restore a saved slot, else prefill the persona alone and save its slot; never on an
+    # engine that has answered; once per engine; a question closes a prefill in progress
+    import http.server as hs
+    seen, calls = [], []
+    class Fake(hs.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_POST(self):
+            seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            if seen[-1].get("hang"):
+                time.sleep(5)
+            b = b'{"choices": [{"message": {"content": "x"}}]}'
+            self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    fake = hs.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    engine = {"verified": {"model_sha256": "ab" * 32}, "hashed_at": 1}
+    metrics = {"records": []}
+    real = (C._get, C.S._slot_call, C.models.LISTEN, C.models.SLOTS, C.S.engine_ctx)
+    C._get = lambda path, timeout=5.0: engine if path == "/bankml" else metrics if path == "/bankml/metrics" else None
+    C.S._slot_call = lambda action, name: calls.append((action, name)) or {}
+    C.models.LISTEN = f"127.0.0.1:{fake.server_address[1]}"
+    C.models.SLOTS = tmp / "slots"
+    C.models.SLOTS.mkdir(parents=True, exist_ok=True)
+    C.S.engine_ctx = lambda: 2048
+    try:
+        C.WARM.update(key=None, state="idle", conn=None)
+        st1 = C.warm()
+        check("warm: a fresh engine with no saved slot is prefilled with the persona alone (one token), then its slot saved",
+              st1 == "prefilled and saved" and len(seen) == 1 and seen[0]["messages"] == [{"role": "system", "content": C.persona()["system_prompt"]}]
+              and seen[0]["max_tokens"] == 1 and calls == [("save", C._slot_key(engine)[1])])
+        check("warm: once per engine (nothing sent again)", C.warm() == st1 and len(seen) == 1)
+        (C.models.SLOTS / C._slot_key(engine)[1]).write_bytes(b"kv")
+        engine["hashed_at"] = 2; calls.clear()
+        check("warm: a restarted engine restores the saved slot, no prefill", C.warm() == "restored" and calls[0][0] == "restore" and len(seen) == 1)
+        engine["hashed_at"] = 3; metrics["records"] = [{"ttft_ms": 1}]; calls.clear()
+        check("warm: an engine that has answered is left alone (its slot is a conversation)", C.warm() == "engine in use" and not calls and len(seen) == 1)
+        # a question during a prefill closes it
+        engine["hashed_at"] = 4; metrics["records"] = []; (C.models.SLOTS / C._slot_key(engine)[1]).unlink()
+        real_persona = C.persona
+        C.persona = lambda: {**real_persona(), "hang": True}
+        orig_dumps = C.json.dumps
+        C.json.dumps = lambda o, *a, **k: orig_dumps({**o, "hang": True} if isinstance(o, dict) and "messages" in o else o, *a, **k)
+        out = {}
+        th = threading.Thread(target=lambda: out.update(s=C.warm()), daemon=True); th.start()
+        for _ in range(50):
+            if C.WARM.get("conn") is not None and getattr(C.WARM["conn"], "sock", None) is not None:
+                break
+            time.sleep(0.05)
+        t0 = time.time(); C.cancel_warm(); th.join(10)
+        C.json.dumps, C.persona = orig_dumps, real_persona
+        check("warm: a question closes a prefill in progress at once", out.get("s") == "cancelled by a question" and time.time() - t0 < 3)
+        C.cancel_warm()  # nothing in progress: no error
+    finally:
+        C._get, C.S._slot_call, C.models.LISTEN, C.models.SLOTS, C.S.engine_ctx = real
+        fake.shutdown()
     # Infotags: ERC-721 attributes and a Merkle root over the log's exact lines
     C.STATE.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps({"at": 1, "question": "a", "answer": "b"}), json.dumps({"at": 2, "question": "c", "answer": "d"})]

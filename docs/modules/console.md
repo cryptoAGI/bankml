@@ -11,6 +11,12 @@ and the same switch in Savante's header move between the two interfaces. A â˜¾/â
 persona a SELF block measured at each question, so what bankML says about its own tokens, speed, load and power is
 measurement, not invention.
 
+**The first answer (0.4.3).** The persona's system prompt is sent first and unchanged; SELF, measured at each question,
+rides as a second system message just before it, so the engine's prompt cache keeps the persona and the conversation
+from turn to turn. When a newly started engine appears, the console restores the persona's saved slot or prefills it
+once and saves it, so the first question does not pay for it; a question during that prefill cancels it. The
+conversation is trimmed four exchanges at a time (`window`), so the cached prefix survives long conversations.
+
 ## Technical usage
 
 ```sh

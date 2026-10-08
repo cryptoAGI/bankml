@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (0.4.3) — the console's first answer
+
+### The persona's prefix kept warm, SELF out of it, a window that holds the cache
+- **SELF moves out of the system prompt.** It changes with every question, and inside the first system message it
+  made the engine recompute everything after it, the rest of the persona and the whole conversation, on every turn
+  (Bonsai-8B on the laptop: 491 prompt tokens from nothing, 200 s to the first token; the next turn reused 376 of 551,
+  66 s). The persona is now the first system message, unchanged; SELF is a second system message just before the
+  question (`console.messages`; Qwen3's template renders a later system message as its own turn, `chat.rs`).
+- **Warm before the first question.** A newly started engine (its `hashed_at` changes) that has answered nothing gets
+  the persona's saved slot restored, or else the persona prefilled (one token) and its slot saved (`console-<hash>.bin`
+  beside Savante's, newest three kept); a question that arrives meanwhile closes the prefill, and the engine stops and
+  keeps what it computed (0.4.1). `/api/state` says what the warmer did (`warm`).
+- **A window that holds the cache.** The conversation sent with a question was cut to its last 12 messages by the page
+  and again by the console, so past six exchanges the start moved every turn and nothing was reused. The page now
+  sends up to 40 and the console trims four exchanges at a time (`console.window`: 12 to 19 messages kept), so the
+  start moves once every four turns. The input field's source changed the same way (ultimate-bankml-ui
+  `console-mount` 8c88972, `consoleEngine.ts`).
+- **A `max_tokens` that is not a number** is refused with a 400 instead of a dropped connection.
+- `test_console.py`: the prompt's order and stable prefix, the window, the warmer against a fake engine (prefill and
+  save, restore, once per engine, left alone once it has answered, closed by a question).
+
 ## Unreleased (0.4.2) — logprobs on Ollama's API; receipts that cover logprobs (to merge with the 0.4.2 GPU work)
 
 ### Measured (2026-10-08, Bonsai-1.7B-Q1_0, against llama-server b11192)

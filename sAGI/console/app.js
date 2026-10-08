@@ -82,7 +82,7 @@ $("form").addEventListener("submit", async (ev) => {
               el("span", null, `first token ${fmt(m.ttft_ms, 0, " ms")}`), el("span", null, `${fmt(m.eval_tps, 1, " tok/s")}`));
           }
           history.push({ role: "user", content: q }, { role: "assistant", content: text });
-          history = history.slice(-12);
+          history = history.slice(-40);  // the console trims it four exchanges at a time (console.py `window`), keeping the cache
         }
       }
     }

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -128,7 +129,7 @@ def state() -> dict:
     p = persona()
     return {"serve": _get("/bankml"), "usage": _get("/bankml/usage"), "metrics": _get("/bankml/metrics"), "resources": models.resources(),
             "persona": {"name": p["name"], "mantra": p["mantra"], "doctrine_root": _doctrine_root(p)}, "job": JOB, "self": self_block(),
-            "public": PUBLIC is not None}
+            "public": PUBLIC is not None, "warm": WARM["state"]}
 
 
 def _doctrine_root(p: dict) -> str | None:
@@ -225,6 +226,107 @@ def apply(threads: int, ram_gb: float, gpu_limit: float) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
+# ── the first answer: the persona's prefix kept warm ────────────────────────────────────────────────────────────
+SELF_HEAD = "SELF (measured by bankML just now):\n"
+# what the warmer did for the engine running now: its key (engine instance, slot file), its state, and the connection of
+# a prefill in progress (closed by a question that arrives meanwhile)
+WARM: dict = {"key": None, "state": "idle", "conn": None}
+
+
+def messages(system: str, hist: list, q: str, self_txt: str) -> list:
+    """The prompt as sent. The persona's system prompt comes first and never changes, so the engine reuses it, and the
+    conversation before this question, from its prompt cache; SELF changes with every question, so it comes last, as a
+    second system message just before the question. Inside the first system message it made the engine recompute
+    everything after it on every turn (376 of 551 tokens reused, 66 s to the first token, Bonsai-8B on the laptop)."""
+    return [{"role": "system", "content": system}, *hist, {"role": "system", "content": SELF_HEAD + self_txt},
+            {"role": "user", "content": q}]
+
+
+def window(hist: list, keep: int = 12, step: int = 8) -> list:
+    """The conversation sent with a question: at least the last `keep` messages, trimmed `step` at a time (four
+    exchanges), so the start of the window, and with it the cached prefix, moves once every four turns instead of on
+    every turn once the conversation is longer than `keep` (a window that slid each turn changed the prompt right after
+    the system prompt, and the engine recomputed everything)."""
+    h = [m for m in hist if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+    start = max(0, len(h) - keep) // step * step
+    return h[start:]
+
+
+def _slot_key(st: dict | None):
+    """(engine instance, slot file) for the persona's prefix on the verified engine now running; None without one."""
+    v = (st or {}).get("verified") or {}
+    if not v.get("model_sha256"):
+        return None
+    h = hashlib.sha256(f"{v['model_sha256']}|{S.engine_ctx()}|{persona()['system_prompt']}".encode()).hexdigest()[:24]
+    return st.get("hashed_at"), f"console-{h}.bin"
+
+
+def warm() -> str:
+    """Before the first question to a newly started engine: restore the persona's saved slot, or else prefill the
+    persona and save its slot, so the first answer does not pay for the persona at prefill speed (about 300 tokens, two
+    minutes on Bonsai-8B here). Only on an engine that has answered nothing: its one slot then holds no one's
+    conversation. A question that arrives during the prefill closes it (`cancel_warm`): the engine stops when its
+    client goes away (0.4.1) and keeps what it computed, so the question starts from there."""
+    st = _get("/bankml")
+    k = _slot_key(st)
+    if not k or WARM["key"] == k:
+        return WARM["state"]
+    WARM.update(key=k, state="checking")
+    if ((_get("/bankml/metrics") or {}).get("records")):
+        WARM["state"] = "engine in use"  # it has answered: its slot is a conversation, not ours to replace
+        return WARM["state"]
+    if (models.SLOTS / k[1]).is_file():
+        try:
+            S._slot_call("restore", k[1])
+            WARM["state"] = "restored"
+            return WARM["state"]
+        except (OSError, ValueError):
+            pass  # an engine without --slot-dir, or a file it will not take: prefill instead
+    WARM["state"] = "prefilling"
+    host, port = models.LISTEN.rsplit(":", 1)
+    conn = http.client.HTTPConnection(host, int(port), timeout=1800)
+    WARM["conn"] = conn
+    body = {"messages": [{"role": "system", "content": persona()["system_prompt"]}], "max_tokens": 1, "temperature": 0, "stream": False}
+    try:
+        conn.request("POST", "/v1/chat/completions", json.dumps(body), {"Content-Type": "application/json"})
+        conn.getresponse().read()
+    except (OSError, http.client.HTTPException):
+        WARM["state"] = "cancelled by a question"
+        return WARM["state"]
+    finally:
+        WARM["conn"] = None
+        conn.close()
+    try:
+        S._slot_call("save", k[1])
+        WARM["state"] = "prefilled and saved"
+        for old in sorted(models.SLOTS.glob("console-*.bin"), key=lambda f: f.stat().st_mtime)[:-3]:
+            old.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        WARM["state"] = "prefilled"
+    return WARM["state"]
+
+
+def cancel_warm() -> None:
+    """A question has come: close a prefill in progress, so the engine turns to the question."""
+    conn = WARM.get("conn")
+    sock = getattr(conn, "sock", None)
+    if sock is not None:
+        try:
+            sock.shutdown(2)
+        except OSError:
+            pass
+
+
+def warmer(every: float = 15.0) -> None:
+    """Watch for a newly started engine (its `hashed_at` changes) and warm it; quiet when nothing changes."""
+    while True:
+        try:
+            warm()
+        except Exception as e:  # noqa: BLE001 — never take the console down; tried again on the next engine
+            WARM["state"] = f"error: {e}"
+        time.sleep(every)
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "bankml-console"
 
@@ -315,15 +417,19 @@ class H(BaseHTTPRequestHandler):
         q = str(req.get("message", "")).strip()
         if not q:
             return self._json({"error": "an empty question"}, 400)
+        try:
+            int(req.get("max_tokens") or 256)
+        except (TypeError, ValueError):
+            return self._json({"error": "max_tokens: a whole number"}, 400)
+        cancel_warm()
         with D.span("ask", chars=len(q), history=len(req.get("history") or []), public=PUBLIC is not None) as root:
             self._ask_traced(req, q, root)
 
     def _ask_traced(self, req: dict, q: str, root):
         with D.span("self_block"):
             sb = self_block()
-        system = persona()["system_prompt"] + "\n\nSELF (measured by bankML just now):\n" + self_text(sb)
-        hist = [m for m in (req.get("history") or [])[-12:] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
-        body = {"messages": [{"role": "system", "content": system}, *hist, {"role": "user", "content": q}], "stream": True,
+        hist = window(req.get("history") or [])
+        body = {"messages": messages(persona()["system_prompt"], hist, q, self_text(sb)), "stream": True,
                 "max_tokens": min(int(req.get("max_tokens") or 256), PUBLIC_MAX_TOKENS if PUBLIC else 1 << 30)}
         for k in ("temperature", "top_k", "top_p", "min_p", "repeat_penalty", "seed"):
             if req.get(k) is not None:
@@ -389,6 +495,7 @@ def main():
     if a.host not in ("127.0.0.1", "localhost", "::1") and not PUBLIC:
         sys.exit("the console is loopback only: it can restart the engine (use view.py for the LAN, --public for a hosted demo)")
     print(f"bankML console on http://{a.host}:{a.port} — bankml serve at {SERVE}")
+    threading.Thread(target=warmer, daemon=True).start()  # the first answer: the persona's prefix kept warm
     ThreadingHTTPServer((a.host, a.port), H).serve_forever()
 
 
