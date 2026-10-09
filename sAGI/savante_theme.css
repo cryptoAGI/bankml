@@ -97,6 +97,14 @@ body, body.dark { background: var(--sv-wash), var(--sv-bg) !important; backgroun
 #bk-side { background: color-mix(in srgb, var(--sv-surface) 70%, var(--sv-bg)) !important; }
 #bk-chat { border-radius: 16px !important; }
 #bk-side { border-radius: 16px !important; padding: 12px !important; }
+/* The side column holds the aivatar card, whose modal is position: fixed. A backdrop-filter or a transform on any of
+   its ancestors makes that ancestor the modal's containing block and traps the card inside the column, so the side
+   column carries neither; a denser surface keeps it reading as glass. */
+#bk-side { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; transform: none !important;
+           background: color-mix(in srgb, var(--sv-surface) 70%, var(--sv-bg)) !important; }
+/* Gradio dims a component to 20 % while its update waits in the queue; the side column's widgets refresh in the
+   background and already show something true, so on a busy machine they stay legible. */
+#bk-side .pending { opacity: 1 !important; }
 .bk-card { border-left: 3px solid var(--sv-gold) !important; border-radius: 12px !important; }
 .bk-card, .bk-card *, .bk-ex, .bk-ex * { color: var(--sv-ink) !important; }
 .bk-card dt, .bk-note, .bk-idle, #bk-prov, #bk-prov * { color: var(--sv-muted) !important; }

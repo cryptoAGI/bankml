@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased (0.4.3) — the console's first answer
+## Unreleased (0.4.3) — browseML: bankML in the browser; the console's first answer
+
+### browseML — bankML in the browser (`browseML/`, `hf/space/browseml*.js`, `tools/browseml.sh`)
+- **The same engine, compiled to WebAssembly** (`wasm32-wasip1`, and `wasm32-wasip1-threads` for cross-origin-isolated
+  pages), runs on the visitor's CPU in a Web Worker. Bonsai-1.7B Q1_0 (248 MB) is downloaded once at a pinned revision
+  and kept in Cache Storage; the engine verifies it as `serve` does (guard, sha256 pin) and puts `serve`'s receipt on
+  every answer. Nothing to install, no account, no server.
+- **Exact:** `browseML/testing/oracle.mjs` gives 9 of 9 answers identical to llama-server b11192's record (text,
+  finish, counts) in Node; through 4 threads in Chrome, the first three likewise.
+- **What the engine needed** (the native build unchanged):
+  - `gguf::Mmap` reads the file into one shared buffer where there is no mmap.
+  - `serve::ident` without unix metadata.
+  - The Vulkan loader reports no card.
+  - The prompt cache's 8 GiB default fits a 32-bit `usize`.
+  - An unseeded request's seed comes from the clock alone (there is no process id).
+  - Rope's `cosf`/`sinf` are glibc's own algorithm (`bankML/sincosf.rs`, from ARM's optimized-routines; equal to
+    glibc's on all 2^32 inputs). Rust's WebAssembly libm differed in the last bit on about 1 % of the rope's angles,
+    which parted one oracle conversation from the reference.
+- **`q1_0::simd128_core`**, bit-identical to the scalar reference:
+  - integer sums vectorised;
+  - the inner multiply-adds exact in f32, so a multiply then an add;
+  - the outer fused multiply-adds through f64 SIMD, with the scalar `mul_add` only for the rare inexact halfway lanes.
+  - About 7× the first build on one thread.
+- **On the Space**, "bankML in this browser" is the default answerer, and the page asks in the ultimate input field
+  (`uif-space.js`). Behind the field, `space-dashboard.js` shows this computer's controls and diagnostics:
+  - controls: threads, context, answer length, a lean or full prompt;
+  - measured: reading and writing speed, first token, the engine's memory, storage;
+  - what to change, worked out from those measurements.
+
 
 ### The persona's prefix kept warm, SELF out of it, a window that holds the cache
 - **SELF moves out of the system prompt.** It changes with every question, and inside the first system message it
@@ -149,7 +177,15 @@
 - `test_console.py`: the prompt's order and stable prefix, the window, the warmer against a fake engine (prefill and
   save, restore, once per engine, left alone once it has answered, closed by a question).
 
-## Unreleased (0.4.2) — logprobs on Ollama's API; receipts that cover logprobs (to merge with the 0.4.2 GPU work)
+## 0.4.2 — 2026-10-08 — logprobs on Ollama's API, receipts over logprobs, `max_tokens: 0`; with 0.4.1
+
+**0.4.1 was never tagged (its gate run stopped mid-way), so this release carries it.** From 0.4.1: a native run stops
+when its client goes away; every GPU object is released on drop; the ternary kernel runs on the GPU bit-exact; CI on
+aarch64; the console's SELF says who is speaking. From 0.4.2: Ollama 0.20's `logprobs`/`top_logprobs` on `/api/chat`
+and `/api/generate` with llama-server b11192's entries; `logprobs_sha256` on receipts; `max_tokens: 0` and
+`num_predict: 0` as llama-server and Ollama read them; one theme and a dark-mode switch for the console and Savante;
+Savante's exact calculator; `install.sh restart`. The batched GPU submissions and the F16 and eight-lane ternary GPU
+kernels are written but unverified on the card, and stay for 0.5.0. Record: `testing/results/0.4.2.txt`.
 
 ### Measured (2026-10-08, Bonsai-1.7B-Q1_0, against llama-server b11192)
 - `logprobs_ollama_oracle_live` **19 / 19**: `/api/chat` and `/api/generate`, streamed and not, entries and receipts.
@@ -166,6 +202,9 @@
   `models.py use FILE` on the file already served returns at once (its sha256 already answers), and `install.sh
   model` starts the default model, and only when nothing serves. Measured: 10 s on Bonsai-8B, pid replaced, verified.
 - `install.sh --help` prints up to its `-h` line instead of a fixed line range (two lines added had cut it short).
+- **Fixed: `./install.sh stop` stopped only the first port.** `pid_on` for a port where nothing listens (7874, the
+  LAN view, usually off) made `grep` fail, and under `set -euo pipefail` the script ended there without a word: 7873,
+  18093 and 18092 kept running. `pid_on` now answers empty instead.
 
 ### The interfaces: one theme, a dark-mode switch, a way back, and a calculator
 - **Console and Savante share one look** (`sAGI/console/theme.css`, `sAGI/savante_theme.css`): depth from the border
@@ -211,7 +250,14 @@
 - `receipts_cover_logprobs_as_written` and `logprobs_as_ollama_asks_and_answers` (unit); live in the oracle above,
   which also checks the `/v1` receipts.
 
-## Unreleased (0.4.1) — a request whose client has gone stops; GPU objects released; ternary on the GPU; CI on ARM
+### Fixed
+- Savante's aivatar card opened trapped inside the side column (318 × 1075 px instead of the whole window): the
+  column's `backdrop-filter` made it the containing block of the card's `position: fixed` modal. The side column
+  now carries no backdrop-filter or transform, and has a denser surface instead. Its widgets also stay legible while
+  Gradio refreshes them; they had dimmed to 20 % on a busy machine. Checked in a browser: the card now spans the
+  window (1366 × 900, a 920 px card).
+
+## 0.4.1 — never tagged; released in 0.4.2 — a request whose client has gone stops; GPU objects released; ternary on the GPU; CI on ARM
 
 **The first steps towards 0.5.0 (hardware), and the two 0.4.x items.**
 - A native run stops when its client goes away, and keeps what it computed.
