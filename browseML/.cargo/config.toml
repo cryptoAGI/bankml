@@ -1,3 +1,8 @@
 # browseML runs where WebAssembly SIMD does (every current browser): the 1-bit kernel uses it
 [target.wasm32-wasip1]
 rustflags = ["-C", "target-feature=+simd128"]
+
+# the threaded build (browseml-mt.wasm): shared memory up to 4 GiB, imported from the page, so the engine's thread
+# pool runs on Web Workers (cross-origin-isolated pages only; the others use browseml.wasm)
+[target.wasm32-wasip1-threads]
+rustflags = ["-C", "target-feature=+simd128", "-C", "link-arg=--max-memory=4294967296"]

@@ -18,7 +18,8 @@ export function wasi({ files, env = {}, write = () => {} }) {
   const dv = () => new DataView(memory.buffer);
   const u8 = () => new Uint8Array(memory.buffer);
   const dec = new TextDecoder(), enc = new TextEncoder();
-  const str = (p, n) => dec.decode(u8().subarray(p, p + n));
+  // copies, not views: with threads the memory is a SharedArrayBuffer, which TextDecoder and getRandomValues refuse
+  const str = (p, n) => dec.decode(u8().slice(p, p + n));
   const fds = new Map([[3, { dir: true }]]); // 0–2 are stdio; 3 is the preopened /models
   let next = 4;
 
@@ -47,7 +48,10 @@ export function wasi({ files, env = {}, write = () => {} }) {
       dv().setBigUint64(out, ns, true); return ERR.SUCCESS;
     },
     clock_res_get: (_id, out) => { dv().setBigUint64(out, 1000n, true); return ERR.SUCCESS; },
-    random_get: (p, n) => { for (let i = 0; i < n; i += 65536) crypto.getRandomValues(u8().subarray(p + i, p + Math.min(n, i + 65536))); return ERR.SUCCESS; },
+    random_get: (p, n) => {
+      for (let i = 0; i < n; i += 65536) { const b = crypto.getRandomValues(new Uint8Array(Math.min(65536, n - i))); u8().set(b, p + i); }
+      return ERR.SUCCESS;
+    },
     fd_prestat_get: (fd, buf) => {
       if (fd !== 3) return ERR.BADF;
       dv().setUint8(buf, 0); dv().setUint32(buf + 4, MOUNT.length, true); return ERR.SUCCESS;

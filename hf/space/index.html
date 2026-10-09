@@ -13,6 +13,7 @@
   <meta name="color-scheme" content="dark" />
   <meta name="date" content="2026-10-07" />
   <link rel="canonical" href="https://deltaverse.pythai.net/bankml" />
+  <link rel="stylesheet" href="uif-space.css" />
   <link rel="alternate" type="text/plain" title="llms.txt" href="https://github.com/cryptoAGI/bankml/blob/main/llms.txt" />
   <!-- the DeltaVerse $ -->
   <link rel="icon" href="https://deltaverse.pythai.net/favicon.ico" sizes="16x16 32x32 48x48" />
@@ -155,21 +156,31 @@
     #ask .status{font-size:13.5px;color:var(--quiet);flex:1 1 100%}
     #ask details{flex:1 1 100%;font-size:14.5px;color:var(--muted)}
     #ask details code{word-break:break-all}
-    #chat{display:grid;gap:8px;margin:12px 0 4px;max-height:420px;overflow-y:auto}
-    #chat .msg{white-space:pre-wrap;border-radius:10px;padding:9px 12px;line-height:1.5}
-    #chat .msg.user{background:rgba(var(--vi),.18);justify-self:end;max-width:85%;color:#fff}
-    #chat .msg.assistant{background:rgba(0,0,0,.35);border:1px solid var(--rule);color:#e8eef5}
-    #chat .meta{font:12.5px ui-monospace,Menlo,monospace;color:var(--quiet);margin:-4px 2px 4px}
-    #chat .meta.ok{color:#56d364}
-    #chat .meta.bad{color:#ff7b72}
-    #chat .meta.warn{color:rgb(var(--am))}
-    footer{max-width:780px; margin:0 auto; padding:10px 16px 90px; text-align:center; color:var(--quiet); font-size:14px;}
-    .social{display:flex; gap:22px; justify-content:center; align-items:center; margin:14px 0 10px;}
-    .social a{display:inline-flex; align-items:center; gap:8px; border:none; color:var(--muted);}
-    .social a:hover{color:#fff;}
-    .social svg{width:24px; height:24px; fill:currentColor;}
-    /* the landing: the highlights until the first question, then the conversation */
-    #chat .failed{color:var(--quiet);font-style:italic}
+    /* the page behind the input field: this computer's controls and diagnostics (space-dashboard.js) */
+    .dash{margin:18px 0 120px}
+    .dash h2{margin:0 0 4px}
+    .dash .dlede{font-size:14px;color:var(--quiet);margin:0 0 12px}
+    .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+    .dcard{background:rgba(0,0,0,.32);border:1px solid var(--rule);border-radius:12px;padding:12px 14px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+    .dcard h3{margin:0 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+    .dkv{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;margin:0 0 8px;font-size:13.5px}
+    .dkv dt{color:var(--quiet)} .dkv dd{margin:0;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;overflow-wrap:anywhere}
+    .dkv dd.ok{color:#56d364} .dkv dd.warn{color:rgb(var(--am))}
+    .dctl{display:grid;grid-template-columns:7.5em 1fr auto;align-items:center;gap:4px 8px;margin:0 0 10px;font-size:13.5px}
+    .dctl > span{color:var(--quiet)} .dctl small{grid-column:2 / -1;color:var(--quiet);font-size:12px}
+    .dctl select,.dctl input[type=range]{width:100%}
+    .dctl output{font-family:ui-monospace,Menlo,monospace;min-width:3ch;text-align:right}
+    .drow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+    .dcard button{font:inherit;font-size:13px;padding:5px 10px;border-radius:8px;border:1px solid var(--rule);background:rgba(255,255,255,.06);color:inherit;cursor:pointer}
+    .dcard button.primary{background:rgba(var(--vi),.35);border-color:rgba(var(--vi),.7)}
+    .dcard button:disabled{opacity:.45;cursor:default}
+    .dspark{display:flex;align-items:center;gap:10px;margin:0 0 8px}
+    .dspark small{color:var(--quiet);font-size:12px}
+    .spark{width:220px;height:40px;background:rgba(0,0,0,.25);border-radius:6px}
+    .spark polyline{fill:none;stroke:#56d364;stroke-width:1.6;stroke-linejoin:round}
+    .dadvice{margin:0;padding-left:18px;font-size:13.5px;line-height:1.45}
+    .dadvice li{margin:0 0 6px} .dadvice li.warn::marker{color:rgb(var(--am))} .dadvice li.ok::marker{color:#56d364}
+    .dnote{font-size:13px;margin:4px 0 0} .dnote.warn{color:rgb(var(--am))}
     #ask .who{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}
     .highlights{margin:10px 0 6px;padding:14px 16px;border-radius:14px;border:1px solid var(--rule);
       background:linear-gradient(160deg,rgba(var(--cy),.10),rgba(var(--vi),.08));box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 18px 40px -22px rgba(var(--cy),.45);
@@ -240,11 +251,6 @@
       
       
       
-      <div class="row ask">
-        <textarea id="message" rows="2" placeholder="Ask bankML about itself, its exactness, its precision, its speed… (Ctrl+Enter)"></textarea>
-        <button id="send" type="button">Ask</button>
-      </div>
-      <p id="askstatus" class="status"></p>
       <div class="speakers" role="radiogroup" aria-label="who speaks">
         <span class="lbl">speaks as</span>
         <label><input type="radio" name="speaker" value="bankml" checked> bankML</label>
@@ -261,9 +267,10 @@
           <li><b>The same bits as llama.cpp</b> — token for token, proven in every release, then faster.</li>
           <li><b>On the CPU you have</b> — one Rust crate, no dependencies; v0.4.2 is the latest. <a href="#faq-release">What's new</a></li>
         </ul>
-        <p class="hl-hint">Ask above: these give way to the answers. Everything else is in the FAQ below.</p>
+        <p class="hl-hint">Ask in the field at the bottom of the screen: its answers open in their own windows (double-click a
+          window's header to fill the screen; ❏ in the field closes, tiles or cascades them all). Everything else is in the FAQ below.</p>
       </div>
-      <div id="chat" aria-live="polite"></div>
+      <section id="dash" class="dash" aria-label="This computer: controls and diagnostics"></section>
       
       
       <details class="who"><summary>Who answers: <b>bankML in this browser</b>, your own bankML, or a provider · how to start your own</summary>
@@ -676,6 +683,10 @@
   })();
   </script>
   <script src="space-tabs.js"></script>
+  <!-- the ultimate input field (cryptoAGI/ultimate-bankml-ui, space-mount: src/space/main.tsx), and its engine -->
+  <div id="uif-root"></div>
+  <script src="uif-space.js"></script>
   <script type="module" src="bankml-chat.js"></script>
+  <script type="module" src="space-dashboard.js"></script>
 </body>
 </html>

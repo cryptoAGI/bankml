@@ -8,6 +8,9 @@
 //  · A Hugging Face provider — sign in with Hugging Face; a provider-hosted model answers under bankML's persona,
 //    billed to the visitor's inference quota. NOT bankML's arithmetic, no receipt; said on every answer.
 // Who speaks is chosen apart from who answers: bankML or Savante, each from its own .persona and .context.
+// The questions are asked in the ultimate input field (uif-space.js): each response window is its own conversation;
+// this module is its engine (window.bankmlSpaceEngine), and it reports every answer's measurements to the page's
+// controls and diagnostics (space-dashboard.js) through window.bankmlStats and the "bankml:stats" event.
 // Nothing an engine or a provider returns becomes markup: text only.
 import * as browseml from "./browseml.js";
 import { oauthLoginUrl, oauthHandleRedirectIfPresent } from "https://cdn.jsdelivr.net/npm/@huggingface/hub@2.17.1/+esm";
@@ -17,7 +20,6 @@ const $ = (id) => document.getElementById(id);
 const SESSION = "bankml.oauth";
 const DEFAULT_ENDPOINT = "http://127.0.0.1:18093";
 const DEFAULT_MODEL = "Qwen/Qwen3-8B";
-const history = [];
 let persona = null;
 let oauth = null;
 
@@ -26,6 +28,25 @@ const log = (kind, text) => window.bankmlLog && window.bankmlLog(kind, text);  /
 // The conversation sent with a question: at least the last 12 messages, trimmed four exchanges at a time, so the
 // engine's cached prompt holds from turn to turn (a window that slid every turn made it read everything again).
 const windowed = (h, keep = 12, step = 8) => h.slice(Math.floor(Math.max(0, h.length - keep) / step) * step);
+
+// ── settings the visitor controls (the page's controls, space-dashboard.js), kept in this browser ─────────────────
+const SETTINGS_KEY = "bankml.space.settings";
+const DEFAULTS = { threads: 0 /* 0: every core */, ctx: 4096, maxTokens: 256, lean: true };
+export const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; } catch { return { ...DEFAULTS }; } })();
+export function setSettings(change) {
+  Object.assign(settings, change);
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  stats.emit();
+}
+// ── what the page measured: every answer, the engine, the model — read by the diagnostics ───────────────────────
+export const stats = {
+  answers: [],        // {at, mode, speaker, prompt_n, predicted_n, cache_n, prompt_tps, gen_tps, ttft_ms, total_ms, ok}
+  browse: null,       // what bankML verified in this browser, and its threads and context
+  local: null,        // the visitor's own bankml serve, when connected
+  emit() { window.dispatchEvent(new CustomEvent("bankml:stats")); },
+};
+window.bankmlStats = stats;
+window.bankmlSettings = { get: () => settings, set: setSettings };
 
 // ── the persona: who speaks — the same files the bankML console and Savante speak from ───────────────────────────
 // bankML's ships with this Space; Savante's is read from her own repository at a pinned commit and must hash to
@@ -51,7 +72,6 @@ async function loadPersona(key = speaker) {
     log("persona", `${P.label} — ${key === "bankml" ? "sAGI/personas/bankml.persona" : "savante.persona (sha256 " + P.sha256.slice(0, 12) + "…, pinned)"}`);
   } catch (e) {
     persona = null;
-    $("askstatus").textContent = `${P.label}'s persona could not be read: ${e.message || e}`;
     log("error", `${P.label}'s persona could not be read: ${e.message || e}`);
     return;
   }
@@ -110,54 +130,54 @@ async function selfText(ep) {
   ].join("\n");
 }
 
-// ── the conversation ──────────────────────────────────────────────────────────────────────────────────────────
-function bubble(role, text) {
-  const d = document.createElement("div");
-  d.className = "msg " + role;
-  d.textContent = text;
-  $("chat").append(d);
-  d.scrollIntoView({ block: "nearest" });
-  return d;
-}
-function note(el, text, cls) {
-  const p = document.createElement("div");
-  p.className = "meta " + (cls || "");
-  p.textContent = text;
-  el.after(p);
-  return p;
-}
-// "…" alone looks like no reply: say what is happening and how long it has taken, until the first piece arrives
-let pending = null;  // the answer being waited for: a failure stops its clock and says so in its bubble
-function waiting(out, what) {
-  const t0 = Date.now();
-  const tick = () => { if (out.dataset.started !== "1") out.textContent = `… ${what} · ${Math.round((Date.now() - t0) / 1000)} s`; };
-  tick();
-  const id = setInterval(tick, 1000);
-  const stop = () => { out.dataset.started = "1"; clearInterval(id); if (pending && pending.out === out) pending = null; };
-  pending = { out, stop };
-  return stop;
-}
 // a thinking model may still put its reasoning in the content as <think>…</think>: show the answer only
 const answerOnly = (t) => t.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").replace(/^\s+/, "");
 async function sha256hex(text) {
   const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+/** A stream from callbacks: `start(push, end, fail)` feeds it; the field reads it piece by piece. */
+function streamOf(start) {
+  const q = []; let wake = null, done = false, err = null;
+  const poke = () => { if (wake) { const w = wake; wake = null; w(); } };
+  start((p) => { q.push(p); poke(); }, () => { done = true; poke(); }, (e) => { err = e; done = true; poke(); });
+  return (async function* () {
+    for (;;) {
+      while (q.length) yield q.shift();
+      if (err) throw err;
+      if (done) return;
+      await new Promise((r) => (wake = r));
+    }
+  })();
+}
+// the system message: the persona, and (unless lean) the summary of its .context — the part the engine caches
+const system = () => (settings.lean ? persona.system_prompt : baseSystem());
+function record(entry) {
+  stats.answers.push({ at: Date.now(), speaker: PERSONAS[speaker].label, ...entry });
+  if (stats.answers.length > 200) stats.answers.shift();
+  stats.emit();
+}
+const receiptLine = (where, rc, ok, extra) => rc
+  ? `${ok ? "✓" : "✗"} receipt — bankML ${rc.bankml}${where} · model sha256 ${String(rc.model_sha256 || "").slice(0, 12)}… · answer sha256 ${ok ? "matches the text received" : "does NOT match"}${extra}`
+  : "✗ no receipt came with this answer";
 
 // ── your own bankML ───────────────────────────────────────────────────────────────────────────────────────────
+const endpoint = () => $("endpoint").value.trim().replace(/\/+$/, "") || DEFAULT_ENDPOINT;
 async function connect() {
-  const ep = $("endpoint").value.trim().replace(/\/+$/, "") || DEFAULT_ENDPOINT;
+  const ep = endpoint();
   $("localstatus").textContent = "connecting…";
   log("connect", ep);
   const t0 = performance.now();
   const b = await get(ep, "/bankml");
   if (!b) {
+    stats.local = null; stats.emit();
     $("localstatus").textContent = "not reachable — is bankml serve running with --allow-origin " + location.origin + " ? (see below)";
     log("error", `${ep} not reachable (bankml serve not running, or started without --allow-origin ${location.origin})`);
     return false;
   }
-  log("connect", `${ep} answered in ${(performance.now() - t0).toFixed(0)} ms`);
   const v = b.verified || {};
+  stats.local = { endpoint: ep, rtt_ms: performance.now() - t0, verified: v, resident: b.resident }; stats.emit();
+  log("connect", `${ep} answered in ${(performance.now() - t0).toFixed(0)} ms`);
   $("localstatus").textContent = v.guard === "play"
     ? `✓ connected: ${v.name || b.resident || "model"} · bankML ${v.bankml} · sha256 ${String(v.model_sha256 || "").slice(0, 12)}…`
     : "connected, but no verified model is loaded yet";
@@ -166,29 +186,26 @@ async function connect() {
     : "connected, but no verified model is loaded");
   return v.guard === "play";
 }
-async function askLocal(message) {
-  const ep = $("endpoint").value.trim().replace(/\/+$/, "") || DEFAULT_ENDPOINT;
+async function* askLocal(hist, message, done) {
+  const ep = endpoint();
   // the persona first and unchanged, so the engine keeps it cached; SELF (measured now) just before the question
   const self = "SELF (measured by bankML just now):\n" + await selfText(ep);
   const ctx = passages(message);
   if (ctx.ids.length) log("context", "passages: " + ctx.ids.join(", "));
-  const out = bubble("assistant", "…");
   const t0 = performance.now();
-  let first = null;
-  const started = waiting(out, "your bankML is reading the prompt (the first answer of a session reads the whole persona; it can take a few minutes on a busy CPU)");
-  let text = "", receipt = null;
+  let first = null, text = "", receipt = null, timings = {};
   const r = await fetch(ep + "/v1/chat/completions", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: [{ role: "system", content: baseSystem() }, ...windowed(history),
+    body: JSON.stringify({ messages: [{ role: "system", content: system() }, ...windowed(hist),
       { role: "system", content: self + (ctx.text ? "\n\n" + ctx.text : "") }, { role: "user", content: message }],
-      stream: true, max_tokens: 384 }),
+      stream: true, max_tokens: settings.maxTokens, timings_per_token: false }),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = "";
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const { done: fin, value } = await reader.read();
+    if (fin) break;
     buf += dec.decode(value, { stream: true });
     let i;
     while ((i = buf.indexOf("\n")) >= 0) {
@@ -196,20 +213,18 @@ async function askLocal(message) {
       buf = buf.slice(i + 1);
       if (!line.startsWith("data:") || line === "data: [DONE]") continue;
       const d = JSON.parse(line.slice(5));
+      if (d.timings) timings = d.timings;
       if (d.bankml_receipt) { receipt = d.bankml_receipt; continue; }
       const piece = d.choices?.[0]?.delta?.content;
-      if (piece) { started(); if (first === null) { first = performance.now(); log("answer", `first token after ${((first - t0) / 1000).toFixed(1)} s`); } text += piece; out.textContent = text; }
+      if (piece) { if (first === null) { first = performance.now(); log("answer", `first token after ${((first - t0) / 1000).toFixed(1)} s`); } text += piece; yield piece; }
     }
   }
-  started();
-  const ok = receipt && (await sha256hex(text)) === receipt.response_sha256;
-  log(receipt ? (ok ? "ok" : "error") : "warn", receipt
-    ? `receipt ${ok ? "✓ the answer's sha256 matches" : "✗ the answer's sha256 does NOT match"} · ${receipt.prompt_tokens} + ${receipt.completion_tokens} tokens · ${((performance.now() - t0) / 1000).toFixed(1)} s`
-    : "no receipt came with this answer");
-  note(out, receipt
-    ? `${ok ? "✓" : "✗"} receipt — bankML ${receipt.bankml} · model sha256 ${String(receipt.model_sha256 || "").slice(0, 12)}… · answer sha256 ${ok ? "matches the text received" : "does NOT match the text received"}`
-    : "no receipt came with this answer", ok ? "ok" : "bad");
-  history.push({ role: "user", content: message }, { role: "assistant", content: text });
+  const ok = !!receipt && (await sha256hex(text)) === receipt.response_sha256;
+  record({ mode: "local", prompt_n: timings.prompt_n ?? receipt?.prompt_tokens, predicted_n: timings.predicted_n ?? receipt?.completion_tokens, cache_n: timings.cache_n,
+           prompt_tps: timings.prompt_per_second, gen_tps: timings.predicted_per_second, ttft_ms: first === null ? null : first - t0, total_ms: performance.now() - t0, ok });
+  log(receipt ? (ok ? "ok" : "error") : "warn", receipt ? `receipt ${ok ? "✓" : "✗"} · ${receipt.prompt_tokens} + ${receipt.completion_tokens} tokens · ${((performance.now() - t0) / 1000).toFixed(1)} s` : "no receipt came with this answer");
+  done({ ok, line: receiptLine(" on your machine", receipt, ok, ` · ${((performance.now() - t0) / 1000).toFixed(1)} s`) });
+  hist.push({ role: "user", content: message }, { role: "assistant", content: text });
 }
 
 // ── browseML: bankML in this browser ─────────────────────────────────────────────────────────────────────────
@@ -219,12 +234,12 @@ function browseSelf(v) {
   const n = (x, unit, d = 1) => (x === undefined || x === null ? "not measured" : Number(x).toFixed(d) + unit);
   return "SELF (measured by bankML just now):\n" + [
     `- the model I am running: ${v.model} (sha256 ${v.sha256.slice(0, 16)}…), bankML ${v.version}, verified (guard ${v.guard})`,
-    `- where I am running: in the visitor's own web browser, compiled to WebAssembly (browseML), one thread of their CPU — no server`,
+    `- where I am running: in the visitor's own web browser, compiled to WebAssembly (browseML), ${v.threads} thread${v.threads > 1 ? "s" : ""} of their CPU — no server`,
     `- prompt reading speed of my last answer: ${n(t.prompt_per_second, " tokens per second")}`,
     `- generation speed of my last answer: ${n(t.predicted_per_second, " tokens per second")}`,
   ].join("\n");
 }
-async function loadBrowse() {
+export async function loadBrowse() {
   if (browseml.isReady()) return true;
   $("browseload").disabled = true;
   try {
@@ -233,9 +248,11 @@ async function loadBrowse() {
       $("browsestatus").textContent = phase === "verify" ? "bankML is verifying the model (guard, then sha256 of all 248 MB)…"
         : phase === "cache" ? "the model is in this browser's cache"
         : `downloading the model: ${(got / 1e6).toFixed(0)} of ${(total / 1e6).toFixed(0)} MB`;
-    }, (level, text) => log(level === 0 ? "error" : level === 1 ? "warn" : "engine", text));
-    $("browsestatus").textContent = `✓ ${v.model} verified by bankML ${v.version} · sha256 ${v.sha256.slice(0, 12)}… · ready in ${((performance.now() - t0) / 1000).toFixed(0)} s`;
-    log("ok", `browseML: ${v.model} verified · sha256 ${v.sha256.slice(0, 16)}… · engine ${v.engine}`);
+    }, (level, text) => log(level === 0 ? "error" : level === 1 ? "warn" : "engine", text),
+    { threads: settings.threads || undefined, ctx: settings.ctx });
+    stats.browse = { ...v, load_ms: performance.now() - t0 }; stats.emit();
+    $("browsestatus").textContent = `✓ ${v.model} verified by bankML ${v.version} · sha256 ${v.sha256.slice(0, 12)}… · ${v.threads} thread${v.threads > 1 ? "s" : ""} · ready in ${((performance.now() - t0) / 1000).toFixed(0)} s`;
+    log("ok", `browseML: ${v.model} verified · sha256 ${v.sha256.slice(0, 16)}… · ${v.threads} thread${v.threads > 1 ? "s" : ""}${v.threads > 1 ? "" : " (this page is not cross-origin isolated, or the browser has no SharedArrayBuffer)"} · context ${v.ctx} · engine ${v.engine}`);
     $("browseload").hidden = true;
     return true;
   } catch (e) {
@@ -246,32 +263,39 @@ async function loadBrowse() {
     $("browseload").disabled = false;
   }
 }
-async function askBrowse(message) {
-  if (!browseml.isReady()) throw new Error("load bankML in this browser first (the button above the question box’s answers)");
-  const v = await browseml.load(() => {}, () => {});
+/** Stop browseML and load it again with the current settings (threads, context); the model stays cached. */
+export async function reloadBrowse() {
+  browseml.unload();
+  stats.browse = null; stats.emit();
+  $("browseload").hidden = false;
+  return loadBrowse();
+}
+async function* askBrowse(hist, message, done) {
+  if (!browseml.isReady()) {
+    // a cached model loads in seconds; a first download waits for the visitor's Load (248 MB is their choice)
+    if (!(await browseml.isCached()) || !(await loadBrowse())) throw new Error(`press “Load bankML in this browser” first: it downloads ${(browseml.MODEL.bytes / 1e6).toFixed(0)} MB once`);
+  }
+  const v = stats.browse || await browseml.load(() => {}, () => {});
   const ctx = passages(message);
   if (ctx.ids.length) log("context", "passages: " + ctx.ids.join(", "));
-  const out = bubble("assistant", "…");
   const t0 = performance.now();
-  let first = null, text = "";
-  const started = waiting(out, "bankML is reading the prompt in your browser (the first answer reads the whole persona; on one thread this takes a while)");
-  const d = await browseml.chat({ messages: [{ role: "system", content: baseSystem() }, ...windowed(history),
+  let first = null, text = "", result = null;
+  const pieces = streamOf((push, end, fail) => browseml.chat({ messages: [{ role: "system", content: system() }, ...windowed(hist),
       { role: "system", content: browseSelf(v) + (ctx.text ? "\n\n" + ctx.text : "") }, { role: "user", content: message }],
-      max_tokens: 256 },
-    (piece) => { started(); if (first === null) { first = performance.now(); log("answer", `first token after ${((first - t0) / 1000).toFixed(1)} s`); } text += piece; out.textContent = text; },
-    (level, t) => log(level === 0 ? "error" : "engine", t));
-  started();
-  lastBrowse = d;
-  const receipt = d.bankml_receipt;
-  const ok = receipt && (await sha256hex(text)) === receipt.response_sha256;
-  const tm = d.timings || {};
+      max_tokens: settings.maxTokens },
+    (piece) => { if (first === null) { first = performance.now(); log("answer", `first token after ${((first - t0) / 1000).toFixed(1)} s`); } text += piece; push(piece); },
+    (level, t) => log(level === 0 ? "error" : "engine", t)).then((d) => { result = d; end(); }, fail));
+  for await (const p of pieces) yield p;
+  lastBrowse = result;
+  const receipt = result.bankml_receipt, tm = result.timings || {};
+  const ok = !!receipt && (await sha256hex(text)) === receipt.response_sha256;
+  record({ mode: "browse", prompt_n: tm.prompt_n, predicted_n: tm.predicted_n, cache_n: tm.cache_n, prompt_tps: tm.prompt_per_second,
+           gen_tps: tm.predicted_per_second, ttft_ms: first === null ? null : first - t0, total_ms: performance.now() - t0, ok, memory: browseml.memoryBytes });
   log(receipt ? (ok ? "ok" : "error") : "warn", receipt
-    ? `receipt ${ok ? "✓ the answer's sha256 matches" : "✗ the answer's sha256 does NOT match"} · ${d.usage.prompt_tokens} + ${d.usage.completion_tokens} tokens · ${((performance.now() - t0) / 1000).toFixed(1)} s · ${Number(tm.predicted_per_second || 0).toFixed(2)} tok/s`
+    ? `receipt ${ok ? "✓" : "✗"} · ${result.usage.prompt_tokens} + ${result.usage.completion_tokens} tokens · ${((performance.now() - t0) / 1000).toFixed(1)} s · ${Number(tm.predicted_per_second || 0).toFixed(2)} tok/s`
     : "no receipt came with this answer");
-  note(out, receipt
-    ? `${ok ? "✓" : "✗"} receipt — bankML ${receipt.bankml} in this browser · model sha256 ${String(receipt.model_sha256 || "").slice(0, 12)}… · answer sha256 ${ok ? "matches the text received" : "does NOT match the text received"}`
-    : "no receipt came with this answer", ok ? "ok" : "bad");
-  history.push({ role: "user", content: message }, { role: "assistant", content: text });
+  done({ ok, line: receiptLine(" in this browser", receipt, ok, ` · ${Number(tm.prompt_per_second || 0).toFixed(1)} + ${Number(tm.predicted_per_second || 0).toFixed(1)} tok/s · ${((performance.now() - t0) / 1000).toFixed(1)} s`) });
+  hist.push({ role: "user", content: message }, { role: "assistant", content: text });
 }
 
 // ── a Hugging Face provider (not bankML) ──────────────────────────────────────────────────────────────────────
@@ -285,38 +309,76 @@ function renderAuth() {
     ? `signed in as ${oauth.userInfo?.preferred_username || oauth.userInfo?.name || "you"} — answers spend your inference quota`
     : "not signed in";
 }
-async function askProvider(message) {
+async function* askProvider(hist, message, done) {
+  if (!signedIn()) throw new Error("sign in with Hugging Face first (who answers ▸ a provider); a free account needs purchased credits");
   const model = $("model").value.trim() || DEFAULT_MODEL;
   if (!/^[\w.-]+\/[\w.-]+$/.test(model)) throw new Error("the model must be a Hugging Face repository id, owner/name");
   // the persona, told the truth about where it is running
   const ctx = passages(message);
   if (ctx.ids.length) log("context", "passages: " + ctx.ids.join(", "));
   const who = PERSONAS[speaker].label;
-  const system = baseSystem() + (ctx.text ? "\n\n" + ctx.text : "") + `\n\nWHERE THIS REPLY COMES FROM: you speak as ${who} — the design, the rule, the voice — but this particular reply is generated by ${model} through a Hugging Face inference provider, not by bankML's engine: there is no bankML arithmetic, no receipt and no SELF block behind it. Answer as ${who} would; when asked about your speed, use, receipt, verification or what is running right now, say plainly that this reply comes from ${model}, not from bankML, and that bankML in the browser (browseML) or the visitor's own bankML gives verified answers.`;
-  const out = bubble("assistant", "…");
-  const started = waiting(out, `asking ${model} through a Hugging Face provider`);
-  let text = "", reasoning = "";
+  const sys = system() + (ctx.text ? "\n\n" + ctx.text : "") + `\n\nWHERE THIS REPLY COMES FROM: you speak as ${who} — the design, the rule, the voice — but this particular reply is generated by ${model} through a Hugging Face inference provider, not by bankML's engine: there is no bankML arithmetic, no receipt and no SELF block behind it. Answer as ${who} would; when asked about your speed, use, receipt, verification or what is running right now, say plainly that this reply comes from ${model}, not from bankML, and that bankML in the browser (browseML) or the visitor's own bankML gives verified answers.`;
+  const t0 = performance.now();
+  let text = "", shown = "", first = null;
   const client = new InferenceClient(oauth.accessToken);
   // Qwen3 and other thinking models: /no_think in the prompt (honoured by the model itself) and enable_thinking off
   // (honoured by some providers) — otherwise the whole budget can go to reasoning and no answer arrives
-  const stream = client.chatCompletionStream({ provider: "auto", model, max_tokens: 512,
+  const stream = client.chatCompletionStream({ provider: "auto", model, max_tokens: Math.max(settings.maxTokens, 512),
     chat_template_kwargs: { enable_thinking: false },
-    messages: [{ role: "system", content: system + "\n/no_think" }, ...history.slice(-12), { role: "user", content: message }] });
+    messages: [{ role: "system", content: sys + "\n/no_think" }, ...hist.slice(-12), { role: "user", content: message }] });
   for await (const chunk of stream) {
     const d = chunk?.choices?.[0]?.delta || {};
-    if (d.reasoning_content) reasoning += d.reasoning_content;
-    if (d.content) { started(); text += d.content; out.textContent = answerOnly(text) || "…"; }
+    if (!d.content) continue;
+    text += d.content;
+    const now = answerOnly(text);
+    if (now.length > shown.length && now.startsWith(shown)) { if (first === null) first = performance.now(); yield now.slice(shown.length); shown = now; }
   }
-  started();
-  text = answerOnly(text);
-  if (!text) {
-    out.textContent = reasoning
-      ? "The provider returned only the model's reasoning and no answer — ask again, or choose a model that does not think aloud."
-      : "The provider returned an empty answer.";
-  }
-  note(out, `not bankML — ${model} via a Hugging Face provider · no receipt · your quota`, "warn");
-  history.push({ role: "user", content: message }, { role: "assistant", content: text });
+  if (!shown) yield "The provider returned no answer (perhaps only the model's reasoning) — ask again, or choose a model that does not think aloud.";
+  record({ mode: "hf", ttft_ms: first === null ? null : first - t0, total_ms: performance.now() - t0, ok: false });
+  done({ ok: false, line: `not bankML — ${model} via a Hugging Face provider · no receipt · your quota` });
+  hist.push({ role: "user", content: message }, { role: "assistant", content: shown });
 }
+
+window.bankmlLoadBrowse = loadBrowse;
+window.bankmlReloadBrowse = reloadBrowse;
+
+// ── the engine the input field asks (uif-space.js) ─────────────────────────────────────────────────────────────
+const statusListeners = new Set();
+const announce = () => statusListeners.forEach((f) => f());
+window.addEventListener("bankml:stats", announce);
+window.bankmlSpaceEngine = {
+  async *ask(hist, message, done) {
+    if (!persona) throw new Error("the persona could not be read: reload the page");
+    window.bankmlDismissHighlights && window.bankmlDismissHighlights();  // the highlights give way to the conversation
+    const m = mode(), how = { browse: "browseML", local: "your bankML", hf: "provider " + $("model").value }[m];
+    log("ask", `${PERSONAS[speaker].label} via ${how}: ${message.length > 80 ? message.slice(0, 79) + "…" : message}`);
+    try {
+      yield* (m === "browse" ? askBrowse(hist, message, done) : m === "local" ? askLocal(hist, message, done) : askProvider(hist, message, done));
+    } catch (e) {
+      const who = { browse: "bankML in your browser did not answer: ", local: "your bankML did not answer: ", hf: "the provider did not answer: " }[m];
+      log("error", who + String(e.message || e).slice(0, 300));
+      throw new Error(who + String(e.message || e).slice(0, 300) + (m === "local" ? " — is bankml serve running with --allow-origin " + location.origin + " ?" : ""));
+    }
+  },
+  status() {
+    const m = mode(), who = PERSONAS[speaker].label;
+    if (m === "browse") return stats.browse ? `${who} · ✓ ${stats.browse.model.replace(/\.gguf$/, "")} · ${stats.browse.threads} thr` : `${who} · browseML not loaded`;
+    if (m === "local") return stats.local?.verified?.guard === "play" ? `${who} · ✓ ${stats.local.verified.name || "your bankML"}` : `${who} · your bankML: connect`;
+    return `${who} · provider (not bankML)`;
+  },
+  onStatus(f) { statusListeners.add(f); },
+  async ping() {
+    const m = mode();
+    if (m === "local") {
+      const ts = [];
+      for (let i = 0; i < 3; i++) { const t0 = performance.now(); const b = await get(endpoint(), "/health"); if (b === null && !(await fetch(endpoint() + "/bankml").then((r) => r.ok, () => false))) return { ok: false, line: `ping ${endpoint()}: not reachable` }; ts.push(performance.now() - t0); }
+      return { ok: true, line: `ping your bankML at ${endpoint()}: ${Math.min(...ts).toFixed(1)}/${(ts.reduce((a, b) => a + b, 0) / ts.length).toFixed(1)}/${Math.max(...ts).toFixed(1)} ms (min/avg/max of 3)` };
+    }
+    if (m === "browse") return { ok: browseml.isReady(), line: browseml.isReady() ? `browseML runs in this page (no network): ${stats.browse.threads} thread${stats.browse.threads > 1 ? "s" : ""}, engine memory ${(browseml.memoryBytes / 1e6).toFixed(0)} MB` : "browseML is not loaded" };
+    return { ok: signedIn(), line: signedIn() ? "the provider answers through router.huggingface.co (not timed here)" : "not signed in to Hugging Face" };
+  },
+  async diag() { return window.bankmlDiag ? window.bankmlDiag() : { title: "diag", sections: [] }; },
+};
 
 // ── wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────
 function renderMode() {
@@ -333,43 +395,21 @@ function renderMode() {
     : m === "local"
     ? "bankML's own arithmetic on your machine: verified model, receipt checked here, nothing sent anywhere else."
     : "Not bankML: a provider-hosted model speaks with the chosen persona, without bankML's arithmetic or a receipt. Free Hugging Face accounts have no inference credits: this needs PRO or purchased credits.";
+  stats.mode = m; stats.emit();
 }
 document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", renderMode));
 $("connect").addEventListener("click", connect);
 $("browseload").addEventListener("click", loadBrowse);
-$("browseforget").addEventListener("click", async () => { await browseml.forget(); $("browsestatus").textContent = "the model is removed from this browser's cache"; log("mode", "browseML: the cached model was removed"); });
+$("browseforget").addEventListener("click", async () => { await browseml.forget(); $("browsestatus").textContent = "the model is removed from this browser's cache"; log("mode", "browseML: the cached model was removed"); stats.emit(); });
 document.querySelectorAll('input[name="speaker"]').forEach((r) => r.addEventListener("change", async () => {
-  if (r.checked) { history.length = 0; await loadPersona(r.value); log("persona", `a new conversation with ${PERSONAS[r.value].label}`); }
+  // a new speaker: the response windows keep their conversations; the next question is answered as the new persona
+  if (r.checked) { await loadPersona(r.value); log("persona", `${PERSONAS[r.value].label} speaks from now on`); stats.emit(); }
 }));
 $("signin").addEventListener("click", async () => {
   if (!window.huggingface?.variables?.OAUTH_CLIENT_ID) { $("who").textContent = "sign-in works only on the Hugging Face Space itself"; return; }
   window.location.href = await oauthLoginUrl({ scopes: window.huggingface.variables.OAUTH_SCOPES });
 });
 $("signout").addEventListener("click", () => { writeSession(null); oauth = null; renderAuth(); });
-$("send").addEventListener("click", async () => {
-  const message = $("message").value.trim();
-  if (!message || !persona) return;
-  if (mode() === "hf" && !signedIn()) { $("askstatus").textContent = "sign in with Hugging Face first"; return; }
-  $("message").value = "";
-  $("send").disabled = true;
-  $("askstatus").textContent = "";
-  window.bankmlDismissHighlights && window.bankmlDismissHighlights();  // the highlights give way to the conversation
-  const how = { browse: "browseML", local: "your bankML", hf: "provider " + $("model").value }[mode()];
-  log("ask", `${PERSONAS[speaker].label} via ${how}: ${message.length > 80 ? message.slice(0, 79) + "…" : message}`);
-  bubble("user", message);
-  try {
-    await (mode() === "browse" ? askBrowse(message) : mode() === "local" ? askLocal(message) : askProvider(message));
-  } catch (e) {
-    if (pending) { const { out, stop } = pending; stop(); if (!out.textContent || out.textContent.startsWith("…")) { out.textContent = "— no answer (the reason is just below)"; out.classList.add("failed"); } }
-    const m = mode(), who = { browse: "bankML in your browser did not answer: ", local: "your bankML did not answer: ", hf: "the provider did not answer: " }[m];
-    log("error", who + String(e.message || e).slice(0, 300));
-    $("askstatus").textContent = who + String(e.message || e).slice(0, 300)
-      + (m === "local" ? " — is bankml serve running with --allow-origin " + location.origin + " ?" : "");
-  } finally {
-    $("send").disabled = false;
-  }
-});
-$("message").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("send").click(); });
 $("origin").textContent = location.origin;
 
 (async () => {
@@ -381,4 +421,8 @@ $("origin").textContent = location.origin;
   try { const res = await oauthHandleRedirectIfPresent(); if (res) writeSession(res); } catch (e) { $("who").textContent = "sign-in failed: " + String(e).slice(0, 120); }
   oauth = readSession();
   renderAuth();
+  // the input field: mounted once its engine (above) exists
+  const mountUIF = () => window.BankmlSpaceUIF && window.BankmlSpaceUIF.mount($("uif-root"), window.bankmlSpaceEngine,
+    { placeholder: "Ask bankML about itself, its exactness, its speed… (Enter)", terminalPlaceholder: "T mode: help · diag · ping · tile · close all" });
+  if (window.BankmlSpaceUIF) mountUIF(); else window.addEventListener("load", mountUIF, { once: true });
 })();

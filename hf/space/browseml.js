@@ -14,6 +14,12 @@ export const MODEL = {
 const CACHE = "browseml-models";
 
 let worker = null, ready = null, busy = null;
+/** The engine's WebAssembly memory after its last open or answer, in bytes (0 when not loaded). */
+export let memoryBytes = 0;
+
+/** Threads for the engine: every core this browser reports (up to 8), when the page is cross-origin isolated
+ *  (the Space sends COOP and COEP); otherwise one. */
+export const threads = () => (globalThis.crossOriginIsolated && typeof SharedArrayBuffer !== "undefined" ? Math.max(1, Math.min(8, navigator.hardwareConcurrency || 1)) : 1);
 
 /** The model in this browser's cache, or null. */
 async function cached() {
@@ -45,6 +51,15 @@ async function fetchModel(progress) {
 }
 
 export const isReady = () => !!ready;
+export const isBusy = () => !!busy;
+/** Stop the engine and free its memory (the model stays in the browser's cache): new settings apply on the next load. */
+export function unload() {
+  if (busy) throw new Error("browseML is writing an answer: wait for it to finish");
+  if (worker) worker.terminate();
+  worker = null; ready = null; memoryBytes = 0;
+}
+/** The model's bytes in this browser's cache, or 0. */
+export async function cachedBytes() { try { const r = await (await caches.open(CACHE)).match(MODEL.url); return r ? +(r.headers.get("Content-Length") || MODEL.bytes) : 0; } catch { return 0; } }
 export async function isCached() { try { return !!(await (await caches.open(CACHE)).match(MODEL.url)); } catch { return false; } }
 export async function forget() { try { await caches.delete(CACHE); } catch {} }
 
@@ -52,9 +67,9 @@ export async function forget() { try { await caches.delete(CACHE); } catch {} }
  * Load bankML in this browser: the model (downloaded or cached), the engine, and bankML's verification.
  * @param {(bytes:number, total:number, phase:string) => void} progress
  * @param {(level:number, text:string) => void} log
- * @returns {Promise<{model, sha256, guard, engine, arch, version}>} what bankML verified
+ * @returns {Promise<{model, sha256, guard, engine, arch, version, threads}>} what bankML verified, and its threads
  */
-export async function load(progress, log) {
+export async function load(progress, log, { threads: want, ctx = 4096 } = {}) {
   if (ready) return ready;
   const [bytes, fork] = await Promise.all([fetchModel(progress), fetch(MODEL.fork).then((r) => { if (!r.ok) throw new Error("the model's FORK.json is missing"); return r.text(); })]);
   progress(MODEL.bytes, MODEL.bytes, "verify");
@@ -63,10 +78,10 @@ export async function load(progress, log) {
     worker.onmessage = (e) => {
       const m = e.data;
       if (m.type === "log") log(m.level, m.text);
-      else if (m.type === "opened") m.rc === 0 ? resolve(JSON.parse(m.out)) : reject(new Error(m.out));
+      else if (m.type === "opened") { memoryBytes = m.memory || 0; m.rc === 0 ? resolve({ ...JSON.parse(m.out), threads: m.threads, ctx }) : reject(new Error(m.out)); }
     };
     worker.onerror = (e) => reject(new Error(e.message || "the engine could not start"));
-    worker.postMessage({ type: "open", name: MODEL.name, bytes, fork }, [bytes]);
+    worker.postMessage({ type: "open", name: MODEL.name, bytes, fork, threads: Math.max(1, Math.min(threads(), want || threads())), ctx }, [bytes]);
   });
   ready = verified;
   return verified;
@@ -86,6 +101,7 @@ export function chat(request, onPiece, log) {
       else if (m.type === "log") log(m.level, m.text);
       else if (m.type === "done") {
         busy = null;
+        memoryBytes = m.memory || memoryBytes;
         if (m.rc === -99) { ready = null; worker.terminate(); worker = null; }  // the engine trapped: load it again
         const j = (() => { try { return JSON.parse(m.out); } catch { return { error: { message: m.out } }; } })();
         m.rc === 0 ? resolve(j) : reject(new Error(j.error ? j.error.message : m.out));
