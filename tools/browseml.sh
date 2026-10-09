@@ -8,8 +8,8 @@ set -eu
 cd "$(dirname "$0")/.."
 rustup target list --installed | grep -qx wasm32-wasip1 || rustup target add wasm32-wasip1
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-(cd browseML && CARGO_TARGET_DIR="../$TARGET_DIR" cargo build --release --target wasm32-wasip1)
 case "$TARGET_DIR" in /*) OUT="$TARGET_DIR" ;; *) OUT="$PWD/$TARGET_DIR" ;; esac
+(cd browseML && CARGO_TARGET_DIR="$OUT" cargo build --release --target wasm32-wasip1)
 cp "$OUT/wasm32-wasip1/release/browseml.wasm" hf/space/browseml.wasm
 echo "hf/space/browseml.wasm: $(wc -c < hf/space/browseml.wasm) bytes, sha256 $(sha256sum hf/space/browseml.wasm | cut -c1-16)…"
 if [ "${1:-}" = oracle ]; then

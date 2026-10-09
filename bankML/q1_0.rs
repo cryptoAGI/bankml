@@ -207,33 +207,47 @@ pub fn vec_dot(n: usize, x: &[u8], y: &[u8]) -> f32 {
 /// has no deterministic SIMD FMA and the software `fmaf` costs as much as the rest of the kernel.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub fn vec_dot_simd128(n: usize, x: &[u8], y: &[u8]) -> f32 {
-    use std::arch::wasm32::*;
     check(n, x, y);
+    simd128_core(n, x, |b| {
+        let yb = &y[b * Q8_0_BYTES..(b + 1) * Q8_0_BYTES];
+        (yb[2..].as_ptr(), f16_to_f32(u16::from_le_bytes([yb[0], yb[1]])))
+    })
+}
+
+/// The kernel itself, over any source of q8 blocks: `q8(b)` gives block b's 32 i8 values (a pointer to 32 readable
+/// bytes) and its scale as f32.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(always)]
+fn simd128_core(n: usize, x: &[u8], q8: impl Fn(usize) -> (*const u8, f32)) -> f32 {
+    use std::arch::wasm32::*;
     let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
     let zero = u8x16_splat(0);
+    // which of the block's 4 sign bytes each lane reads: bytes 0 and 1 for elements 0–15, bytes 2 and 3 for 16–31
+    let spread = [u8x16(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), u8x16(2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3)];
     let (mut acc_lo, mut acc_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
     for i in 0..n / QK1_0 {
         let xb = &x[i * Q1_0_BYTES..i * Q1_0_BYTES + Q1_0_BYTES];
         let d0 = f16_to_f32(u16::from_le_bytes([xb[0], xb[1]]));
         let (mut ab_lo, mut ab_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
         for k in 0..4 {
-            let yb = &y[(i * 4 + k) * Q8_0_BYTES..(i * 4 + k + 1) * Q8_0_BYTES];
-            let d1 = f16_to_f32(u16::from_le_bytes([yb[0], yb[1]]));
-            let signs = &xb[2 + k * 4..2 + k * 4 + 4];
+            let (qp, d1) = q8(i * 4 + k);
+            let signs = u32x4_splat(u32::from_le_bytes([xb[2 + k * 4], xb[3 + k * 4], xb[4 + k * 4], xb[5 + k * 4]]));
             let half = |h: usize| {
-                // SAFETY: `yb` holds 2 + 32 bytes (bounds-checked slice above); each load reads 16 of them.
-                let q = unsafe { v128_load(yb.as_ptr().add(2 + 16 * h) as *const v128) };
-                let (b0, b1) = (signs[2 * h], signs[2 * h + 1]);
-                let sel = v128_and(u8x16(b0, b0, b0, b0, b0, b0, b0, b0, b1, b1, b1, b1, b1, b1, b1, b1), bit);
+                // SAFETY: `q8` gives 32 readable bytes; each load reads 16 of them.
+                let q = unsafe { v128_load(qp.add(16 * h) as *const v128) };
+                let sel = v128_and(u8x16_swizzle(signs, spread[h]), bit);
                 let m = i8x16_eq(sel, zero); // −1 where the weight's bit is 0: that q is negated
                 // exact: |sum of four i8| ≤ 512, so the conversion to f32 is exact
                 f32x4_convert_i32x4(i32x4_extadd_pairwise_i16x8(i16x8_extadd_pairwise_i8x16(i8x16_sub(v128_xor(q, m), m))))
             };
             let (s_lo, s_hi) = (half(0), half(1));
+            // d1 is f16-exact (11 significant bits) and |s| ≤ 512 (10 bits): d1·s is exact in f32, so the
+            // reference's fused d1·s + ab rounds once either way — a multiply then an add is the same bits
+            let d = f32x4_splat(d1);
             if k == 0 {
-                (ab_lo, ab_hi) = (f32x4_mul(f32x4_splat(d1), s_lo), f32x4_mul(f32x4_splat(d1), s_hi));
+                (ab_lo, ab_hi) = (f32x4_mul(d, s_lo), f32x4_mul(d, s_hi));
             } else {
-                (ab_lo, ab_hi) = (fma4(d1, s_lo, ab_lo), fma4(d1, s_hi, ab_hi));
+                (ab_lo, ab_hi) = (f32x4_add(f32x4_mul(d, s_lo), ab_lo), f32x4_add(f32x4_mul(d, s_hi), ab_hi));
             }
         }
         (acc_lo, acc_hi) = (fma4(d0, ab_lo, acc_lo), fma4(d0, ab_hi, acc_hi));
@@ -248,21 +262,28 @@ pub fn vec_dot_simd128(n: usize, x: &[u8], y: &[u8]) -> f32 {
 }
 
 /// Four lanes of `d.mul_add(x, a)`, bit for bit, through f64: the product of two f32 is exact in f64 and the sum
-/// rounds once there, so rounding that sum to f32 gives the fused result — except when the f64 sum landed exactly
-/// on an f32 halfway point (rounding twice can then differ from rounding once), or is an f32 subnormal, infinite or
-/// NaN. Those lanes, rare, are computed again with the scalar `mul_add` (correctly rounded).
+/// rounds once there, so rounding that sum to f32 gives the fused result — except when that f64 rounding was
+/// inexact and left the sum exactly on an f32 halfway point (rounding twice can then differ from rounding once), or
+/// in the f32 subnormal, overflow or NaN range. Those lanes, rare, are computed again with the scalar `mul_add`
+/// (correctly rounded). An exact f64 sum (the TwoSum error is zero) is rounded once, so it is always the fused result.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[inline(always)]
 fn fma4(d: f32, x: std::arch::wasm32::v128, a: std::arch::wasm32::v128) -> std::arch::wasm32::v128 {
     use std::arch::wasm32::*;
     let dd = f64x2_splat(d as f64);
     let pair = |x2: v128, a2: v128| {
-        let s = f64x2_add(f64x2_mul(dd, f64x2_promote_low_f32x4(x2)), f64x2_promote_low_f32x4(a2));
+        let (p, c) = (f64x2_mul(dd, f64x2_promote_low_f32x4(x2)), f64x2_promote_low_f32x4(a2));
+        let s = f64x2_add(p, c);
+        // TwoSum: the f64 sum's rounding error. Zero (the usual case: these products have few significant bits)
+        // means the sum is exact, and one rounding of an exact value to f32 is the fused result, whatever it is.
+        let bb = f64x2_sub(s, p);
+        let err = f64x2_add(f64x2_sub(p, f64x2_sub(s, bb)), f64x2_sub(c, bb));
+        let inexact = f64x2_ne(err, f64x2_splat(0.0)); // NaN (from an infinity) counts as inexact
         let halfway = i64x2_eq(v128_and(s, i64x2_splat(0x1fff_ffff)), i64x2_splat(0x1000_0000));
         let abs = f64x2_abs(s);
         // outside [2^-125, 2^127): an f32 subnormal (or near it), too large, infinite or NaN (NaN fails `ge`)
         let odd = v128_not(v128_and(f64x2_ge(abs, f64x2_splat(f64::from_bits(0x3820_0000_0000_0000))), f64x2_lt(abs, f64x2_splat(f64::from_bits(0x47e0_0000_0000_0000)))));
-        (f32x4_demote_f64x2_zero(s), v128_any_true(v128_or(halfway, odd)))
+        (f32x4_demote_f64x2_zero(s), v128_any_true(v128_and(inexact, v128_or(halfway, odd))))
     };
     let (lo, fix_lo) = pair(x, a);
     let (hi, fix_hi) = pair(i32x4_shuffle::<2, 3, 0, 1>(x, x), i32x4_shuffle::<2, 3, 0, 1>(a, a));
@@ -393,6 +414,10 @@ pub fn vec_dot_act(x: &[u8], a: &Q8Act) -> f32 {
     if has_avx2() {
         return unsafe { if a.has_min { vec_dot_act_avx2(x, a) } else { vec_dot_act_sel_avx2(x, a) } };
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // the activation's own i8 values and f32 scales (f16-exact), read in place: no q8 copy per row
+    return simd128_core(a.n, x, |b| (a.qs[b * QK8_0..b * QK8_0 + QK8_0].as_ptr() as *const u8, a.d[b]));
+    #[allow(unreachable_code)]
     let mut q8 = vec![0u8; a.n / QK8_0 * Q8_0_BYTES];
     for (b, (q, d)) in q8.as_chunks_mut::<Q8_0_BYTES>().0.iter_mut().zip(a.qs.as_chunks::<QK8_0>().0.iter().zip(&a.d)) {
         b[..2].copy_from_slice(&f32_to_f16(*d).to_le_bytes());

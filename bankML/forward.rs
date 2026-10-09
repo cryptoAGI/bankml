@@ -144,6 +144,21 @@ pub struct Rope {
     pub neox: bool,
 }
 
+/// The C library's `cosf`/`sinf` natively; on WebAssembly, where there is none, glibc's algorithm
+/// (`crate::sincosf`, identical on every float) — Rust's own libm differs from it in the last bit.
+#[cfg(not(target_family = "wasm"))]
+#[inline(always)]
+fn cosf(t: f32) -> f32 {
+    t.cos()
+}
+#[cfg(not(target_family = "wasm"))]
+#[inline(always)]
+fn sinf(t: f32) -> f32 {
+    t.sin()
+}
+#[cfg(target_family = "wasm")]
+use crate::sincosf::{cosf, sinf};
+
 impl Rope {
     /// The parameters llama-context.cpp (b11192) passes: with YaRN scaling `factor`, `freq_scale = 1/factor`,
     /// `ext_factor = 1`, `attn_factor = get_mscale(factor, 1) / (1 + 0.1·logf(factor))`, beta_fast 32, beta_slow 1.
@@ -166,6 +181,7 @@ impl Rope {
     }
 
     /// `ggml_rope_cache_init` for position `p`: (cos, sin) per pair, theta advanced by repeated multiplication.
+    /// `cosf`/`sinf` are the C library's (glibc, as the reference), or on WebAssembly glibc's own algorithm.
     pub fn cache(&self, p: i32, cache: &mut [f32]) {
         let mut theta = p as f32;
         for i0 in (0..self.n_dims).step_by(2) {
@@ -179,8 +195,8 @@ impl Rope {
                 t = theta_interp.mul_add(1.0 - ramp_mix, theta * ramp_mix);
                 mscale *= (1.0f32 / self.freq_scale).ln().mul_add(0.1f32, 1.0f32);
             }
-            cache[i0] = t.cos() * mscale;
-            cache[i0 + 1] = t.sin() * mscale;
+            cache[i0] = cosf(t) * mscale;
+            cache[i0 + 1] = sinf(t) * mscale;
             theta *= self.theta_scale;
         }
     }

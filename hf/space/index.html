@@ -325,8 +325,9 @@
           then the sha256 of the whole file against its FORK.json — before it answers. Every answer carries the same receipt
           <code>bankml serve</code> gives. Nothing is installed and nothing you ask leaves your computer.</p>
           <p>It is exact before it is fast: the release check runs browseML against llama-server b11192's recorded answers
-          and requires the same text, token for token. Today it uses one thread and no SIMD, so it is slower than the
-          native engine; the 8B models and full speed are in <b>Your own bankML</b>.</p></details>
+          and requires the same text, token for token. Today it uses one thread (with WebAssembly SIMD) — about one to
+          two tokens a second on a laptop, slower than the native engine; the 8B models and full speed are in
+          <b>Your own bankML</b>.</p></details>
         <details><summary>Who speaks — bankML or Savante?</summary><p><b>speaks as</b> chooses the persona: bankML, from
           <code>sAGI/personas/bankml.persona</code> with the context of its own codebase, or Savante, from her own
           repository's <code>savante.persona</code> (read at a pinned commit and refused unless its sha256 matches) with

@@ -46,6 +46,7 @@ pub mod q2_0;
 pub mod sampler;
 pub mod schema;
 pub mod sha256;
+pub mod sincosf;
 pub mod sys;
 pub mod metrics;
 pub mod train;

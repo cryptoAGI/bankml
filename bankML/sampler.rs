@@ -419,7 +419,12 @@ pub fn token_probs(logits: &[f32], sampled: u32, n_top: usize) -> (f32, Vec<Toke
 fn rng_seed(seed: u32) -> u32 {
     if seed == DEFAULT_SEED {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        (t ^ (t >> 32)) as u32 ^ std::process::id()
+        // WebAssembly (browseML) has no process id: there the clock alone seeds it
+        #[cfg(not(target_family = "wasm"))]
+        let pid = std::process::id();
+        #[cfg(target_family = "wasm")]
+        let pid = 0;
+        (t ^ (t >> 32)) as u32 ^ pid
     } else {
         seed
     }
