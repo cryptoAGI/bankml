@@ -96,10 +96,19 @@ pub struct FileIdent {
     mtime_ns: i128,
 }
 
+#[cfg(unix)]
 pub fn ident(p: &Path) -> std::io::Result<FileIdent> {
     use std::os::unix::fs::MetadataExt;
     let m = std::fs::metadata(p)?;
     Ok(FileIdent { dev: m.dev(), ino: m.ino(), len: m.len(), mtime_ns: m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128 })
+}
+
+/// Without unix metadata (WebAssembly): the length and the modification time; no device or inode.
+#[cfg(not(unix))]
+pub fn ident(p: &Path) -> std::io::Result<FileIdent> {
+    let m = std::fs::metadata(p)?;
+    let mtime_ns = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_nanos() as i128).unwrap_or(0);
+    Ok(FileIdent { dev: 0, ino: 0, len: m.len(), mtime_ns })
 }
 
 /// Limits for a loopback gateway: connections, head line bytes, head lines, upstream body bytes.

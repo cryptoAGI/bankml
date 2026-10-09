@@ -8,3 +8,6 @@ sAGI/voice/cache/**/.*.lock
 sAGI/voice/cache/**/.manifest.lock
 sAGI/voice/export/.bankml-export-*/
 sAGI/voice/**/*.tmp
+
+# browseML: built by tools/browseml.sh, uploaded to the Space, not committed
+hf/space/browseml.wasm

@@ -12,10 +12,20 @@ type VkResult = i32;
 type Pfn = unsafe extern "C" fn();
 pub(super) type GetInstanceProcAddr = unsafe extern "C" fn(*mut c_void, *const c_char) -> Option<Pfn>;
 
+#[cfg(not(target_family = "wasm"))]
 #[link(name = "dl")]
 extern "C" {
     fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+}
+// WebAssembly (browseML) has no Vulkan loader to open: no card, and the CPU path stays as it is
+#[cfg(target_family = "wasm")]
+unsafe fn dlopen(_filename: *const c_char, _flag: i32) -> *mut c_void {
+    std::ptr::null_mut()
+}
+#[cfg(target_family = "wasm")]
+unsafe fn dlsym(_handle: *mut c_void, _symbol: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
 }
 const RTLD_NOW: i32 = 2;
 

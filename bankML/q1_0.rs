@@ -193,7 +193,87 @@ pub fn vec_dot(n: usize, x: &[u8], y: &[u8]) -> f32 {
         check(n, x, y);
         return unsafe { vec_dot_avx2(n, x, y) };
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    return vec_dot_simd128(n, x, y);
+    #[allow(unreachable_code)]
     vec_dot_ref(n, x, y)
+}
+
+/// browseML's kernel (WebAssembly SIMD): `vec_dot_ref`, operation for operation and bit for bit.
+///
+/// The integer part is vectorised: signs applied as `(q ^ m) − m` on i8 (−128 wraps, as in the reference), then two
+/// pairwise widening adds give lane l the exact sum of elements 4l..4l+3. The float part keeps the reference's
+/// operations — a multiply for the first q8 block, fused multiply-adds after it — in [`fma4`], because WebAssembly
+/// has no deterministic SIMD FMA and the software `fmaf` costs as much as the rest of the kernel.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub fn vec_dot_simd128(n: usize, x: &[u8], y: &[u8]) -> f32 {
+    use std::arch::wasm32::*;
+    check(n, x, y);
+    let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
+    let zero = u8x16_splat(0);
+    let (mut acc_lo, mut acc_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
+    for i in 0..n / QK1_0 {
+        let xb = &x[i * Q1_0_BYTES..i * Q1_0_BYTES + Q1_0_BYTES];
+        let d0 = f16_to_f32(u16::from_le_bytes([xb[0], xb[1]]));
+        let (mut ab_lo, mut ab_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
+        for k in 0..4 {
+            let yb = &y[(i * 4 + k) * Q8_0_BYTES..(i * 4 + k + 1) * Q8_0_BYTES];
+            let d1 = f16_to_f32(u16::from_le_bytes([yb[0], yb[1]]));
+            let signs = &xb[2 + k * 4..2 + k * 4 + 4];
+            let half = |h: usize| {
+                // SAFETY: `yb` holds 2 + 32 bytes (bounds-checked slice above); each load reads 16 of them.
+                let q = unsafe { v128_load(yb.as_ptr().add(2 + 16 * h) as *const v128) };
+                let (b0, b1) = (signs[2 * h], signs[2 * h + 1]);
+                let sel = v128_and(u8x16(b0, b0, b0, b0, b0, b0, b0, b0, b1, b1, b1, b1, b1, b1, b1, b1), bit);
+                let m = i8x16_eq(sel, zero); // −1 where the weight's bit is 0: that q is negated
+                // exact: |sum of four i8| ≤ 512, so the conversion to f32 is exact
+                f32x4_convert_i32x4(i32x4_extadd_pairwise_i16x8(i16x8_extadd_pairwise_i8x16(i8x16_sub(v128_xor(q, m), m))))
+            };
+            let (s_lo, s_hi) = (half(0), half(1));
+            if k == 0 {
+                (ab_lo, ab_hi) = (f32x4_mul(f32x4_splat(d1), s_lo), f32x4_mul(f32x4_splat(d1), s_hi));
+            } else {
+                (ab_lo, ab_hi) = (fma4(d1, s_lo, ab_lo), fma4(d1, s_hi, ab_hi));
+            }
+        }
+        (acc_lo, acc_hi) = (fma4(d0, ab_lo, acc_lo), fma4(d0, ab_hi, acc_hi));
+    }
+    let mut a = [0.0f32; 8];
+    // SAFETY: two 16-byte stores into an 8 × f32 array.
+    unsafe {
+        v128_store(a.as_mut_ptr() as *mut v128, acc_lo);
+        v128_store(a.as_mut_ptr().add(4) as *mut v128, acc_hi);
+    }
+    hsum8(a)
+}
+
+/// Four lanes of `d.mul_add(x, a)`, bit for bit, through f64: the product of two f32 is exact in f64 and the sum
+/// rounds once there, so rounding that sum to f32 gives the fused result — except when the f64 sum landed exactly
+/// on an f32 halfway point (rounding twice can then differ from rounding once), or is an f32 subnormal, infinite or
+/// NaN. Those lanes, rare, are computed again with the scalar `mul_add` (correctly rounded).
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(always)]
+fn fma4(d: f32, x: std::arch::wasm32::v128, a: std::arch::wasm32::v128) -> std::arch::wasm32::v128 {
+    use std::arch::wasm32::*;
+    let dd = f64x2_splat(d as f64);
+    let pair = |x2: v128, a2: v128| {
+        let s = f64x2_add(f64x2_mul(dd, f64x2_promote_low_f32x4(x2)), f64x2_promote_low_f32x4(a2));
+        let halfway = i64x2_eq(v128_and(s, i64x2_splat(0x1fff_ffff)), i64x2_splat(0x1000_0000));
+        let abs = f64x2_abs(s);
+        // outside [2^-125, 2^127): an f32 subnormal (or near it), too large, infinite or NaN (NaN fails `ge`)
+        let odd = v128_not(v128_and(f64x2_ge(abs, f64x2_splat(f64::from_bits(0x3820_0000_0000_0000))), f64x2_lt(abs, f64x2_splat(f64::from_bits(0x47e0_0000_0000_0000)))));
+        (f32x4_demote_f64x2_zero(s), v128_any_true(v128_or(halfway, odd)))
+    };
+    let (lo, fix_lo) = pair(x, a);
+    let (hi, fix_hi) = pair(i32x4_shuffle::<2, 3, 0, 1>(x, x), i32x4_shuffle::<2, 3, 0, 1>(a, a));
+    if fix_lo || fix_hi {
+        let (xs, as_) = (
+            [f32x4_extract_lane::<0>(x), f32x4_extract_lane::<1>(x), f32x4_extract_lane::<2>(x), f32x4_extract_lane::<3>(x)],
+            [f32x4_extract_lane::<0>(a), f32x4_extract_lane::<1>(a), f32x4_extract_lane::<2>(a), f32x4_extract_lane::<3>(a)],
+        );
+        return f32x4(d.mul_add(xs[0], as_[0]), d.mul_add(xs[1], as_[1]), d.mul_add(xs[2], as_[2]), d.mul_add(xs[3], as_[3]));
+    }
+    i32x4_shuffle::<0, 1, 4, 5>(lo, hi)
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -414,6 +414,9 @@ pub fn tensor_bytes(path: &Path, h: &Header, t: &TensorInfo) -> std::io::Result<
 pub struct Mmap {
     ptr: *const u8,
     len: usize,
+    /// Without mmap: the file's bytes, shared by every `Mmap` of the same path while one is open.
+    #[cfg(not(unix))]
+    keep: std::sync::Arc<[u8]>,
 }
 
 // SAFETY: a PROT_READ, MAP_PRIVATE mapping is never written by the process, so shared reads are sound.
@@ -445,6 +448,35 @@ impl Mmap {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
     /// One tensor's blocks, bounds-checked by `tensor_span` and then by the mapping's length.
+    pub fn tensor(&self, h: &Header, t: &TensorInfo) -> Option<&[u8]> {
+        let (start, n) = tensor_span(h, t).ok()?;
+        self.bytes().get(usize::try_from(start).ok()?..usize::try_from(start + n).ok()?)
+    }
+}
+
+/// Without mmap (WebAssembly): the file is read once into memory, and every `Mmap` of the same path while one is
+/// open shares those bytes (the weights and the tokenizer read one file; there is one copy of it, not two).
+#[cfg(not(unix))]
+impl Mmap {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
+        use std::sync::{Arc, Mutex, Weak};
+        static OPEN: Mutex<Vec<(std::path::PathBuf, Weak<[u8]>)>> = Mutex::new(Vec::new());
+        let mut open = OPEN.lock().unwrap_or_else(|e| e.into_inner());
+        open.retain(|(_, w)| w.strong_count() > 0);
+        let keep = match open.iter().find(|(p, _)| p == path).and_then(|(_, w)| w.upgrade()) {
+            Some(k) => k,
+            None => {
+                let k: Arc<[u8]> = std::fs::read(path)?.into();
+                open.push((path.to_path_buf(), Arc::downgrade(&k)));
+                k
+            }
+        };
+        Ok(Mmap { ptr: keep.as_ptr(), len: keep.len(), keep })
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.keep
+    }
+    /// One tensor's blocks, bounds-checked by `tensor_span` and then by the buffer's length.
     pub fn tensor(&self, h: &Header, t: &TensorInfo) -> Option<&[u8]> {
         let (start, n) = tensor_span(h, t).ok()?;
         self.bytes().get(usize::try_from(start).ok()?..usize::try_from(start + n).ok()?)

@@ -39,7 +39,8 @@ fn cache_ram_limit() -> Option<usize> {
         Some(n) => Some(n as usize * MIB),
         None => {
             let quarter = crate::sys::memory().map(|m| (m.available / 4) as usize).unwrap_or(usize::MAX);
-            Some((8192 * MIB).min(quarter).max(MIB))
+            // 8192 MiB does not fit a 32-bit usize (WebAssembly): there the cap is the address space
+            Some(usize::try_from(8192u64 << 20).unwrap_or(usize::MAX).min(quarter).max(MIB))
         }
     }
 }

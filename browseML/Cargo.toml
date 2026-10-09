@@ -1,0 +1,27 @@
+[package]
+name = "browseml"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.99"
+authors = ["Professor Codephreak", "Gregory L. Magnusson"]
+repository = "https://github.com/cryptoAGI/bankml"
+description = "browseML: bankML in the browser — the same engine, verified and with a receipt, on the visitor's own CPU, compiled to WebAssembly (wasm32-wasip1)"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+# One dependency, the engine itself (by path), as the C API: no external crate.
+[dependencies]
+engine = { package = "bankml", path = ".." }
+
+# Its own workspace: the native build (and the release gate) never compiles browseML.
+[workspace]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = 3

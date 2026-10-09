@@ -139,6 +139,12 @@
     #ask .modes{display:grid;gap:6px;margin:8px 0}
     #ask .modes label{color:var(--muted);cursor:pointer}
     #ask .modenote{font-size:14px;color:var(--quiet);margin:.3em 0 .8em}
+    #ask .speakers{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:6px 0 4px;font-size:14px}
+    #ask .speakers .lbl{color:var(--quiet)}
+    #ask .speakers label{cursor:pointer;color:var(--muted)}
+    #ask .speakers input:checked + *{color:inherit}
+    #ask .browserow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:4px 0 10px}
+    #ask .linkish{background:none;border:0;padding:0;color:var(--muted);text-decoration:underline;cursor:pointer;font:inherit}
     #ask [hidden]{display:none!important}
     #ask .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
     #ask input[type=text],#ask #endpoint,#ask #model{flex:1 1 220px;min-width:0;background:rgba(0,0,0,.35);color:#fff;border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font:14px ui-monospace,Menlo,monospace}
@@ -239,6 +245,16 @@
         <button id="send" type="button">Ask</button>
       </div>
       <p id="askstatus" class="status"></p>
+      <div class="speakers" role="radiogroup" aria-label="who speaks">
+        <span class="lbl">speaks as</span>
+        <label><input type="radio" name="speaker" value="bankml" checked> bankML</label>
+        <label><input type="radio" name="speaker" value="savante"> Savante</label>
+        <span class="lbl" id="answererline">· answered by <b>bankML in this browser</b> (browseML)</span>
+      </div>
+      <div id="browserow" class="row browserow">
+        <button id="browseload" type="button">Load bankML in this browser (248 MB, once)</button>
+        <span id="browsestatus" class="status">bankML's own engine runs here, on your CPU: nothing to install, no account, a receipt on every answer.</span>
+      </div>
       <div id="highlights" class="highlights" aria-label="bankML at a glance">
         <ul>
           <li><b>Verified before it speaks</b> — the model's sha256 checked against its pin, a receipt on every answer.</li>
@@ -250,9 +266,10 @@
       <div id="chat" aria-live="polite"></div>
       
       
-      <details class="who"><summary>Who answers: <b>your own bankML</b> or a provider · how to start your own</summary>
+      <details class="who"><summary>Who answers: <b>bankML in this browser</b>, your own bankML, or a provider · how to start your own</summary>
         <div class="modes" role="radiogroup" aria-label="who answers">
-        <label><input type="radio" name="mode" value="local" checked> <b>Your own bankML</b> — verified, with a receipt, on your CPU (free)</label>
+        <label><input type="radio" name="mode" value="browse" checked> <b>bankML in this browser</b> (browseML) — verified, with a receipt, on your CPU, nothing to install (free)</label>
+        <label><input type="radio" name="mode" value="local"> <b>Your own bankML</b> — <code>bankml serve</code> on your machine, the 8B models, faster (free)</label>
         <label><input type="radio" name="mode" value="hf"> <b>A Hugging Face provider</b> — not bankML, no receipt, your inference quota</label>
       </div>
         <p class="modenote" id="modenote"></p>
@@ -272,6 +289,7 @@
           </ol>
         </details>
       </div>
+        <p class="modenote" id="browseextra"><button id="browseforget" type="button" class="linkish">remove the model from this browser's cache</button></p>
         <div id="hfrow" class="row" hidden>
         <input id="model" aria-label="provider model (owner/name)" spellcheck="false">
         <button id="signin" type="button">Sign in with Hugging Face</button>
@@ -296,10 +314,24 @@
           b11192's own answers — tensors, dot products, whole conversations, sampled tokens, JSON grammars, logprobs —
           and require bankML to match every one. The record of every run is published beside the release.
           <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md">The oracles</a>.</p></details>
-        <details><summary>Which answers on this page are bankML's?</summary><p>Only those in <b>Your own bankML</b> mode:
-          your browser talks to <code>bankml serve</code> on your machine, and each answer comes with a receipt. In
-          <b>A Hugging Face provider</b> mode a hosted model speaks with bankML's persona, without its arithmetic or a
-          receipt, and every answer says so.</p></details>
+        <details><summary>Which answers on this page are bankML's?</summary><p>Those in <b>bankML in this browser</b> and
+          <b>Your own bankML</b> modes, each with a receipt this page checks. In <b>A Hugging Face provider</b> mode a hosted
+          model speaks with the chosen persona, without bankML's arithmetic or a receipt, and every answer says so; free
+          Hugging Face accounts have no inference credits, so that mode needs PRO or purchased credits.</p></details>
+        <details id="faq-browseml"><summary>What is browseML — bankML in this browser?</summary><p>bankML's own engine,
+          the same Rust code that runs <code>bankml serve</code>, compiled to WebAssembly and run by this page on your CPU.
+          Press <b>Load</b> and it downloads Bonsai-1.7B (1-bit, 248&nbsp;MB) once from its Hugging Face repository at a pinned
+          revision, keeps it in this browser's cache, and verifies it exactly as the native engine does — the GGUF guard,
+          then the sha256 of the whole file against its FORK.json — before it answers. Every answer carries the same receipt
+          <code>bankml serve</code> gives. Nothing is installed and nothing you ask leaves your computer.</p>
+          <p>It is exact before it is fast: the release check runs browseML against llama-server b11192's recorded answers
+          and requires the same text, token for token. Today it uses one thread and no SIMD, so it is slower than the
+          native engine; the 8B models and full speed are in <b>Your own bankML</b>.</p></details>
+        <details><summary>Who speaks — bankML or Savante?</summary><p><b>speaks as</b> chooses the persona: bankML, from
+          <code>sAGI/personas/bankml.persona</code> with the context of its own codebase, or Savante, from her own
+          repository's <code>savante.persona</code> (read at a pinned commit and refused unless its sha256 matches) with
+          the context of her designer, Professor Codephreak, and her family of repositories. Changing it starts a new
+          conversation. Who <i>answers</i> — this browser, your own bankML, or a provider — is chosen separately.</p></details>
         <details><summary>How do I run my own bankML for this page?</summary><p>On Linux with AVX2:
           <code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code>.
           It builds bankML, imports and verifies Bonsai-8B (1.16&nbsp;GB), and lets this page reach it. Then press
