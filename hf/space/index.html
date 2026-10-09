@@ -181,6 +181,20 @@
     .dadvice{margin:0;padding-left:18px;font-size:13.5px;line-height:1.45}
     .dadvice li{margin:0 0 6px} .dadvice li.warn::marker{color:rgb(var(--am))} .dadvice li.ok::marker{color:#56d364}
     .dnote{font-size:13px;margin:4px 0 0} .dnote.warn{color:rgb(var(--am))}
+    .dnow{font:12.5px ui-monospace,Menlo,monospace;color:#7ee2b8;margin:0 0 10px;min-height:1.2em}
+    /* what is happening now: fixed at the top, above everything but the field's own windows */
+    .activity{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:1500;max-width:min(860px,calc(100vw - 24px));
+      display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:center;padding:8px 14px;border-radius:12px;
+      background:rgba(8,14,24,.92);border:1px solid rgba(86,211,100,.35);box-shadow:0 8px 28px rgba(0,0,0,.45);
+      font:13px/1.4 ui-monospace,Menlo,monospace;color:#d6f5e0;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+    .activity[hidden]{display:none}
+    .act-dot{width:9px;height:9px;border-radius:50%;background:#56d364;box-shadow:0 0 0 0 rgba(86,211,100,.6);animation:actpulse 1.4s infinite}
+    @keyframes actpulse{70%{box-shadow:0 0 0 8px rgba(86,211,100,0)}100%{box-shadow:0 0 0 0 rgba(86,211,100,0)}}
+    @media (prefers-reduced-motion: reduce){.act-dot{animation:none}}
+    .act-bar{grid-column:1 / -1;height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden}
+    .act-bar[hidden]{display:none}
+    .act-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#56d364,#7ee2b8);transition:width .4s ease}
+    #browseprogress{width:160px;height:8px;vertical-align:middle;accent-color:#56d364}
     #ask .who{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}
     .highlights{margin:10px 0 6px;padding:14px 16px;border-radius:14px;border:1px solid var(--rule);
       background:linear-gradient(160deg,rgba(var(--cy),.10),rgba(var(--vi),.08));box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 18px 40px -22px rgba(var(--cy),.45);
@@ -259,6 +273,7 @@
       </div>
       <div id="browserow" class="row browserow">
         <button id="browseload" type="button">Load bankML in this browser (248 MB, once)</button>
+        <progress id="browseprogress" max="1" value="0" hidden aria-label="download"></progress>
         <span id="browsestatus" class="status">bankML's own engine runs here, on your CPU: nothing to install, no account, a receipt on every answer.</span>
       </div>
       <div id="highlights" class="highlights" aria-label="bankML at a glance">
@@ -683,6 +698,11 @@
   })();
   </script>
   <script src="space-tabs.js"></script>
+  <!-- what is happening now (bankml-chat.js): downloading, verifying, reading the prompt, writing -->
+  <div id="activity" class="activity" role="status" aria-live="polite" hidden>
+    <span class="act-dot" aria-hidden="true"></span><span id="activity-text"></span>
+    <span class="act-bar" hidden><i id="activity-bar"></i></span>
+  </div>
   <!-- the ultimate input field (cryptoAGI/ultimate-bankml-ui, space-mount: src/space/main.tsx), and its engine -->
   <div id="uif-root"></div>
   <script src="uif-space.js"></script>

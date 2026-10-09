@@ -2,9 +2,11 @@
 // browseML's worker: bankML's engine runs here, off the page's thread, so the page stays responsive while the
 // visitor's CPU reads the prompt and writes the answer.
 //
-// Threads: on a cross-origin-isolated page (SharedArrayBuffer available) it runs browseml-mt.wasm, the engine
-// built for wasm32-wasip1-threads, with its thread pool on Web Workers (browseml-thread.js) sharing its memory —
-// the pool's results do not depend on the thread count, so the answers are the same bits. Elsewhere it runs
+// Threads: on a cross-origin-isolated page (SharedArrayBuffer available) it runs the engine built for
+// wasm32-wasip1-threads, with its thread pool on Web Workers (browseml-thread.js) sharing its memory — the pool's
+// results do not depend on the thread count, so the answers are the same bits. It tries browseml-mt-relaxed.wasm
+// first (relaxed SIMD: one fused multiply-add instruction where the plain build emulates it; about 1.4–1.7× faster),
+// which the engine itself refuses where relaxed_madd is not fused; then browseml-mt.wasm. Elsewhere it runs
 // browseml.wasm on this one thread.
 //
 //   page → worker  {type: "open", name, bytes: ArrayBuffer (transferred), fork, threads, ctx}  |  {type: "chat", request}
@@ -12,7 +14,7 @@
 //                  {type: "done", rc, out, memory}   (memory: the engine's WebAssembly memory, bytes)
 import { wasi } from "./browseml-wasi.js";
 
-let x = null, w = null, memory = null;
+let x = null, w = null, memory = null, builtWith = "browseml.wasm", relaxedRefused = false, pool = [];
 const dec = new TextDecoder(), enc = new TextEncoder();
 const text = (p, n) => dec.decode(new Uint8Array(memory.buffer).slice(p, p + n));
 const put = (s) => { const b = enc.encode(s); const p = x.browseml_alloc(b.length); new Uint8Array(memory.buffer, p, b.length).set(b); return [p, b.length]; };
@@ -52,8 +54,14 @@ async function open({ name, bytes, fork, threads, ctx }) {
   const mt = threads > 1 && typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated;
   let n = 1;
   if (mt) {
-    const wasmBytes = await (await fetch(new URL("./browseml-mt.wasm", import.meta.url))).arrayBuffer();
-    const module = await WebAssembly.compile(wasmBytes);
+    // the fastest build this browser compiles and this machine runs exactly
+    let build = "browseml-mt-relaxed.wasm", wasmBytes = null, module = null;
+    for (const f of relaxedRefused ? ["browseml-mt.wasm"] : ["browseml-mt-relaxed.wasm", "browseml-mt.wasm"]) {
+      try { wasmBytes = await (await fetch(new URL("./" + f, import.meta.url))).arrayBuffer(); module = await WebAssembly.compile(wasmBytes); build = f; break; }
+      catch (e) { postMessage({ type: "log", level: 1, text: `${f}: ${e.message || e} — trying the next build` }); }
+    }
+    if (!module) throw new Error("no threaded build of browseML compiles in this browser");
+    builtWith = build;
     const lim = importedMemory(wasmBytes);
     if (!lim || !lim.shared) throw new Error("browseml-mt.wasm does not import a shared memory");
     memory = new WebAssembly.Memory({ initial: lim.initial, maximum: lim.maximum, shared: true });
@@ -69,6 +77,7 @@ async function open({ name, bytes, fork, threads, ctx }) {
       t.onerror = (e) => bad(new Error(e.message || "a thread could not start"));
       t.postMessage({ type: "init", module, memory });
     })));
+    pool = idle.slice();  // every thread of this engine, to end them if it is refused
     let tid = 0;
     w = wasi({ files, env: { BANKML_CACHE_RAM: "0", BANKML_THREADS: String(n) }, write: log });
     ({ exports: x } = await WebAssembly.instantiate(module, {
@@ -83,8 +92,15 @@ async function open({ name, bytes, fork, threads, ctx }) {
   }
   w.bind(memory);
   const rc = x.browseml_open(...put(`/models/${name}`), ...put(fork), ctx || 4096);
+  if (rc !== 0 && builtWith === "browseml-mt-relaxed.wasm" && /relaxed_madd is not fused/.test(out())) {
+    // this machine's relaxed multiply-add is not fused, so that build would not be exact: start again with the plain one
+    postMessage({ type: "log", level: 1, text: "relaxed SIMD is not fused here: using browseml-mt.wasm (exact, slower)" });
+    relaxedRefused = true; x = null;
+    pool.forEach((t) => t.terminate()); pool = [];  // the refused engine's threads and their memory go with it
+    return open({ name, bytes: files[name].buffer, fork, threads, ctx });
+  }
   w.release(name);  // the engine holds the model in its own memory now; the downloaded copy can go
-  postMessage({ type: "opened", rc, out: out(), threads: n, memory: memory.buffer.byteLength });
+  postMessage({ type: "opened", rc, out: out(), threads: n, memory: memory.buffer.byteLength, build: builtWith });
 }
 
 onmessage = async (e) => {

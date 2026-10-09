@@ -17,9 +17,42 @@ and no account to create, and no server does the work. Free for everyone, on Hug
 |---|---|
 | `browseML/src/lib.rs` | the WebAssembly exports (`browseml_open`, `browseml_chat`). It only moves bytes across the boundary, as `capi/` does for C. |
 | `hf/space/browseml-wasi.js` | the few WASI calls the engine makes, answered in memory: one read-only `/models` directory holding the downloaded file, the clocks, random bytes, environment and stderr. Anything else is refused, never faked. |
-| `hf/space/browseml-worker.js` | runs the engine in a Web Worker, so the page stays responsive |
-| `hf/space/browseml.js` | downloads the model with progress, caches it, loads it and chats with it |
+| `hf/space/browseml-worker.js` | runs the engine in a Web Worker, so the page stays responsive. On a cross-origin-isolated page it chooses the fastest threaded build that compiles here and is exact here (below) and starts the pool's threads first |
+| `hf/space/browseml-thread.js` | one thread of the engine's pool: a Web Worker running the same module on the same shared memory (`wasi.thread-spawn` → `wasi_thread_start`) |
+| `hf/space/browseml.js` | downloads the model with progress, caches it, loads it (one load at a time) and chats with it |
 | `hf/space/browseML/*.FORK.json` | the model's pin |
+| `hf/space/bankml-chat.js`, `space-dashboard.js` | the Space's engine for the ultimate input field, the activity line, and this computer's controls and diagnostics |
+| `testing/oracle.mjs`, `testing/bench.mjs` | exactness against llama-server's record; timing at any thread count, with the pool on Node worker threads |
+
+### Three builds, one engine
+
+| file | target | where the page uses it |
+|---|---|---|
+| `browseml-mt-relaxed.wasm` | `wasm32-wasip1-threads`, SIMD + relaxed SIMD | cross-origin isolated, the browser compiles relaxed SIMD (Chrome, Edge) and `relaxed_madd` is fused on this machine |
+| `browseml-mt.wasm` | `wasm32-wasip1-threads`, SIMD | cross-origin isolated, otherwise (Firefox; or `relaxed_madd` not fused) |
+| `browseml.wasm` | `wasm32-wasip1`, SIMD | not isolated, or no `SharedArrayBuffer`: one thread |
+
+The Space sends `cross-origin-opener-policy: same-origin` and `cross-origin-embedder-policy: credentialless`
+(`custom_headers` in its README), and huggingface.co embeds it with `allow="cross-origin-isolated"`, so threads work
+both on the Space page and at pythai-bankml.static.hf.space. `credentialless` rather than `require-corp`, because the
+page loads scripts from deltaverse.pythai.net and jsDelivr.
+
+**Threads.** The engine's pool (`par::Pool`, whose results do not depend on the thread count) runs on Web Workers
+sharing the module's memory. A thread that waits cannot start a worker, so the page creates the pool's workers
+before the engine starts; `wasi.thread-spawn` then hands each one a thread. The WASI shim copies out of shared
+memory where `TextDecoder` and `getRandomValues` refuse a `SharedArrayBuffer` view.
+
+**Relaxed SIMD, exactly.** `f32x4.relaxed_madd` may be fused or not, by the implementation; fused, it *is* the
+reference's `mul_add`. So the relaxed build checks at open (`q1_0::relaxed_madd_is_fused`:
+(1 + 2⁻²³)·(1 − 2⁻²³) − 1 is −2⁻⁴⁶ fused and 0 unfused) and refuses to open where it is not fused; the page then
+loads `browseml-mt.wasm`. Its kernel (`q1_0::relaxed_core`):
+- **Sign sums:** computed as llama.cpp's AVX2 "sel" kernel does, Σ±q = 2·Σ₊q − Σq. Σ₊q comes from
+  `relaxed_dot_i8x16_i7x16` against the weights' bits as 0 or 1, deterministic everywhere because the second operand
+  never has its top bit set. (With ±1 it is not: V8 on x86 reads that operand as unsigned.) Σq is precomputed per
+  activation. This applies only to activations without a −128, where ggml's i8 negation wraps; those keep
+  `simd128_core`.
+- **Inner multiply-adds:** `d1·s` is exact in f32 (11 + 10 significant bits), so they are the same bits fused or not.
+- **Outer `d0·ab + acc`:** one fused instruction instead of the f64 emulation.
 
 The engine needed six small changes for WebAssembly, and none of them changes the native build:
 - **`gguf::Mmap`** reads the file into memory where there is no `mmap`, one shared copy per path.
@@ -45,23 +78,66 @@ Q1_0's dot product has a WebAssembly SIMD kernel (`q1_0::simd128_core`, used by 
   f32 halfway point, or are subnormal or non-finite, use the scalar `mul_add`. WebAssembly has no deterministic
   SIMD FMA, and the software `fmaf` was a third of the time.
 
-Measured on one thread of a Ryzen 3 3200U in Node, Bonsai-1.7B Q1_0:
+### Measured
 
-| build | prompt | generation |
-|---|---|---|
-| scalar reference | ~0.2 tok/s | ~0.2 tok/s |
-| SIMD kernel, as now | ~1.4 tok/s | ~1.3 tok/s |
+Bonsai-1.7B Q1_0 on a Ryzen 3 3200U (2 cores, 4 threads), in Node (`testing/bench.mjs`: a 20-token prompt, 48 tokens
+written; the machine otherwise idle):
+
+| build | threads | prompt | writing |
+|---|---|---|---|
+| scalar reference, first build | 1 | ~0.2 tok/s | ~0.2 tok/s |
+| `browseml.wasm` (SIMD) | 1 | 1.43 tok/s | 1.11 tok/s |
+| `browseml-mt.wasm` | 2 | 2.59 | 1.57 |
+| `browseml-mt-relaxed.wasm` | 2 | 3.53 | 2.19 |
+| `browseml-mt.wasm` | 4 | 2.96 | 1.91 |
+| `browseml-mt-relaxed.wasm` | 4 | **5.16** | **2.71** |
+
+Every build gives the oracle's answers, the same text: `browseml.wasm` 9 of 9 (`testing/oracle.mjs`),
+`browseml-mt-relaxed.wasm` on 2 threads 9 of 9 (`testing/bench.mjs … oracle.jsonl 9`), and through 4 threads in
+Chrome the first three likewise.
+
+### Where the time goes, and what is next
+
+From V8's profiles of every thread (`node --cpu-prof … testing/bench.mjs`):
+- **The 1-bit kernel** (`vec_dot_act`) is 73–79 % of each thread.
+- **Serial parts** — attention (`attend_head_partial`, 5 %), the f16 dot products, the pool's dispatch — leave the
+  other threads idle for about a fifth of the time.
+- **This laptop has 2 physical cores.** Beyond 2 threads, its hyperthreads share the SIMD units, so a visitor with
+  more cores gains more from threads.
+
+Next:
+- spread attention across the pool, as the native engine's split-KV attention does;
+- a relaxed-SIMD f16 dot product;
+- read the activation's signs once per 128 weights instead of once per 32.
+
+## What a visitor sees while it works
+
+Nothing is a silent wait (`bankml-chat.js`):
+- **An activity line** at the top of the page, with a bar wherever it can measure:
+  - the download, with MB, MB/s and time left;
+  - verification, with a running clock;
+  - reading the prompt, with elapsed time against an estimate from the last measured reading speed and the prompt's
+    size; it says when it runs past the estimate;
+  - writing, with the token count and speed.
+- **The same line in the response window**, where it stays as the answer's timing record ("read 446 tokens in
+  3 min 22 s (2.2 tok/s) · wrote 55 in 69 s (0.80 tok/s) · 4 threads").
+- **The dashboard's "now" line** shows it too.
+- **A second question during a download** waits for the download in progress instead of starting another.
 
 ## Build and check
 
 ```sh
-tools/browseml.sh            # → hf/space/browseml.wasm
-tools/browseml.sh oracle     # and the oracle (Node 20+, .models/Bonsai-1.7B-Q1_0.gguf and its FORK.json)
+tools/browseml.sh            # → hf/space/browseml.wasm, browseml-mt.wasm, browseml-mt-relaxed.wasm
+tools/browseml.sh oracle     # and the oracle on browseml.wasm (Node 20+, .models/Bonsai-1.7B-Q1_0.gguf and its FORK.json)
+node browseML/testing/bench.mjs hf/space/browseml-mt-relaxed.wasm .models/Bonsai-1.7B-Q1_0.gguf FORK.json 4 \
+  .models/oracle-forward/serve-Bonsai-1.7B-Q1_0.jsonl 9    # 4 threads: speed, and the 9 answers against the record
 ```
 
 ## Limits, stated
 
-- **One thread.** Threads in the browser need cross-origin isolation, which a static Space cannot set by header.
+- **Threads need cross-origin isolation.** Safari, and pages that are not isolated, run on one thread.
+- **Relaxed SIMD only where it is exact.** Firefox does not compile it yet, and a machine whose `relaxed_madd` is
+  not fused gets the plain threaded build: same answers, slower.
 - **Q1_0 models only, so far.** The page offers Bonsai-1.7B; the 8B models are for `bankml serve`.
 - **Memory.** A tab holds about 2× the model while it loads, then the model once.
 - **No stopping mid-answer.** An answer cannot be interrupted, because the engine runs to `max_tokens` or end of turn.

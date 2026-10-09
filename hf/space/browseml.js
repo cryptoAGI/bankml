@@ -69,8 +69,17 @@ export async function forget() { try { await caches.delete(CACHE); } catch {} }
  * @param {(level:number, text:string) => void} log
  * @returns {Promise<{model, sha256, guard, engine, arch, version, threads}>} what bankML verified, and its threads
  */
-export async function load(progress, log, { threads: want, ctx = 4096 } = {}) {
-  if (ready) return ready;
+let loading = null;
+/** A load in progress (a download, the verification), or null. */
+export const isLoading = () => !!loading;
+export const whenLoaded = () => loading;
+export function load(progress, log, opts = {}) {
+  if (ready) return Promise.resolve(ready);
+  if (loading) return loading;  // one download at a time: a second caller waits for the first
+  loading = loadOnce(progress, log, opts).finally(() => { loading = null; });
+  return loading;
+}
+async function loadOnce(progress, log, { threads: want, ctx = 4096 } = {}) {
   const [bytes, fork] = await Promise.all([fetchModel(progress), fetch(MODEL.fork).then((r) => { if (!r.ok) throw new Error("the model's FORK.json is missing"); return r.text(); })]);
   progress(MODEL.bytes, MODEL.bytes, "verify");
   worker = new Worker(new URL("./browseml-worker.js", import.meta.url), { type: "module" });
@@ -78,7 +87,7 @@ export async function load(progress, log, { threads: want, ctx = 4096 } = {}) {
     worker.onmessage = (e) => {
       const m = e.data;
       if (m.type === "log") log(m.level, m.text);
-      else if (m.type === "opened") { memoryBytes = m.memory || 0; m.rc === 0 ? resolve({ ...JSON.parse(m.out), threads: m.threads, ctx }) : reject(new Error(m.out)); }
+      else if (m.type === "opened") { memoryBytes = m.memory || 0; m.rc === 0 ? resolve({ ...JSON.parse(m.out), threads: m.threads, ctx, build: m.build }) : reject(new Error(m.out)); }
     };
     worker.onerror = (e) => reject(new Error(e.message || "the engine could not start"));
     worker.postMessage({ type: "open", name: MODEL.name, bytes, fork, threads: Math.max(1, Math.min(threads(), want || threads())), ctx }, [bytes]);

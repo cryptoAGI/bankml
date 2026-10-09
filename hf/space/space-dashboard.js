@@ -84,7 +84,8 @@ function render() {
   // who answers, and the engine's state
   const engineRows = mode === "browse"
     ? (b ? [["engine", `bankML ${b.version} in this browser (WebAssembly)`], ["model", `${b.model} · verified`, "ok"], ["sha256", `${b.sha256.slice(0, 16)}…`],
-            ["threads", `${b.threads} of ${cores} cores${isolated ? "" : " (not isolated: one)"}`], ["context", `${b.ctx} tokens`], ["engine memory", MB(browseml.memoryBytes)], ["loaded in", fmt(b.load_ms / 1000, 0, " s")]]
+            ["threads", `${b.threads} of ${cores} cores${isolated ? "" : " (not isolated: one)"}`],
+            ["build", b.build === "browseml-mt-relaxed.wasm" ? "relaxed SIMD (fused multiply-add) — the fastest" : b.build === "browseml-mt.wasm" ? "SIMD, threads (no relaxed SIMD here)" : "SIMD, one thread"], ["context", `${b.ctx} tokens`], ["engine memory", MB(browseml.memoryBytes)], ["loaded in", fmt(b.load_ms / 1000, 0, " s")]]
          : [["engine", "browseML not loaded"], ["model", `${browseml.MODEL.title}, ${MB(browseml.MODEL.bytes)}`], ["in this browser's cache", storage && storage.model ? "yes" : "no"]])
     : mode === "local"
     ? (st.local ? [["engine", `your bankml serve at ${st.local.endpoint}`], ["model", st.local.verified?.name || "—", st.local.verified?.guard === "play" ? "ok" : "warn"], ["round trip", fmt(st.local.rtt_ms, 0, " ms")]] : [["engine", "your own bankML: not connected"]])
@@ -145,6 +146,7 @@ function render() {
 
   root.replaceChildren(el("h2", { textContent: "This computer — controls and diagnostics" }),
     el("p", { className: "dlede", textContent: `Everything here is measured in this browser and stays in it. ${cores} logical cores · ${isolated ? "cross-origin isolated: threads on" : "not isolated: one thread"}.` }),
+    el("p", { className: "dnow", id: "dash-now", textContent: st.activity ? "now: " + st.activity : "now: idle" }),
     el("div", { className: "dgrid" }, who, controls, usage, mem, adv));
 }
 let alertTimer = null;
@@ -173,5 +175,7 @@ window.bankmlDiag = async () => {
   await Promise.all([refreshStorage(), refreshPersonaSize()]);
   render();
   window.addEventListener("bankml:stats", () => { refreshStorage().then(render); });
+  // the live line, without redrawing the cards: it changes every second while something runs
+  window.addEventListener("bankml:activity", () => { const n = $("dash-now"); if (n) n.textContent = window.bankmlStats.activity ? "now: " + window.bankmlStats.activity : "now: idle"; });
   setInterval(() => { if (!document.hidden) render(); }, 5000);  // the engine's memory and the page's heap move on their own
 })();

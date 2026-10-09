@@ -23,6 +23,21 @@
   - the inner multiply-adds exact in f32, so a multiply then an add;
   - the outer fused multiply-adds through f64 SIMD, with the scalar `mul_add` only for the rare inexact halfway lanes.
   - About 7× the first build on one thread.
+- **Threads and relaxed SIMD.** Cross-origin-isolated pages (the Space sends COOP and COEP) run the engine's pool on
+  Web Workers, and Chrome and Edge get `browseml-mt-relaxed.wasm`. Its kernel is `q1_0::relaxed_core`:
+  - the sign sums as llama.cpp's AVX2 "sel" kernel computes them, with `relaxed_dot` against 0/1 bits;
+  - fused `relaxed_madd` for the reference's `mul_add`.
+  - The engine refuses this build where `relaxed_madd` is not fused, and the page falls back to `browseml-mt.wasm`.
+  - On a 2-core laptop, 4 threads: prompt 5.16 tok/s and writing 2.71, against 1.43 and 1.11 on one thread.
+  - 9 of 9 oracle answers identical in Node and in Chrome.
+- **No silent wait.** An activity line at the top of the page, mirrored in the response window and the dashboard,
+  shows each phase:
+  - the download (MB, MB/s, time left, a bar);
+  - verification (a running clock);
+  - reading the prompt (elapsed against an estimate);
+  - writing (tokens, speed).
+  - The window keeps the timings as the answer's record.
+  - A question asked during a download waits for it.
 - **On the Space**, "bankML in this browser" is the default answerer, and the page asks in the ultimate input field
   (`uif-space.js`). Behind the field, `space-dashboard.js` shows this computer's controls and diagnostics:
   - controls: threads, context, answer length, a lean or full prompt;

@@ -104,6 +104,12 @@ pub extern "C" fn browseml_version() -> usize {
 
 /// As `bankml_open`: the guard, the sha256 pin, the native forward pass, or a refusal with serve's reason.
 fn open(model: &Path, fork: &str, n_ctx: u32) -> Result<Open, String> {
+    // the relaxed build is the reference's arithmetic only where relaxed_madd is fused: refuse it elsewhere (the page
+    // then loads browseml-mt.wasm)
+    #[cfg(target_feature = "relaxed-simd")]
+    if !engine::q1_0::relaxed_madd_is_fused() {
+        return Err("refuse: this machine's relaxed_madd is not fused, so the relaxed build would not be exact: load browseml-mt.wasm".into());
+    }
     let verified = engine::verify(model, fork, engine::gguf::Engine::Mainline).map_err(|e| format!("refuse: {e}"))?;
     let model_id = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if let Err(why) = header_info(model).native {

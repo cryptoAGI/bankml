@@ -11,9 +11,13 @@ for t in wasm32-wasip1 wasm32-wasip1-threads; do rustup target list --installed 
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 case "$TARGET_DIR" in /*) OUT="$TARGET_DIR" ;; *) OUT="$PWD/$TARGET_DIR" ;; esac
 (cd browseML && CARGO_TARGET_DIR="$OUT" cargo build --release --target wasm32-wasip1 && CARGO_TARGET_DIR="$OUT" cargo build --release --target wasm32-wasip1-threads)
+# the relaxed-SIMD threaded build (browseml-mt-relaxed.wasm): RUSTFLAGS replaces .cargo/config.toml's for this one
+(cd browseML && CARGO_TARGET_DIR="$OUT/relaxed" RUSTFLAGS="-C target-feature=+simd128,+relaxed-simd -C link-arg=--max-memory=4294967296" \
+  cargo build --release --target wasm32-wasip1-threads)
 cp "$OUT/wasm32-wasip1/release/browseml.wasm" hf/space/browseml.wasm
 cp "$OUT/wasm32-wasip1-threads/release/browseml.wasm" hf/space/browseml-mt.wasm
-for f in hf/space/browseml.wasm hf/space/browseml-mt.wasm; do echo "$f: $(wc -c < $f) bytes, sha256 $(sha256sum $f | cut -c1-16)…"; done
+cp "$OUT/relaxed/wasm32-wasip1-threads/release/browseml.wasm" hf/space/browseml-mt-relaxed.wasm
+for f in hf/space/browseml.wasm hf/space/browseml-mt.wasm hf/space/browseml-mt-relaxed.wasm; do echo "$f: $(wc -c < $f) bytes, sha256 $(sha256sum $f | cut -c1-16)…"; done
 if [ "${1:-}" = oracle ]; then
   MODELS="${BANKML_MODELS:-.models}"
   FORK="${BANKML_FORKS:-$HOME/.local/share/bankml/forks}/Bonsai-1.7B-Q1_0.gguf.FORK.json"

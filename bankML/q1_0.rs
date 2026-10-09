@@ -261,6 +261,67 @@ fn simd128_core(n: usize, x: &[u8], q8: impl Fn(usize) -> (*const u8, f32)) -> f
     hsum8(a)
 }
 
+/// Whether this machine's `f32x4.relaxed_madd` is fused (one rounding), which `relaxed_core` needs to be the
+/// reference's arithmetic: (1 + 2⁻²³)·(1 − 2⁻²³) − 1 is −2⁻⁴⁶ fused and 0 unfused. browseML's open refuses a
+/// relaxed build where it is not (the page then loads the plain one).
+#[cfg(all(target_arch = "wasm32", target_feature = "relaxed-simd"))]
+pub fn relaxed_madd_is_fused() -> bool {
+    use std::arch::wasm32::*;
+    let (a, b) = (f32x4_splat(f32::from_bits(0x3f80_0001)), f32x4_splat(f32::from_bits(0x3f7f_fffe)));
+    let r = f32x4_relaxed_madd(std::hint::black_box(a), std::hint::black_box(b), f32x4_splat(-1.0));
+    f32x4_extract_lane::<0>(r) == -f32::from_bits(0x2880_0000) // −2⁻⁴⁶
+        && f32x4_extract_lane::<3>(r) == f32x4_extract_lane::<0>(r)
+}
+
+/// The activation kernel with relaxed SIMD, bit for bit the reference where `relaxed_madd` is fused:
+/// - the sign sums as llama.cpp's AVX2 "sel" kernel computes them, Σ±q = 2·Σ₊q − Σq, with Σ₊q from
+///   `relaxed_dot` against the weights' bits as 0 or 1 (deterministic on every implementation: the second operand
+///   never has its top bit set) and Σq precomputed per activation (`Q8Act::tot`); only for activations without −128;
+/// - d1·s exact in f32, so its multiply-add is the same bits fused or not;
+/// - the outer d0·ab + acc fused in one instruction, as the reference's `mul_add`.
+#[cfg(all(target_arch = "wasm32", target_feature = "relaxed-simd"))]
+fn relaxed_core(n: usize, x: &[u8], a: &Q8Act) -> f32 {
+    use std::arch::wasm32::*;
+    let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
+    let zero = u8x16_splat(0);
+    let one = u8x16_splat(1);
+    let spread = [u8x16(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), u8x16(2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3)];
+    let (mut acc_lo, mut acc_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
+    let (qs, ds, tot) = (a.qs.as_ptr(), &a.d, a.tot.as_ptr());
+    for i in 0..n / QK1_0 {
+        let xb = &x[i * Q1_0_BYTES..i * Q1_0_BYTES + Q1_0_BYTES];
+        let d0 = f32x4_splat(f16_to_f32(u16::from_le_bytes([xb[0], xb[1]])));
+        let (mut ab_lo, mut ab_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
+        for k in 0..4 {
+            let b = i * 4 + k;
+            let d = f32x4_splat(ds[b]);
+            let signs = u32x4_splat(u32::from_le_bytes([xb[2 + k * 4], xb[3 + k * 4], xb[4 + k * 4], xb[5 + k * 4]]));
+            let half = |h: usize| {
+                // SAFETY: `qs` holds n i8 values and `tot` n / 4 sums (Q8Act's invariants); each load reads 16 bytes of
+                // block b, half h, and its 4 lane sums.
+                let (q, t) = unsafe { (v128_load(qs.add(b * QK8_0 + 16 * h) as *const v128), v128_load(tot.add(b * 8 + 4 * h) as *const v128)) };
+                let on = v128_and(v128_not(u8x16_eq(v128_and(u8x16_swizzle(signs, spread[h]), bit), zero)), one); // 1 where the bit is set
+                let pos = i32x4_relaxed_dot_i8x16_i7x16_add(q, on, i32x4_splat(0)); // Σ₊q per lane of four
+                f32x4_convert_i32x4(i32x4_sub(i32x4_shl(pos, 1), t))
+            };
+            let (s_lo, s_hi) = (half(0), half(1));
+            if k == 0 {
+                (ab_lo, ab_hi) = (f32x4_mul(d, s_lo), f32x4_mul(d, s_hi));
+            } else {
+                (ab_lo, ab_hi) = (f32x4_relaxed_madd(d, s_lo, ab_lo), f32x4_relaxed_madd(d, s_hi, ab_hi));
+            }
+        }
+        (acc_lo, acc_hi) = (f32x4_relaxed_madd(d0, ab_lo, acc_lo), f32x4_relaxed_madd(d0, ab_hi, acc_hi));
+    }
+    let mut out = [0.0f32; 8];
+    // SAFETY: two 16-byte stores into an 8 × f32 array.
+    unsafe {
+        v128_store(out.as_mut_ptr() as *mut v128, acc_lo);
+        v128_store(out.as_mut_ptr().add(4) as *mut v128, acc_hi);
+    }
+    hsum8(out)
+}
+
 /// Four lanes of `d.mul_add(x, a)`, bit for bit, through f64: the product of two f32 is exact in f64 and the sum
 /// rounds once there, so rounding that sum to f32 gives the fused result — except when that f64 rounding was
 /// inexact and left the sum exactly on an f32 halfway point (rounding twice can then differ from rounding once), or
@@ -413,6 +474,12 @@ pub fn vec_dot_act(x: &[u8], a: &Q8Act) -> f32 {
     #[cfg(target_arch = "x86_64")]
     if has_avx2() {
         return unsafe { if a.has_min { vec_dot_act_avx2(x, a) } else { vec_dot_act_sel_avx2(x, a) } };
+    }
+    // relaxed SIMD (browseml-mt-relaxed.wasm, used only where relaxed_madd is fused: `relaxed_madd_is_fused`):
+    // the fast kernel, unless the activation holds a −128 (ggml's i8 negation wraps there; the Σ₊ identity does not)
+    #[cfg(all(target_arch = "wasm32", target_feature = "relaxed-simd"))]
+    if !a.has_min {
+        return relaxed_core(a.n, x, a);
     }
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     // the activation's own i8 values and f32 scales (f16-exact), read in place: no q8 copy per row

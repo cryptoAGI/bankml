@@ -12,3 +12,4 @@ sAGI/voice/**/*.tmp
 # browseML: built by tools/browseml.sh, uploaded to the Space, not committed
 hf/space/browseml.wasm
 hf/space/browseml-mt.wasm
+hf/space/browseml-mt-relaxed.wasm
