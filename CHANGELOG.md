@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased (0.4.2) — logprobs on Ollama's API; receipts that cover logprobs (to merge with the 0.4.2 GPU work)
+## 0.4.2 — 2026-10-08 — logprobs on Ollama's API, receipts over logprobs, `max_tokens: 0`; with 0.4.1
+
+**0.4.1 was never tagged (its gate run stopped mid-way), so this release carries it.** From 0.4.1: a native run stops
+when its client goes away; every GPU object is released on drop; the ternary kernel runs on the GPU bit-exact; CI on
+aarch64; the console's SELF says who is speaking. From 0.4.2: Ollama 0.20's `logprobs`/`top_logprobs` on `/api/chat`
+and `/api/generate` with llama-server b11192's entries; `logprobs_sha256` on receipts; `max_tokens: 0` and
+`num_predict: 0` as llama-server and Ollama read them; one theme and a dark-mode switch for the console and Savante;
+Savante's exact calculator; `install.sh restart`. The batched GPU submissions and the F16 and eight-lane ternary GPU
+kernels are written but unverified on the card, and stay for 0.5.0. Record: `testing/results/0.4.2.txt`.
 
 ### Measured (2026-10-08, Bonsai-1.7B-Q1_0, against llama-server b11192)
 - `logprobs_ollama_oracle_live` **19 / 19**: `/api/chat` and `/api/generate`, streamed and not, entries and receipts.
@@ -17,6 +25,9 @@
   `models.py use FILE` on the file already served returns at once (its sha256 already answers), and `install.sh
   model` starts the default model, and only when nothing serves. Measured: 10 s on Bonsai-8B, pid replaced, verified.
 - `install.sh --help` prints up to its `-h` line instead of a fixed line range (two lines added had cut it short).
+- **Fixed: `./install.sh stop` stopped only the first port.** `pid_on` for a port where nothing listens (7874, the
+  LAN view, usually off) made `grep` fail, and under `set -euo pipefail` the script ended there without a word: 7873,
+  18093 and 18092 kept running. `pid_on` now answers empty instead.
 
 ### The interfaces: one theme, a dark-mode switch, a way back, and a calculator
 - **Console and Savante share one look** (`sAGI/console/theme.css`, `sAGI/savante_theme.css`): depth from the border
@@ -62,7 +73,14 @@
 - `receipts_cover_logprobs_as_written` and `logprobs_as_ollama_asks_and_answers` (unit); live in the oracle above,
   which also checks the `/v1` receipts.
 
-## Unreleased (0.4.1) — a request whose client has gone stops; GPU objects released; ternary on the GPU; CI on ARM
+### Fixed
+- Savante's aivatar card opened trapped inside the side column (318 × 1075 px instead of the whole window): the
+  column's `backdrop-filter` made it the containing block of the card's `position: fixed` modal. The side column
+  now carries no backdrop-filter or transform, and has a denser surface instead. Its widgets also stay legible while
+  Gradio refreshes them; they had dimmed to 20 % on a busy machine. Checked in a browser: the card now spans the
+  window (1366 × 900, a 920 px card).
+
+## 0.4.1 — never tagged; released in 0.4.2 — a request whose client has gone stops; GPU objects released; ternary on the GPU; CI on ARM
 
 **The first steps towards 0.5.0 (hardware), and the two 0.4.x items.**
 - A native run stops when its client goes away, and keeps what it computed.

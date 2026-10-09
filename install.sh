@@ -129,7 +129,7 @@ fetch() {  # fetch URL FILE: resumable download
 }
 listening() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":$1\$"; }
 # pid_on PORT: the pid of this user's process listening on PORT (never by pattern-matching command lines)
-pid_on() { ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2; }
+pid_on() { ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true; }  # nothing listening: empty, never an error under set -e
 
 # the engine: an explicit BANKML_LLAMA_SERVER, else what a previous run installed, else the importer's default
 LLAMA_SERVER="${BANKML_LLAMA_SERVER:-${INSTALL_LLAMA_SERVER:-}}"
