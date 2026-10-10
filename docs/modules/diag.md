@@ -9,8 +9,9 @@ bankML runs on, read from `/proc` and `/sys` with no crates, and checked against
 | section | readings | source |
 |---|---|---|
 | system | kernel, uptime, boot time (and the host name with `--full`) | `/proc/sys/kernel`, `/proc/uptime`, `/proc/stat` |
-| cpu | busy share over the sample, whole machine and per core (psutil's rule: iowait is idle); load averages; runnable and total tasks; clocks; every temperature sensor; CPU pressure | `/proc/stat`, `/proc/loadavg`, `cpufreq`, `/sys/class/hwmon`, `/proc/pressure/cpu` |
+| cpu | the machine's CPUs (`logical`, `/sys/devices/system/cpu/online`) and this process's share (`allowed`: affinity and CPU quota); busy share over the sample, whole machine and per core (psutil's rule: iowait is idle); load averages; runnable and total tasks; clocks; every temperature sensor; CPU pressure | `/proc/stat`, `/proc/loadavg`, `cpufreq`, `/sys/class/hwmon`, `/proc/pressure/cpu` |
 | memory | total, available, used (psutil's definition), free, buffers, cached, dirty, swap; memory pressure | `/proc/meminfo`, `/proc/pressure/memory` |
+| cgroup (per process) | the cgroup v2 path; memory max, high, current, peak, swap; OOM and OOM-kill events; CPU quota and period (and the CPUs it allows), weight, usage, throttling; tasks; the cgroup's own pressure. A systemd service's `MemoryMax=`, `CPUQuota=` and `TasksMax=` are these files | `/proc/<pid>/cgroup`, `/sys/fs/cgroup/<path>/` |
 | processes | state, RSS, virtual size, threads, open descriptors, voluntary and involuntary context switches, minor and major page faults, CPU % over the sample, storage I/O, OOM score, age | `/proc/<pid>/{status,stat,fd,io,oom_score}` |
 | disks | space for each path, its block device and disk, model, whether it rotates, the device's reads, writes, bytes and I/O time; I/O pressure | `statvfs`, `/proc/self/mountinfo`, `/sys/block`, `/proc/diskstats`, `/proc/pressure/io` |
 | network | each interface's bytes, packets, errors and drops; TCP and UDP sockets counted by state; listening sockets with their owners; bankML's own connections | `/proc/net/dev`, `/proc/net/{tcp,tcp6,udp,udp6}`, `/proc/<pid>/fd` |
@@ -56,6 +57,10 @@ curl -s 127.0.0.1:18093/bankml/diagnostics     # serve's own picture (not full),
   (interface bytes and packets, disk I/O, context switches). Levels that move must agree within a stated tolerance
   (available and used memory 64 MB, load 0.15, temperatures 3 °C, RSS 4 MB). A ping to a listening socket connects
   three times; one to a closed port is refused three times.
+- **cgroup and CPUs:** the oracle runs `bankml diag` inside `systemd-run --user --scope -p MemoryMax=300M -p TasksMax=64` and
+  expects exactly those limits back, and checks `logical` against psutil and `allowed` against `os.sched_getaffinity`.
+  An unprivileged scope cannot set a CPU quota, so `cpu.max` is compared with `systemctl show <unit>` where a service
+  sets one (the mindX VPS's `bankml.service`, `CPUQuota=100%`).
 - **Not checked by an independent source**, and said so in the oracle's output: pressure (psutil does not read it),
   the busy share of one sample (only its range), and the ping times (only their count and order).
 

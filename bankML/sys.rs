@@ -89,8 +89,28 @@ pub fn io(pid: u32) -> Option<(u64, u64)> {
 }
 
 /// Available parallelism; 1 if unknown.
+/// The CPUs this process may use: affinity and the cgroup's CPU quota (`available_parallelism`). On a service with
+/// `CPUQuota=100%` this is 1 however many the machine has; the machine's count is [`online_cpus`].
 pub fn cores() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
+
+/// The machine's online CPUs (`/sys/devices/system/cpu/online`, e.g. `0-3` or `0-1,4-5`), whatever this process
+/// is allowed; `None` when unreadable.
+pub fn online_cpus() -> Option<usize> {
+    parse_cpu_list(std::fs::read_to_string("/sys/devices/system/cpu/online").ok()?.trim())
+}
+
+/// A kernel CPU list (`0-3,6,8-9`) counted.
+pub fn parse_cpu_list(s: &str) -> Option<usize> {
+    let mut n = 0;
+    for part in s.split(',').filter(|p| !p.is_empty()) {
+        n += match part.split_once('-') {
+            Some((a, b)) => b.parse::<usize>().ok()?.checked_sub(a.parse::<usize>().ok()?)? + 1,
+            None => part.parse::<usize>().map(|_| 1).ok()?,
+        };
+    }
+    (n > 0).then_some(n)
 }
 
 /// Resident memory of a process in bytes (`/proc/<pid>/status` VmRSS).
@@ -224,10 +244,10 @@ pub fn usage_json(procs: &[(&str, u32)], interval: Duration) -> String {
     }
     let m = memory().unwrap_or_default();
     format!(
-        "{{\"source\": \"bankml sys.rs (/proc)\", \"cores\": {}, \"mem_total_bytes\": {}, \"mem_available_bytes\": {}, \"swap_total_bytes\": {}, \
+        "{{\"source\": \"bankml sys.rs (/proc)\", \"cores\": {}, \"cores_online\": {}, \"mem_total_bytes\": {}, \"mem_available_bytes\": {}, \"swap_total_bytes\": {}, \
          \"swap_free_bytes\": {}, \"rss_bytes\": {rss_sum}, \"cpu_percent\": {cpu_sum:.1}, \"interval_ms\": {}, \"processes\": [{}], \
          \"package_watts\": {watts}, \"gpus\": [{}], \"gpu_limiter\": {}}}",
-        cores(), m.total, m.available, m.swap_total, m.swap_free, interval.as_millis(), rows.join(", "),
+        cores(), online_cpus().map_or("null".into(), |n| n.to_string()), m.total, m.available, m.swap_total, m.swap_free, interval.as_millis(), rows.join(", "),
         gpus().iter().map(gpu_json).collect::<Vec<_>>().join(", "), crate::gpu::worker::status_json()
     )
 }
@@ -255,6 +275,16 @@ mod tests {
         assert!(disk(Path::new("/no/such/place")).is_none());
         let (r, w) = io(std::process::id()).expect("/proc/self/io");
         assert!(r < u64::MAX && w < u64::MAX);
+    }
+
+    #[test]
+    fn cpu_lists_are_counted() {
+        assert_eq!(parse_cpu_list("0-3"), Some(4));
+        assert_eq!(parse_cpu_list("0-1,4-5,7"), Some(5));
+        assert_eq!(parse_cpu_list("0"), Some(1));
+        assert_eq!(parse_cpu_list(""), None);
+        assert_eq!(parse_cpu_list("3-1"), None);
+        assert!(online_cpus().unwrap() >= cores());
     }
 
     #[test]

@@ -609,12 +609,12 @@ fn status_json(st: &State) -> String {
         None => check("the engine log", "ok", &format!("{} messages kept, no warning", log.len())),
     });
     format!(
-        "{{\"bankml\": {}, \"at\": {:.3}, \"verified\": {}, \"serve\": {{\"listen\": {}, \"upstream\": {}, \"native\": {}, \"pid\": {}, \"uptime_s\": {up},          \"allow_origin\": {}, \"threads\": {}, \"cache_type\": {}, \"gpu\": {}}}, \"cpu\": {{\"model\": {}, \"logical\": {}, \"mhz\": [{}]}},          \"disk\": {{\"path\": {}, \"total_bytes\": {}, \"available_bytes\": {}, \"model_bytes\": {}, \"read_bytes\": {}, \"write_bytes\": {}}},          \"usage\": {}, \"metrics\": {}, \"checks\": [{}], \"log\": [{}]}}",
+        "{{\"bankml\": {}, \"at\": {:.3}, \"verified\": {}, \"serve\": {{\"listen\": {}, \"upstream\": {}, \"native\": {}, \"pid\": {}, \"uptime_s\": {up},          \"allow_origin\": {}, \"threads\": {}, \"cache_type\": {}, \"gpu\": {}}}, \"cpu\": {{\"model\": {}, \"logical\": {}, \"allowed\": {}, \"mhz\": [{}]}},          \"disk\": {{\"path\": {}, \"total_bytes\": {}, \"available_bytes\": {}, \"model_bytes\": {}, \"read_bytes\": {}, \"write_bytes\": {}}},          \"usage\": {}, \"metrics\": {}, \"checks\": [{}], \"log\": [{}]}}",
         crate::gguf::jstr(crate::VERSION),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0),
         verified.unwrap_or_else(|| "null".into()), crate::gguf::jstr(&listen), crate::gguf::jstr(&st.upstream), st.native.is_some(), std::process::id(),
         st.allow_origin.as_deref().map(crate::gguf::jstr).unwrap_or_else(|| "null".into()), env("BANKML_THREADS"), env("BANKML_CACHE_TYPE"), env("BANKML_GPU"),
-        cpu_name.as_deref().map(crate::gguf::jstr).unwrap_or_else(|| "null".into()), crate::sys::cores(),
+        cpu_name.as_deref().map(crate::gguf::jstr).unwrap_or_else(|| "null".into()), opt(crate::sys::online_cpus().map(|n| n as u64)), crate::sys::cores(),
         mhz.iter().map(|m| format!("{m:.0}")).collect::<Vec<_>>().join(", "),
         crate::gguf::jstr(&dir.to_string_lossy()), opt(disk.map(|d| d.0)), opt(disk.map(|d| d.1)), opt(model_bytes), opt(io.map(|i| i.0)), opt(io.map(|i| i.1)),
         usage_cached(), crate::metrics::json(), checks.join(", "),

@@ -14,13 +14,19 @@
   endpoint never carries remote addresses, other processes' sockets or the host name; `bankml diag --full` does, at
   the terminal.
 - **Checked:** `testing/diag_oracle.py`, in the gate: `bankml diag --json --full` against psutil 5.9.5, `ss` and
-  `ip` on the same machine, **35 / 35**. Fixed values equal (cores, memory and swap totals, boot time, host name,
+  `ip` on the same machine, **41 / 41** (the cgroup limits against a transient scope the oracle creates). Fixed values equal (cores, memory and swap totals, boot time, host name,
   interfaces, the listening TCP and unconnected UDP sockets and their owners, the root file system, the sensors);
   counters between bankML's reading and psutil's later one; moving levels within stated tolerances; a ping to a
   listening socket connects 3 / 3 and one to a closed port is refused 3 / 3. Pressure, one sample's busy share and the
   ping times have no independent source here and are listed as unchecked. The first run found one parsing slip, in
   the oracle (a link-local address's scope id).
-- Unit tests on fixed `/proc` text (`diag::tests`, 5), clippy clean.
+- **Two CPU counts, and the cgroup.** `sys::cores()` is `available_parallelism`, which follows the cgroup's CPU quota:
+  on the mindX VPS (2 CPUs, `bankml.service` with `CPUQuota=100%`) `/bankml/usage` reported `"cores": 1`. It now also
+  reports `cores_online` (the machine's), `/bankml/status` and `bankml diag` give `logical` and `allowed`, and each
+  process carries its cgroup v2 limits and counts: memory max/high/current/peak, swap, OOM kills, CPU quota and
+  throttling, tasks, pressure. On the VPS that is `bankml.service`'s `MemoryMax=3G` against the ternary model's
+  ~3 GB peak.
+- Unit tests on fixed `/proc` text (`diag::tests`, 5; `sys::tests::cpu_lists_are_counted`), clippy clean.
 
 ## Unreleased (0.4.3) — browseML: bankML in the browser; the console's first answer
 

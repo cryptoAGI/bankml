@@ -148,6 +148,24 @@ def main():
     check("ping to a listening socket: 3 of 3 connected", live["connected"] == 3 and live["min_ms"] <= live["avg_ms"] <= live["max_ms"], json.dumps(live))
     check("ping to a closed port: 0 of 3, refused", dead["connected"] == 0 and "refused" in (dead["error"] or "").lower(), json.dumps(dead))
 
+    # cores: the machine's, and this process's allowed share (affinity, cgroup quota)
+    check("logical CPUs = psutil.cpu_count()", d["cpu"]["logical"] == psutil.cpu_count())
+    check("allowed CPUs ≤ logical and = len(sched_getaffinity) here (no CPU quota on this scope)",
+          d["cpu"]["allowed"] <= d["cpu"]["logical"] and d["cpu"]["allowed"] == len(os.sched_getaffinity(0)), f'{d["cpu"]["allowed"]} / {len(os.sched_getaffinity(0))}')
+
+    # cgroup: limits this oracle sets itself, through a transient systemd scope (memory and pids are what an
+    # unprivileged user's scope may limit)
+    cg = subprocess.run(["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=300M", "-p", "TasksMax=64", BIN, "diag", "--json", "--sample", "50"],
+                        capture_output=True, text=True, timeout=60)
+    if cg.returncode == 0:
+        g = json.loads(cg.stdout)["processes"][0]["cgroup"]
+        check("cgroup memory.max = the scope's MemoryMax=300M", g["memory_max"] == 300 * MB, json.dumps(g["memory_max"]))
+        check("cgroup pids.max = the scope's TasksMax=64", g["pids_max"] == 64, json.dumps(g["pids_max"]))
+        check("cgroup path is the scope's (run-*.scope)", g["path"].endswith(".scope") and "/run-" in g["path"], g["path"])
+        check("cgroup memory current ≤ max and > 0", 0 < g["memory_current_bytes"] <= g["memory_max"])
+    else:
+        unchecked.append(f"cgroup limits: systemd-run --user --scope unavailable ({cg.stderr.strip()[:80]})")
+    unchecked.append("cgroup CPU quota: an unprivileged scope cannot set it here; compare with `systemctl show <unit> -p CPUQuotaPerSecUSec` where a service sets one")
     unchecked.extend(["pressure (PSI): psutil does not read it", "the busy share of one 300 ms sample (only its range)", "ping times (only their order and count)",
                       "GPU and package power: sys.rs's, checked in its own tests"])
     passed = sum(ok for _, ok, _ in checks)

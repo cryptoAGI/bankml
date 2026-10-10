@@ -259,6 +259,48 @@ fn proc_v(p: &ProcSample, secs: f64, uptime: Option<f64>) -> V {
         ("cpu_percent", V::f(cpu, 1)), ("read_bytes", V::u(io.map(|x| x.0))), ("write_bytes", V::u(io.map(|x| x.1))),
         ("oom_score", V::u(read(format!("/proc/{pid}/oom_score")).and_then(|s| s.trim().parse().ok()))),
         ("age_s", V::f(age, 1)),
+        ("cgroup", cgroup_v(pid)),
+    ])
+}
+
+/// A cgroup v2 limit file: a number, or `max` (no limit).
+fn limit(text: Option<String>) -> V {
+    match text.as_deref().map(str::trim) {
+        Some("max") => V::s("max"),
+        Some(t) => t.parse::<u64>().map_or(V::Null, |n| V::Int(n as i64)),
+        None => V::Null,
+    }
+}
+
+/// The process's cgroup (v2: `/proc/<pid>/cgroup` is `0::/path`) and what it limits and counts: memory (max, high,
+/// current, peak, swap, the OOM events), CPU (`cpu.max` as quota and period, and the CPUs that quota allows; weight;
+/// throttling) and tasks. A systemd service's `MemoryMax=` and `CPUQuota=` are these files.
+pub fn cgroup_v(pid: u32) -> V {
+    let Some(path) = read(format!("/proc/{pid}/cgroup")).and_then(|t| t.lines().find_map(|l| l.strip_prefix("0::").map(str::to_string))) else { return V::Null };
+    let dir = Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+    let f = |n: &str| read(dir.join(n));
+    let events = f("memory.events").unwrap_or_default();
+    let cpu_stat = f("cpu.stat").unwrap_or_default();
+    let ev = |k: &str| events.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix(' ')?.trim().parse::<u64>().ok());
+    let cs = |k: &str| cpu_stat.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix(' ')?.trim().parse::<u64>().ok());
+    // cpu.max: "<quota|max> <period>"
+    let cpu_max = f("cpu.max").map(|t| t.split_whitespace().map(str::to_string).collect::<Vec<_>>());
+    let (quota, period) = match cpu_max.as_deref() {
+        Some([q, p]) => (Some(q.clone()), p.parse::<u64>().ok()),
+        _ => (None, None),
+    };
+    let allowed = quota.as_deref().and_then(|q| q.parse::<u64>().ok()).zip(period).map(|(q, p)| q as f64 / p as f64);
+    V::obj(vec![
+        ("path", V::s(path.trim())),
+        ("memory_max", limit(f("memory.max"))), ("memory_high", limit(f("memory.high"))),
+        ("memory_current_bytes", limit(f("memory.current"))), ("memory_peak_bytes", limit(f("memory.peak"))),
+        ("swap_current_bytes", limit(f("memory.swap.current"))), ("swap_max", limit(f("memory.swap.max"))),
+        ("oom_events", V::u(ev("oom"))), ("oom_kills", V::u(ev("oom_kill"))), ("memory_high_events", V::u(ev("high"))),
+        ("cpu_quota_us", quota.map_or(V::Null, |q| q.parse::<u64>().map_or(V::s(q), |n| V::Int(n as i64)))), ("cpu_period_us", V::u(period)),
+        ("cpu_quota_cpus", V::f(allowed, 2)), ("cpu_weight", limit(f("cpu.weight"))),
+        ("cpu_usage_us", V::u(cs("usage_usec"))), ("nr_throttled", V::u(cs("nr_throttled"))), ("throttled_us", V::u(cs("throttled_usec"))),
+        ("pids_current", limit(f("pids.current"))), ("pids_max", limit(f("pids.max"))),
+        ("pressure", read(dir.join("memory.pressure")).map_or(V::Null, |t| V::obj(vec![("memory", parse_pressure(&t)), ("cpu", f("cpu.pressure").map_or(V::Null, |t| parse_pressure(&t))), ("io", f("io.pressure").map_or(V::Null, |t| parse_pressure(&t)))]))),
     ])
 }
 
@@ -525,7 +567,8 @@ pub fn report(o: &Opts) -> V {
     let (model, mhz) = crate::sys::cpu();
     let load = read("/proc/loadavg").and_then(|t| parse_loadavg(&t));
     let cpu = V::obj(vec![
-        ("model", model.map_or(V::Null, V::Str)), ("logical", V::Int(crate::sys::cores() as i64)),
+        ("model", model.map_or(V::Null, V::Str)), ("logical", V::u(crate::sys::online_cpus().map(|n| n as u64))),
+        ("allowed", V::Int(crate::sys::cores() as i64)),
         ("busy_percent", V::f(busy.first().copied().flatten(), 1)),
         ("per_core_busy_percent", V::Arr(busy.iter().skip(1).map(|b| V::f(*b, 1)).collect())),
         ("mhz", V::Arr(mhz.iter().map(|m| V::Num(*m, 0)).collect())),

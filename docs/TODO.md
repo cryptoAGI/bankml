@@ -254,7 +254,8 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
 
 - [x] **Diagnostics, measured and checked** (**0.4.4**, operator 2026-10-09: "expand diagnostics for bankML"): `bankml
   diag` and `GET /bankml/diagnostics` (`diag.rs`): what psutil, `ss`, `ip -s link` and a ping report, from `/proc` and
-  `/sys` with no crates; `testing/diag_oracle.py` against psutil, `ss` and `ip` on the same machine, 35 / 35, in the
+  `/sys` with no crates, with each process's cgroup limits; `testing/diag_oracle.py` against psutil, `ss`, `ip` and a
+  transient systemd scope on the same machine, 41 / 41, in the
   gate. Over HTTP the report keeps to bankML's own sockets.
 - [ ] **Token accounting to the last token** (operator 2026-10-09: SCIEN·TIFIC "counting tokens accurately"): serve's
   running totals per model (prompt, cached, completion, end-of-generation tokens counted as llama-server counts them)
@@ -265,6 +266,19 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   (`sAGI/sysdiag.py`), so one implementation, checked by the oracle, feeds every view.
 
 ### 0.5.0 — hardware
+
+**browseML, a surprise on the road to 0.5.0** (operator 2026-10-09): bankML compiled to WebAssembly (0.4.3) made the
+visitor's own CPU a hardware target nobody planned. The operator's direction: **keep both paths, Node.js and Rust,
+and perhaps ship both in the final release.**
+- [ ] The Node.js path first-class: the same `.wasm` run by Node (today `browseML/testing/oracle.mjs` and `bench.mjs`
+  through Node's WASI and worker threads) as a usable host, a CLI and a module, not only a test harness; the browser
+  host (`hf/space/browseml*.js`) and the Node host share one loader.
+- [ ] The Rust path first-class: the native `bankml` binary, and `tools/browseml.sh test` running the engine's unit
+  tests on `wasm32-wasip1` (0.4.3).
+- [ ] One oracle for both: llama-server b11192's recorded answers (`oracle-forward/serve-*.jsonl`) identical through
+  native Rust, Node + WebAssembly and the browser, in the gate (browseML is outside the gate today).
+- [ ] The release artefacts (to decide with the operator): the native binaries, and the `.wasm` builds with their JS
+  host for Node and browsers, each sha256-pinned beside the model pins.
 
 - [x] **GPU object lifetimes** (found by the 2026-10-06 code audit; **0.4.1**: every object released on drop, the instance leak found by the test closed, `Buffer` no longer `Sync`, `gpu_objects_are_released_on_drop`): `Gpu` destroys nothing on drop — device, buffers
   and pipelines stay until the process exits — so a worker dropped and reopened (a model reload) leaks its card
