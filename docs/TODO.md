@@ -252,6 +252,18 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   once `n_gen > 0`), so with logprobs it returns the next-token distribution; bankML now does the same. Ollama's
   `num_predict: 0` is no limit, as its runner reads it.
 
+- [x] **Diagnostics, measured and checked** (**0.4.4**, operator 2026-10-09: "expand diagnostics for bankML"): `bankml
+  diag` and `GET /bankml/diagnostics` (`diag.rs`): what psutil, `ss`, `ip -s link` and a ping report, from `/proc` and
+  `/sys` with no crates; `testing/diag_oracle.py` against psutil, `ss` and `ip` on the same machine, 35 / 35, in the
+  gate. Over HTTP the report keeps to bankML's own sockets.
+- [ ] **Token accounting to the last token** (operator 2026-10-09: SCIEN·TIFIC "counting tokens accurately"): serve's
+  running totals per model (prompt, cached, completion, end-of-generation tokens counted as llama-server counts them)
+  in `/bankml/diagnostics` and the receipts, as integers and as SCIEN·TIFIC's 18-decimal fixed point, each checked
+  against llama-server's `usage` and `timings` on the same requests (`scientific_diagnostic.py` holds one run's
+  numbers; this makes them cumulative and part of the record).
+- [ ] The console's `diag` and Savante's machine panel read `/bankml/diagnostics` instead of their own Python
+  (`sAGI/sysdiag.py`), so one implementation, checked by the oracle, feeds every view.
+
 ### 0.5.0 — hardware
 
 - [x] **GPU object lifetimes** (found by the 2026-10-06 code audit; **0.4.1**: every object released on drop, the instance leak found by the test closed, `Buffer` no longer `Sync`, `gpu_objects_are_released_on_drop`): `Gpu` destroys nothing on drop — device, buffers

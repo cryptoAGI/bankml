@@ -27,6 +27,9 @@ out=testing/results/$v.txt
   python3 -B testing/test_chain.py | tail -1 | sed 's/^/iNFT mint and load (throwaway anvil devnet): /'
   BANKML_TEST_CARRIER=1 python3 -B testing/test_models.py | tail -1 | sed 's/^/model importer (loopback source; carrier on spare ports): /'
   python3 testing/guard_agree.py target/release/bankml $(ls .models/*.gguf 2>/dev/null) | tail -1
+  # 0.4.4: bankml diag against psutil, ss and ip on this machine (testing/diag_oracle.py)
+  python3 -B testing/diag_oracle.py target/release/bankml > target/diag_oracle.out || { cat target/diag_oracle.out; echo "FAILED: diag_oracle"; exit 1; }
+  tail -1 target/diag_oracle.out
   # 0.3.2: the C library, and bankml_log (a C-variadic function defined in Rust) against libc snprintf, from C
   cargo build --release --locked -q -p bankml-capi
   python3 -B testing/capi/capi_oracle.py --printf || { echo "FAILED: printf oracle"; exit 1; }

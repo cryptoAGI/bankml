@@ -497,6 +497,8 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             respond(&mut c, 200, "application/json", j.as_bytes())
         }
         ("GET", "/bankml/usage") => respond(&mut c, 200, "application/json", usage_cached().as_bytes()),
+        // the machine under serve, measured (diag.rs): CPU, memory, processes, disks, network, ping, pressure
+        ("GET", "/bankml/diagnostics") => respond(&mut c, 200, "application/json", diagnostics_cached(st).as_bytes()),
         // everything this engine measures of itself, in one answer (the status page and the console's Engine tab)
         ("GET", "/bankml/status") => respond(&mut c, 200, "application/json", status_json(st).as_bytes()),
         // a browser asking for the root gets the status page; every other client keeps Ollama's plain-text answer
@@ -509,8 +511,29 @@ fn handle(mut c: TcpStream, st: &State) -> std::io::Result<()> {
             Err(e) => respond(&mut c, 502, "text/plain", format!("upstream: {e}").as_bytes()),
         },
         ("POST", "/v1/chat/completions") => chat(&mut c, st, &body),
-        _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /bankml/usage /bankml/metrics /health /props /v1/models, POST /v1/chat/completions"),
+        _ => respond(&mut c, 404, "text/plain", b"bankml serve: GET /bankml /bankml/usage /bankml/diagnostics /bankml/metrics /health /props /v1/models, POST /v1/chat/completions"),
     }
+}
+
+/// `GET /bankml/diagnostics`: `diag::report` for serve and a spawned engine, the model's disk, and a TCP ping to
+/// serve's own address and the engine's, sampled over 250 ms; at most one report every two seconds, shared by all
+/// pollers. Not `full`: no remote addresses, other processes' sockets or host name, since `--allow-origin` lets one
+/// web origin read every route.
+fn diagnostics_cached(st: &State) -> String {
+    static LAST: std::sync::Mutex<Option<(Instant, String)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(2)) {
+        let engine = CHILD_PID.load(Ordering::SeqCst);
+        let procs = [("bankml serve", std::process::id()), ("llama-server", engine.max(0) as u32)];
+        let dir = st.model.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let mut ping: Vec<String> = STARTED.get().map(|(_, l)| vec![l.clone()]).unwrap_or_default();
+        if !st.upstream.is_empty() && st.native.is_none() {
+            ping.push(st.upstream.clone());
+        }
+        let o = crate::diag::Opts { procs: &procs, paths: &[("model", dir)], ping: &ping, sample: Duration::from_millis(250), full: false };
+        *last = Some((Instant::now(), crate::diag::report(&o).to_json()));
+    }
+    last.as_ref().map(|(_, j)| j.clone()).unwrap_or_default()
 }
 
 /// Resource use of serve and a spawned engine (sys.rs, sampled over 250 ms); at most one sample per second, shared by

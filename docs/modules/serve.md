@@ -45,6 +45,7 @@ Defaults (from `main.rs`): `--listen 127.0.0.1:18093`, `--upstream 127.0.0.1:180
 | method, path | P0 (llama-server) | `--native` |
 |---|---|---|
 | `GET /bankml` | what was verified, when, the upstream | the same, plus `resident` and `models` (the last verification when none is resident) |
+| `GET /bankml/diagnostics` | (0.4.4) the machine under serve, measured (`diag.rs`): CPU busy per core, load, temperatures, pressure; memory; serve's and the engine's threads, descriptors, context switches, faults; the model's disk and its I/O; interface counters, sockets by state, serve's own listening sockets and connections; a TCP ping to serve and the engine. Never `full`: no remote addresses, other processes' sockets or host name. Sampled over 250 ms, at most every 2 s, shared | the same |
 | `GET /bankml/usage` | memory and CPU of `bankml serve` and the spawned engine; since 0.3.7 also `package_watts`, each GPU's busy %, VRAM and GTT, and the GPU limiter's state (`sys.rs`, sampled over 250 ms, at most once a second however many clients poll; the sample is shared) | the same |
 | `GET /bankml/metrics` (0.3.7) | the native engine's records (empty in P0) | one record per completion, a ring of 256 with totals: TTFT, prompt and generation tokens per second, grammar time, energy ([metrics.md](metrics.md)) |
 | `GET /health` | proxied | `{"status": "ok"}` |

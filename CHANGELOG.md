@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased (0.4.4) — diagnostics: the machine measured, and checked against psutil, ss and ip
+
+- **`bankml diag`** and **`GET /bankml/diagnostics`** (`bankML/diag.rs`, docs/modules/diag.md): what psutil,
+  `ss`/`netstat`, `ip -s link`, `uptime` and a ping report, from `/proc` and `/sys` with no crates. System (kernel,
+  uptime, boot time); CPU busy over the sample, whole machine and per core (psutil's rule), load, runnable and total
+  tasks, clocks, every temperature sensor, pressure (PSI); memory as psutil defines it, with pressure; each process's
+  state, RSS, virtual size, threads, open descriptors, context switches, page faults, CPU %, storage I/O, OOM score and
+  age; each path's disk, its device's I/O counters and I/O pressure; each interface's counters; TCP and UDP sockets by
+  state; listening sockets and their owners; bankML's own connections; a TCP ping (three connects, min/avg/max, or
+  why they failed). Text for the terminal, `--json` for programs.
+- **Over HTTP it keeps to bankML's own picture.** `--allow-origin` lets one web origin read every route, so the
+  endpoint never carries remote addresses, other processes' sockets or the host name; `bankml diag --full` does, at
+  the terminal.
+- **Checked:** `testing/diag_oracle.py`, in the gate: `bankml diag --json --full` against psutil 5.9.5, `ss` and
+  `ip` on the same machine, **35 / 35**. Fixed values equal (cores, memory and swap totals, boot time, host name,
+  interfaces, the listening TCP and unconnected UDP sockets and their owners, the root file system, the sensors);
+  counters between bankML's reading and psutil's later one; moving levels within stated tolerances; a ping to a
+  listening socket connects 3 / 3 and one to a closed port is refused 3 / 3. Pressure, one sample's busy share and the
+  ping times have no independent source here and are listed as unchecked. The first run found one parsing slip, in
+  the oracle (a link-local address's scope id).
+- Unit tests on fixed `/proc` text (`diag::tests`, 5), clippy clean.
+
 ## Unreleased (0.4.3) — browseML: bankML in the browser; the console's first answer
 
 ### browseML — bankML in the browser (`browseML/`, `hf/space/browseml*.js`, `tools/browseml.sh`)

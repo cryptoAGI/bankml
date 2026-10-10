@@ -32,6 +32,7 @@ pub mod chat;
 pub mod f16;
 pub mod convert;
 pub mod create;
+pub mod diag;
 pub mod forward;
 pub mod gguf;
 pub mod grammar;

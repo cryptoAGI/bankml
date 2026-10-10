@@ -21,7 +21,7 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
                                              │  text: tokenizer.rs, chat.rs                              ▼
                                              │  draw: sampler.rs, grammar.rs, schema.rs      q1_0 · q2_0 · f16 · gpu
                                              │  keep: prompt_cache.rs (slot states in RAM)     (par.rs threads)
-                                             └─ measure: metrics.rs per answer; sys.rs usage
+                                             └─ measure: metrics.rs per answer; sys.rs usage; diag.rs
 ```
 
 ## Pages
@@ -39,6 +39,7 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [par.md](par.md) | `par.rs` | the zero-dependency thread pool; bits independent of thread count |
 | [gpu.md](gpu.md) | `gpu/` | Vulkan through dlopen, bankML's own SPIR-V, a verified card's share of the rows |
 | [sys.md](sys.md) | `sys.rs` | machine facts and the process's usage (`bankml usage`, `/bankml/usage`): CPU, memory, GPU busy and memory, package power |
+| [diag.md](diag.md) | `diag.rs` | the machine measured, checked against psutil, `ss` and `ip`: CPU, temperatures, pressure, memory, processes, disks, network sockets, TCP ping (`bankml diag`, `/bankml/diagnostics`) |
 | [metrics.md](metrics.md) | `metrics.rs` | bankML's own measurements of its answers: TTFT, pp and tg tokens/s, energy per token (`/bankml/metrics`) |
 | **The model** | | |
 | [forward.md](forward.md) | `forward.rs` | the Qwen3 and Llama graphs, the KV cache (f16, or q8_0 with llama.cpp's rotation, 0.4.0), ggml's three attention kernels |

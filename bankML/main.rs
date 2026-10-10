@@ -32,6 +32,11 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml gpu [--remote | --verify]                        (every video card found, and which bankml will use;
                                                               --remote adds the GPUs Hugging Face rents, listed only;
                                                               --verify runs the bit-exact kernel oracle on each card)
+       bankml diag [--json] [--full] [--ping HOST:PORT …] [--sample MS] [PID …]
+                                                              (the machine, measured: CPU busy and load, temperatures, pressure, memory,
+                                                              each process's threads, descriptors, switches and faults, disks and their I/O,
+                                                              network interfaces and sockets, TCP ping (default 127.0.0.1:18093);
+                                                              --full adds remote addresses, every process's sockets, the host name)
        bankml version";
 
 fn main() {
@@ -209,6 +214,39 @@ fn main() {
             let named: Vec<(String, u32)> = if pids.is_empty() { vec![("bankml".into(), std::process::id())] } else { pids.iter().map(|p| (format!("pid {p}"), *p)).collect() };
             let refs: Vec<(&str, u32)> = named.iter().map(|(n, p)| (n.as_str(), *p)).collect();
             println!("{}", bankml::sys::usage_json(&refs, std::time::Duration::from_millis(500)));
+            0
+        }
+        (Some("diag"), _) => {
+            // Values after --ping and --sample are theirs; the other numbers are process ids (default: this process).
+            let (mut pids, mut ping, mut bad) = (Vec::new(), Vec::new(), Vec::new());
+            let mut it = a[1..].iter();
+            while let Some(x) = it.next() {
+                match x.as_str() {
+                    "--json" | "--full" => {}
+                    "--ping" | "--sample" => {
+                        let v = it.next().cloned().unwrap_or_default();
+                        if x == "--ping" { ping.push(v) }
+                    }
+                    p => match p.parse::<u32>() {
+                        Ok(p) => pids.push(p),
+                        Err(_) => bad.push(p.to_string()),
+                    },
+                }
+            }
+            if !bad.is_empty() {
+                eprintln!("bankml diag: not a process id or option: {}", bad.join(" "));
+                std::process::exit(1);
+            }
+            if ping.is_empty() {
+                ping.push("127.0.0.1:18093".into());
+            }
+            let sample = opt("--sample").and_then(|s| s.parse().ok()).unwrap_or(500u64).clamp(10, 10_000);
+            let named: Vec<(String, u32)> = if pids.is_empty() { vec![("bankml".into(), std::process::id())] } else { pids.iter().map(|p| (format!("pid {p}"), *p)).collect() };
+            let refs: Vec<(&str, u32)> = named.iter().map(|(n, p)| (n.as_str(), *p)).collect();
+            let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+            let o = bankml::diag::Opts { procs: &refs, paths: &[("root", Path::new("/")), ("here", &cwd)], ping: &ping, sample: std::time::Duration::from_millis(sample), full: flag("--full") };
+            let r = bankml::diag::report(&o);
+            print!("{}", if flag("--json") { r.to_json() + "\n" } else { r.to_text() });
             0
         }
         (Some("version" | "--version" | "-V"), _) => {
