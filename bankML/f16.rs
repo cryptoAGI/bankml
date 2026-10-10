@@ -81,7 +81,40 @@ pub fn vec_dot(x: &[u8], y: &[u16]) -> f32 {
         // SAFETY: AVX2 + FMA + F16C detected; lengths asserted above.
         return unsafe { vec_dot_avx2(x, y) };
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    return vec_dot_simd128(x, y);
+    #[allow(unreachable_code)]
     vec_dot_ref(x, y)
+}
+
+/// `vec_dot_ref` on WebAssembly SIMD, bit for bit: the same four 8-lane accumulators (two f32x4 each), the same
+/// reduction. Both factors are f16 (11 significant bits), so each product is exact in f32 and the reference's fused
+/// multiply-add is the same bits as a multiply then an add.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+fn vec_dot_simd128(x: &[u8], y: &[u16]) -> f32 {
+    use std::arch::wasm32::*;
+    use crate::wasm_simd::widen4;
+    let n = y.len();
+    assert!(x.len() >= n * F16_BYTES);
+    let np = n & !31;
+    let (xp, yp) = (x.as_ptr() as *const u16, y.as_ptr());
+    let mut acc = [f32x4_splat(0.0); 8]; // acc[2j + h]: accumulator j, lanes 4h..4h+4
+    for i in (0..np).step_by(32) {
+        for (jh, a) in acc.iter_mut().enumerate() {
+            let k = i + 4 * jh;
+            // SAFETY: k + 4 ≤ np ≤ n, and x holds n f16 (asserted).
+            let (xv, yv) = unsafe { (widen4(xp.add(k)), widen4(yp.add(k))) };
+            *a = f32x4_add(f32x4_mul(xv, yv), *a);
+        }
+    }
+    let r = |h: usize| f32x4_add(f32x4_add(acc[h], acc[4 + h]), f32x4_add(acc[2 + h], acc[6 + h]));
+    let t = f32x4_add(r(0), r(1));
+    let l = |i: usize| match i { 0 => f32x4_extract_lane::<0>(t), 1 => f32x4_extract_lane::<1>(t), 2 => f32x4_extract_lane::<2>(t), _ => f32x4_extract_lane::<3>(t) };
+    let mut sum = ((l(0) + l(1)) + (l(2) + l(3))) as f64;
+    for (k, &yk) in y.iter().enumerate().skip(np) {
+        sum += (w(x, k) * f16_to_f32(yk)) as f64;
+    }
+    sum as f32
 }
 
 /// # Safety
@@ -171,6 +204,15 @@ pub fn widen(src: &[u16], dst: &mut [f32]) {
         // SAFETY: AVX2 + F16C detected; i0 ≤ both lengths.
         unsafe { widen_f16c(&src[..i0], &mut dst[..i0]) };
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        let n = src.len().min(dst.len()) & !3;
+        while i0 < n {
+            // SAFETY: i0 + 4 ≤ n ≤ both lengths.
+            unsafe { std::arch::wasm32::v128_store(dst.as_mut_ptr().add(i0) as *mut std::arch::wasm32::v128, crate::wasm_simd::widen4(src.as_ptr().add(i0))) };
+            i0 += 4;
+        }
+    }
     for (d, &s) in dst[i0..].iter_mut().zip(&src[i0..]) {
         *d = f16_to_f32(s);
     }
@@ -196,6 +238,21 @@ pub fn mad(acc: &mut [u16], v: &[u16], w: f32) {
         // SAFETY: AVX2 + FMA + F16C detected; i0 ≤ both lengths.
         unsafe { mad_avx2(&mut acc[..i0], &v[..i0], w) };
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use std::arch::wasm32::*;
+        let (n, wv) = (acc.len() & !3, f32x4_splat(w));
+        let mut f = [0.0f32; 4];
+        while i0 < n {
+            // SAFETY: i0 + 4 ≤ n ≤ acc.len() ≤ v.len(); the four lanes are fused (`wasm_simd::fmadd`), then rounded
+            // to f16 one by one as the scalar path does
+            unsafe { v128_store(f.as_mut_ptr() as *mut v128, crate::wasm_simd::fmadd(crate::wasm_simd::widen4(v.as_ptr().add(i0)), wv, crate::wasm_simd::widen4(acc.as_ptr().add(i0)))) };
+            for (a, x) in acc[i0..i0 + 4].iter_mut().zip(f) {
+                *a = f32_to_f16(x);
+            }
+            i0 += 4;
+        }
+    }
     for (a, &vv) in acc[i0..].iter_mut().zip(&v[i0..]) {
         *a = f32_to_f16(f16_to_f32(vv).mul_add(w, f16_to_f32(*a)));
     }
@@ -210,6 +267,20 @@ pub fn scale(acc: &mut [u16], s: f32) {
         i0 = acc.len() & !7;
         // SAFETY: AVX2 + FMA + F16C detected; i0 ≤ acc.len().
         unsafe { scale_avx2(&mut acc[..i0], s) };
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use std::arch::wasm32::*;
+        let (n, sv) = (acc.len() & !3, f32x4_splat(s));
+        let mut f = [0.0f32; 4];
+        while i0 < n {
+            // SAFETY: i0 + 4 ≤ n ≤ acc.len().
+            unsafe { v128_store(f.as_mut_ptr() as *mut v128, f32x4_mul(crate::wasm_simd::widen4(acc.as_ptr().add(i0)), sv)) };
+            for (a, x) in acc[i0..i0 + 4].iter_mut().zip(f) {
+                *a = f32_to_f16(x);
+            }
+            i0 += 4;
+        }
     }
     for a in acc[i0..].iter_mut() {
         *a = f32_to_f16(f16_to_f32(*a) * s);

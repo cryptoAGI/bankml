@@ -78,6 +78,23 @@ Q1_0's dot product has a WebAssembly SIMD kernel (`q1_0::simd128_core`, used by 
   f32 halfway point, or are subnormal or non-finite, use the scalar `mul_add`. WebAssembly has no deterministic
   SIMD FMA, and the software `fmaf` was a third of the time.
 
+The **f16 paths and the tiled attention kernel** have WebAssembly SIMD too (`bankML/wasm_simd.rs`), each bit-identical
+to its scalar definition:
+- **`f16::vec_dot`** (the KV cache's dot products) keeps the reference's four 8-lane accumulators, as eight f32x4, and
+  its reduction order. Both factors are f16 (11 significant bits), so each product is exact in f32 and the fused
+  multiply-add is a multiply then an add.
+- **`f16::widen`** widens four f16 at a time exactly (the bits shifted into place, scaled by 2¹¹²; infinities and NaNs
+  set apart); `f16::mad` and `f16::scale` (the reference kernel's V accumulator) use it, then round each lane to f16 as
+  the scalar path does.
+- **The tiled kernel's score chains and V update** run four lanes at a time through `wasm_simd::fmadd`: the fused
+  `relaxed_madd` in the relaxed build, otherwise the f64 route above, with the scalar `mul_add` for the rare lanes
+  where rounding twice could differ.
+
+`tools/browseml.sh test` runs these kernels' unit tests, and `q1_0`'s, on `wasm32-wasip1` under Node's WASI
+(`testing/wasi-run.mjs`), with SIMD and with relaxed SIMD: all 65,536 f16 values through `widen4`, and about a million
+`fmadd` lanes against `mul_add`. Those lanes include sums that land on an f32 midpoint after the f64 rounding, which is
+exactly where rounding twice goes wrong; with the fix removed, the test fails.
+
 ### Measured
 
 Bonsai-1.7B Q1_0 on a Ryzen 3 3200U (2 cores, 4 threads), in Node (`testing/bench.mjs`: a 20-token prompt, 48 tokens
@@ -91,6 +108,11 @@ written; the machine otherwise idle):
 | `browseml-mt-relaxed.wasm` | 2 | 3.53 | 2.19 |
 | `browseml-mt.wasm` | 4 | 2.96 | 1.91 |
 | `browseml-mt-relaxed.wasm` | 4 | **5.16** | **2.71** |
+
+The f16 and attention SIMD (`wasm_simd.rs`), measured old against new, interleaved (3 rounds in both orders, load
+average 1.4–2.3): writing on 2 threads with relaxed SIMD, median 2.76 against 2.31 tok/s (+19 %, ahead in 6 of 6);
+on one thread, 1.62 against 1.52 (+6 %, ahead in 5 of 6, at the edge of the noise). Reading a 20-token prompt
+did not change beyond the noise: attention is a small share at that length.
 
 Every build gives the oracle's answers, the same text: `browseml.wasm` 9 of 9 (`testing/oracle.mjs`),
 `browseml-mt-relaxed.wasm` on 2 threads 9 of 9 (`testing/bench.mjs … oracle.jsonl 9`), and through 4 threads in
@@ -107,7 +129,6 @@ From V8's profiles of every thread (`node --cpu-prof … testing/bench.mjs`):
 
 Next:
 - spread attention across the pool, as the native engine's split-KV attention does;
-- a relaxed-SIMD f16 dot product;
 - read the activation's signs once per 128 weights instead of once per 32.
 
 ## What a visitor sees while it works
@@ -128,6 +149,7 @@ Nothing is a silent wait (`bankml-chat.js`):
 
 ```sh
 tools/browseml.sh            # → hf/space/browseml.wasm, browseml-mt.wasm, browseml-mt-relaxed.wasm
+tools/browseml.sh test       # the kernels' unit tests under Node's WASI, SIMD and relaxed SIMD (no model needed)
 tools/browseml.sh oracle     # and the oracle on browseml.wasm (Node 20+, .models/Bonsai-1.7B-Q1_0.gguf and its FORK.json)
 node browseML/testing/bench.mjs hf/space/browseml-mt-relaxed.wasm .models/Bonsai-1.7B-Q1_0.gguf FORK.json 4 \
   .models/oracle-forward/serve-Bonsai-1.7B-Q1_0.jsonl 9    # 4 threads: speed, and the 9 answers against the record

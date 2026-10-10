@@ -5,8 +5,21 @@
 # for cross-origin-isolated pages). The same engine as the native build; the targets are installed on first use.
 #   tools/browseml.sh            build
 #   tools/browseml.sh oracle     build, then check it against llama-server b11192's recorded answers (Node 20+)
+#   tools/browseml.sh test       the kernels' unit tests (wasm_simd, f16, q1_0) on wasm32-wasip1 under Node's WASI, with
+#                                SIMD and with relaxed SIMD: every lane equal to the scalar reference, bit for bit
 set -eu
 cd "$(dirname "$0")/.."
+if [ "${1:-}" = test ]; then
+  rustup target list --installed | grep -qx wasm32-wasip1 || rustup target add wasm32-wasip1
+  export CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings $PWD/browseML/testing/wasi-run.mjs"
+  for f in +simd128 +simd128,+relaxed-simd; do
+    # --allow-undefined: the test binary links the GPU loader's dlopen/dlsym (LTO drops them from the real builds);
+    # the runner traps if one is called. Tests that start a thread pool or need the models are skipped.
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/wasm-test" RUSTFLAGS="-C target-feature=$f -C link-arg=--allow-undefined" \
+      cargo test --release --target wasm32-wasip1 --lib -p bankml -- wasm_simd f16::tests q1_0::tests --skip avx2_equals --skip par_ --skip oracle --test-threads=1
+  done
+  exit
+fi
 for t in wasm32-wasip1 wasm32-wasip1-threads; do rustup target list --installed | grep -qx $t || rustup target add $t; done
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 case "$TARGET_DIR" in /*) OUT="$TARGET_DIR" ;; *) OUT="$PWD/$TARGET_DIR" ;; esac

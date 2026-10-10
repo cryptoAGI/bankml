@@ -47,6 +47,8 @@ pub mod sampler;
 pub mod schema;
 pub mod sha256;
 pub mod sincosf;
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub mod wasm_simd;
 pub mod sys;
 pub mod metrics;
 pub mod train;

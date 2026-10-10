@@ -154,8 +154,6 @@ pub fn cosf(y: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// All 2^32 inputs against the C library this machine runs (the reference's glibc, its FMA variant on an FMA
     /// CPU). Ignored by default: a few minutes on one core.
     #[test]

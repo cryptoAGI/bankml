@@ -375,6 +375,9 @@ fn tiled_body(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize
             let tile = T.min(n_kv[r] - ic);
             let mut chains = [0.0f32; T];
             for (d, &qd) in qs[r].iter().enumerate() {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                crate::wasm_simd::fma_chain(&mut chains[..tile], &kt[d * T..d * T + tile], qd);
+                #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
                 for (c, &kd) in chains.iter_mut().zip(&kt[d * T..d * T + tile]) {
                     *c = kd.mul_add(qd, *c); // each cell's own chain over the head dimension, in order
                 }
@@ -412,6 +415,9 @@ fn tiled_body(qs: &[&[f32]], n_kv: &[usize], k: &[u16], v: &[u16], stride: usize
             }
             *sum = (*sum as f64 + tsum) as f32;
             for (tk, &p) in kq.iter().enumerate().take(tile) {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                crate::wasm_simd::axpy(a, &vt[tk * hd..(tk + 1) * hd], p);
+                #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
                 for (x, &vd) in a.iter_mut().zip(&vt[tk * hd..(tk + 1) * hd]) {
                     *x = vd.mul_add(p, *x);
                 }

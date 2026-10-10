@@ -30,6 +30,22 @@
   - The engine refuses this build where `relaxed_madd` is not fused, and the page falls back to `browseml-mt.wasm`.
   - On a 2-core laptop, 4 threads: prompt 5.16 tok/s and writing 2.71, against 1.43 and 1.11 on one thread.
   - 9 of 9 oracle answers identical in Node and in Chrome.
+- **The f16 paths and the tiled attention kernel in WebAssembly SIMD** (`bankML/wasm_simd.rs`): `f16::vec_dot` with
+  the reference's accumulators and reduction order (f16 × f16 is exact in f32), `f16::widen`/`mad`/`scale` four lanes
+  at a time, and the tiled kernel's score chains and V update through an exact four-lane `fmadd` (`relaxed_madd` in
+  the relaxed build, otherwise f64 with a scalar fallback for the lanes where rounding twice could differ). The
+  modules on the Space were already built from this code; the source now matches them byte for byte.
+  - Oracle: `browseml.wasm` 9 of 9 and `browseml-mt-relaxed.wasm` on 2 threads 9 of 9, identical to llama-server
+    b11192's record.
+  - Speed: measured old/new interleaved (3 rounds, both orders, Bonsai-1.7B, a 20-token prompt and 48 tokens written;
+    load average 1.4–2.3): writing on 2 threads (relaxed) median **2.76 against 2.31 tok/s** (+19 %; ahead in 6 of 6,
+    the slowest new run above the fastest old), on one thread 1.62 against 1.52 (+6 %, ahead in 5 of 6, at the edge
+    of the noise); reading a short prompt unchanged within the noise.
+- **`tools/browseml.sh test`**: the kernels' unit tests (`wasm_simd`, `f16`, `q1_0`) on `wasm32-wasip1` under Node's
+  WASI (`browseML/testing/wasi-run.mjs`), with SIMD and with relaxed SIMD, 13 of 13 each: every f16 value through
+  `widen4`, about a million `fmadd` lanes against `mul_add`. Those lanes include the double-rounding trap (an f64 sum
+  that lands on an f32 midpoint), and the test fails with the fix removed. These kernels had only the end-to-end oracle
+  before.
 - **No silent wait.** An activity line at the top of the page, mirrored in the response window and the dashboard,
   shows each phase:
   - the download (MB, MB/s, time left, a bar);
