@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // browseML's model download, under the visitor's control: nothing is fetched until the visitor presses "Download and
-// verify" on the page's consent card. Progress (MB done of total, MB/s, time left), Pause (the bytes so far stay in
-// this tab's memory only, and Resume asks for the rest with an HTTP Range request), Cancel (aborts the fetch and
+// verify" on the page's consent card. Progress (MB done of total, MB/s, time left), Pause or a dropped connection (the
+// bytes so far stay in this tab's memory only, and Resume or Retry asks for the rest with an HTTP Range request), Cancel (aborts the fetch and
 // keeps nothing). The finished file goes into this browser's Cache Storage, where browseml.js finds it; bankML then
 // checks its sha256 against the pin before it answers (browseml.load). Also what browseML keeps in this browser
 // (Cache Storage, the engine files) and the browser's storage controls (estimate, persisted, persist).
@@ -11,7 +11,7 @@ export const CACHE = "browseml-models";  // as browseml.js keeps it
 const M = browseml.MODEL;
 
 /** phase: idle · downloading · paused · saving · failed · cancelled · done (in the cache; verification is the page's) */
-let st = { phase: "idle", got: 0, total: M.bytes, rate: null, eta: null, error: null };
+let st = { phase: "idle", got: 0, total: M.bytes, rate: null, eta: null, error: null, resumable: false };
 const fns = new Set();
 const set = (patch) => { st = { ...st, ...patch }; fns.forEach((f) => { try { f(st); } catch { /* a listener's own failure */ } }); };
 export const state = () => st;
@@ -32,19 +32,22 @@ export async function download() {
   if (st.phase === "downloading" || st.phase === "saving") return false;
   if (await browseml.isCached()) { set({ phase: "done", got: M.bytes, error: null }); return true; }
   abort = new AbortController();
-  const from = partial && st.phase === "paused" ? st.got : 0;
-  set({ phase: "downloading", error: null, rate: null, eta: null, got: from, total: M.bytes });
+  // a pause, or a connection that dropped mid-file, kept the bytes so far: ask for the rest with a Range request
+  const from = partial && (st.phase === "paused" || (st.phase === "failed" && st.resumable)) ? st.got : 0;
+  set({ phase: "downloading", error: null, resumable: false, rate: null, eta: null, got: from, total: M.bytes });
+  let got = from, streaming = false;  // the exact bytes in hand; a failure while streaming the body is resumable
   try {
     const r = await fetch(M.url, { signal: abort.signal, headers: from ? { Range: `bytes=${from}-` } : undefined });
     if (!r.ok) throw new Error(`the model could not be downloaded: HTTP ${r.status}`);
-    let got = r.status === 206 ? from : 0;  // a server that ignores the range sends the whole file again
+    got = r.status === 206 ? from : 0;  // a server that ignores the range sends the whole file again
     if (!partial || got === 0) partial = new Uint8Array(M.bytes);
     const buf = partial, reader = r.body.getReader(), samples = [{ t: performance.now(), got }];
     let shown = 0;
+    streaming = true;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (got + value.length > buf.length) throw new Error("the download is longer than the model");
+      if (got + value.length > buf.length) { streaming = false; throw new Error("the download is longer than the model"); }
       buf.set(value, got); got += value.length;
       const t = performance.now();
       samples.push({ t, got });
@@ -52,6 +55,7 @@ export async function download() {
       if (t - shown > 150) { shown = t; const rate = rateOf(samples); set({ got, rate, eta: rate ? (M.bytes - got) / rate : null }); }
     }
     if (got !== M.bytes) throw new Error(`the download stopped at ${got} of ${M.bytes} bytes`);
+    streaming = false;
     set({ got, phase: "saving", rate: null, eta: null });
     try {
       const c = await caches.open(CACHE);
@@ -63,9 +67,12 @@ export async function download() {
     set({ phase: "done" });
     return true;
   } catch (e) {
-    if (abort && abort.signal.aborted) return false;  // pause() or cancel() already set the state
-    partial = null;
-    set({ phase: "failed", error: String(e.message || e), rate: null, eta: null });
+    // pause() or cancel() already set the state; a pause resumes from the exact byte
+    if (abort && abort.signal.aborted) { if (st.phase === "paused") set({ got }); return false; }
+    // the connection dropped mid-file (a phone, Wi-Fi that changes): keep the bytes so far; Retry resumes there
+    const resumable = streaming && !!partial && got > 0 && got < M.bytes;
+    if (!resumable) partial = null;
+    set({ phase: "failed", error: String(e.message || e), resumable, got: resumable ? got : st.got, rate: null, eta: null });
     return false;
   } finally {
     abort = null;
@@ -81,10 +88,10 @@ export function pause() {
 export function cancel() {
   if (st.phase === "downloading" && abort) abort.abort();
   partial = null;
-  set({ phase: "cancelled", got: 0, rate: null, eta: null, error: null });
+  set({ phase: "cancelled", got: 0, rate: null, eta: null, error: null, resumable: false });
 }
 /** Say the download is over (the page verified, or the visitor removed the model). */
-export function reset(phase = "idle", error = null) { partial = null; set({ phase, got: phase === "idle" ? 0 : st.got, rate: null, eta: null, error }); }
+export function reset(phase = "idle", error = null) { partial = null; set({ phase, got: phase === "idle" ? 0 : st.got, rate: null, eta: null, error, resumable: false }); }
 
 // ── what browseML keeps in this browser ─────────────────────────────────────────────────────────────────────────
 /** Every file browseML keeps: the model in Cache Storage (exact bytes), and the engine's files as this page loaded
@@ -124,12 +131,13 @@ export async function persisted() { try { return navigator.storage && navigator.
 export async function askPersist() { try { return navigator.storage && navigator.storage.persist ? await navigator.storage.persist() : null; } catch { return null; } }
 export async function estimate() { try { const e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; return e && e.quota ? { usage: e.usage || 0, quota: e.quota } : null; } catch { return null; } }
 
-/** "Remove the model after this session": a visit that starts without this tab's marker removes what the last visit
- *  kept, and leaving the page tries to remove it at once (the browser may not wait for it). */
+/** "Remove the model after this session": the session is this tab's (sessionStorage), so a reload or a link within the
+ *  tab keeps the model, and the next visit in a new tab or window starts by removing what the last one kept. Nothing
+ *  is removed on pagehide: it fires on a reload too (the 248 MB would be thrown away and downloaded again), and a
+ *  closing tab gives no reliable time to delete them anyway. */
 const MARK = "browseml:session";
 export function sessionCleanup(on) {
   let fresh = false;
   try { fresh = !sessionStorage.getItem(MARK); sessionStorage.setItem(MARK, "1"); } catch { /* off */ }
   if (fresh && on()) { try { caches.delete(CACHE); } catch { /* off */ } }
-  addEventListener("pagehide", (e) => { if (on() && !e.persisted) { try { caches.delete(CACHE); } catch { /* off */ } } });
 }

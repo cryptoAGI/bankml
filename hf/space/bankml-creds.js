@@ -3,7 +3,8 @@
  * the token's storage (this tab by default; remembered on this device only when chosen), the only function that
  * sends it (to huggingface.co and router.huggingface.co, nowhere else), and the "your credentials" panel.
  * Copyright (C) 2026 cryptoAGI — Professor Codephreak and Gregory L. Magnusson. GNU GPL version 3 only; the full text:
- * https://www.gnu.org/licenses/gpl-3.0.txt and src/creds/LICENSE. Source: src/creds/ of bankML UIF. */
+ * bankml-creds-LICENSE.txt beside this file (src/creds/LICENSE in the source) and https://www.gnu.org/licenses/gpl-3.0.txt.
+ * Source: src/creds/ of bankML UIF; this file is unminified, so it is its source too. */
 const SESSION_KEY = "bankml-creds:session";
 const DEVICE_KEY = "bankml-creds:device";
 const LEGACY_SESSION_KEY = "bankml.oauth";
@@ -209,7 +210,7 @@ function mountPanel(host) {
       root.append(el("div", { className: "bkc-row" }, fgt, out));
     }
     if (note) root.append(el("p", { className: /not|did not|could not|refused/i.test(note) && !/^Forgotten|^Signed out/.test(note) ? "bkc-bad" : "bkc-fine", textContent: note, role: "status" }));
-    root.append(el("p", { className: "bkc-fine", textContent: "This panel and the token handling are bankml-creds.js, GPL-3.0-only (its source is published with every build); the rest of the page is MIT." }));
+    root.append(el("p", { className: "bkc-fine", textContent: "This panel and the token handling are bankml-creds.js, GPL-3.0-only (its licence text is bankml-creds-LICENSE.txt beside this page, and the file is unminified, so it is its own source); the rest of the page is MIT." }));
   }
   draw();
   const off = onChange(draw);

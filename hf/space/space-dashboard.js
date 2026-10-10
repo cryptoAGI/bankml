@@ -13,11 +13,13 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids.filter((k) => k !== null && k !== undefined)); return e; };
 const cores = navigator.hardwareConcurrency || 1;
 const isolated = !!(globalThis.crossOriginIsolated && typeof SharedArrayBuffer !== "undefined");
-const MB = (b) => (b ? `${(b / 1e6).toFixed(0)} MB` : "—");
+const MB = (b) => (b ? (b < 1e6 ? `${(b / 1e3).toFixed(1)} KB` : `${(b / 1e6).toFixed(0)} MB`) : "—");
 const fmt = (x, d = 1, unit = "") => (x === null || x === undefined || Number.isNaN(x) ? "—" : `${Number(x).toFixed(d)}${unit}`);
 // Bonsai-1.7B's KV cache in f16: 28 layers × (8 heads × 128) × K and V × 2 bytes, per token of context
 const KV_BYTES_PER_TOKEN = 28 * 1024 * 2 * 2;
 const CTX = [1024, 2048, 4096];
+// the context advised where the device reports little memory: the same rule as the browseML card (caps.ctxCapFor)
+const lowCap = () => { const m = navigator.deviceMemory; return typeof m !== "number" ? null : m <= 2 ? 1024 : m <= 4 ? 2048 : null; };
 // a token is about 3.6 characters of English for this tokenizer: an estimate, said as one
 const tokensOf = (chars) => Math.round(chars / 3.6);
 
@@ -145,14 +147,14 @@ function render() {
         ["this device", navigator.deviceMemory ? `about ${navigator.deviceMemory} GB (rounded by the browser)` : "not reported"],
         ["context cache", `${MB(S.ctx * KV_BYTES_PER_TOKEN)} at ${S.ctx} tokens (estimate)`],
         ["browseML needs", `about ${MB(browseml.MODEL.bytes + S.ctx * KV_BYTES_PER_TOKEN + 96e6)}: the model, the context cache and the engine's scratch (estimate)`]]),
-    navigator.deviceMemory && navigator.deviceMemory <= 4 ? el("p", { className: "dnote warn", textContent: `This device reports about ${navigator.deviceMemory} GB: the browser may close the tab under memory pressure. A smaller context helps, or use the free CPU tab.` }) : null);
+    lowCap() && S.ctx > lowCap() ? el("p", { className: "dnote warn", textContent: `This device reports about ${navigator.deviceMemory} GB: keep the context at ${lowCap()} or less (now ${S.ctx}), or the browser may close the tab under memory pressure. Or use the free CPU tab.` }) : null);
   // disk and cache: what browseML keeps here, persistent storage, remove after this session, clear (confirmed here)
   const cacheBytes = kept.filter((f) => f.where === "Cache Storage").reduce((n, f) => n + f.bytes, 0);
   const files = kept.length
     ? el("ul", { className: "dadvice" }, ...kept.map((f) => el("li", { className: "ok", textContent: `${f.name} · ${MB(f.bytes)} · ${f.where}${f.where === "HTTP cache" ? " (the browser manages it)" : ""}` })))
     : el("p", { className: "dnote", textContent: "browseML keeps nothing in this browser yet." });
   const after = el("label", { className: "drow" }, el("input", { type: "checkbox", checked: !!S.removeAfterSession, onchange: (e) => set({ removeAfterSession: e.target.checked }) }),
-    " remove the model after this session (the next visit starts without it)");
+    " remove the model after this session — it goes when this site next opens in a new tab or window (a reload or a link within this tab keeps it)");
   const clearRow = el("div", { className: "drow" });
   if (!confirmClear) clearRow.append(el("button", { type: "button", textContent: `Clear browseML's cache${cacheBytes ? ` (frees ${MB(cacheBytes)})` : ""}`, disabled: !cacheBytes, onclick: () => { confirmClear = true; render(); } }));
   else clearRow.append(el("span", { className: "dnote warn", textContent: `Remove ${MB(cacheBytes)} from this browser? The next browseML answer downloads the model again.` }),
@@ -171,12 +173,14 @@ function render() {
   const who = card("Who answers", kv(engineRows), engineBtns);
 
   root.replaceChildren(el("h2", { textContent: "This computer — controls and diagnostics" }),
-    el("p", { className: "dlede", textContent: `Everything here is measured in this browser and stays in it. ${cores} logical cores · ${isolated ? "cross-origin isolated: threads on" : "not isolated: one thread"}.` }),
+    el("p", { className: "dlede", role: "status", textContent: notice || `Everything here is measured in this browser and stays in it. ${cores} logical cores · ${isolated ? "cross-origin isolated: threads on" : "not isolated: one thread"}.` }),
     el("p", { className: "dnow", id: "dash-now", textContent: st.activity ? "now: " + st.activity : "now: idle" }),
     el("div", { className: "dgrid" }, who, controls, usage, mem, disk, adv));
 }
-let alertTimer = null;
-function alertLine(t) { const p = $("dash")?.querySelector(".dlede"); if (!p) return; const old = p.textContent; p.textContent = t; clearTimeout(alertTimer); alertTimer = setTimeout(() => (p.textContent = old), 4000); }
+// a notice (what a button just did, such as the bytes a clear freed) is state, not a write into the DOM: render() rebuilds
+// every card, so a line written straight into .dlede was replaced by the next render before anyone could read it
+let alertTimer = null, notice = null;
+function alertLine(t) { notice = t; clearTimeout(alertTimer); alertTimer = setTimeout(() => { notice = null; render(); }, 6000); render(); }
 
 /** T mode's diag: the same measurements, as an accordion. */
 window.bankmlDiag = async () => {

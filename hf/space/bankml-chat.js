@@ -44,7 +44,10 @@ const windowed = (h, keep = 12, step = 8) => h.slice(Math.floor(Math.max(0, h.le
 
 // ── settings the visitor controls (the page's controls, space-dashboard.js), kept in this browser ─────────────────
 const SETTINGS_KEY = "bankml.space.settings";
-const DEFAULTS = { threads: 0 /* 0: every core */, ctx: 4096, maxTokens: 256, lean: true, removeAfterSession: false, spaceModel: "ternary" };
+// the context a device that reports little memory is advised (the input field's bundle uses the same rule, caps.ctxCapFor),
+// and the default there: a phone that reports 4 GB starts at 2048, not 4096
+const ctxCap = () => { const m = navigator.deviceMemory; return typeof m !== "number" ? null : m <= 2 ? 1024 : m <= 4 ? 2048 : null; };
+const DEFAULTS = { threads: 0 /* 0: every core */, ctx: Math.min(4096, ctxCap() || 4096), maxTokens: 256, lean: true, removeAfterSession: false, spaceModel: "ternary" };
 export const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; } catch { return { ...DEFAULTS }; } })();
 export function setSettings(change) {
   Object.assign(settings, change);
@@ -232,7 +235,7 @@ function hint(m, msg) {
   if (m === "local" && /failed to fetch|networkerror|load failed|not reachable|TypeError/i.test(msg))
     return ` — the browser did not reach ${endpoint()}: the card under “your own bankML” shows the ways forward (browseML now, install steps for this device, the free CPU tab, Hugging Face).`;
   if (m === "space" && /connection|network|failed to fetch|errored/i.test(msg)) return " — the free CPU Space could not be reached or dropped the connection: ask again, or use browseML.";
-  if (m === "browse" && /download|HTTP \d|stopped at|longer than/i.test(msg)) return " — the model's download failed: check the connection and press Retry on the browseML card; a partial download is not kept.";
+  if (m === "browse" && /download|HTTP \d|stopped at|longer than/i.test(msg)) return " — the model's download failed: check the connection and press Retry on the browseML card (after a dropped connection it continues from the bytes that arrived).";
   return "";
 }
 
@@ -515,7 +518,7 @@ async function* askProvider(hist, message, done, progress = () => {}) {
     throw new NoDelivery(noDelivery(`${model} via a Hugging Face provider`, usage && !usage.completion_tokens ? "counted no completion tokens" : "sent no answer text (perhaps only its reasoning)") + ` · ${label}`);
   }
   counted(usage?.prompt_tokens, usage?.completion_tokens, `last: ${usage ? usage.completion_tokens + " tokens" : pieces + " pieces (the provider sent no token count)"} · ${model} (not bankML)`);
-  done({ ok: false, line: delivery({ who: `${model} via a Hugging Face provider`, prompt: usage?.prompt_tokens, completion: usage?.completion_tokens,
+  done({ ok: false, receipt: false, line: delivery({ who: `${model} via a Hugging Face provider`, prompt: usage?.prompt_tokens, completion: usage?.completion_tokens,
                                      ttft, total, where: "at a Hugging Face Inference Provider" + (usage ? "" : ` (it sent no token count; ${pieces} pieces)`), verdict: label }) });
   hist.push({ role: "user", content: message }, { role: "assistant", content: shown });
 }
@@ -554,7 +557,8 @@ async function* askFree(hist, message, done, progress = () => {}) {
   const lines = [v.delivery || `delivered by the model — ${u.prompt_tokens ?? "?"} prompt → ${u.completion_tokens} completion tokens · free public CPU (${SPACE_NAME})`,
     bankmlThere ? (U().SPACE_BANKML || "bankML on Hugging Face's free CPU — a receipt on the answer, checked here") : spaceHonest()];
   if (v.footer) lines.push(`footer added by the Space (not the model's words): ${v.footer}`);
-  done({ ok: !!v.ok, line: lines.join("\n") });
+  // no receipt by design (llama.cpp on the free CPU) is not a failed receipt: the pill then reads a neutral "no receipt"
+  done({ ok: !!v.ok, receipt: bankmlThere, line: lines.join("\n") });
   hist.push({ role: "user", content: message }, { role: "assistant", content: text });
 }
 
@@ -650,12 +654,20 @@ function setMode(m, focus = false) {
   try { sessionStorage.setItem("bankml.answerer", m); } catch { /* off */ }
   renderMode(focus);
 }
+// the chosen tab in view inside the scrolled strip (a phone), however it was chosen (a click, the not-found card's
+// buttons, the keys): only the strip scrolls, never the page
+function inStrip(t) {
+  const s = t.parentElement; if (!s || s.scrollWidth <= s.clientWidth) return;
+  const sr = s.getBoundingClientRect(), tr = t.getBoundingClientRect();
+  if (tr.left < sr.left) s.scrollLeft -= sr.left - tr.left + 8;
+  else if (tr.right > sr.right) s.scrollLeft += tr.right - sr.right + 8;
+}
 function renderMode(focus = false) {
   const m = mode();
   for (const t of document.querySelectorAll("#anstabs [role=tab]")) {
     const on = t.dataset.mode === m;
     t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1;
-    if (on) { $("anspanel").setAttribute("aria-labelledby", t.id); if (focus) t.focus(); }
+    if (on) { $("anspanel").setAttribute("aria-labelledby", t.id); if (focus) t.focus(); inStrip(t); }
   }
   $("spacerow").hidden = m !== "space";
   $("browserow").hidden = m !== "browse";
@@ -672,7 +684,7 @@ $("anstabs").addEventListener("click", (e) => { const t = e.target.closest("[rol
 $("anstabs").addEventListener("keydown", (e) => {
   const all = [...document.querySelectorAll("#anstabs [role=tab]")], i = all.findIndex((t) => t.dataset.mode === mode());
   const j = e.key === "ArrowRight" ? (i + 1) % all.length : e.key === "ArrowLeft" ? (i - 1 + all.length) % all.length : e.key === "Home" ? 0 : e.key === "End" ? all.length - 1 : -1;
-  if (j >= 0) { e.preventDefault(); setMode(all[j].dataset.mode, true); all[j].scrollIntoView({ block: "nearest", inline: "nearest" }); }
+  if (j >= 0) { e.preventDefault(); setMode(all[j].dataset.mode, true); }
 });
 
 // ── ask a question again (after browseML verified, or from the not-found card): the field sends it as if typed ─────
@@ -728,8 +740,9 @@ function renderConsent() {
         d.phase === "paused" ? el("button", { type: "button", className: "load", textContent: "Resume", onclick: () => startDownload() }) : null,
         d.phase !== "saving" ? el("button", { type: "button", className: "cs-stop", textContent: "Cancel", onclick: () => { fetcher.cancel(); log("mode", "browseML: download cancelled, nothing kept"); } }) : null));
   } else if (d.phase === "failed") {
-    kids.push(el("p", { className: "cs-line is-bad", textContent: `✗ ${d.error || "the download or the verification failed"} — Retry starts it again; a partial download is not kept.` }),
-      el("div", { className: "cs-row" }, el("button", { type: "button", className: "load", textContent: "Retry", onclick: () => startDownload() }),
+    kids.push(el("p", { className: "cs-line is-bad", textContent: `✗ ${d.error || "the download or the verification failed"} — ${d.resumable ? `the ${MB(d.got)} that arrived are kept in this tab's memory (a reload loses them): Retry asks for the rest` : "Retry starts it again"}.` }),
+      el("div", { className: "cs-row" }, el("button", { type: "button", className: "load", textContent: d.resumable ? `Retry from ${MB(d.got)}` : "Retry", onclick: () => startDownload() }),
+        d.resumable ? el("button", { type: "button", className: "cs-stop", textContent: "Cancel", onclick: () => { fetcher.cancel(); log("mode", "browseML: download cancelled, nothing kept"); } }) : null,
         el("button", { type: "button", textContent: "Use the free CPU tab", onclick: () => setMode("space") })));
   } else if (consentInfo.cached) {
     kids.push(el("p", { className: "cs-line", textContent: `The model is already in this browser's cache (${MB(need)}): starting takes a few seconds, and bankML checks its sha256 again first. Nothing is downloaded.` }),
@@ -794,7 +807,7 @@ function renderConsentControls() {
     el("label", { className: "dctl" }, el("span", { textContent: "CPU threads" }), thr, out,
       el("small", { textContent: c.isolated ? `1 to ${max} of ${cores} cores (bankML takes at most ${browseml.MAX_THREADS}) · applies on the next load` : "one: this page is not cross-origin isolated here (no SharedArrayBuffer), so threads are not possible — open pythai-bankml.static.hf.space directly for every core" })),
     el("label", { className: "dctl" }, el("span", { textContent: "context (RAM)" }), ctx,
-      el("small", { textContent: `the model ${MB(browseml.MODEL.bytes)} + its cache per token of context; estimates · applies on the next load${b ? ` · WebAssembly memory in use now: ${MB(browseml.memoryBytes)}` : ""}${navigator.deviceMemory && navigator.deviceMemory <= 4 ? ` · this device reports about ${navigator.deviceMemory} GB: a smaller context is safer` : ""}` })),
+      el("small", { textContent: `the model ${MB(browseml.MODEL.bytes)} + its cache per token of context; estimates · applies on the next load${b ? ` · WebAssembly memory in use now: ${MB(browseml.memoryBytes)}` : ""}${ctxCap() && settings.ctx > ctxCap() ? ` · this device reports about ${navigator.deviceMemory} GB: keep the context at ${ctxCap()} or less, or the browser may close the tab` : ""}` })),
     el("label", { className: "dctl" }, el("span", { textContent: "answer length" }), maxT, mo, el("small", { textContent: "tokens at most, from the next answer" })),
     stale ? el("div", { className: "cs-row" }, el("span", { className: "cs-line is-working", textContent: `the engine runs ${b.threads} thread${b.threads > 1 ? "s" : ""}, context ${b.ctx}:` }),
       el("button", { type: "button", textContent: "Reload the engine to apply", onclick: () => reloadBrowse().then(() => { renderConsent(); renderConsentControls(); }) })) : null].filter(Boolean));
