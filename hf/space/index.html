@@ -2,6 +2,9 @@
 <html lang="en" class="dark">
 <head>
   <meta charset="utf-8" />
+  <!-- what this page may connect to: itself, Hugging Face (the free CPU Space, sign-in, providers, the model), the
+       Gradio client's CDN, the Savante persona on GitHub, and the visitor's own bankML on this machine -->
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' https://huggingface.co https://router.huggingface.co https://*.huggingface.co https://*.hf.co https://*.hf.space wss://*.hf.space https://cdn.jsdelivr.net https://raw.githubusercontent.com https://deltaverse.pythai.net http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Why bankML — verified 1-bit and ternary AI on the CPU you already have</title>
   <meta name="description" content="1-bit and ternary language models on the CPU you already have: llama.cpp's exact answers, checked bit for bit, then faster. Zero-dependency Rust." />
@@ -124,7 +127,6 @@
     code{font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:rgba(255,255,255,.07); padding:1px 5px; border-radius:4px; color:#e6f7fb;}
     .more{font-size:14.5px; color:var(--quiet); margin-top:.3em;}
     .more::before{content:"→ "; color:rgba(var(--cy),.7);}
-    .soon{color:var(--quiet); border-bottom:1px dotted rgba(255,255,255,.3);}
     ul{padding-left:1.2em;} li{margin:.35em 0;}
     .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0 4px;}
     .stat{border:1px solid var(--rule); border-radius:10px; padding:12px 14px; background:rgba(0,0,0,.25);}
@@ -145,7 +147,7 @@
     .spaces a:hover{color:#fff}
     .spaces .on{background:#fff;color:#000;font-weight:600}
     a.unpublished{color:var(--muted);border-bottom:1px dotted rgba(255,255,255,.3);cursor:default} a.unpublished:hover{color:var(--muted)}
-    .soon-tag{font-size:.78em;color:var(--quiet);margin-left:.35em} .spaces .soon-tag{align-self:center;margin:0 6px 0 -8px}
+    .pub-tag{font-size:.78em;color:var(--quiet);margin-left:.35em} .spaces .pub-tag{align-self:center;margin:0 6px 0 -8px}
     .spaces a.unpublished{border-bottom:0}
     #ask .mantra{font-size:19px;color:#fff;margin:.2em 0 .6em}
     #ask .speakers{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:6px 0 4px;font-size:14px}
@@ -252,18 +254,41 @@
     /* Ask: the stable Space's note, the chooser and its carrier note, the environment, the session, examples */
     #ask .edition{font-size:14px;color:var(--muted);margin:0 0 12px;padding:8px 12px;border-left:3px solid var(--btc-orange);background:rgba(247,147,26,.06);border-radius:0 8px 8px 0}
     #ask .edition a{color:var(--btc-orange);border-bottom-color:rgba(247,147,26,.4)}
-    #ask .answerers{border:0;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
-    #ask .answerers legend{padding:0;margin:0 0 6px;font-size:14px;color:var(--quiet)}
-    #ask label.ans{position:relative;display:flex;align-items:center;gap:8px;min-height:var(--tap);padding:8px 12px;border:1px solid var(--rule);border-radius:12px;background:rgba(0,0,0,.3);cursor:pointer;color:var(--muted)}
-    #ask label.ans input{position:absolute;opacity:0;pointer-events:none}
-    #ask label.ans span{display:flex;flex-direction:column;line-height:1.25}
-    #ask label.ans b{color:#fff;font-weight:600;font-size:15px}
-    #ask label.ans small{font-size:12.5px;color:var(--quiet)}
-    #ask label.ans.on,#ask label.ans:has(input:checked){border-color:var(--btc-orange);background:rgba(247,147,26,.12);box-shadow:0 0 0 1px var(--btc-orange) inset}
-    #ask label.ans.on small,#ask label.ans:has(input:checked) small{color:#fbd9ae}
-    #ask label.ans:has(input:focus-visible){outline:2px solid var(--btc-orange);outline-offset:2px}
-    #ask label.ans.is-coming{cursor:not-allowed;opacity:.55;border-style:dashed}
-    #ask label.ans input[value=hf]:checked ~ span small{color:#ffd0d6}
+    /* who answers: a real tablist over the conversation; the active tab in bitcoin orange; on phones it scrolls sideways */
+    #ask .anstabs{display:flex;gap:6px;margin:10px 0 0;overflow-x:auto;overflow-y:hidden;max-width:100%;min-width:0;
+      scrollbar-width:thin;scrollbar-color:rgba(247,147,26,.5) transparent;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding-bottom:4px}
+    #ask .anstabs::-webkit-scrollbar{height:6px} #ask .anstabs::-webkit-scrollbar-thumb{background:rgba(247,147,26,.45);border-radius:3px}
+    #ask .anstabs [role=tab]{flex:1 1 0;min-width:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-height:var(--tap);
+      text-align:left;padding:8px 12px;border:1px solid var(--rule);border-radius:12px;background:rgba(0,0,0,.3);color:var(--muted);font:inherit;cursor:pointer;line-height:1.25}
+    #ask .anstabs [role=tab] b{color:#fff;font-weight:600;font-size:15px;white-space:nowrap}
+    #ask .anstabs [role=tab] small{font-size:12.5px;color:var(--quiet)}
+    #ask .anstabs [role=tab]:hover{background:rgba(247,147,26,.08)}
+    #ask .anstabs [role=tab][aria-selected=true]{border-color:var(--btc-orange);background:rgba(247,147,26,.14);box-shadow:0 0 0 1px var(--btc-orange) inset}
+    #ask .anstabs [role=tab][aria-selected=true] b{color:var(--btc-orange)} #ask .anstabs [role=tab][aria-selected=true] small{color:#fbd9ae}
+    #ask .anstabs [role=tab]:focus-visible{outline:2px solid var(--btc-orange);outline-offset:2px}
+    #ask .anspanel{min-width:0}
+    #ask .spacemodel{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:14px;color:var(--muted)}
+    #ask .spacemodel select,#ask .cscard select{min-height:var(--tap);background:var(--field-bg);color:var(--field-text);border:1px solid rgba(148,163,184,.35);border-radius:8px;padding:6px 8px;font-size:16px;max-width:100%}
+    /* the browseML consent card and the not-found card: glass, in the palette */
+    #ask .cscard{flex:1 1 100%;min-width:0;background:rgba(0,0,0,.34);border:1px solid var(--rule);border-radius:12px;padding:12px 14px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+    #ask .cscard h3{margin:0 0 6px;font-size:15px;color:#fff}
+    #ask .cs-what,#ask .nf-lede{font-size:14px;color:var(--muted);margin:0 0 8px}
+    #ask .cs-line{font-size:13.5px;margin:6px 0;color:var(--muted);overflow-wrap:anywhere}
+    #ask .cs-line.is-working{color:var(--btc-orange)} #ask .cs-line.is-ok{color:var(--candle-green)} #ask .cs-line.is-bad{color:var(--stop-red)}
+    #ask .cs-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+    #ask .cs-stop{border-color:var(--stop-red);background:color-mix(in srgb,var(--stop-red) 16%,transparent)}
+    #ask .cs-bar{width:100%;height:8px;accent-color:var(--btc-orange)}
+    #ask .cs-kv{margin:6px 0} #ask .cs-verdicts{margin:6px 0}
+    #ask .cs-controls{margin:8px 0 0} #ask .cs-controls summary{cursor:pointer;min-height:var(--tap);display:flex;align-items:center}
+    #ask .cs-controls input[type=range]{width:100%;accent-color:var(--btc-orange)}
+    #ask .cs-note,#ask .nf-note{font-size:12.5px;color:var(--quiet);margin:6px 0 0}
+    #ask .nfcard{border-color:color-mix(in srgb,var(--stop-red) 45%,var(--rule))}
+    #ask .nf-ways{margin:0;padding-left:1.3em;font-size:14px;color:var(--muted)} #ask .nf-ways > li{margin:0 0 10px} #ask .nf-ways b{color:#fff}
+    #ask .nf-ways button{margin-top:6px}
+    #ask .nf-code{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+    #ask .nf-code pre{flex:1;min-width:0;margin:0;overflow-x:auto;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.55);color:#a7f3d0;font:12.5px/1.5 ui-monospace,Menlo,monospace}
+    #ask .credspanel{flex:1 1 100%;min-width:0}
+    #ask .credspanel button,#ask .credspanel a{min-height:var(--tap)}
     #ask .carrier{font-size:14px;color:var(--muted);margin:8px 0 10px}
     #ask .load{background:rgba(247,147,26,.16);border-color:var(--btc-orange)}
     #ask .load:hover{background:rgba(247,147,26,.3)}
@@ -315,8 +340,9 @@
     @media (pointer:coarse){ .spaces a,.spaces span{min-height:var(--tap);display:inline-flex;align-items:center} .dcard button,.logtools button,.tabs [role=tab]{min-height:var(--tap)} .faq summary{min-height:var(--tap);align-items:center} }
     /* phone: 16px gutters, the field docked to the bottom above the keyboard and the safe area, windows inside the screen */
     @media (max-width:640px){
+      #ask .anstabs [role=tab]{flex:0 0 auto;min-width:44px} #ask .anstabs [role=tab] small{white-space:nowrap}
       main{padding:44px var(--gutter) calc(190px + env(safe-area-inset-bottom));}
-      section{padding:16px;} #ask .answerers{grid-template-columns:1fr 1fr;}
+      section{padding:16px;}
       .hero h1{letter-spacing:.08em;} .hero .delta{letter-spacing:.3em;}
       .ultimate-input-field:not(.is-maximized){left:0!important;right:0!important;top:auto!important;bottom:0!important;width:auto!important;
         border-radius:14px 14px 0 0;padding:8px max(8px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))}
@@ -332,7 +358,6 @@
       main{padding-top:28px} .hero{padding:1vh 0 1.2vh} .hero h1{font-size:clamp(40px,7vw,64px);margin:.1em 0 0} .spaces{margin-bottom:10px}
       #ask .mantra{margin:.1em 0 .3em} footer{margin-bottom:170px}
     }
-    @media (max-width:380px){ #ask .answerers{grid-template-columns:1fr;} }
     @media (max-width:560px){ body{font-size:16px;} section{padding:18px 16px;} .table td:first-child{width:auto;} .table td{display:block; border-top:none; padding:4px 0;} .table tr{display:block; border-top:1px solid var(--rule); padding:8px 0;} }
   </style>
 </head>
@@ -342,7 +367,7 @@
 
   <main>
     <header class="hero">
-      <div class="spaces" role="group" aria-label="the Spaces"><a href="https://huggingface.co/spaces/PYTHAI/savante" rel="noopener">Savante</a><span class="on" aria-current="page">bankML · stable</span><a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF · experimental</a><small class="soon-tag">soon</small><a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">browseML</a><small class="soon-tag">soon</small></div>
+      <div class="spaces" role="group" aria-label="the Spaces"><a href="https://huggingface.co/spaces/PYTHAI/savante" rel="noopener">Savante</a><span class="on" aria-current="page">bankML · stable</span><a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF · experimental</a><small class="pub-tag">not yet public</small><a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">browseML</a><small class="pub-tag">not yet public</small></div>
       <div class="delta">Δ <a href="https://deltaverse.pythai.net" rel="noopener">deltaverse</a> · <a href="https://github.com/cryptoAGI" rel="noopener">cryptoAGI</a></div>
       <h1>bankML</h1>
       <p>Verified 1-bit and ternary language models on the CPU you already have.</p>
@@ -356,26 +381,39 @@
         <label><input type="radio" name="speaker" value="bankml" checked> bankML</label>
         <label><input type="radio" name="speaker" value="savante"> Savante</label>
       </div>
-      <fieldset class="answerers">
-        <legend>who answers</legend>
-        <label class="ans on"><input type="radio" name="mode" value="browse" checked><span><b>bankML in this browser</b><small>browseML · receipt · free</small></span></label>
-        <label class="ans"><input type="radio" name="mode" value="local"><span><b>your own bankML</b><small>bankml serve · receipt · free</small></span></label>
-        <label class="ans is-coming" title="Offered once bankML itself runs inside Gregory-L/mindXhfgradio"><input type="radio" name="mode" value="space" disabled><span><b>bankML on a free Space</b><small>coming · not live yet</small></span></label>
-        <label class="ans"><input type="radio" name="mode" value="hf"><span><b>a Hugging Face provider</b><small>not bankML · no receipt · your quota</small></span></label>
-      </fieldset>
+      <div id="anstabs" class="anstabs" role="tablist" aria-label="who answers">
+        <button type="button" role="tab" id="anst-space" data-mode="space" aria-controls="anspanel" aria-selected="true" tabindex="0"><b>bankML · free CPU</b><small>Bonsai on HF's free CPU · no receipt · free</small></button>
+        <button type="button" role="tab" id="anst-browse" data-mode="browse" aria-controls="anspanel" aria-selected="false" tabindex="-1"><b>browseML</b><small>bankML in this browser · receipt · free</small></button>
+        <button type="button" role="tab" id="anst-local" data-mode="local" aria-controls="anspanel" aria-selected="false" tabindex="-1"><b>your own bankML</b><small>bankml serve · receipt · free</small></button>
+        <button type="button" role="tab" id="anst-hf" data-mode="hf" aria-controls="anspanel" aria-selected="false" tabindex="-1"><b>Hugging Face</b><small>not bankML · no receipt · your quota</small></button>
+      </div>
+      <div id="anspanel" class="anspanel" role="tabpanel" aria-labelledby="anst-space">
       <p class="carrier" id="modenote"></p>
-      <div id="browserow" class="row browserow">
-        <button id="browseload" type="button" class="load">Load bankML in this browser (248 MB, once)</button>
-        <progress id="browseprogress" max="1" value="0" hidden aria-label="download"></progress>
-        <span id="browsestatus" class="status">Or just ask: the first question offers the one-time download and shows its progress.</span>
-        <button id="browseforget" type="button" class="linkish">remove the model from this browser's cache</button>
+      <div id="spacerow" class="row">
+        <label class="spacemodel">model on the free CPU
+          <select id="spacemodel" aria-label="model on the free CPU">
+            <option value="ternary">Ternary-Bonsai-8B (llama.cpp)</option>
+            <option value="bonsai">Bonsai-8B, 1-bit (llama.cpp)</option>
+          </select></label>
+        <span class="status is-warn">Public: what you type is processed on the public Space Gregory-L/mindXhfgradio. Not bankML's engine, no receipt.</span>
+      </div>
+      <div id="browserow" class="row browserow" hidden>
+        <div id="browsecard" class="cscard" aria-live="polite">
+          <h3>browseML — bankML in this browser</h3>
+          <div id="browsestate"></div>
+          <p id="browsestatus" class="status" aria-live="polite"></p>
+          <progress id="browseprogress" max="1" value="0" hidden aria-label="loading"></progress>
+          <details class="cs-controls"><summary>CPU and RAM for browseML (kept in this browser)</summary><div id="browsectl"></div></details>
+          <p class="cs-note">The disk and cache controls (what browseML keeps, persistent storage, remove after this session, clear) are in “This computer” below.</p>
+        </div>
       </div>
       <div id="localrow" class="row" hidden>
         <input id="endpoint" aria-label="your bankml serve address" spellcheck="false">
         <button id="connect" type="button">connect</button>
         <span id="localstatus" class="status"></span>
+        <div id="notfound" class="cscard nfcard" role="region" aria-label="your own bankML did not answer" hidden></div>
         <details>
-          <summary>Start your own bankML for this page (Linux, AVX2; free)</summary>
+          <summary>Start your own bankML for this page (Linux x86-64 with AVX2, or Windows in WSL2; free)</summary>
           <ol>
             <li><code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code> — builds bankML,
               imports and verifies Bonsai-8B, and starts it so this page (<span id="origin"></span>) may talk to it. Already installed?
@@ -388,9 +426,9 @@
       </div>
       <div id="hfrow" class="row" hidden>
         <input id="model" aria-label="provider model (owner/name)" spellcheck="false">
-        <button id="signin" type="button">Sign in with Hugging Face</button>
-        <button id="signout" type="button" hidden>sign out</button>
-        <span id="who" class="status"></span>
+        <div id="credspanel" class="credspanel" aria-label="your credentials"></div>
+        <p class="status">Free Hugging Face accounts have no included inference credit since 2026-10-07: provider answers need PRO or purchased credits. No account? <a href="https://huggingface.co/join" rel="noopener" target="_blank">Create one on huggingface.co</a>.</p>
+      </div>
       </div>
       <div class="env" aria-label="environment">
         <span><i>model runs on</i> <b id="env_server">—</b></span>
@@ -411,8 +449,8 @@
       <p class="askhint">Ask in the field at the bottom of the screen: <b>Enter</b> sends, <b>Shift+Enter</b> starts a new line.
         Each answer opens in its own window, with its delivery line under it.</p>
       <p class="edition">This is <b>bankML's stable Space</b>. The experimental edition, still expanding, is
-        <a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF</a><small class="soon-tag">not yet public</small>; bankML alone in the
-        browser is <a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">PYTHAI/browseML</a><small class="soon-tag">not yet public</small>.</p>
+        <a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF</a><small class="pub-tag">not yet public</small>; bankML alone in the
+        browser is <a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">PYTHAI/browseML</a><small class="pub-tag">not yet public</small>.</p>
 
       <div id="highlights" class="highlights" aria-label="bankML at a glance">
         <ul>
@@ -441,17 +479,20 @@
           b11192's own answers — tensors, dot products, whole conversations, sampled tokens, JSON grammars, logprobs —
           and require bankML to match every one. The record of every run is published beside the release.
           <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md">The oracles</a>.</p></details>
-        <details><summary>Which answers on this page are bankML's?</summary><p>Those from <b>bankML in this browser</b> and
-          <b>your own bankML</b>, each with a receipt this page checks. From <b>a Hugging Face provider</b> a hosted
-          model speaks with the chosen persona, without bankML's arithmetic or a receipt, and every answer says so; free
-          Hugging Face accounts have no inference credits, so that needs PRO or purchased credits. <b>bankML on a free
-          Space</b> is shown as coming: it is offered once bankML itself runs inside Gregory-L/mindXhfgradio.</p>
+        <details><summary>Which answers on this page are bankML's?</summary><p>Those from <b>browseML</b> (bankML in this
+          browser) and <b>your own bankML</b>, each with a receipt this page checks. <b>bankML · free CPU</b>, the tab that
+          answers at once, is Bonsai on Hugging Face's free CPU — llama.cpp, not bankML's engine, no receipt — on the
+          public Space Gregory-L/mindXhfgradio, asked as PYTHAI/savante asks it; every answer says so, and what you type
+          there is processed on that public Space. When that Space runs bankML itself and returns a receipt, this page
+          checks it. From <b>Hugging Face</b> a provider-hosted model speaks with the chosen persona, without bankML's
+          arithmetic or a receipt, under your own account; free accounts have no included inference credit since
+          2026-10-07, so that needs PRO or purchased credits.</p>
           <p>Under every answer the page writes its delivery line — the prompt and completion tokens the engine counted,
           the time to the first token, the speed, where it ran and the receipt's verdict. When no completion tokens were
           counted it says “No delivery from the model” instead, and that turn is not added to the conversation.</p></details>
         <details id="faq-browseml"><summary>What is browseML — bankML in this browser?</summary><p>bankML's own engine,
           the same Rust code that runs <code>bankml serve</code>, compiled to WebAssembly and run by this page on your CPU.
-          Press <b>Load</b> and it downloads Bonsai-1.7B (1-bit, 248&nbsp;MB) once from its Hugging Face repository at a pinned
+          Press <b>Download and verify</b> on its card and it downloads Bonsai-1.7B (1-bit, 248&nbsp;MB) once from its Hugging Face repository at a pinned
           revision, keeps it in this browser's cache, and verifies it exactly as the native engine does — the GGUF guard,
           then the sha256 of the whole file against its FORK.json — before it answers. Every answer carries the same receipt
           <code>bankml serve</code> gives. Nothing is installed and nothing you ask leaves your computer.</p>
@@ -463,7 +504,7 @@
           <code>sAGI/personas/bankml.persona</code> with the context of its own codebase, or Savante, from her own
           repository's <code>savante.persona</code> (read at a pinned commit and refused unless its sha256 matches) with
           the context of her designer, Professor Codephreak, and her family of repositories. Changing it starts a new
-          conversation. Who <i>answers</i> — this browser, your own bankML, or a provider — is chosen separately.</p></details>
+          conversation. Who <i>answers</i> — the free CPU, browseML, your own bankML, or Hugging Face — is chosen separately, with the tabs over the conversation.</p></details>
         <details><summary>How do I run my own bankML for this page?</summary><p>On Linux with AVX2:
           <code>git clone https://github.com/cryptoAGI/bankml &amp;&amp; cd bankml &amp;&amp; ./install.sh --space</code>.
           It builds bankML, imports and verifies Bonsai-8B (1.16&nbsp;GB), and lets this page reach it. Then press
@@ -750,10 +791,15 @@
     </div>
     <p><a href="https://huggingface.co/spaces/PYTHAI/savante">Savante</a> — the oversight office bankML serves ·
       <a href="https://huggingface.co/spaces/PYTHAI/bankml">bankML on Hugging Face</a> (this stable Space) ·
-      <a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF</a><small class="soon-tag">not yet public</small>, the experimental edition ·
-      <a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">browseML</a><small class="soon-tag">not yet public</small>, bankML in the browser ·
+      <a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF</a><small class="pub-tag">not yet public</small>, the experimental edition ·
+      <a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">browseML</a><small class="pub-tag">not yet public</small>, bankML in the browser ·
       <a href="https://github.com/minaiml">minaiml</a> (<a href="https://huggingface.co/spaces/PYTHAI/minaiml">Space</a>), language models in miniature ·
       <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">thesis</a></p>
+    <p class="licence">Licences: the page's core (this page, bankml-chat.js, browseML, the input field) is MIT OR Apache-2.0
+      (the input field's bundle MIT); the credential module <code>bankml-creds.js</code> — Hugging Face sign-in, the token's
+      storage, the only code that sends it — is <b>GPL-3.0-only</b> (<a href="bankml-creds-LICENSE.txt">licence</a>), in its own
+      file the core never imports: bankML's rule for code that makes, holds or checks a secret, so no build can ship a
+      modified, closed copy of what handles your credentials. The page works without it, with no sign-in.</p>
     <p>bankML · MIT OR Apache-2.0 · Professor Codephreak · Gregory L. Magnusson · the substrate: DeltaVerse (MIT) ·
       <a href="https://deltaverse.pythai.net/bankml">deltaverse.pythai.net/bankml</a></p>
   </footer>
@@ -817,6 +863,9 @@
   <!-- the ultimate input field (cryptoAGI/ultimate-bankml-ui, space-mount: src/space/main.tsx), and its engine -->
   <div id="uif-root"></div>
   <script src="uif-space.js"></script>
+  <!-- the credential module: Hugging Face sign-in and the token, GPL-3.0-only, in its own file the core never imports
+       (bankml-creds.js; licence: bankml-creds-LICENSE.txt). The page works without it, with no sign-in. -->
+  <script type="module" src="bankml-creds.js" data-bankml-creds></script>
   <script type="module" src="bankml-chat.js"></script>
   <script type="module" src="space-dashboard.js"></script>
 </body>

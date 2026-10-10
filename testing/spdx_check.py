@@ -3,23 +3,31 @@
 """Every tracked source file names its licence in an SPDX header, and the header matches its layer (LICENSING.md):
 crypto/ → GPL-3.0-only, agpl/ → AGPL-3.0-only (alone or with MIT), upstream/ → MIT (llama.cpp's licence),
 everything else → MIT OR Apache-2.0. C sources and headers count since 0.3.2 (the C API and its oracles).
+The web pages' credential module (bankml-creds.js, and any creds/ source directory) is GPL-3.0-only wherever it lies —
+it holds the visitor's token — and must have its licence text beside it (bankml-creds-LICENSE.txt or creds/LICENSE).
 run: python3 testing/spdx_check.py   (exit 0 = every file agrees)"""
 import re, subprocess, sys
 from pathlib import Path
 
 SRC = re.compile(r"\.(rs|py|mjs|jsx|sh|c|h)$")
-files = [f for f in subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1]).stdout.split() if SRC.search(f)]
+# the credential module: the client-side code that signs a visitor in and holds their token (LICENSING.md)
+CREDS = re.compile(r"(^|/)bankml-creds\.js$|(^|/)creds/[^/]+\.(ts|js|mjs)$")
+files = [f for f in subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1]).stdout.split() if SRC.search(f) or CREDS.search(f)]
 root = Path(__file__).resolve().parents[1]
 bad = []
 for f in files:
     head = "\n".join((root / f).read_text(encoding="utf-8", errors="replace").splitlines()[:3])
     m = re.search(r"SPDX-License-Identifier:\s*(.+?)\s*(?:\*/)?\s*$", head, re.M)
-    want = ("GPL-3.0-only",) if f.startswith("crypto/") else ("AGPL-3.0-only", "MIT AND AGPL-3.0-only") if f.startswith("agpl/") \
+    want = ("GPL-3.0-only",) if f.startswith("crypto/") or CREDS.search(f) else ("AGPL-3.0-only", "MIT AND AGPL-3.0-only") if f.startswith("agpl/") \
         else ("MIT",) if f.startswith("upstream/") else ("MIT OR Apache-2.0",)
     if not m:
         bad.append(f"{f}: no SPDX header")
     elif m.group(1) not in want:
         bad.append(f"{f}: {m.group(1)!r}, expected {' or '.join(want)}")
+    if CREDS.search(f):
+        here = (root / f).parent
+        if not ((here / "bankml-creds-LICENSE.txt").is_file() or (here / "LICENSE").is_file()):
+            bad.append(f"{f}: GPL-3.0-only without its licence text beside it (bankml-creds-LICENSE.txt or LICENSE)")
 for b in bad:
     print("FAIL", b)
 print(f"spdx: {len(files) - len(bad)}/{len(files)} files carry the licence of their layer")

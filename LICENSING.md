@@ -12,6 +12,7 @@ Copyright stays with the authors: cryptoAGI — Professor Codephreak and Gregory
 |---|---|---|---|
 | bankml's own code: runtime, kernels, gateway, UI, tests | everything today | `MIT OR Apache-2.0` | maximal freedom, rights preserved |
 | client-side encryption and key handling: anything that makes, holds or checks a secret | `crypto/` (none yet; the first will be receipt signing) | `GPL-3.0-only` | transparency: no black-box modification of key handling can ship, because every build that contains it must publish its source |
+| the web pages' credential module: Hugging Face sign-in, the visitor's token and its storage, the only code that sends it | `hf/space/bankml-creds.js` (built from ultimate-bankml-ui `src/creds/`) | `GPL-3.0-only` | the same rule, in the browser: the code that holds a visitor's secret is open to everyone who runs it |
 | code derived from AGPL projects | `agpl/` (none yet) | `AGPL-3.0-only` (or `MIT AND AGPL-3.0-only` where a file mixes both) | the upstream licence stays intact |
 
 Rules that keep the layers honest:
@@ -20,6 +21,19 @@ Rules that keep the layers honest:
   feature (`crypto`, `agpl`), off by default, so the default binary stays `MIT OR Apache-2.0`; a build with either
   feature is, as a whole, under that feature's copyleft licence, and **will** say so in `bankml version` and in
   `GET /bankml`.
+- **The credential module of the web pages is GPL-3.0-only, and the pages' core never imports it.** On bankML's
+  Hugging Face page (`hf/space/`), the code that handles a visitor's credential — by the visitor, for the visitor —
+  is one file, `bankml-creds.js`: Hugging Face sign-in (OAuth with PKCE), where the token is kept (this tab by
+  default; on this device only when the visitor opts in, with its expiry shown), the optional pasted token, the
+  "your credentials" panel, and `fetchWithToken`, the only function that attaches the token to a request, which
+  refuses every host but `huggingface.co` and `router.huggingface.co`. It is built on its own from
+  [ultimate-bankml-ui](https://github.com/cryptoAGI/ultimate-bankml-ui)'s `src/creds/` and loaded by the page with its
+  own `<script type="module">`; its full licence text is beside it (`bankml-creds-LICENSE.txt`). The page's core
+  (`bankml-chat.js`, browseML, the dashboard: `MIT OR Apache-2.0`; the input field's bundle `uif-space.js`: MIT) talks
+  to it only through `window.bankmlCreds` (`status`, `signIn`, `signOut`, `describe`, `fetchWithToken`, `onChange`,
+  `mountPanel`), never holds the token, never builds an Authorization header, and works without it (no sign-in is
+  offered). Why: the same reason as `crypto/` — no one can ship a modified, closed copy of the code that holds a
+  visitor's credentials. `testing/spdx_check.py` checks the header and that the licence text is beside it.
 - **AGPL §13** (network use) is met the way bankon-vault meets it: the source is public, and a deployment runs a
   tagged commit whose source anyone can fetch.
 - **Every source file carries an SPDX header**, and the release gate checks it (`testing/spdx_check.py`): a file in

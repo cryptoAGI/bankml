@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// browseML's page: one answerer here, bankML in this browser (browseml.js); the chooser names the others honestly (two
-// on the full bankML Space, one coming) without calling them. The input → response pattern of the Savante Space, with every model word written with textContent, never innerHTML. Each answer keeps three things apart:
+// browseML's page: one answerer here, bankML in this browser (browseml.js); the chooser names the others honestly (all
+// on the full bankML Space: the free CPU, your own bankML, a Hugging Face provider) without calling them. The input → response pattern of the Savante Space, with every model word written with textContent, never innerHTML. Each answer keeps three things apart:
 //   the answer   — only the text the model generated
 //   a page note  — anything this page adds (a hidden <think> section, a length cut), labelled as the page's
 //   the delivery — the engine's own token counts, time to the first token, tok/s, where it ran, the receipt's verdict

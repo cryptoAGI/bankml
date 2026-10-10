@@ -80,13 +80,10 @@ select { background: var(--field-bg); color: var(--field-text); -webkit-text-fil
 .pill-choice:has(input:checked) { border-color: var(--btc-orange); color: var(--work-ink); box-shadow: 0 0 0 1px var(--btc-orange) inset; }
 .pill-choice input { accent-color: var(--btc-orange); width: 18px; height: 18px; margin: 0; }
 .pill-choice small { font-size: .8rem; color: var(--text2); }
-/* the answerers this page does not run: smaller, dashed. One is coming; two live on the full bankML Space, reached by a
-   link and never called from this page */
-.pill-choice.is-coming, a.pill-choice.elsewhere { display: inline-block; padding: 11px 12px; line-height: 1.3; font-size: .88rem;
+/* the answerers this page does not run: smaller, dashed. They live on the full bankML Space, reached by a link and never
+   called from this page */
+a.pill-choice.elsewhere { display: inline-block; padding: 11px 12px; line-height: 1.3; font-size: .88rem;
   border-style: dashed; border-radius: 22px; }
-.pill-choice.is-coming input { vertical-align: -2px; margin-right: 4px; }
-.pill-choice.is-coming { cursor: not-allowed; color: var(--text2); }
-.pill-choice.is-coming input { width: 14px; height: 14px; }
 a.pill-choice.elsewhere { color: var(--text); text-decoration: none; }
 a.pill-choice.elsewhere:hover { border-color: var(--link); }
 .chooser-more { flex: 1 1 100%; font-size: .75rem; color: var(--text2); }
