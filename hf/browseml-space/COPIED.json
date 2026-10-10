@@ -1,0 +1,10 @@
+{
+ "source": "hf/space/ of github.com/cryptoAGI/bankml, at 8265ddb with uncommitted changes",
+ "files": {
+  "browseml.js": "712c640f8043f9c0ec36e922b657e3364548508bb3e7bafbdb10a208dd3356d3",
+  "browseml-worker.js": "39cdf331a06e87e31d8406491efc64492e21da48f83ca367ece4ddabfd56feb8",
+  "browseml-thread.js": "8af38a67e81d02ed98f1473426ffd6c97241161d5e2766c578af0b8b906c3b53",
+  "browseml-wasi.js": "1f91566020e8255c3417086e676af8288a11908902bff027f87994406fb91cca",
+  "browseML/Bonsai-1.7B-Q1_0.gguf.FORK.json": "616c57b425f70b31c4bf9614dc67f9f98854e4b9b0f8d4bdd87f6ed30983676b"
+ }
+}

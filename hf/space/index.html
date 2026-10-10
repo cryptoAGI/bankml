@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Why bankML — verified 1-bit and ternary AI on the CPU you already have</title>
   <meta name="description" content="1-bit and ternary language models on the CPU you already have: llama.cpp's exact answers, checked bit for bit, then faster. Zero-dependency Rust." />
   <meta name="keywords" content="bankML, bankml, 1-bit LLM, ternary LLM, BitNet, Bonsai-8B, Q1_0, Q2_0, low-bit inference, CPU inference, Rust, llama.cpp, bit-exact, verified inference, receipts, Ollama API, OpenAI API, mindX, Savante, DeltaVerse, cryptoAGI" />
@@ -88,6 +88,14 @@
       --txt:#ffffff; --muted:rgba(255,255,255,.78); --quiet:rgba(255,255,255,.46);
       --cy:34,211,238; --vi:157,78,221; --am:255,176,84;
       --panel:rgba(8,10,22,.80); --rule:rgba(34,211,238,.18);
+      /* the palette (operator, 2026-10-10): defined once, used everywhere, the same in both of the field's themes */
+      --candle-green:#0ECB81; --candle-ink:#04140d;      /* Send, and positive events: ✓ receipt, connected, verified, delivered */
+      --btc-orange:#F7931A;                              /* accents and working: the active answerer, downloading, reading, streaming, focus */
+      --stop-red:#F6465D;                                /* Stop and failure: ✗ receipt, errors, no delivery (the chart's red candle) */
+      --term-green:#33FF66; --term-bg:#000;              /* T mode */
+      --field-bg:#0d1117; --field-text:#f1f5f9; --field-placeholder:#9aa6b8;   /* placeholder 7:1 on the field */
+      --glass:rgba(13,17,23,.72); --glass-solid:#0d1117; /* the windows the field spawns */
+      --gutter:16px; --tap:44px;
     }
     html{background:radial-gradient(circle at center, var(--bg1) 0%, var(--bg0) 70%) fixed; background-color:#000;}
     body{margin:0; color:var(--txt); font:17px/1.62 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif; background:transparent;}
@@ -132,28 +140,28 @@
     .release li, .thesis li{margin:0 0 10px;}
     .release li strong, .thesis li strong{color:rgb(var(--am));}
     .thesis ol{padding-left:1.3em;}
-    .spaces{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:3px;font-size:13px;margin-bottom:18px;background:rgba(0,0,0,.35)}
+    .spaces{display:inline-flex;flex-wrap:wrap;justify-content:center;gap:2px;max-width:100%;border:1px solid var(--rule);border-radius:22px;padding:3px;font-size:13px;margin-bottom:18px;background:rgba(0,0,0,.35)}
     .spaces a,.spaces span{padding:3px 14px;border-radius:999px;border:none;color:var(--muted)}
     .spaces a:hover{color:#fff}
     .spaces .on{background:#fff;color:#000;font-weight:600}
+    a.unpublished{color:var(--muted);border-bottom:1px dotted rgba(255,255,255,.3);cursor:default} a.unpublished:hover{color:var(--muted)}
+    .soon-tag{font-size:.78em;color:var(--quiet);margin-left:.35em} .spaces .soon-tag{align-self:center;margin:0 6px 0 -8px}
+    .spaces a.unpublished{border-bottom:0}
     #ask .mantra{font-size:19px;color:#fff;margin:.2em 0 .6em}
-    #ask .modes{display:grid;gap:6px;margin:8px 0}
-    #ask .modes label{color:var(--muted);cursor:pointer}
-    #ask .modenote{font-size:14px;color:var(--quiet);margin:.3em 0 .8em}
     #ask .speakers{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:6px 0 4px;font-size:14px}
     #ask .speakers .lbl{color:var(--quiet)}
     #ask .speakers label{cursor:pointer;color:var(--muted)}
     #ask .speakers input:checked + *{color:inherit}
     #ask .browserow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:4px 0 10px}
-    #ask .linkish{background:none;border:0;padding:0;color:var(--muted);text-decoration:underline;cursor:pointer;font:inherit}
+    #ask .linkish{background:none;border:0;padding:0 2px;color:var(--muted);text-decoration:underline;cursor:pointer;font:13.5px system-ui,sans-serif}
     #ask [hidden]{display:none!important}
     #ask .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
-    #ask input[type=text],#ask #endpoint,#ask #model{flex:1 1 220px;min-width:0;background:rgba(0,0,0,.35);color:#fff;border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font:14px ui-monospace,Menlo,monospace}
-    #ask textarea{flex:1 1 260px;min-width:0;background:rgba(0,0,0,.35);color:#fff;border:1px solid var(--rule);border-radius:8px;padding:9px 10px;font:15px system-ui,sans-serif;resize:vertical}
-    #ask button{background:rgba(var(--cy),.16);color:#fff;border:1px solid rgba(var(--cy),.5);border-radius:8px;padding:8px 14px;font:600 14px system-ui,sans-serif;cursor:pointer}
+    #ask input[type=text],#ask #endpoint,#ask #model{flex:1 1 220px;min-width:0;min-height:var(--tap);background:var(--field-bg);color:var(--field-text);-webkit-text-fill-color:var(--field-text);caret-color:var(--btc-orange);border:1px solid rgba(148,163,184,.35);border-radius:8px;padding:8px 10px;font:16px ui-monospace,Menlo,monospace}
+    #ask button{min-height:var(--tap);background:rgba(var(--cy),.16);color:#fff;border:1px solid rgba(var(--cy),.5);border-radius:8px;padding:8px 14px;font:600 14px system-ui,sans-serif;cursor:pointer}
     #ask button:hover{background:rgba(var(--cy),.3)}
     #ask button:disabled{opacity:.5;cursor:wait}
-    #ask .status{font-size:13.5px;color:var(--quiet);flex:1 1 100%}
+    #ask .status{font-size:13.5px;color:var(--muted);flex:1 1 100%}
+    #ask .status.is-working{color:var(--btc-orange)} #ask .status.is-ok{color:var(--candle-green)} #ask .status.is-bad{color:var(--stop-red)} #ask .status.is-warn{color:rgb(var(--am))}
     #ask details{flex:1 1 100%;font-size:14.5px;color:var(--muted)}
     #ask details code{word-break:break-all}
     /* the page behind the input field: this computer's controls and diagnostics (space-dashboard.js) */
@@ -165,7 +173,7 @@
     .dcard h3{margin:0 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
     .dkv{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;margin:0 0 8px;font-size:13.5px}
     .dkv dt{color:var(--quiet)} .dkv dd{margin:0;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;overflow-wrap:anywhere}
-    .dkv dd.ok{color:#56d364} .dkv dd.warn{color:rgb(var(--am))}
+    .dkv dd.ok{color:var(--candle-green)} .dkv dd.warn{color:rgb(var(--am))}
     .dctl{display:grid;grid-template-columns:7.5em 1fr auto;align-items:center;gap:4px 8px;margin:0 0 10px;font-size:13.5px}
     .dctl > span{color:var(--quiet)} .dctl small{grid-column:2 / -1;color:var(--quiet);font-size:12px}
     .dctl select,.dctl input[type=range]{width:100%}
@@ -177,25 +185,27 @@
     .dspark{display:flex;align-items:center;gap:10px;margin:0 0 8px}
     .dspark small{color:var(--quiet);font-size:12px}
     .spark{width:220px;height:40px;background:rgba(0,0,0,.25);border-radius:6px}
-    .spark polyline{fill:none;stroke:#56d364;stroke-width:1.6;stroke-linejoin:round}
+    .spark polyline{fill:none;stroke:var(--candle-green);stroke-width:1.6;stroke-linejoin:round}
     .dadvice{margin:0;padding-left:18px;font-size:13.5px;line-height:1.45}
-    .dadvice li{margin:0 0 6px} .dadvice li.warn::marker{color:rgb(var(--am))} .dadvice li.ok::marker{color:#56d364}
+    .dadvice li{margin:0 0 6px} .dadvice li.warn::marker{color:rgb(var(--am))} .dadvice li.ok::marker{color:var(--candle-green)}
     .dnote{font-size:13px;margin:4px 0 0} .dnote.warn{color:rgb(var(--am))}
-    .dnow{font:12.5px ui-monospace,Menlo,monospace;color:#7ee2b8;margin:0 0 10px;min-height:1.2em}
+    .dnow{font:12.5px ui-monospace,Menlo,monospace;color:var(--btc-orange);margin:0 0 10px;min-height:1.2em}
     /* what is happening now: fixed at the top, above everything but the field's own windows */
     .activity{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:1500;max-width:min(860px,calc(100vw - 24px));
       display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:center;padding:8px 14px;border-radius:12px;
-      background:rgba(8,14,24,.92);border:1px solid rgba(86,211,100,.35);box-shadow:0 8px 28px rgba(0,0,0,.45);
-      font:13px/1.4 ui-monospace,Menlo,monospace;color:#d6f5e0;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+      background:rgba(8,14,24,.92);border:1px solid color-mix(in srgb,var(--btc-orange) 45%,transparent);box-shadow:0 8px 28px rgba(0,0,0,.45);
+      font:13px/1.4 ui-monospace,Menlo,monospace;color:#fdeedd;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+    .activity.is-ok{border-color:color-mix(in srgb,var(--candle-green) 50%,transparent);color:#d8fbe9}
+    .activity.is-bad{border-color:color-mix(in srgb,var(--stop-red) 60%,transparent);color:#ffe1e5}
+    .activity.is-ok .act-dot{background:var(--candle-green);animation:none} .activity.is-bad .act-dot{background:var(--stop-red);animation:none}
     .activity[hidden]{display:none}
-    .act-dot{width:9px;height:9px;border-radius:50%;background:#56d364;box-shadow:0 0 0 0 rgba(86,211,100,.6);animation:actpulse 1.4s infinite}
-    @keyframes actpulse{70%{box-shadow:0 0 0 8px rgba(86,211,100,0)}100%{box-shadow:0 0 0 0 rgba(86,211,100,0)}}
+    .act-dot{width:9px;height:9px;border-radius:50%;background:var(--btc-orange);box-shadow:0 0 0 0 rgba(247,147,26,.6);animation:actpulse 1.4s infinite}
+    @keyframes actpulse{70%{box-shadow:0 0 0 8px rgba(247,147,26,0)}100%{box-shadow:0 0 0 0 rgba(247,147,26,0)}}
     @media (prefers-reduced-motion: reduce){.act-dot{animation:none}}
     .act-bar{grid-column:1 / -1;height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden}
     .act-bar[hidden]{display:none}
-    .act-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#56d364,#7ee2b8);transition:width .4s ease}
-    #browseprogress{width:160px;height:8px;vertical-align:middle;accent-color:#56d364}
-    #ask .who{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}
+    .act-bar i{display:block;height:100%;width:0;background:var(--btc-orange);transition:width .4s ease}
+    #browseprogress{width:160px;max-width:100%;height:8px;vertical-align:middle;accent-color:var(--btc-orange)}
     .highlights{margin:10px 0 6px;padding:14px 16px;border-radius:14px;border:1px solid var(--rule);
       background:linear-gradient(160deg,rgba(var(--cy),.10),rgba(var(--vi),.08));box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 18px 40px -22px rgba(var(--cy),.45);
       transition:opacity .35s ease,transform .35s ease,max-height .35s ease;max-height:900px;overflow:hidden}
@@ -227,10 +237,6 @@
     .faq .faq-group{margin:18px 0 4px;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--quiet)}
     .faq .faq-body{margin:.4em 0 0 1.4em} .faq .faq-body p,.faq .faq-body li{font-size:15.5px} .faq .faq-body h4{margin:.8em 0 .2em;color:#fff}
     .faq .faq-body .more{font-size:14px}
-    #ask details.who{margin-top:12px;border-top:1px solid var(--rule);padding-top:10px}
-    #ask details.who>summary{cursor:pointer;color:var(--quiet);font-size:14px;list-style:none}
-    #ask details.who>summary::-webkit-details-marker{display:none}
-    #ask details.who>summary::before{content:"▸ ";color:rgba(var(--cy),.9)} #ask details.who[open]>summary::before{content:"▾ "}
     /* Logs */
     .logs .quiet-note{font-size:14px;color:var(--quiet)}
     .logtools{display:flex;gap:8px;margin:6px 0 10px}
@@ -240,9 +246,93 @@
     .pagelog li{display:grid;grid-template-columns:auto 4.5em 1fr;gap:10px;color:#a7f3d0}
     .pagelog li time{color:var(--quiet)}
     .pagelog li .k{color:rgba(var(--cy),.9)}
-    .pagelog li.is-error,.pagelog li.is-error .k{color:#fca5a5} .pagelog li.is-warn .k{color:rgb(var(--am))} .pagelog li.is-ok .k{color:#86efac}
+    .pagelog li.is-error,.pagelog li.is-error .k{color:var(--stop-red)} .pagelog li.is-warn .k{color:rgb(var(--am))} .pagelog li.is-ok .k{color:var(--candle-green)}
     .pagelog li.empty{display:block;color:var(--quiet)}
     @media (prefers-reduced-motion:reduce){.highlights{transition:none}.faq summary::before{transition:none}}
+    /* Ask: the stable Space's note, the chooser and its carrier note, the environment, the session, examples */
+    #ask .edition{font-size:14px;color:var(--muted);margin:0 0 12px;padding:8px 12px;border-left:3px solid var(--btc-orange);background:rgba(247,147,26,.06);border-radius:0 8px 8px 0}
+    #ask .edition a{color:var(--btc-orange);border-bottom-color:rgba(247,147,26,.4)}
+    #ask .answerers{border:0;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+    #ask .answerers legend{padding:0;margin:0 0 6px;font-size:14px;color:var(--quiet)}
+    #ask label.ans{position:relative;display:flex;align-items:center;gap:8px;min-height:var(--tap);padding:8px 12px;border:1px solid var(--rule);border-radius:12px;background:rgba(0,0,0,.3);cursor:pointer;color:var(--muted)}
+    #ask label.ans input{position:absolute;opacity:0;pointer-events:none}
+    #ask label.ans span{display:flex;flex-direction:column;line-height:1.25}
+    #ask label.ans b{color:#fff;font-weight:600;font-size:15px}
+    #ask label.ans small{font-size:12.5px;color:var(--quiet)}
+    #ask label.ans.on,#ask label.ans:has(input:checked){border-color:var(--btc-orange);background:rgba(247,147,26,.12);box-shadow:0 0 0 1px var(--btc-orange) inset}
+    #ask label.ans.on small,#ask label.ans:has(input:checked) small{color:#fbd9ae}
+    #ask label.ans:has(input:focus-visible){outline:2px solid var(--btc-orange);outline-offset:2px}
+    #ask label.ans.is-coming{cursor:not-allowed;opacity:.55;border-style:dashed}
+    #ask label.ans input[value=hf]:checked ~ span small{color:#ffd0d6}
+    #ask .carrier{font-size:14px;color:var(--muted);margin:8px 0 10px}
+    #ask .load{background:rgba(247,147,26,.16);border-color:var(--btc-orange)}
+    #ask .load:hover{background:rgba(247,147,26,.3)}
+    #ask .env,#ask .counter{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--quiet);margin:6px 0;overflow-wrap:anywhere}
+    #ask .env i,#ask .counter i{font-style:normal;color:var(--quiet)} #ask .env b,#ask .counter b{color:var(--field-text);font-weight:500}
+    #ask .env small{font-size:12px}
+    #ask .counter .live{color:var(--btc-orange)} #ask .counter .muted{color:var(--quiet)}
+    #ask .chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+    #ask .chips button{background:rgba(255,255,255,.05);border-color:rgba(148,163,184,.35);font-weight:500;border-radius:999px;padding:8px 14px}
+    #ask .chips button:hover{border-color:var(--btc-orange)}
+    #ask .askhint{font-size:13.5px;color:var(--quiet);margin:6px 0 8px}
+    :focus-visible{outline:2px solid var(--btc-orange);outline-offset:2px}
+    /* the input field (uif-space.css): its text was the bundle's light-theme ink (#020817) on a dark field — the page
+       now sets .dark on <html> and gives the field its own colours from the palette */
+    .ultimate-input-field.glass-effect{background:color-mix(in srgb,var(--field-bg) 94%,transparent);border-color:rgba(148,163,184,.32)}
+    .ultimate-textarea.text-mode{color:var(--field-text);-webkit-text-fill-color:var(--field-text);caret-color:var(--btc-orange);font-size:16px}
+    .ultimate-textarea.text-mode::placeholder{color:var(--field-placeholder);-webkit-text-fill-color:var(--field-placeholder);opacity:1}
+    .ultimate-textarea:focus{box-shadow:0 0 0 2px var(--btc-orange)}
+    .ultimate-input-field.terminal-glass{background:var(--term-bg);border-color:color-mix(in srgb,var(--term-green) 40%,transparent)}
+    .ultimate-input-field.is-terminal{--uif-term:var(--term-green);--uif-text:var(--term-green)}
+    .ultimate-textarea.terminal-mode{color:var(--term-green);-webkit-text-fill-color:var(--term-green);caret-color:var(--term-green);font-size:16px}
+    .ultimate-textarea.terminal-mode:focus{box-shadow:0 0 0 2px var(--term-green)}
+    .uif-termlog{background:var(--term-bg);color:var(--term-green);border-color:color-mix(in srgb,var(--term-green) 40%,transparent)}
+    .uif-termline.is-dim{color:color-mix(in srgb,var(--term-green) 62%,transparent)} .uif-termline.is-err{color:var(--stop-red)}
+    .ultimate-textarea.terminal-mode::placeholder{color:rgba(51,255,102,.62);-webkit-text-fill-color:rgba(51,255,102,.62);opacity:1}
+    .uif-send{min-width:var(--tap);min-height:var(--tap);background:var(--candle-green);border-color:var(--candle-green);color:var(--candle-ink);font-weight:700;font-size:18px}
+    .uif-send{position:relative;z-index:3;flex:none}
+    .ultimate-controls-left,.uif-actionbar{min-width:0;overflow-x:clip;overflow-y:visible}  /* the actions clip before they reach Send */
+    .uif-send:hover{filter:brightness(1.08)} .uif-send:disabled{opacity:.78;filter:saturate(.8)}  /* still candle green while the field is empty */
+    /* room for two lines of question above the 44px controls (min-height wins over the field's own height) */
+    .ultimate-input-field.is-chat:not(.is-maximized){min-height:150px!important}
+    .uif-status.is-err{color:var(--stop-red)}
+    .bk-uif-pill.ok{color:var(--candle-green);border-color:color-mix(in srgb,var(--candle-green) 55%,transparent)}
+    .bk-uif-pill.bad{color:var(--stop-red);border-color:color-mix(in srgb,var(--stop-red) 60%,transparent)}
+    .uif-input,.uif-output-reply-input,.uif-output-rename{background:var(--field-bg);color:var(--field-text);-webkit-text-fill-color:var(--field-text);caret-color:var(--btc-orange)}
+    .uif-input::placeholder,.uif-output-reply-input::placeholder{color:var(--field-placeholder);-webkit-text-fill-color:var(--field-placeholder)}
+    /* the windows the field spawns: glass, the page showing through, the text readable over it */
+    .uif-output{background:var(--glass);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2);color:#eef2f7}
+    .uif-output .uif-msg-assistant{background:rgba(148,163,184,.14);color:#f1f5f9}
+    .uif-output .uif-msg-system{color:#c3ccd8}
+    /* a failure or "No delivery" in red, a delivery line marked green, an answer taken back hidden (bankml-chat.js markWindows) */
+    .uif-output .uif-msg-system.bk-fail,.uif-output .uif-msg-assistant.bk-fail{color:#ffd7dd;background:color-mix(in srgb,var(--stop-red) 16%,transparent);border-left:3px solid var(--stop-red);border-radius:6px;padding:.375rem .6rem;align-self:stretch;max-width:none}
+    .uif-output .uif-msg-system.bk-fail::first-line{color:var(--stop-red)}
+    .uif-output .uif-msg-system.bk-delivered{color:#d4f7e7;border-left:3px solid var(--candle-green);padding-left:.5rem;align-self:stretch}
+    .uif-output .bk-withdrawn,.uif-output .uif-msg-assistant:empty{display:none}
+    @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.uif-output{background:var(--glass-solid)}}
+    /* tablet and up: the page a little wider where there is room */
+    @media (min-width:1200px){ main{max-width:880px;} }
+    @media (pointer:coarse){ .spaces a,.spaces span{min-height:var(--tap);display:inline-flex;align-items:center} .dcard button,.logtools button,.tabs [role=tab]{min-height:var(--tap)} .faq summary{min-height:var(--tap);align-items:center} }
+    /* phone: 16px gutters, the field docked to the bottom above the keyboard and the safe area, windows inside the screen */
+    @media (max-width:640px){
+      main{padding:44px var(--gutter) calc(190px + env(safe-area-inset-bottom));}
+      section{padding:16px;} #ask .answerers{grid-template-columns:1fr 1fr;}
+      .hero h1{letter-spacing:.08em;} .hero .delta{letter-spacing:.3em;}
+      .ultimate-input-field:not(.is-maximized){left:0!important;right:0!important;top:auto!important;bottom:0!important;width:auto!important;
+        border-radius:14px 14px 0 0;padding:8px max(8px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))}
+      .ultimate-input-field:not(.is-maximized)>.uif-corner{display:none}
+      .dv-em{translate:0 calc(-156px - env(safe-area-inset-bottom))}  /* the ⟁ layers menu, above the docked field */
+      .uif-output:not(.is-maximized){left:8px!important;width:calc(100vw - 16px)!important;max-width:calc(100vw - 16px)}
+      .activity{top:max(8px,env(safe-area-inset-top))}
+      .dash{margin-bottom:24px} .dctl{grid-template-columns:6.5em 1fr auto} .spark{width:100%;max-width:220px}
+    }
+    /* tablet and desktop: the field floats over the bottom of the screen — the chooser, its note and Load sit above it on
+       the first view, and the page ends clear of it */
+    @media (min-width:641px){
+      main{padding-top:28px} .hero{padding:1vh 0 1.2vh} .hero h1{font-size:clamp(40px,7vw,64px);margin:.1em 0 0} .spaces{margin-bottom:10px}
+      #ask .mantra{margin:.1em 0 .3em} footer{margin-bottom:170px}
+    }
+    @media (max-width:380px){ #ask .answerers{grid-template-columns:1fr;} }
     @media (max-width:560px){ body{font-size:16px;} section{padding:18px 16px;} .table td:first-child{width:auto;} .table td{display:block; border-top:none; padding:4px 0;} .table tr{display:block; border-top:1px solid var(--rule); padding:8px 0;} }
   </style>
 </head>
@@ -252,50 +342,35 @@
 
   <main>
     <header class="hero">
-      <div class="spaces" role="group" aria-label="the Spaces"><a href="https://huggingface.co/spaces/PYTHAI/savante" rel="noopener">Savante</a><span class="on" aria-current="page">bankML</span></div>
+      <div class="spaces" role="group" aria-label="the Spaces"><a href="https://huggingface.co/spaces/PYTHAI/savante" rel="noopener">Savante</a><span class="on" aria-current="page">bankML · stable</span><a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF · experimental</a><small class="soon-tag">soon</small><a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">browseML</a><small class="soon-tag">soon</small></div>
       <div class="delta">Δ <a href="https://deltaverse.pythai.net" rel="noopener">deltaverse</a> · <a href="https://github.com/cryptoAGI" rel="noopener">cryptoAGI</a></div>
       <h1>bankML</h1>
       <p>Verified 1-bit and ternary language models on the CPU you already have.</p>
     </header>
 
     <section id="ask">
-      <h2>Ask bankML</h2>
+     <h2>Ask bankML</h2>
       <p class="mantra" id="mantra"></p>
-      
-      
-      
-      
       <div class="speakers" role="radiogroup" aria-label="who speaks">
         <span class="lbl">speaks as</span>
         <label><input type="radio" name="speaker" value="bankml" checked> bankML</label>
         <label><input type="radio" name="speaker" value="savante"> Savante</label>
-        <span class="lbl" id="answererline">· answered by <b>bankML in this browser</b> (browseML)</span>
       </div>
+      <fieldset class="answerers">
+        <legend>who answers</legend>
+        <label class="ans on"><input type="radio" name="mode" value="browse" checked><span><b>bankML in this browser</b><small>browseML · receipt · free</small></span></label>
+        <label class="ans"><input type="radio" name="mode" value="local"><span><b>your own bankML</b><small>bankml serve · receipt · free</small></span></label>
+        <label class="ans is-coming" title="Offered once bankML itself runs inside Gregory-L/mindXhfgradio"><input type="radio" name="mode" value="space" disabled><span><b>bankML on a free Space</b><small>coming · not live yet</small></span></label>
+        <label class="ans"><input type="radio" name="mode" value="hf"><span><b>a Hugging Face provider</b><small>not bankML · no receipt · your quota</small></span></label>
+      </fieldset>
+      <p class="carrier" id="modenote"></p>
       <div id="browserow" class="row browserow">
-        <button id="browseload" type="button">Load bankML in this browser (248 MB, once)</button>
+        <button id="browseload" type="button" class="load">Load bankML in this browser (248 MB, once)</button>
         <progress id="browseprogress" max="1" value="0" hidden aria-label="download"></progress>
-        <span id="browsestatus" class="status">bankML's own engine runs here, on your CPU: nothing to install, no account, a receipt on every answer.</span>
+        <span id="browsestatus" class="status">Or just ask: the first question offers the one-time download and shows its progress.</span>
+        <button id="browseforget" type="button" class="linkish">remove the model from this browser's cache</button>
       </div>
-      <div id="highlights" class="highlights" aria-label="bankML at a glance">
-        <ul>
-          <li><b>Verified before it speaks</b> — the model's sha256 checked against its pin, a receipt on every answer.</li>
-          <li><b>The same bits as llama.cpp</b> — token for token, proven in every release, then faster.</li>
-          <li><b>On the CPU you have</b> — one Rust crate, no dependencies; v0.4.2 is the latest. <a href="#faq-release">What's new</a></li>
-        </ul>
-        <p class="hl-hint">Ask in the field at the bottom of the screen: its answers open in their own windows (double-click a
-          window's header to fill the screen; ❏ in the field closes, tiles or cascades them all). Everything else is in the FAQ below.</p>
-      </div>
-      <section id="dash" class="dash" aria-label="This computer: controls and diagnostics"></section>
-      
-      
-      <details class="who"><summary>Who answers: <b>bankML in this browser</b>, your own bankML, or a provider · how to start your own</summary>
-        <div class="modes" role="radiogroup" aria-label="who answers">
-        <label><input type="radio" name="mode" value="browse" checked> <b>bankML in this browser</b> (browseML) — verified, with a receipt, on your CPU, nothing to install (free)</label>
-        <label><input type="radio" name="mode" value="local"> <b>Your own bankML</b> — <code>bankml serve</code> on your machine, the 8B models, faster (free)</label>
-        <label><input type="radio" name="mode" value="hf"> <b>A Hugging Face provider</b> — not bankML, no receipt, your inference quota</label>
-      </div>
-        <p class="modenote" id="modenote"></p>
-        <div id="localrow" class="row">
+      <div id="localrow" class="row" hidden>
         <input id="endpoint" aria-label="your bankml serve address" spellcheck="false">
         <button id="connect" type="button">connect</button>
         <span id="localstatus" class="status"></span>
@@ -311,14 +386,44 @@
           </ol>
         </details>
       </div>
-        <p class="modenote" id="browseextra"><button id="browseforget" type="button" class="linkish">remove the model from this browser's cache</button></p>
-        <div id="hfrow" class="row" hidden>
+      <div id="hfrow" class="row" hidden>
         <input id="model" aria-label="provider model (owner/name)" spellcheck="false">
         <button id="signin" type="button">Sign in with Hugging Face</button>
         <button id="signout" type="button" hidden>sign out</button>
         <span id="who" class="status"></span>
       </div>
-      </details>
+      <div class="env" aria-label="environment">
+        <span><i>model runs on</i> <b id="env_server">—</b></span>
+        <span><i>this device</i> <b id="env_client">reading…</b></span>
+        <small>read in this browser, never sent</small>
+      </div>
+      <div class="counter" aria-live="polite">
+        <span><i>session</i> <b id="c_in">0</b> in · <b id="c_out">0</b> out · <b id="c_turns">0</b> turns</span>
+        <span id="c_live" class="live"></span>
+        <span id="c_last" class="muted"></span>
+      </div>
+      <div class="chips" aria-label="example questions">
+        <button type="button" data-example="What makes your answers exact, in three sentences?">What makes it exact?</button>
+        <button type="button" data-example="What is a receipt, and how does this page check it?">What is a receipt?</button>
+        <button type="button" data-example="How fast are you on this computer, and what did you measure?">How fast here?</button>
+        <button type="button" data-example="Why 1-bit and ternary models?">Why 1-bit?</button>
+      </div>
+      <p class="askhint">Ask in the field at the bottom of the screen: <b>Enter</b> sends, <b>Shift+Enter</b> starts a new line.
+        Each answer opens in its own window, with its delivery line under it.</p>
+      <p class="edition">This is <b>bankML's stable Space</b>. The experimental edition, still expanding, is
+        <a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF</a><small class="soon-tag">not yet public</small>; bankML alone in the
+        browser is <a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">PYTHAI/browseML</a><small class="soon-tag">not yet public</small>.</p>
+
+      <div id="highlights" class="highlights" aria-label="bankML at a glance">
+        <ul>
+          <li><b>Verified before it speaks</b> — the model's sha256 checked against its pin, a receipt on every answer.</li>
+          <li><b>The same bits as llama.cpp</b> — token for token, proven in every release, then faster.</li>
+          <li><b>On the CPU you have</b> — one Rust crate, no dependencies; v0.4.2 is the latest. <a href="#faq-release">What's new</a></li>
+        </ul>
+        <p class="hl-hint">Double-click a window's header to fill the screen; ❏ in the field closes, tiles or cascades them all.
+          Everything else is in the FAQ below.</p>
+      </div>
+      <section id="dash" class="dash" aria-label="This computer: controls and diagnostics"></section>
     </section>
 
     <nav class="tabs" role="tablist" aria-label="more about bankML"><button type="button" role="tab" id="tab-faq" aria-controls="panel-faq" aria-selected="true" tabindex="0">FAQ</button><button type="button" role="tab" id="tab-logs" aria-controls="panel-logs" aria-selected="false" tabindex="-1">Logs</button></nav>
@@ -336,10 +441,14 @@
           b11192's own answers — tensors, dot products, whole conversations, sampled tokens, JSON grammars, logprobs —
           and require bankML to match every one. The record of every run is published beside the release.
           <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/oracles.md">The oracles</a>.</p></details>
-        <details><summary>Which answers on this page are bankML's?</summary><p>Those in <b>bankML in this browser</b> and
-          <b>Your own bankML</b> modes, each with a receipt this page checks. In <b>A Hugging Face provider</b> mode a hosted
+        <details><summary>Which answers on this page are bankML's?</summary><p>Those from <b>bankML in this browser</b> and
+          <b>your own bankML</b>, each with a receipt this page checks. From <b>a Hugging Face provider</b> a hosted
           model speaks with the chosen persona, without bankML's arithmetic or a receipt, and every answer says so; free
-          Hugging Face accounts have no inference credits, so that mode needs PRO or purchased credits.</p></details>
+          Hugging Face accounts have no inference credits, so that needs PRO or purchased credits. <b>bankML on a free
+          Space</b> is shown as coming: it is offered once bankML itself runs inside Gregory-L/mindXhfgradio.</p>
+          <p>Under every answer the page writes its delivery line — the prompt and completion tokens the engine counted,
+          the time to the first token, the speed, where it ran and the receipt's verdict. When no completion tokens were
+          counted it says “No delivery from the model” instead, and that turn is not added to the conversation.</p></details>
         <details id="faq-browseml"><summary>What is browseML — bankML in this browser?</summary><p>bankML's own engine,
           the same Rust code that runs <code>bankml serve</code>, compiled to WebAssembly and run by this page on your CPU.
           Press <b>Load</b> and it downloads Bonsai-1.7B (1-bit, 248&nbsp;MB) once from its Hugging Face repository at a pinned
@@ -640,7 +749,9 @@
       </a>
     </div>
     <p><a href="https://huggingface.co/spaces/PYTHAI/savante">Savante</a> — the oversight office bankML serves ·
-      <a href="https://huggingface.co/spaces/PYTHAI/bankml">bankML on Hugging Face</a> ·
+      <a href="https://huggingface.co/spaces/PYTHAI/bankml">bankML on Hugging Face</a> (this stable Space) ·
+      <a data-space="PYTHAI/bankML-UIF" class="unpublished" title="not yet public on Hugging Face">bankML UIF</a><small class="soon-tag">not yet public</small>, the experimental edition ·
+      <a data-space="PYTHAI/browseML" class="unpublished" title="not yet public on Hugging Face">browseML</a><small class="soon-tag">not yet public</small>, bankML in the browser ·
       <a href="https://github.com/minaiml">minaiml</a> (<a href="https://huggingface.co/spaces/PYTHAI/minaiml">Space</a>), language models in miniature ·
       <a href="https://github.com/cryptoAGI/bankml/blob/main/docs/thesis.md">thesis</a></p>
     <p>bankML · MIT OR Apache-2.0 · Professor Codephreak · Gregory L. Magnusson · the substrate: DeltaVerse (MIT) ·

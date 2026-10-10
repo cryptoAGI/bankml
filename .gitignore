@@ -13,3 +13,7 @@ sAGI/voice/**/*.tmp
 hf/space/browseml.wasm
 hf/space/browseml-mt.wasm
 hf/space/browseml-mt-relaxed.wasm
+# the same three, copied into PYTHAI/browseML's files by tools/browseml-space.sh
+hf/browseml-space/browseml.wasm
+hf/browseml-space/browseml-mt.wasm
+hf/browseml-space/browseml-mt-relaxed.wasm

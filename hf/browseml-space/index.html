@@ -1,0 +1,121 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0a0d12">
+<title>browseML — bankML in your browser</title>
+<meta name="description" content="bankML's engine compiled to WebAssembly, answering on your CPU: the model verified against its sha256 pin, a receipt on every answer checked in the page.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true">bML</span>
+    <div><h1>browseML</h1><div class="tag">bankML in your browser · verified · a receipt on every answer</div></div>
+  </div>
+  <a class="toplink" href="https://huggingface.co/spaces/PYTHAI/bankml" rel="noopener">the full bankML Space</a>
+</header>
+
+<main>
+  <section class="console" aria-label="ask bankML">
+    <div class="chooser" role="radiogroup" aria-label="who answers">
+      <span class="chooser-label">who answers</span>
+      <label class="pill-choice"><input type="radio" name="answerer" value="browse" checked> bankML in this browser</label>
+      <label class="pill-choice is-coming" title="Offered once bankML itself runs inside Gregory-L/mindXhfgradio"><input type="radio"
+        name="answerer" value="space" disabled> bankML on a free Space <small>· coming</small></label>
+      <a class="pill-choice elsewhere" href="https://huggingface.co/spaces/PYTHAI/bankml" rel="noopener"
+        title="your bankml serve on 127.0.0.1:18093, receipt checked: offered on the full bankML Space">your own bankML <small>↗</small></a>
+      <a class="pill-choice elsewhere" href="https://huggingface.co/spaces/PYTHAI/bankml" rel="noopener"
+        title="sign in to Hugging Face: offered on the full bankML Space">a Hugging Face provider <small>· not bankML · no receipt · your quota ↗</small></a>
+      <span class="chooser-more">↗ answers on the full bankML Space (PYTHAI/bankml), not on this page</span>
+    </div>
+    <p id="carriernote" class="note">Runs in this tab, on your CPU: bankML compiled to WebAssembly, with Bonsai-1.7B Q1_0
+      (248 MB, downloaded once, checked against its sha256 pin). A receipt with every answer, checked here. Free.
+      Private: your questions never leave this computer.</p>
+    <div class="env" aria-label="environment">
+      <span><i>model runs on</i> <b id="env_server">this tab: no server does the work (this Space only serves files)</b></span>
+      <span><i>this device</i> <b id="env_client">reading…</b></span>
+    </div>
+
+    <div class="loadbar">
+      <span id="status" class="status" aria-live="polite">The model is not loaded. Your first question offers the one-time download.</span>
+      <progress id="bar" max="1" value="0" hidden></progress>
+      <button id="load" type="button" class="secondary">Load bankML in this browser (248 MB, once)</button>
+    </div>
+
+    <div id="screen" class="screen">
+      <div class="counter" aria-live="polite">
+        <span><i>session</i> <b id="c_in">0</b> in · <b id="c_out">0</b> out · <b id="c_turns">0</b> turns</span>
+        <span id="c_live" class="live"></span>
+        <span id="c_last" class="muted"></span>
+        <button id="tmode" type="button" class="tbtn" aria-pressed="false" title="T mode: terminal green on black">T</button>
+      </div>
+      <div id="log" class="log" aria-live="polite"></div>
+      <div class="examples" aria-label="example questions">
+        <button type="button" data-example="What are you, and where are you running right now?">What are you?</button>
+        <button type="button" data-example="Explain a 1-bit weight in two sentences.">A 1-bit weight</button>
+        <button type="button" data-example="What does a receipt on an answer prove, and what does it not prove?">What a receipt proves</button>
+        <button type="button" data-example="Write a four-line poem about a CPU doing arithmetic.">A poem</button>
+      </div>
+    </div>
+
+    <div class="dock">
+      <div class="composer">
+        <label class="sr" for="message">your question</label>
+        <textarea id="message" rows="2" enterkeyhint="send" autocomplete="off"
+          placeholder="Ask bankML. Enter sends · Shift+Enter for a new line"></textarea>
+        <button id="send" type="button" class="send">Send</button>
+      </div>
+    </div>
+    <div class="opts">
+      <label>answer length
+        <select id="maxtok">
+          <option value="64">64 tokens</option>
+          <option value="128" selected>128 tokens</option>
+          <option value="256">256 tokens</option>
+          <option value="512">512 tokens</option>
+        </select></label>
+      <span class="muted">An answer cannot be stopped midway: it runs to its end or to this length.</span>
+    </div>
+
+    <details class="drawer">
+      <summary>what this is: three builds, the oracle, the limits</summary>
+      <p>browseML is <a class="inl" href="https://github.com/cryptoAGI/bankml">bankML</a>'s engine compiled to WebAssembly. Before
+        it answers, it checks the model as <code>bankml serve</code> does: the GGUF guard, then the sha256 of all
+        248 MB against its pin. Every answer it gives carries <code>serve</code>'s receipt.</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>build</th><th>used when</th></tr></thead>
+        <tbody>
+          <tr><td><code>browseml-mt-relaxed.wasm</code></td><td>threads, relaxed SIMD compiled here and fused on this machine</td></tr>
+          <tr><td><code>browseml-mt.wasm</code></td><td>threads, otherwise (Firefox, or not fused)</td></tr>
+          <tr><td><code>browseml.wasm</code></td><td>one thread: the page is not cross-origin isolated (or Safari)</td></tr>
+        </tbody>
+      </table></div>
+      <p>All three are exact, and they give the same answers. On llama-server b11192's nine recorded conversations,
+        every text, finish reason and token count is identical: <code>browseml.wasm</code> 9 of 9 and
+        <code>browseml-mt-relaxed.wasm</code> on 2 threads 9 of 9.</p>
+      <p class="muted">Limits: threads need cross-origin isolation, so Safari runs on one thread. The first download is
+        248 MB. A tab holds about twice the model while it loads. An answer cannot be stopped midway.</p>
+    </details>
+    <details class="drawer">
+      <summary>engine log</summary>
+      <pre id="englog" class="englog"></pre>
+    </details>
+  </section>
+</main>
+
+<footer>
+  <nav class="links" aria-label="related">
+    <a href="https://huggingface.co/spaces/PYTHAI/bankml">PYTHAI/bankml</a>
+    <a href="https://huggingface.co/spaces/PYTHAI/bankML-UIF">PYTHAI/bankML-UIF</a>
+    <a href="https://github.com/cryptoAGI/bankml">github.com/cryptoAGI/bankml</a>
+  </nav>
+  <span>MIT OR Apache-2.0 · model Bonsai-1.7B (prism-ml, Apache-2.0)</span>
+</footer>
+<div id="spawns" class="spawns"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

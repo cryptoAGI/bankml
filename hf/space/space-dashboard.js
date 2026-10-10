@@ -18,38 +18,36 @@ const CTX = [1024, 2048, 4096];
 // a token is about 3.6 characters of English for this tokenizer: an estimate, said as one
 const tokensOf = (chars) => Math.round(chars / 3.6);
 
-let storage = null, persona = { lean: 0, full: 0 };
+let storage = null;
 async function refreshStorage() {
   try { storage = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch { storage = null; }
   try { storage = { ...(storage || {}), model: await browseml.cachedBytes() }; } catch {}
 }
-async function refreshPersonaSize() {
-  try {
-    const [p, c] = await Promise.all([fetch("sAGI/personas/bankml.persona").then((r) => r.json()), fetch("sAGI/personas/bankml.context").then((r) => r.json())]);
-    persona = { lean: tokensOf(p.system_prompt.length), full: tokensOf(p.system_prompt.length + (c.summary || "").length + 60) };
-  } catch {}
-}
+// the prompt of whoever speaks now (bankML or Savante), lean and full, as bankml-chat.js built it: an estimate
+const promptSize = () => { const p = window.bankmlStats && window.bankmlStats.prompt; return p ? { who: p.speaker, lean: tokensOf(p.lean), full: tokensOf(p.full) } : { who: "the persona", lean: 0, full: 0 }; };
+// the threads the engine can take here: every core up to browseML's cap when isolated, else one
+const maxThreads = () => browseml.threads();
 
 /** What the measurements say to change: each line is a finding and what to do about it. */
 function advice(S, st) {
-  const out = [], last = st.answers.filter((a) => a.mode === "browse").slice(-1)[0];
+  const out = [], last = st.answers.filter((a) => a.mode === "browse").slice(-1)[0], persona = promptSize();
   const mode = st.mode || "browse";
   if (mode === "browse") {
     if (!isolated) out.push(["warn", "One thread: this page is not cross-origin isolated (or this browser has no SharedArrayBuffer). Open the Space directly — pythai-bankml.static.hf.space — in Chrome, Edge or Firefox to use every core."]);
-    else if (st.browse && st.browse.threads < cores) out.push(["ok", `${st.browse.threads} of ${cores} cores in use. More threads answer faster; fewer leave the computer free for other work.`]);
+    else if (st.browse && st.browse.threads < maxThreads()) out.push(["ok", `${st.browse.threads} of ${maxThreads()} threads in use${cores > maxThreads() ? ` (bankML in this browser takes at most ${browseml.MAX_THREADS} of the ${cores} cores)` : ""}. More threads answer faster; fewer leave the computer free for other work.`]);
     if (!st.browse) out.push(["warn", `browseML is not loaded: Load downloads ${MB(browseml.MODEL.bytes)} once, then it starts in seconds from this browser's cache.`]);
     if (last && last.prompt_tps) {
       const next = (S.lean ? persona.lean : persona.full) + 40;
-      out.push(["ok", `Reading speed ${fmt(last.prompt_tps, 1)} tokens/s: a new conversation's first answer reads about ${next} tokens of persona first — about ${fmt(next / last.prompt_tps, 0)} s. Later answers in the same window read only what is new (${last.cache_n ?? 0} tokens were reused last time).`]);
+      out.push(["ok", `Reading speed ${fmt(last.prompt_tps, 1)} tokens/s: a new conversation's first answer reads about ${next} tokens of ${persona.who}'s persona first — about ${fmt(next / last.prompt_tps, 0)} s. Later answers in the same window read only what is new (${last.cache_n ?? 0} tokens were reused last time).`]);
     }
-    if (!S.lean && persona.full) out.push(["warn", `The full prompt adds bankML's codebase summary: about ${persona.full - persona.lean} more tokens to read before every new conversation. “Lean” keeps only the persona and still adds the passages that match each question.`]);
-    const more = isolated && st.browse && st.browse.threads < cores;
+    if (!S.lean && persona.full) out.push(["warn", `The full prompt adds ${persona.who}'s context summary: about ${persona.full - persona.lean} more tokens to read before every new conversation. “Lean” keeps only the persona and still adds the passages that match each question.`]);
+    const more = isolated && st.browse && st.browse.threads < maxThreads();
     if (last && last.gen_tps && last.gen_tps < 1) out.push(["warn", `Writing at ${fmt(last.gen_tps, 2)} tokens/s: close other busy tabs, ${more ? "raise the threads, " : ""}or shorten answers (now ${S.maxTokens} tokens at most).`]);
     const kv = S.ctx * KV_BYTES_PER_TOKEN, dev = navigator.deviceMemory ? navigator.deviceMemory * 1e9 : null;
     if (dev && browseml.MODEL.bytes + kv > dev * 0.5) out.push(["warn", `Context ${S.ctx} reserves ${MB(kv)} for its cache, beside the ${MB(browseml.MODEL.bytes)} model, on a device that reports about ${navigator.deviceMemory} GB: a smaller context leaves more for the rest.`]);
     if (storage && storage.quota && storage.usage / storage.quota > 0.8) out.push(["warn", `This site's storage is ${fmt(100 * storage.usage / storage.quota, 0)} % full: the browser may evict the cached model.`]);
   }
-  if (mode === "local" && !(st.local && st.local.verified && st.local.verified.guard === "play")) out.push(["warn", "Your own bankML is not connected: start it with ./install.sh start --space, then connect (who answers ▸ your own bankML)."]);
+  if (mode === "local" && !(st.local && st.local.verified && st.local.verified.guard === "play")) out.push(["warn", "Your own bankML is not connected: start it with ./install.sh start --space, then connect (who answers: your own bankML)."]);
   if (mode === "hf") out.push(["warn", "A provider answers: not bankML, no receipt, and free Hugging Face accounts have no inference credits. bankML in this browser is free and verified."]);
   if (!out.length) out.push(["ok", "Nothing to change: the measurements look healthy."]);
   return out;
@@ -79,12 +77,13 @@ function render() {
   const S = window.bankmlSettings.get(), st = window.bankmlStats, set = window.bankmlSettings.set;
   const b = st.browse, mode = st.mode || "browse";
   const answers = st.answers, last = answers[answers.length - 1];
-  const loaded = !!b, pendingThreads = Math.max(1, Math.min(isolated ? cores : 1, S.threads || cores)), stale = loaded && (b.threads !== pendingThreads || b.ctx !== S.ctx);
+  // the threads a reload would give: capped as browseml.js caps them, so above 8 cores "reload to apply" does not stay
+  const loaded = !!b, pendingThreads = Math.max(1, Math.min(maxThreads(), S.threads || cores)), stale = loaded && (b.threads !== pendingThreads || b.ctx !== S.ctx);
 
   // who answers, and the engine's state
   const engineRows = mode === "browse"
     ? (b ? [["engine", `bankML ${b.version} in this browser (WebAssembly)`], ["model", `${b.model} · verified`, "ok"], ["sha256", `${b.sha256.slice(0, 16)}…`],
-            ["threads", `${b.threads} of ${cores} cores${isolated ? "" : " (not isolated: one)"}`],
+            ["threads", `${b.threads} of ${cores} cores${isolated ? (cores > maxThreads() ? ` (at most ${browseml.MAX_THREADS} here)` : "") : " (not isolated: one)"}`],
             ["build", b.build === "browseml-mt-relaxed.wasm" ? "relaxed SIMD (fused multiply-add) — the fastest" : b.build === "browseml-mt.wasm" ? "SIMD, threads (no relaxed SIMD here)" : "SIMD, one thread"], ["context", `${b.ctx} tokens`], ["engine memory", MB(browseml.memoryBytes)], ["loaded in", fmt(b.load_ms / 1000, 0, " s")]]
          : [["engine", "browseML not loaded"], ["model", `${browseml.MODEL.title}, ${MB(browseml.MODEL.bytes)}`], ["in this browser's cache", storage && storage.model ? "yes" : "no"]])
     : mode === "local"
@@ -95,24 +94,25 @@ function render() {
     engineBtns.append(
       el("button", { type: "button", textContent: loaded ? (stale ? "Apply: reload the engine" : "Reload the engine") : "Load bankML in this browser", className: stale || !loaded ? "primary" : "",
         onclick: async (e) => { e.target.disabled = true; try { await (loaded ? window.bankmlReloadBrowse() : window.bankmlLoadBrowse()); } finally { render(); } } }),
-      loaded ? el("button", { type: "button", textContent: "Unload (free its memory)", onclick: () => { try { browseml.unload(); st.browse = null; st.emit(); $("browseload").hidden = false; } catch (err) { alertLine(err.message); } } }) : null);
+      ...(loaded ? [el("button", { type: "button", textContent: "Unload (free its memory)", onclick: () => { try { browseml.unload(); st.browse = null; st.emit(); $("browseload").hidden = false; } catch (err) { alertLine(err.message); } } })] : []));  // append() would write "null"
   }
 
   // the controls
   const threadOut = el("output", { textContent: `${pendingThreads}` });
-  const threads = el("input", { type: "range", min: 1, max: isolated ? cores : 1, value: pendingThreads, disabled: !isolated,
+  const threads = el("input", { type: "range", min: 1, max: maxThreads(), value: pendingThreads, disabled: !isolated,
     oninput: (e) => { threadOut.textContent = e.target.value; }, onchange: (e) => set({ threads: +e.target.value }) });
   const ctx = el("select", { onchange: (e) => set({ ctx: +e.target.value }) },
     ...CTX.map((c) => el("option", { value: c, selected: S.ctx === c, textContent: `${c} tokens · ${MB(c * KV_BYTES_PER_TOKEN)} of cache` })));
   const maxOut = el("output", { textContent: `${S.maxTokens}` });
   const maxT = el("input", { type: "range", min: 32, max: 512, step: 32, value: S.maxTokens,
     oninput: (e) => { maxOut.textContent = e.target.value; }, onchange: (e) => set({ maxTokens: +e.target.value }) });
+  const persona = promptSize();
   const prompt = el("div", { className: "drow", role: "radiogroup" },
-    el("label", {}, el("input", { type: "radio", name: "dprompt", checked: S.lean, onchange: () => set({ lean: true }) }), ` lean — the persona (~${persona.lean} tokens)`),
-    el("label", {}, el("input", { type: "radio", name: "dprompt", checked: !S.lean, onchange: () => set({ lean: false }) }), ` full — and the codebase summary (~${persona.full})`));
+    el("label", {}, el("input", { type: "radio", name: "dprompt", checked: S.lean, onchange: () => set({ lean: true }) }), ` lean — ${persona.who}'s persona (~${persona.lean} tokens)`),
+    el("label", {}, el("input", { type: "radio", name: "dprompt", checked: !S.lean, onchange: () => set({ lean: false }) }), ` full — and its context summary (~${persona.full})`));
   const controls = card("Controls",
     el("label", { className: "dctl" }, el("span", { textContent: "threads" }), threads, threadOut,
-      el("small", { textContent: isolated ? `of ${cores} cores · applies on reload` : "one: this page is not cross-origin isolated" })),
+      el("small", { textContent: isolated ? `of ${cores} cores${cores > maxThreads() ? ` (at most ${browseml.MAX_THREADS} here)` : ""} · applies on reload` : "one: this page is not cross-origin isolated" })),
     el("label", { className: "dctl" }, el("span", { textContent: "context" }), ctx, el("small", { textContent: "how much of a conversation it holds · applies on reload" })),
     el("label", { className: "dctl" }, el("span", { textContent: "answer length" }), maxT, maxOut, el("small", { textContent: "tokens at most, from the next answer" })),
     el("div", { className: "dctl" }, el("span", { textContent: "prompt" }), prompt),
@@ -172,7 +172,7 @@ window.bankmlDiag = async () => {
 };
 
 (async () => {
-  await Promise.all([refreshStorage(), refreshPersonaSize()]);
+  await refreshStorage();
   render();
   window.addEventListener("bankml:stats", () => { refreshStorage().then(render); });
   // the live line, without redrawing the cards: it changes every second while something runs

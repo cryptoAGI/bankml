@@ -1,0 +1,16 @@
+{
+ "kind": "bankml import (weights downloaded, verified against the published sha256)",
+ "source_repo": "prism-ml/Bonsai-1.7B-gguf",
+ "source_url": "https://huggingface.co/prism-ml/Bonsai-1.7B-gguf/blob/210a9e99f79cb184909d49595906526eb2b3dd9a/Bonsai-1.7B-Q1_0.gguf",
+ "source_revision": "210a9e99f79cb184909d49595906526eb2b3dd9a",
+ "licence_tag": "apache-2.0",
+ "imported_at_utc": "2026-09-29T03:19:17Z",
+ "pinned_from": "Hugging Face LFS sha256 of Bonsai-1.7B-Q1_0.gguf at 210a9e99f79cb184909d49595906526eb2b3dd9a",
+ "files": [
+  {
+   "path": "Bonsai-1.7B-Q1_0.gguf",
+   "bytes": 248302272,
+   "sha256": "3d7c6c90dd98717a203adb22d5eacd2581850e40aa5327e144b97766cae5f7e3"
+  }
+ ]
+}
