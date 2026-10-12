@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — browseML on the desktop: a download that survives cuts, the model held once
+
+- **The download in pieces** (`hf/space/browseml.js` `download()`): 16 MB HTTP Range requests, each retried (six tries,
+  a growing pause) from the byte where the connection cut it; a 4xx stops at once; a server that ignores Range is read
+  as one stream. Brave 1.94 on Linux cut the single 248 MB response mid-body (`TypeError: network error`, at 57 MB
+  and at 219 MB) where curl on the same machine got the whole file: browseML worked on phones and not there.
+  `browseML/testing/download.mjs`: against a local server that cuts every third response, the file arrives
+  byte-identical, each retry from the exact byte. The Space says "the connection dropped … asking for that piece again".
+- **The model held once in WebAssembly memory** (`gguf::Mmap`, the build without mmap): read straight into the shared
+  `Arc<[u8]>` instead of a `Vec` copied into one — WebAssembly memory never shrinks, so the module kept room for the
+  model twice. After open: 531 → 317 MB (Bonsai-1.7B, measured); open 8.1 → 5.9 s; the Node oracle's peak RSS 838 →
+  630 MB; 3 of 3 oracle answers identical to llama-server b11192's record. The native build (mmap) is unchanged.
+- **The prompt cache from the page** (`browseml-worker.js`): `load(…, { cacheRam })` sets the engine's
+  `BANKML_CACHE_RAM` (MiB, 0 off as before). **`loadStats`**: each load measured — where the model came from, bytes
+  fetched, pieces retried, download and open times, the engine's memory once open — for diagnostics from actual usage.
+
 ## Unreleased (0.4.3) — browseML: bankML in the browser; the console's first answer
 
 ### browseML — bankML in the browser (`browseML/`, `hf/space/browseml*.js`, `tools/browseml.sh`)

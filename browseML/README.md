@@ -161,5 +161,11 @@ node browseML/testing/bench.mjs hf/space/browseml-mt-relaxed.wasm .models/Bonsai
 - **Relaxed SIMD only where it is exact.** Firefox does not compile it yet, and a machine whose `relaxed_madd` is
   not fused gets the plain threaded build: same answers, slower.
 - **Q1_0 models only, so far.** The page offers Bonsai-1.7B; the 8B models are for `bankml serve`.
-- **Memory.** A tab holds about 2× the model while it loads, then the model once.
+- **Memory.** While it opens, the tab holds the model twice (the downloaded bytes, then the engine's own copy);
+  once open, once. The engine's WebAssembly memory after open is 317 MB for Bonsai-1.7B (248 MB), measured; it grows
+  with the keys and values a conversation fills, up to the context chosen. (Before 2026-10-12 it read the file into
+  a `Vec` and copied it into the shared buffer, and WebAssembly memory never shrinks: 531 MB.)
+- **The download comes in 16 MB pieces** (HTTP Range), each retried on its own from the byte where it was cut: Brave
+  on Linux cut the single 248 MB response mid-body (`TypeError: network error`, at 57 MB and at 219 MB) where curl
+  on the same machine got the whole file. `browseML/testing/download.mjs` checks it against a server that cuts.
 - **No stopping mid-answer.** An answer cannot be interrupted, because the engine runs to `max_tokens` or end of turn.

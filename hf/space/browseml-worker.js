@@ -9,7 +9,7 @@
 // which the engine itself refuses where relaxed_madd is not fused; then browseml-mt.wasm. Elsewhere it runs
 // browseml.wasm on this one thread.
 //
-//   page → worker  {type: "open", name, bytes: ArrayBuffer (transferred), fork, threads, ctx}  |  {type: "chat", request}
+//   page → worker  {type: "open", name, bytes: ArrayBuffer (transferred), fork, threads, ctx, cacheRam}  |  {type: "chat", request}
 //   worker → page  {type: "log", level, text} · {type: "opened", rc, out, threads, memory} · {type: "piece", text} ·
 //                  {type: "done", rc, out, memory}   (memory: the engine's WebAssembly memory, bytes)
 import { wasi } from "./browseml-wasi.js";
@@ -44,7 +44,10 @@ function importedMemory(bytes) {
   return null;
 }
 
-async function open({ name, bytes, fork, threads, ctx }) {
+async function open({ name, bytes, fork, threads, ctx, cacheRam }) {
+  // the engine's host prompt cache, in MiB (serve's --cache-ram): 0 off, the default here; a little lets a repeated
+  // prefix skip its prompt reading at the cost of that much memory
+  const cache = String(Math.max(0, Math.min(1024, Math.floor(Number(cacheRam) || 0))));
   const files = { [name]: new Uint8Array(bytes) };
   const log = (fd, s) => postMessage({ type: "log", level: fd === 2 ? 1 : 2, text: s.trimEnd() });
   const browseml = {
@@ -79,13 +82,13 @@ async function open({ name, bytes, fork, threads, ctx }) {
     })));
     pool = idle.slice();  // every thread of this engine, to end them if it is refused
     let tid = 0;
-    w = wasi({ files, env: { BANKML_CACHE_RAM: "0", BANKML_THREADS: String(n) }, write: log });
+    w = wasi({ files, env: { BANKML_CACHE_RAM: cache, BANKML_THREADS: String(n) }, write: log });
     ({ exports: x } = await WebAssembly.instantiate(module, {
       ...w.imports, env: { memory }, browseml,
       wasi: { "thread-spawn": (arg) => { const t = idle.shift(); if (!t) return -1; t.postMessage({ type: "start", tid: ++tid, arg }); return tid; } },
     }));
   } else {
-    w = wasi({ files, env: { BANKML_CACHE_RAM: "0", BANKML_THREADS: "1" }, write: log });
+    w = wasi({ files, env: { BANKML_CACHE_RAM: cache, BANKML_THREADS: "1" }, write: log });
     const { instance } = await WebAssembly.instantiateStreaming(fetch(new URL("./browseml.wasm", import.meta.url)), { ...w.imports, browseml });
     x = instance.exports;
     memory = x.memory;
@@ -97,7 +100,7 @@ async function open({ name, bytes, fork, threads, ctx }) {
     postMessage({ type: "log", level: 1, text: "relaxed SIMD is not fused here: using browseml-mt.wasm (exact, slower)" });
     relaxedRefused = true; x = null;
     pool.forEach((t) => t.terminate()); pool = [];  // the refused engine's threads and their memory go with it
-    return open({ name, bytes: files[name].buffer, fork, threads, ctx });
+    return open({ name, bytes: files[name].buffer, fork, threads, ctx, cacheRam });
   }
   w.release(name);  // the engine holds the model in its own memory now; the downloaded copy can go
   postMessage({ type: "opened", rc, out: out(), threads: n, memory: memory.buffer.byteLength, build: builtWith });

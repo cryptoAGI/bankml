@@ -466,7 +466,18 @@ impl Mmap {
         let keep = match open.iter().find(|(p, _)| p == path).and_then(|(_, w)| w.upgrade()) {
             Some(k) => k,
             None => {
-                let k: Arc<[u8]> = std::fs::read(path)?.into();
+                // read straight into the shared allocation: `fs::read(..).into()` would read into a Vec and then copy
+                // it into the Arc, and WebAssembly memory never shrinks, so the module would keep room for the model
+                // twice (531 MB for Bonsai-1.7B's 248 MB, measured)
+                use std::io::Read;
+                let mut f = std::fs::File::open(path)?;
+                let len = usize::try_from(f.metadata()?.len()).map_err(|_| std::io::Error::other("the file is larger than memory"))?;
+                // SAFETY: new_zeroed_slice initialises every byte to 0, which is a valid u8.
+                let mut k: Arc<[u8]> = unsafe { Arc::<[u8]>::new_zeroed_slice(len).assume_init() };
+                f.read_exact(Arc::get_mut(&mut k).expect("a new Arc has one owner"))?;
+                if f.read(&mut [0u8; 1])? != 0 {
+                    return Err(std::io::Error::other("the file grew while it was read"));
+                }
                 open.push((path.to_path_buf(), Arc::downgrade(&k)));
                 k
             }

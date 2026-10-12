@@ -284,6 +284,9 @@ export async function loadBrowse(progressLine) {
         const t = `downloading the model (${browseml.MODEL.title}): ${(got / 1e6).toFixed(0)} of ${(total / 1e6).toFixed(0)} MB`
           + (rate ? ` · ${(rate / 1e6).toFixed(1)} MB/s · about ${secs(left)} left` : "") + " — once; it stays in this browser's cache";
         say(t, got / total); activity.set("⬇ " + t, got / total);
+      } else if (phase === "retry") {
+        const t = `the connection dropped at ${(got / 1e6).toFixed(0)} MB: asking for that piece again`;
+        say(t, got / total); activity.set("⬇ " + t, got / total);
       } else if (phase === "cache") {
         const t = `the model is in this browser's cache (${(got / 1e6).toFixed(0)} MB): no download`;
         say(t); activity.set("◉ " + t);
