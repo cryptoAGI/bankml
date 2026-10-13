@@ -322,6 +322,111 @@ fn relaxed_core(n: usize, x: &[u8], a: &Q8Act) -> f32 {
     hsum8(out)
 }
 
+/// `relaxed_core` for one weight row and four activations at once (a prompt's micro-batch): the row's sign bits are
+/// turned into lane masks once and used for all four, and each activation then goes through exactly `relaxed_core`'s
+/// operations in its order — so each result is `relaxed_core`'s bits (and the reference's). None may hold a −128.
+#[cfg(all(target_arch = "wasm32", target_feature = "relaxed-simd"))]
+fn relaxed_core_1x4(n: usize, x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] {
+    use std::arch::wasm32::*;
+    let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
+    let zero = u8x16_splat(0);
+    let one = u8x16_splat(1);
+    let spread = [u8x16(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), u8x16(2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3)];
+    let mut acc = [(f32x4_splat(0.0), f32x4_splat(0.0)); 4];
+    for i in 0..n / QK1_0 {
+        let xb = &x[i * Q1_0_BYTES..i * Q1_0_BYTES + Q1_0_BYTES];
+        let d0 = f32x4_splat(f16_to_f32(u16::from_le_bytes([xb[0], xb[1]])));
+        let mut ab = [(f32x4_splat(0.0), f32x4_splat(0.0)); 4];
+        for k in 0..4 {
+            let b = i * 4 + k;
+            let signs = u32x4_splat(u32::from_le_bytes([xb[2 + k * 4], xb[3 + k * 4], xb[4 + k * 4], xb[5 + k * 4]]));
+            // the row's bits for this block, as 0 or 1 per element: once, for all four activations
+            let on = [0, 1].map(|h| v128_and(v128_not(u8x16_eq(v128_and(u8x16_swizzle(signs, spread[h]), bit), zero)), one));
+            for (c, a) in cols.iter().enumerate() {
+                let d = f32x4_splat(a.d[b]);
+                let half = |h: usize| {
+                    // SAFETY: as in `relaxed_core`: block b of an activation of n values, and its lane sums.
+                    let (q, t) = unsafe { (v128_load(a.qs.as_ptr().add(b * QK8_0 + 16 * h) as *const v128), v128_load(a.tot.as_ptr().add(b * 8 + 4 * h) as *const v128)) };
+                    let pos = i32x4_relaxed_dot_i8x16_i7x16_add(q, on[h], i32x4_splat(0));
+                    f32x4_convert_i32x4(i32x4_sub(i32x4_shl(pos, 1), t))
+                };
+                let (s_lo, s_hi) = (half(0), half(1));
+                ab[c] = if k == 0 { (f32x4_mul(d, s_lo), f32x4_mul(d, s_hi)) }
+                        else { (f32x4_relaxed_madd(d, s_lo, ab[c].0), f32x4_relaxed_madd(d, s_hi, ab[c].1)) };
+            }
+        }
+        for c in 0..4 {
+            acc[c] = (f32x4_relaxed_madd(d0, ab[c].0, acc[c].0), f32x4_relaxed_madd(d0, ab[c].1, acc[c].1));
+        }
+    }
+    acc.map(|(lo, hi)| {
+        let mut out = [0.0f32; 8];
+        // SAFETY: two 16-byte stores into an 8 × f32 array.
+        unsafe {
+            v128_store(out.as_mut_ptr() as *mut v128, lo);
+            v128_store(out.as_mut_ptr().add(4) as *mut v128, hi);
+        }
+        hsum8(out)
+    })
+}
+
+/// `simd128_core` for one weight row and four activations (the plain-SIMD build, any q including −128): the sign
+/// masks are made once per block and shared; each activation then takes `simd128_core`'s operations in its order.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+fn simd128_core_1x4(n: usize, x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] {
+    use std::arch::wasm32::*;
+    let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
+    let zero = u8x16_splat(0);
+    let spread = [u8x16(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), u8x16(2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3)];
+    let mut acc = [(f32x4_splat(0.0), f32x4_splat(0.0)); 4];
+    for i in 0..n / QK1_0 {
+        let xb = &x[i * Q1_0_BYTES..i * Q1_0_BYTES + Q1_0_BYTES];
+        let d0 = f16_to_f32(u16::from_le_bytes([xb[0], xb[1]]));
+        let mut ab = [(f32x4_splat(0.0), f32x4_splat(0.0)); 4];
+        for k in 0..4 {
+            let b = i * 4 + k;
+            let signs = u32x4_splat(u32::from_le_bytes([xb[2 + k * 4], xb[3 + k * 4], xb[4 + k * 4], xb[5 + k * 4]]));
+            let m = [0, 1].map(|h| i8x16_eq(v128_and(u8x16_swizzle(signs, spread[h]), bit), zero));
+            for (c, a) in cols.iter().enumerate() {
+                let half = |h: usize| {
+                    // SAFETY: block b of an activation of n values: 16 of its 32 i8 per load.
+                    let q = unsafe { v128_load(a.qs.as_ptr().add(b * QK8_0 + 16 * h) as *const v128) };
+                    f32x4_convert_i32x4(i32x4_extadd_pairwise_i16x8(i16x8_extadd_pairwise_i8x16(i8x16_sub(v128_xor(q, m[h]), m[h]))))
+                };
+                let (s_lo, s_hi) = (half(0), half(1));
+                let d = f32x4_splat(a.d[b]);
+                ab[c] = if k == 0 { (f32x4_mul(d, s_lo), f32x4_mul(d, s_hi)) }
+                        else { (f32x4_add(f32x4_mul(d, s_lo), ab[c].0), f32x4_add(f32x4_mul(d, s_hi), ab[c].1)) };
+            }
+        }
+        for c in 0..4 {
+            acc[c] = (fma4(d0, ab[c].0, acc[c].0), fma4(d0, ab[c].1, acc[c].1));
+        }
+    }
+    acc.map(|(lo, hi)| {
+        let mut a = [0.0f32; 8];
+        // SAFETY: two 16-byte stores into an 8 × f32 array.
+        unsafe {
+            v128_store(a.as_mut_ptr() as *mut v128, lo);
+            v128_store(a.as_mut_ptr().add(4) as *mut v128, hi);
+        }
+        hsum8(a)
+    })
+}
+
+/// One Q1_0 row · four prepared activations, each bit-identical to `vec_dot_act` on it: WebAssembly's tile for a
+/// prompt's micro-batch (the row decoded once). The relaxed kernel when none holds a −128, the plain one otherwise.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub fn vec_dot_act_1x4(x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] {
+    let n = cols[0].n;
+    assert!(cols.iter().all(|c| c.n == n) && x.len() >= n / QK1_0 * Q1_0_BYTES);
+    #[cfg(target_feature = "relaxed-simd")]
+    if cols.iter().all(|c| !c.has_min) {
+        return relaxed_core_1x4(n, x, cols);
+    }
+    simd128_core_1x4(n, x, cols)
+}
+
 /// Four lanes of `d.mul_add(x, a)`, bit for bit, through f64: the product of two f32 is exact in f64 and the sum
 /// rounds once there, so rounding that sum to f32 gives the fused result — except when that f64 rounding was
 /// inexact and left the sum exactly on an f32 halfway point (rounding twice can then differ from rounding once), or
@@ -719,7 +824,7 @@ fn mat_mul_check(w: &[u8], rows: usize, n: usize, ys: &[&[u8]], out: &[f32]) {
 /// `mat_mul_check` passed for these arguments, and no other thread writes rows `rs` of `out`.
 unsafe fn mat_mul_rows(w: &[u8], rows: usize, n: usize, rs: std::ops::Range<usize>, ys: &[&[u8]], out: *mut f32) {
     let rb = n / QK1_0 * Q1_0_BYTES;
-    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
+    #[cfg_attr(not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128"))), allow(unused_mut))] // the x86 and wasm tiles advance it
     let mut c0 = 0;
     #[cfg(target_arch = "x86_64")]
     if has_avx2() {
@@ -786,7 +891,7 @@ fn mat_mul_act_check(w: &[u8], rows: usize, cols: &[Q8Act], out: &[f32]) -> bool
 /// `mat_mul_act_check` passed, and no other thread writes rows `rs` of `out`.
 unsafe fn mat_mul_act_rows(w: &[u8], rows: usize, rs: std::ops::Range<usize>, cols: &[Q8Act], out: *mut f32) {
     let rb = cols[0].n / QK1_0 * Q1_0_BYTES;
-    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))] // only the x86 path below advances it
+    #[cfg_attr(not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128"))), allow(unused_mut))] // the x86 and wasm tiles advance it
     let mut c0 = 0;
     #[cfg(target_arch = "x86_64")]
     if has_avx2() {
@@ -803,6 +908,17 @@ unsafe fn mat_mul_act_rows(w: &[u8], rows: usize, rs: std::ops::Range<usize>, co
             }
             c0 += 4;
         }
+    }
+    // WebAssembly: four columns per row pass, the row's bits decoded once (`vec_dot_act_1x4`, the same bits)
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    while c0 + 4 <= cols.len() {
+        let t = [&cols[c0], &cols[c0 + 1], &cols[c0 + 2], &cols[c0 + 3]];
+        for r in rs.clone() {
+            for (c, v) in vec_dot_act_1x4(&w[r * rb..], t).into_iter().enumerate() {
+                *out.add((c0 + c) * rows + r) = v;
+            }
+        }
+        c0 += 4;
     }
     for (c, a) in cols.iter().enumerate().skip(c0) {
         for r in rs.clone() {
@@ -1158,6 +1274,40 @@ pub(crate) mod tests {
             for c in 0..cols {
                 for i in 0..rows {
                     let want = vec_dot_ref(nb * 128, &w[i * nb * Q1_0_BYTES..], ys[c].as_slice());
+                    assert_eq!(out[c * rows + i].to_bits(), want.to_bits(), "rows {rows} nb {nb} col {c} row {i}");
+                }
+            }
+        }
+    }
+
+    /// WebAssembly's prefill tile (`vec_dot_act_1x4`) against the scalar reference, bit for bit: activations with and
+    /// without −128 (the relaxed kernel, and the plain one it falls back to), many shapes; and `mat_mul_act` through
+    /// it against per-pair `vec_dot_act`.
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    #[test]
+    fn wasm_act_tile_bit_exact() {
+        let mut r = Rng(5150);
+        for round in 0..600 {
+            let nb = 1 + (r.next() % 33) as usize;
+            let x = random_q1(&mut r, nb);
+            let wrap = round % 3 == 0; // a third with −128 somewhere
+            let ys: Vec<Vec<u8>> = (0..4).map(|_| random_q8(&mut r, nb, wrap)).collect();
+            let acts: Vec<Q8Act> = ys.iter().map(|y| Q8Act::from_q8_0(nb * 128, y)).collect();
+            let got = vec_dot_act_1x4(&x, [&acts[0], &acts[1], &acts[2], &acts[3]]);
+            for c in 0..4 {
+                let want = vec_dot_ref(nb * 128, &x, &ys[c]);
+                assert_eq!(got[c].to_bits(), want.to_bits(), "round {round} nb {nb} col {c}");
+            }
+        }
+        for (rows, nb, cols) in [(3usize, 2usize, 4usize), (5, 7, 9), (17, 16, 13), (64, 16, 8)] {
+            let w = random_q1(&mut r, rows * nb);
+            let acts: Vec<Q8Act> = (0..cols).map(|c| Q8Act::from_q8_0(nb * 128, &random_q8(&mut r, nb, c % 2 == 0))).collect();
+            let mut out = vec![0f32; rows * cols];
+            assert!(mat_mul_act_check(&w, rows, &acts, &out));
+            unsafe { mat_mul_act_rows(&w, rows, 0..rows, &acts, out.as_mut_ptr()) };
+            for c in 0..cols {
+                for i in 0..rows {
+                    let want = vec_dot_act(&w[i * nb * Q1_0_BYTES..], &acts[c]);
                     assert_eq!(out[c * rows + i].to_bits(), want.to_bits(), "rows {rows} nb {nb} col {c} row {i}");
                 }
             }
