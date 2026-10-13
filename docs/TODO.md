@@ -307,8 +307,10 @@ visitor's browser. Its work lands here first and is pinned there; the registry i
 - [x] **Prompt reading on the GPU** (`begin_many` / `finish_many`, `forward.rs` `mm`): a card whose kernel has a
   token dimension takes a share of every micro-batch's rows, calibrated per shape like the per-token products.
   To measure: reading speed on and off, answers identical.
-- [ ] **Batched submissions on WebGPU**: Q/K/V and gate/up in one dispatch chain, one wait (each wait is a
-  round-trip through the GPU worker; the same item as 0.5.0's for Vulkan).
+- [x] **Grouped submissions on WebGPU** (`begin_group` / `finish_group`, `Gpu::MANY_IN_FLIGHT`): Q/K/V and gate/up
+  submitted together, the CPU's rows of all of them in one wake of the pool, one wait. Measured through Dawn on the
+  Vega 3, 3 threads, two alternating rounds at load ~5: reading 5.05 → 5.41 and 5.10 → 5.60 tok/s with the GPU,
+  writing unchanged (2.2), 12 of 12 answers identical. Vulkan keeps one submission in flight (0.5.0's item).
 - [ ] **A token dimension in SPIR-V**: the many-token kernel for Vulkan, so the server reads prompts on its card too.
 - [ ] **Subgroup reductions** where the adapter has `subgroups`, in the CPU's order, checked bit-exact.
 - [ ] **Discrete AMD and NVIDIA in a browser**: the same oracle, then reading and writing speed per card.

@@ -968,6 +968,22 @@ impl Weights {
     pub fn mv_many(&self, ms: &[&Mat], a: &Act, outs: &mut [&mut [f32]]) -> Result<(), String> {
         // 1-bit and ternary on the CPU: every matrix's rows in one wake of the pool (`rows_multi`), each row by the same
         // kernel as `mv`, so the same bits (Q/K/V, gate/up: three and two wakes become one each)
+        // with a card that takes several products in flight (WebGPU): the card's share of each submitted at once, the
+        // rest of every matrix in one wake of the pool, one wait — the same bits, as each row is still one kernel's
+        if ms.len() > 1 && ms.iter().zip(outs.iter()).all(|(m, o)| o.len() == m.rows && m.ty == TYPE_Q1_0) {
+            if let (Some(w), Act::Q1(a)) = (self.gpu.as_ref(), a) {
+                let mut worker = w.lock().map_err(|_| "the GPU worker is poisoned".to_string())?;
+                let mats: Vec<(&str, &[u8], usize)> = ms.iter().map(|m| (m.name, m.bytes, m.rows)).collect();
+                if let Some(gs) = worker.begin_group(&mats, a)? {
+                    let rb = a.n() / QK1_0 * Q1_0_BYTES;
+                    {
+                        let mut rest: Vec<&mut [f32]> = outs.iter_mut().zip(&gs).map(|(o, &g)| &mut o[g..]).collect();
+                        self.pool.rows_multi(&mut rest, &|s, r0, o| q1_0::mat_vec(&ms[s].bytes[(gs[s] + r0) * rb..], o.len(), a, o));
+                    }
+                    return worker.finish_group(outs, &gs);
+                }
+            }
+        }
         if self.gpu.is_none() && ms.len() > 1 && ms.iter().zip(outs.iter()).all(|(m, o)| o.len() == m.rows) {
             match a {
                 Act::Q1(a) if ms.iter().all(|m| m.ty == TYPE_Q1_0) => {

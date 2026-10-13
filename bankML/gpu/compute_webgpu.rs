@@ -31,7 +31,7 @@ extern "C" {
     /// Dispatch pipeline `pipe` on buffers `ids[..n]` with push constants `push[..np]`; the last buffer's first
     /// `out_len` bytes are copied to `out_ptr` here when it finishes. Returns at once.
     fn bankml_gpu_submit(pipe: u32, ids: *const u32, n: u32, push: *const u32, np: u32, out_ptr: *mut u8, out_len: u32) -> u32;
-    /// Block until the last submit finished and its result is copied; 1 on success.
+    /// Block until every submit since the last wait finished and its result is copied; 1 on success.
     fn bankml_gpu_wait() -> u32;
     /// Bytes the device's buffers hold now.
     fn bankml_gpu_allocated() -> f64;
@@ -84,6 +84,8 @@ impl Gpu {
     /// Many activations in one dispatch: push constants (rows, blocks per row, columns), output `O[col · rows + row]`
     /// (the WGSL kernel's token dimension).
     pub const COLUMNS: bool = true;
+    /// Several submits in flight, one [`Gpu::wait`] for all: each output lands in its own mirror.
+    pub const MANY_IN_FLIGHT: bool = true;
 
     /// Open the host's WebGPU device (`index` is 0: the one adapter the page was given).
     pub fn open(_index: usize) -> Result<Gpu, String> {

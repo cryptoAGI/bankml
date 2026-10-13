@@ -100,6 +100,9 @@ pub struct Worker {
     pipe_many: Option<Pipeline>,
     many: Option<(Buffer, Buffer, Buffer)>,
     pending_many: Option<(usize, usize)>,
+    /// Matrices sharing one activation (Q/K/V, gate/up) submitted together, one wait for all ([`Gpu::MANY_IN_FLIGHT`]):
+    /// each one's name and rows taken.
+    pending_group: Vec<(String, usize)>,
     /// The limiter: L, whether the heap is system RAM, when the card may work again, when the pending dispatch began.
     limit: f64,
     integrated: bool,
@@ -127,7 +130,7 @@ impl Worker {
         let integrated = matches!(d.kind, super::Kind::Integrated);
         let pipe_many = if Gpu::COLUMNS { Some(gpu.pipeline(&q1_0_mat_vec8(), Q1_0_BINDINGS, 12)?) } else { None };
         let mut w = Worker { gpu, pipe, name: d.name.clone(), share: 0.0, mats: HashMap::new(), act_d, act_q, cap_n, pending: None,
-                             pipe_many, many: None, pending_many: None,
+                             pipe_many, many: None, pending_many: None, pending_group: Vec::new(),
                              limit: limit(), integrated, rest_until: None, started: None, st: Status::default(),
                              tunes: HashMap::new(), trial: None };
         w.share = match std::env::var("BANKML_GPU_SHARE").ok().and_then(|v| v.parse::<f64>().ok()) {
@@ -268,6 +271,71 @@ impl Worker {
         }
         self.publish();
         r
+    }
+
+    /// Several matrices by one activation (Q/K/V, gate/up): the card's share of each submitted at once, one wait for
+    /// all in [`Worker::finish_group`]. `None` (do them one by one) where submits cannot overlap, while any of their
+    /// shapes is still being measured, or while the card rests; otherwise the rows the card took of each (0 for a
+    /// shape decided for the CPU, or a matrix over the memory limit).
+    pub fn begin_group(&mut self, mats: &[(&str, &[u8], usize)], a: &Q8Act) -> Result<Option<Vec<usize>>, String> {
+        let n = a.n();
+        if !Gpu::MANY_IN_FLIGHT || n > self.cap_n || self.rest_until.is_some_and(|t| Instant::now() < t) {
+            return Ok(None);
+        }
+        let mut card = Vec::with_capacity(mats.len());
+        for &(_, _, rows) in mats {
+            match self.tunes.get(&(rows, n)).and_then(|t| t.chosen) {
+                Some(c) => card.push(c),
+                None => return Ok(None),
+            }
+        }
+        self.trial = None;
+        let mut gs = vec![0usize; mats.len()];
+        let mut wrote = false;
+        for (i, &(name, w, rows)) in mats.iter().enumerate() {
+            if !card[i] {
+                continue;
+            }
+            let Some(g) = self.upload(name, w, rows, n, self.share, true)? else { continue };
+            if !wrote {
+                let (d, q) = super::kernels::pack_act(a);
+                self.gpu.write(&self.act_d, &d);
+                self.gpu.write(&self.act_q, &q);
+                wrote = true;
+            }
+            let m = &self.mats[name];
+            self.gpu.submit(&self.pipe, &[&m.wd, &m.wb, &self.act_d, &self.act_q, &m.out], &[g as u32, (n / QK1_0) as u32],
+                            (g as u32 * 8).div_ceil(LOCAL_SIZE))?;
+            self.pending_group.push((name.to_string(), g));
+            self.st.on_card += 1;
+            gs[i] = g;
+        }
+        if wrote {
+            self.started = Some(Instant::now());
+        }
+        Ok(Some(gs))
+    }
+
+    /// Wait once for [`Worker::begin_group`]'s products and write each card's rows into the start of its output, in
+    /// the order the matrices were given (`outs[i]` for the i-th; those the card did not take are left alone).
+    pub fn finish_group(&mut self, outs: &mut [&mut [f32]], taken: &[usize]) -> Result<(), String> {
+        if self.pending_group.is_empty() {
+            return Ok(());
+        }
+        let r = self.gpu.wait();
+        let pending = std::mem::take(&mut self.pending_group);
+        r?;
+        let mut it = pending.into_iter();
+        for (o, &g) in outs.iter_mut().zip(taken) {
+            if g > 0 {
+                let (name, g2) = it.next().ok_or("a group product went missing")?;
+                debug_assert_eq!(g, g2);
+                o[..g].copy_from_slice(&self.gpu.read_f32(&self.mats[&name].out, g));
+            }
+        }
+        self.rest();
+        self.publish();
+        Ok(())
     }
 
     /// Record a timed product and, once each candidate has `TRIALS` timings after its warm-up, decide the shape.

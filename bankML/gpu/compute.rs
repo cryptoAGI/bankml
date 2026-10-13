@@ -178,6 +178,8 @@ impl Gpu {
     /// Whether a Q1_0 kernel takes many activations in one dispatch (a third push constant: the columns). Vulkan's
     /// SPIR-V kernels take one; WebGPU's (`compute_webgpu.rs`) take many.
     pub const COLUMNS: bool = false;
+    /// Whether several submits may be in flight before one `wait` (WebGPU: yes; here one at a time).
+    pub const MANY_IN_FLIGHT: bool = false;
 
     /// Open Vulkan physical device `index` (the index `bankml gpu` reports) for compute.
     pub fn open(index: usize) -> Result<Gpu, String> {

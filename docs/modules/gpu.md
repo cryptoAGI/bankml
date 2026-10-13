@@ -285,6 +285,9 @@ is a CPU and never used. The verification, the calibration and the limiter are u
 - **Eight invocations per row**, one per accumulation lane of the CPU kernel, lane 0 adding the eight in the CPU's
   order (6.5× the one-per-row kernel on the Vega 3), and **a token dimension**, so a prompt's micro-batch is one
   dispatch (`Gpu::COLUMNS`; the worker's `begin_many` / `finish_many`, used by `forward.rs`'s `mm`).
+- **Several products in flight** (`Gpu::MANY_IN_FLIGHT`; the worker's `begin_group` / `finish_group`, used by
+  `mv_many`): Q/K/V and gate/up submitted together, the CPU's rows of all of them in one wake of the pool, one wait
+  (each wait is a round-trip to the page's GPU worker). Once every shape is decided; while measuring, one by one.
 - **Workgroups by vendor** (`workgroup_for`): 64 for AMD, 32 for NVIDIA, else the subgroup size rounded up to 8. Any
   multiple of 8 gives the same bits (checked at 32, 64, 128).
 - **The limiter without `/proc`**: on an integrated card whose available RAM is unknown, the heap's limit alone.
