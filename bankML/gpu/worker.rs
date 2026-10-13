@@ -128,7 +128,7 @@ impl Worker {
         let cap_n = 16384;
         let (act_d, act_q) = (gpu.buffer(cap_n / 32 * 4)?, gpu.buffer(cap_n)?);
         let integrated = matches!(d.kind, super::Kind::Integrated);
-        let pipe_many = if Gpu::COLUMNS { Some(gpu.pipeline(&q1_0_mat_vec8(), Q1_0_BINDINGS, 12)?) } else { None };
+        let pipe_many = if Gpu::COLUMNS { Some(gpu.pipeline(&super::kernels::q1_0_mat_mul8(), Q1_0_BINDINGS, 12)?) } else { None };
         let mut w = Worker { gpu, pipe, name: d.name.clone(), share: 0.0, mats: HashMap::new(), act_d, act_q, cap_n, pending: None,
                              pipe_many, many: None, pending_many: None, pending_group: Vec::new(),
                              limit: limit(), integrated, rest_until: None, started: None, st: Status::default(),

@@ -175,9 +175,9 @@ pub struct Pipeline {
 }
 
 impl Gpu {
-    /// Whether a Q1_0 kernel takes many activations in one dispatch (a third push constant: the columns). Vulkan's
-    /// SPIR-V kernels take one; WebGPU's (`compute_webgpu.rs`) take many.
-    pub const COLUMNS: bool = false;
+    /// Whether a Q1_0 kernel takes many activations in one dispatch: `kernels::q1_0_mat_mul8`, a third push constant
+    /// (the columns) dispatched as the y dimension. Learned in browseML's WGSL; Vulkan and WebGPU both take it.
+    pub const COLUMNS: bool = true;
     /// Whether several submits may be in flight before one `wait` (WebGPU: yes; here one at a time).
     pub const MANY_IN_FLIGHT: bool = false;
 
@@ -397,7 +397,9 @@ impl Gpu {
             if p.push_bytes > 0 {
                 (self.dev.fns.push)(self.cb, p.layout, STAGE_COMPUTE, 0, p.push_bytes, push.as_ptr() as *const c_void);
             }
-            (self.dev.fns.dispatch)(self.cb, groups, 1, 1);
+            // a third push constant is the kernel's token dimension (q1_0_mat_mul8): one row of workgroups per column
+            let gy = if p.push_bytes >= 12 { push[2].max(1) } else { 1 };
+            (self.dev.fns.dispatch)(self.cb, groups, gy, 1);
             check((self.dev.fns.end)(self.cb), "vkEndCommandBuffer")?;
             let si = SubmitInfo { s_type: 4, p_next: std::ptr::null(), wait_count: 0, waits: std::ptr::null(), wait_stages: std::ptr::null(),
                                   cb_count: 1, cbs: &self.cb, signal_count: 0, signals: std::ptr::null() };

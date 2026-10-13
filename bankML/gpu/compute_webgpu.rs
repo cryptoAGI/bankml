@@ -77,7 +77,8 @@ pub struct Pipeline {
 /// The WGSL twin of a SPIR-V kernel: both Q1_0 kernels (one invocation per row, or eight) have the same one, which
 /// takes one activation or many.
 fn twin_of(spirv: &[u32]) -> Option<&'static str> {
-    (spirv == super::kernels::q1_0_mat_vec().as_slice() || spirv == super::kernels::q1_0_mat_vec8().as_slice()).then_some(super::wgsl::Q1_0_MM)
+    (spirv == super::kernels::q1_0_mat_vec().as_slice() || spirv == super::kernels::q1_0_mat_vec8().as_slice()
+        || spirv == super::kernels::q1_0_mat_mul8().as_slice()).then_some(super::wgsl::Q1_0_MM)
 }
 
 impl Gpu {

@@ -153,6 +153,19 @@ pub fn pack_act(a: &crate::q1_0::Q8Act) -> (Vec<f32>, Vec<i32>)
   - Not yet used for inference: one invocation per row is slower than the CPU's ternary kernel (3.5–4.7 ms per
     4096×4096 or 2048×12288 product on the Vega 3). A layout with lanes per row, as `q1_0_mat_vec8`, comes next.
 
+### `kernels.rs` — `q1_0_mat_mul8`, the token dimension (learned in browseML)
+
+`q1_0_mat_mul8` is `q1_0_mat_vec8` with a second dispatch dimension: one column of workgroups per activation (a
+prompt's token), push constants rows, blocks per row, columns; activations packed one after another; output
+`out[col · rows + row]`. It is the SPIR-V form of browseML's WGSL kernel's token dimension (`wgsl.rs`), and
+`q1_0_mat_vec8`'s words are unchanged (the column ops are emitted only for it). `verify_q1_0` checks it on the card
+(3 × 1000×512, 7 × 2048×2048 and 4 × 513×6144 tokens, two of them layer-shaped) before any use, and the worker reads
+prompts with it (`begin_many`). Vulkan's `submit` takes a third push constant as the y dimension.
+
+On the Vega 3 (RADV): every result bit-exact; `bankml generate`, 497 prompt tokens, two rounds alternating card off
+and on: reading 30.7 → 29.9 s and 35.1 → 31.5 s, writing 8.85 → 8.55 and 8.88 → 8.32 tok/s (a 3-compute-unit
+integrated card), the answers byte-identical.
+
 ### `compute.rs` — Vulkan compute
 
 ```rust
@@ -344,8 +357,6 @@ and every result against bankML's scalar reference (`testing/gpu.mjs`).
 - **Speed-neutral on the APU.** On the Vega 3 the card is worth about one CPU core, and each of the 253 matrix calls
   per token pays one submit and wait, which cancels the gain (CHANGELOG 0.2.14). Per-shape calibration (0.3.7) keeps
   the card from costing decode, but does not make it faster there. One submission is in flight at a time.
-- **Many tokens per dispatch only on WebGPU.** Vulkan's SPIR-V kernels take one activation; prompt reading on a
-  Vulkan card is still per token (the CPU reads prompts there).
 - **`Q1_0` only.** The worker is opened only for 1-bit models; there is no Q2_0 (ternary) or F16 GPU kernel yet.
 - **One card.** The worker uses the first selected card; several cards are not yet used together. The design for
   several cards gives each a share of every matrix's rows, which keeps each output element one card's exact dot

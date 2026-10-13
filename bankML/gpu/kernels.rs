@@ -185,6 +185,18 @@ pub fn q1_0_mat_vec() -> Vec<u32> {
 /// there too; a workgroup covers 8 rows. The lane sums meet in workgroup memory and lane 0 adds them in the CPU's
 /// order, so the bits equal `q1_0_mat_vec`'s.
 pub fn q1_0_mat_vec8() -> Vec<u32> {
+    q1_0_mat8(false)
+}
+
+/// [`q1_0_mat_vec8`] with a token dimension (learned in browseML's WGSL twin, [`super::wgsl::Q1_0_MM`]): many
+/// activations, one per workgroup row of the dispatch (`ceil(rows · 8 / 64)` × columns). Push constants: rows, blocks
+/// per row, columns. Activations are packed one after another (each [`pack_act`]); output `out[col · rows + row]`.
+/// Each element has the bits of `q1_0_mat_vec8`'s for that column.
+pub fn q1_0_mat_mul8() -> Vec<u32> {
+    q1_0_mat8(true)
+}
+
+fn q1_0_mat8(cols: bool) -> Vec<u32> {
     let mut m = Module::new();
     m.capability(1);
     let glsl = m.ext_import("GLSL.std.450");
@@ -214,10 +226,13 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
         v
     };
     let (wd, wbits, ad, aq, outb) = (bind(&mut m, p_sf, 0), bind(&mut m, p_su, 1), bind(&mut m, p_sf, 2), bind(&mut m, p_si, 3), bind(&mut m, p_sf, 4));
-    let pc_st = m.ty(op::TYPE_STRUCT, &[u32t, u32t]);
+    let pc_st = if cols { m.ty(op::TYPE_STRUCT, &[u32t, u32t, u32t]) } else { m.ty(op::TYPE_STRUCT, &[u32t, u32t]) };
     m.decorate(pc_st, &[dec::BLOCK]);
     m.member_decorate(pc_st, 0, &[dec::OFFSET, 0]);
     m.member_decorate(pc_st, 1, &[dec::OFFSET, 4]);
+    if cols {
+        m.member_decorate(pc_st, 2, &[dec::OFFSET, 8]);
+    }
     let p_pc = m.ty(op::TYPE_POINTER, &[sc::PUSH_CONSTANT, pc_st]);
     let pe_pcu = m.ty(op::TYPE_POINTER, &[sc::PUSH_CONSTANT, u32t]);
     let pc = m.global(p_pc, sc::PUSH_CONSTANT);
@@ -259,7 +274,21 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
     let rows = m.op(op::LOAD, u32t, &[prow]);
     let pnb = m.op(op::ACCESS_CHAIN, pe_pcu, &[pc, cu[1]]);
     let nb = m.op(op::LOAD, u32t, &[pnb]);
-    let inrange = m.op(op::U_LESS_THAN, tbool, &[r, rows]);
+    let row_ok = m.op(op::U_LESS_THAN, tbool, &[r, rows]);
+    // the token dimension: column c's activation starts at block c·nb·4 (scales) and word c·nb·4·8 (quants)
+    let (inrange, abase, obase) = if cols {
+        let c = m.op(op::COMPOSITE_EXTRACT, u32t, &[g, 1]);
+        let pcols = m.op(op::ACCESS_CHAIN, pe_pcu, &[pc, cu[2]]);
+        let ncols = m.op(op::LOAD, u32t, &[pcols]);
+        let col_ok = m.op(op::U_LESS_THAN, tbool, &[c, ncols]);
+        let both = m.op(op::LOGICAL_AND, tbool, &[row_ok, col_ok]);
+        let nb4 = m.op(op::I_MUL, u32t, &[nb, cu[4]]);
+        let ab = m.op(op::I_MUL, u32t, &[c, nb4]);
+        let ob = m.op(op::I_MUL, u32t, &[c, rows]);
+        (both, Some(ab), Some(ob))
+    } else {
+        (row_ok, None, None)
+    };
     m.stmt(op::STORE, &[acc, cf0]);
     m.stmt(op::SELECTION_MERGE, &[l_after, 0]);
     m.stmt(op::BRANCH_CONDITIONAL, &[inrange, l_work, l_after]);
@@ -287,7 +316,8 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
         let wi = m.op(op::I_ADD, u32t, &[blk4, cu[k as usize]]);
         let pw = m.op(op::ACCESS_CHAIN, pe_u, &[wbits, cu[0], wi]);
         let wword = m.op(op::LOAD, u32t, &[pw]);
-        let ab_i = m.op(op::I_ADD, u32t, &[iv4, cu[k as usize]]);
+        let ab_i0 = m.op(op::I_ADD, u32t, &[iv4, cu[k as usize]]);
+        let ab_i = match abase { Some(b) => m.op(op::I_ADD, u32t, &[b, ab_i0]), None => ab_i0 };
         let pd = m.op(op::ACCESS_CHAIN, pe_f, &[ad, cu[0], ab_i]);
         let d1 = m.op(op::LOAD, f32t, &[pd]);
         let ab8 = m.op(op::I_MUL, u32t, &[ab_i, cu[8]]);
@@ -343,7 +373,8 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
     let lo = m.op(op::F_ADD, f32t, &[r4[0], r4[2]]);
     let hi = m.op(op::F_ADD, f32t, &[r4[1], r4[3]]);
     let sum = m.op(op::F_ADD, f32t, &[lo, hi]);
-    let po = m.op(op::ACCESS_CHAIN, pe_f, &[outb, cu[0], r]);
+    let oi = match obase { Some(b) => m.op(op::I_ADD, u32t, &[b, r]), None => r };
+    let po = m.op(op::ACCESS_CHAIN, pe_f, &[outb, cu[0], oi]);
     m.stmt(op::STORE, &[po, sum]);
     m.stmt(op::BRANCH, &[l_end]);
     m.label(l_end);
@@ -410,6 +441,53 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
                 return Err(format!("{kname} {rows}×{n}: row {i} differs from the CPU kernel (gpu {:e}, cpu {:e})", got[i], cpu[i]));
             }
             lines.push(format!("{kname} {rows}×{n}{}: {rows} of {rows} rows bit-exact ({dt:.2} ms)", if real { " (layer-shaped)" } else { "" }));
+        }
+    }
+    // the token dimension (prompt reading), where the card's API takes it: every column against the CPU kernel
+    if super::compute::Gpu::COLUMNS {
+        let pipe = gpu.pipeline(&q1_0_mat_mul8(), Q1_0_BINDINGS, 12)?;
+        for &(rows, n, ncols, real) in &[(1000usize, 512usize, 3usize, false), (2048, 2048, 7, true), (513, 6144, 4, true)] {
+            let nb = n / 128;
+            let w: Vec<u8> = (0..rows * nb).flat_map(|_| {
+                let mut b = [0u8; 18];
+                let d = if real { (1.0 + (next() % 1900) as f32) * 1e-5 * if next() & 1 == 1 { -1.0 } else { 1.0 } } else { ((next() % 2000) as f32 - 1000.0) * 1e-5 };
+                b[..2].copy_from_slice(&crate::q1_0::f32_to_f16(d).to_le_bytes());
+                b[2..].iter_mut().for_each(|x| *x = next() as u8);
+                b
+            }).collect();
+            let acts: Vec<Q8Act> = (0..ncols).map(|c| {
+                let mut x: Vec<f32> = (0..n).map(|i| {
+                    let v = ((next() % 20001) as f32 - 10000.0) * 1e-4;
+                    if real { v * (1.0 + (i / 32 % 7) as f32 * 0.37) * (0.05 + ((i / 32) * 2654435761 % 97) as f32 * 0.01) } else { v * 10.0 }
+                }).collect();
+                if !real && c == 0 {
+                    x[3] = -1e9;
+                }
+                Q8Act::quantize(&x)
+            }).collect();
+            let (mut ad, mut aq) = (Vec::new(), Vec::new());
+            for a in &acts {
+                let (d, q) = pack_act(a);
+                ad.extend_from_slice(&d);
+                aq.extend_from_slice(&q);
+            }
+            let (wd, wb) = pack_q1_0(&w, rows, n);
+            let bufs = [gpu.upload(&wd)?, gpu.upload(&wb)?, gpu.upload(&ad)?, gpu.upload(&aq)?, gpu.buffer(rows * ncols * 4)?];
+            let t = std::time::Instant::now();
+            gpu.run(&pipe, &bufs.iter().collect::<Vec<_>>(), &[rows as u32, nb as u32, ncols as u32], (rows as u32 * 8).div_ceil(LOCAL_SIZE))?;
+            let dt = t.elapsed().as_secs_f64() * 1e3;
+            let got = gpu.read_f32(&bufs[4], rows * ncols);
+            for b in bufs {
+                gpu.free(b);
+            }
+            let mut cpu = vec![0.0f32; rows];
+            for (c, a) in acts.iter().enumerate() {
+                mat_vec(&w, rows, a, &mut cpu);
+                if let Some(i) = got[c * rows..(c + 1) * rows].iter().zip(&cpu).position(|(g, c)| !same_result(*g, *c)) {
+                    return Err(format!("q1_0_mat_mul8 {rows}×{n} × {ncols}: column {c} row {i} differs from the CPU kernel"));
+                }
+            }
+            lines.push(format!("q1_0_mat_mul8 {rows}×{n} × {ncols} tokens{}: {} of {} bit-exact ({dt:.2} ms)", if real { " (layer-shaped)" } else { "" }, rows * ncols, rows * ncols));
         }
     }
     Ok(lines)
