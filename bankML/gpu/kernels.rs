@@ -352,6 +352,13 @@ pub fn q1_0_mat_vec8() -> Vec<u32> {
     m.words()
 }
 
+/// A card's result is the CPU kernel's: the same bits — except that on WebAssembly (browseML) a NaN is only NaN, since
+/// WebAssembly leaves NaN bit patterns undefined (the CPU engine's own NaN bits are not fixed there) and so does WGSL.
+/// Every finite result and every infinity must match bit for bit everywhere.
+fn same_result(gpu: f32, cpu: f32) -> bool {
+    gpu.to_bits() == cpu.to_bits() || (cfg!(target_family = "wasm") && gpu.is_nan() && cpu.is_nan())
+}
+
 /// The on-card oracle: both Q1_0 kernels against the CPU kernel, bit for bit, on seeded random data.
 ///
 /// Run before a card is trusted (`bankml gpu --verify`, `Worker::open`). Returns one line per kernel and shape, or
@@ -399,7 +406,7 @@ pub fn verify_q1_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
             for b in bufs {
                 gpu.free(b);
             }
-            if let Some(i) = got.iter().zip(&cpu).position(|(g, c)| g.to_bits() != c.to_bits()) {
+            if let Some(i) = got.iter().zip(&cpu).position(|(g, c)| !same_result(*g, *c)) {
                 return Err(format!("{kname} {rows}×{n}: row {i} differs from the CPU kernel (gpu {:e}, cpu {:e})", got[i], cpu[i]));
             }
             lines.push(format!("{kname} {rows}×{n}{}: {rows} of {rows} rows bit-exact ({dt:.2} ms)", if real { " (layer-shaped)" } else { "" }));
@@ -447,7 +454,7 @@ pub fn verify_q2_0(gpu: &super::compute::Gpu) -> Result<Vec<String>, String> {
         let dt = t.elapsed().as_secs_f64() * 1e3;
         let got = gpu.read_f32(&bufs[4], rows);
         drop(bufs);
-        if let Some(i) = got.iter().zip(&cpu).position(|(g, c)| g.to_bits() != c.to_bits()) {
+        if let Some(i) = got.iter().zip(&cpu).position(|(g, c)| !same_result(*g, *c)) {
             return Err(format!("q2_0_mat_vec {rows}×{n}: row {i} differs from the CPU kernel (gpu {:e}, cpu {:e})", got[i], cpu[i]));
         }
         lines.push(format!("q2_0_mat_vec {rows}×{n}{}: {rows} of {rows} rows bit-exact ({dt:.2} ms)", if real { " (layer-shaped)" } else { "" }));

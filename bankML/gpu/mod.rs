@@ -8,6 +8,11 @@
 //! merged into each device. Remote (rented) cards are listed on request and never selected.
 //! Details: docs/modules/gpu.md.
 
+#[cfg(not(target_family = "wasm"))]
+pub mod compute;
+// browseML: the same API on WebGPU, through the page's GPU worker
+#[cfg(target_family = "wasm")]
+#[path = "compute_webgpu.rs"]
 pub mod compute;
 pub mod hf;
 pub mod kernels;
@@ -102,7 +107,29 @@ impl Device {
 pub type Discover = fn() -> Result<Vec<Device>, String>;
 
 /// Every local backend bankml knows: a name and its discovery function. Add a backend here.
+#[cfg(not(target_family = "wasm"))]
 pub const BACKENDS: &[(&str, Discover)] = &[("vulkan", vulkan::devices)];
+#[cfg(target_family = "wasm")]
+pub const BACKENDS: &[(&str, Discover)] = &[("webgpu", webgpu_devices)];
+
+/// The page's WebGPU adapter as a device (browseML). A fallback or software adapter (SwiftShader) is a CPU renderer,
+/// never used, as llvmpipe is on Linux.
+#[cfg(target_family = "wasm")]
+fn webgpu_devices() -> Result<Vec<Device>, String> {
+    let (vendor, arch, desc, kind, heap) = compute::adapter().ok_or("this page has no WebGPU adapter")?;
+    let v = vendor.to_lowercase();
+    let id = if v.contains("nvidia") { 0x10de } else if v.contains("amd") || v.contains("ati") { 0x1002 } else if v.contains("intel") { 0x8086 }
+             else if v.contains("apple") { 0x106b } else { 0 };
+    let soft = kind == "cpu" || desc.to_lowercase().contains("swiftshader") || v.contains("google");
+    Ok(vec![Device {
+        backend: "webgpu", index: 0,
+        name: [vendor.as_str(), arch.as_str(), desc.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · "),
+        vendor: id, device: 0,
+        kind: if soft { Kind::Cpu } else if kind == "discrete" { Kind::Discrete } else { Kind::Integrated },
+        api: "webgpu".into(), device_local_bytes: heap, host_visible_device_local: false, compute_queues: 1,
+        sysfs: None, count: 1, usd_per_hour: None,
+    }])
+}
 
 /// Remote backends: asked only on request (they use the network), never selected automatically.
 pub const REMOTE_BACKENDS: &[(&str, Discover)] = &[("huggingface", hf::devices)];
