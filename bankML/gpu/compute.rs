@@ -175,6 +175,10 @@ pub struct Pipeline {
 }
 
 impl Gpu {
+    /// Whether a Q1_0 kernel takes many activations in one dispatch (a third push constant: the columns). Vulkan's
+    /// SPIR-V kernels take one; WebGPU's (`compute_webgpu.rs`) take many.
+    pub const COLUMNS: bool = false;
+
     /// Open Vulkan physical device `index` (the index `bankml gpu` reports) for compute.
     pub fn open(index: usize) -> Result<Gpu, String> {
         // SAFETY: each entry point is cast to its Vulkan signature; create-info structs and out-pointers outlive

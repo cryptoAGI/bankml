@@ -288,6 +288,31 @@ passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a 
   every load. Next: slice-based loads where they cost nothing.
 - [x] CI builds and unit-tests on x86-64 and natively on aarch64 (**0.4.1**: `ubuntu-24.04-arm`; build, unit tests, clippy `-D warnings`, the guard; the first run found that ARM's `/proc/cpuinfo` names no `model name`). Still to add: the x86 variants without AVX2, forced.
 
+### browseML — the client host (alongside 0.5.0 to 1.0.0)
+
+**Direction (operator, 2026-10-13): keep a clear distinction between the bankML server and client-side interaction;
+bring what browseML learns about GPUs back into bankML as modules.** browseML
+([github.com/browseML/browseML](https://github.com/browseML/browseML)) runs this engine as WebAssembly in the
+visitor's browser. Its work lands here first and is pinned there; the registry is [modules/host.md](modules/host.md).
+
+- [x] **The host registry** (`host.rs`, `bankml hosts`): server hosts (`native`, `capi`) and client hosts
+  (`browseml`, `wasi`), each with its side, target, model source, threads, GPU and memory; the browseML engine
+  names itself at open.
+- [x] **WebGPU as a backend** (`gpu/compute_webgpu.rs`, `2c8192d`): the worker, its on-card oracle and calibration
+  unchanged on it.
+- [x] **The WGSL kernel as bankML's own** (`gpu/wgsl.rs`): exact without an FMA, TwoSum hidden from the driver (the
+  AMD lesson), eight lanes per row, a token dimension, workgroups by vendor; browseML's copy checked identical.
+- [x] **The limiter without `/proc`**: a browser's integrated card was never given a matrix (no available RAM read);
+  now the heap's limit alone.
+- [x] **Prompt reading on the GPU** (`begin_many` / `finish_many`, `forward.rs` `mm`): a card whose kernel has a
+  token dimension takes a share of every micro-batch's rows, calibrated per shape like the per-token products.
+  To measure: reading speed on and off, answers identical.
+- [ ] **Batched submissions on WebGPU**: Q/K/V and gate/up in one dispatch chain, one wait (each wait is a
+  round-trip through the GPU worker; the same item as 0.5.0's for Vulkan).
+- [ ] **A token dimension in SPIR-V**: the many-token kernel for Vulkan, so the server reads prompts on its card too.
+- [ ] **Subgroup reductions** where the adapter has `subgroups`, in the CPU's order, checked bit-exact.
+- [ ] **Discrete AMD and NVIDIA in a browser**: the same oracle, then reading and writing speed per card.
+
 ### 0.6.0 — more models
 
 **Direction (operator, 2026-10-05): SmolLM2 and `mindx-genN` stay as the *example* of the imprint (they prove the

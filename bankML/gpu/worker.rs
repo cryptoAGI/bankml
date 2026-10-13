@@ -17,6 +17,9 @@ use std::time::Instant;
 
 /// Timed products per candidate and shape, after one warm-up each (the warm-up includes the upload).
 const TRIALS: usize = 6;
+/// Marks a shape's activation width as a many-token product's (prompt reading) in the calibration: each width is
+/// at most `cap_n` (16384), so the two kinds never share a key, and they are decided separately.
+const MANY: usize = 1 << 30;
 
 /// One shape's tuning: timings per candidate (0 = the CPU alone, 1 = the card's share) and the decision once made.
 #[derive(Debug, Clone, Default)]
@@ -91,6 +94,12 @@ pub struct Worker {
     act_q: Buffer,
     cap_n: usize,
     pending: Option<(String, usize)>,
+    /// Prompt reading, where the card's kernel takes many activations in one dispatch ([`Gpu::COLUMNS`]): its
+    /// pipeline (rows, blocks, columns), and buffers for the activations and the result that grow to the largest
+    /// micro-batch seen; the pending product's rows and columns.
+    pipe_many: Option<Pipeline>,
+    many: Option<(Buffer, Buffer, Buffer)>,
+    pending_many: Option<(usize, usize)>,
     /// The limiter: L, whether the heap is system RAM, when the card may work again, when the pending dispatch began.
     limit: f64,
     integrated: bool,
@@ -116,7 +125,9 @@ impl Worker {
         let cap_n = 16384;
         let (act_d, act_q) = (gpu.buffer(cap_n / 32 * 4)?, gpu.buffer(cap_n)?);
         let integrated = matches!(d.kind, super::Kind::Integrated);
+        let pipe_many = if Gpu::COLUMNS { Some(gpu.pipeline(&q1_0_mat_vec8(), Q1_0_BINDINGS, 12)?) } else { None };
         let mut w = Worker { gpu, pipe, name: d.name.clone(), share: 0.0, mats: HashMap::new(), act_d, act_q, cap_n, pending: None,
+                             pipe_many, many: None, pending_many: None,
                              limit: limit(), integrated, rest_until: None, started: None, st: Status::default(),
                              tunes: HashMap::new(), trial: None };
         w.share = match std::env::var("BANKML_GPU_SHARE").ok().and_then(|v| v.parse::<f64>().ok()) {
@@ -163,9 +174,21 @@ impl Worker {
     /// Returns the rows the card took (0 when none). The caller computes the rest, then calls [`Worker::finish`]
     /// even when 0 was returned, since `finish` also records the shape's timing.
     pub fn begin(&mut self, name: &str, w: &[u8], rows: usize, a: &Q8Act) -> Result<usize, String> {
-        let shape = (rows, a.n());
+        if self.candidate((rows, a.n())) == 0 {
+            return Ok(0);
+        }
+        let g = self.begin_share(name, w, rows, a, self.share, true)?;
+        if g == 0 {
+            self.trial = None; // the card rested or the matrix did not fit: not a measurement of the card's share
+        }
+        Ok(g)
+    }
+
+    /// The candidate for this product of `shape`: its decision, or (while it is measured) the CPU and the card in
+    /// turn, timed from here to `finish`.
+    fn candidate(&mut self, shape: (usize, usize)) -> usize {
         let t = self.tunes.entry(shape).or_default();
-        let cand = match t.chosen {
+        match t.chosen {
             Some(card) => {
                 self.trial = None;
                 card as usize
@@ -176,15 +199,75 @@ impl Worker {
                 self.trial = Some((shape, c, Instant::now()));
                 c
             }
-        };
-        if cand == 0 {
+        }
+    }
+
+    /// Prompt reading: start the card on the first `share` of `rows` rows of `name` times every activation in `cols`
+    /// (one micro-batch's tokens), in one dispatch. Returns the rows the card took (0 when none: no kernel with a
+    /// token dimension here, too wide, resting, over the memory limit, or the CPU measured faster for this shape).
+    /// The caller computes the other rows of every column, then calls [`Worker::finish_many`] even when 0 was
+    /// returned. Each row the card returns has the bits of the CPU kernel's, as in [`Worker::begin`].
+    pub fn begin_many(&mut self, name: &str, w: &[u8], rows: usize, cols: &[Q8Act]) -> Result<usize, String> {
+        let Some(a0) = cols.first() else { return Ok(0) };
+        let n = a0.n();
+        if self.pipe_many.is_none() || cols.len() < 2 || n > self.cap_n || (rows as f64 * self.share) as usize == 0 || cols.iter().any(|a| a.n() != n) {
             return Ok(0);
         }
-        let g = self.begin_share(name, w, rows, a, self.share, true)?;
-        if g == 0 {
-            self.trial = None; // the card rested or the matrix did not fit: not a measurement of the card's share
+        if self.candidate((rows, n + MANY)) == 0 {
+            return Ok(0);
         }
+        let Some(g) = self.upload(name, w, rows, n, self.share, true)? else {
+            self.trial = None;
+            return Ok(0);
+        };
+        let (mut d, mut q) = (Vec::with_capacity(cols.len() * n / 32), Vec::with_capacity(cols.len() * n / 4));
+        for a in cols {
+            let (ad, aq) = super::kernels::pack_act(a);
+            d.extend_from_slice(&ad);
+            q.extend_from_slice(&aq);
+        }
+        let out_bytes = g * cols.len() * 4;
+        let grow = self.many.as_ref().is_none_or(|(bd, bq, bo)| bd.bytes < d.len() * 4 || bq.bytes < q.len() * 4 || bo.bytes < out_bytes);
+        if grow {
+            if let Some((bd, bq, bo)) = self.many.take() {
+                for b in [bd, bq, bo] {
+                    self.gpu.free(b);
+                }
+            }
+            // room for the largest micro-batch so far, and for the widest matrix's share of it
+            let (cd, cq, co) = (d.len() * 4, q.len() * 4, out_bytes.max(self.mats.values().map(|m| m.g).max().unwrap_or(g) * cols.len() * 4));
+            self.many = Some((self.gpu.buffer(cd)?, self.gpu.buffer(cq)?, self.gpu.buffer(co)?));
+        }
+        let (bd, bq, bo) = self.many.as_ref().expect("made above");
+        self.gpu.write(bd, &d);
+        self.gpu.write(bq, &q);
+        let m = &self.mats[name];
+        self.gpu.submit(self.pipe_many.as_ref().expect("checked"), &[&m.wd, &m.wb, bd, bq, bo],
+                        &[g as u32, (n / QK1_0) as u32, cols.len() as u32], (g as u32 * 8).div_ceil(LOCAL_SIZE))?;
+        self.pending_many = Some((g, cols.len()));
+        self.started = Some(Instant::now());
+        self.st.on_card += 1;
         Ok(g)
+    }
+
+    /// Wait for [`Worker::begin_many`]'s product and write the card's rows of every column into `out`
+    /// (`out[col · rows + row]`, the CPU's layout), and record a pending timing.
+    pub fn finish_many(&mut self, rows: usize, out: &mut [f32]) -> Result<(), String> {
+        let r = (|| {
+            let Some((g, cols)) = self.pending_many.take() else { return Ok(()) };
+            self.gpu.wait()?;
+            let got = self.gpu.read_f32(&self.many.as_ref().expect("submitted").2, g * cols);
+            for (c, part) in got.chunks_exact(g).enumerate() {
+                out[c * rows..c * rows + g].copy_from_slice(part);
+            }
+            self.rest();
+            Ok(())
+        })();
+        if let Some((shape, cand, t0)) = self.trial.take() {
+            self.record(shape, cand, t0.elapsed().as_secs_f64());
+        }
+        self.publish();
+        r
     }
 
     /// Record a timed product and, once each candidate has `TRIALS` timings after its warm-up, decide the shape.
@@ -231,9 +314,9 @@ impl Worker {
         if held as f64 > self.limit * self.gpu.heap_bytes as f64 {
             return false;
         }
-        if self.integrated {
-            let avail = crate::sys::memory().map(|m| m.available).unwrap_or(0);
-            return held as f64 <= self.limit * (self.gpu.allocated() + avail) as f64;
+        // where the RAM available is unknown (a browser: no /proc), the heap's limit is the only one
+        if let (true, Some(m)) = (self.integrated, crate::sys::memory()) {
+            return held as f64 <= self.limit * (self.gpu.allocated() + m.available) as f64;
         }
         true
     }
@@ -258,24 +341,8 @@ impl Worker {
         if g == 0 || n > self.cap_n {
             return Ok(0);
         }
-        if limited && self.rest_until.is_some_and(|t| Instant::now() < t) {
-            self.st.on_cpu_resting += 1;
-            self.publish();
-            return Ok(0);
-        }
-        if !self.mats.contains_key(name) {
-            let need = (g * (n / QK1_0) * Q1_0_BYTES + g * 4) as u64;
-            if limited && !self.fits(need) {
-                self.st.on_cpu_memory += 1;
-                self.publish();
-                return Ok(0);
-            }
-            let (wd, wb) = pack_q1_0(w, g, n);
-            let m = GMat { wd: self.gpu.upload(&wd)?, wb: self.gpu.upload(&wb)?, out: self.gpu.buffer(g * 4)?, g, shape: (rows, n) };
-            self.mats.insert(name.to_string(), m);
-        }
+        let Some(g) = self.upload(name, w, rows, n, share, limited)? else { return Ok(0) };
         let m = &self.mats[name];
-        let g = m.g;
         let (d, q) = super::kernels::pack_act(a);
         self.gpu.write(&self.act_d, &d);
         self.gpu.write(&self.act_q, &q);
@@ -287,6 +354,29 @@ impl Worker {
             self.st.on_card += 1;
         }
         Ok(g)
+    }
+
+    /// `name`'s first `share` of rows on the card (uploaded on first use); the rows it holds, or `None` when, `limited`,
+    /// the card rests or the matrix does not fit the memory limit (counted in the status).
+    fn upload(&mut self, name: &str, w: &[u8], rows: usize, n: usize, share: f64, limited: bool) -> Result<Option<usize>, String> {
+        if limited && self.rest_until.is_some_and(|t| Instant::now() < t) {
+            self.st.on_cpu_resting += 1;
+            self.publish();
+            return Ok(None);
+        }
+        if !self.mats.contains_key(name) {
+            let g = ((rows as f64 * share) as usize).min(rows);
+            let need = (g * (n / QK1_0) * Q1_0_BYTES + g * 4) as u64;
+            if limited && !self.fits(need) {
+                self.st.on_cpu_memory += 1;
+                self.publish();
+                return Ok(None);
+            }
+            let (wd, wb) = pack_q1_0(w, g, n);
+            let m = GMat { wd: self.gpu.upload(&wd)?, wb: self.gpu.upload(&wb)?, out: self.gpu.buffer(g * 4)?, g, shape: (rows, n) };
+            self.mats.insert(name.to_string(), m);
+        }
+        Ok(Some(self.mats[name].g))
     }
 
     /// Wait for the card, write its rows into the start of `out`, and record a pending timing.
@@ -303,7 +393,13 @@ impl Worker {
         let Some((name, g)) = self.pending.take() else { return Ok(()) };
         self.gpu.wait()?;
         out[..g].copy_from_slice(&self.gpu.read_f32(&self.mats[&name].out, g));
-        // Duty cycle: rest d·(1−L)/L after a dispatch of d; `busy` is the smoothed busy fraction.
+        self.rest();
+        self.publish();
+        Ok(())
+    }
+
+    /// Duty cycle: rest d·(1−L)/L after a dispatch of d; `busy` is the smoothed busy fraction.
+    fn rest(&mut self) {
         if let Some(t) = self.started.take() {
             let d = t.elapsed();
             let rest = d.mul_f64((1.0 - self.limit) / self.limit);
@@ -311,7 +407,5 @@ impl Worker {
             let frac = d.as_secs_f64() / (d + rest).as_secs_f64().max(1e-9);
             self.st.busy = if self.st.busy == 0.0 { frac } else { 0.9 * self.st.busy + 0.1 * frac };
         }
-        self.publish();
-        Ok(())
     }
 }

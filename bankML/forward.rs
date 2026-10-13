@@ -908,7 +908,27 @@ impl Weights {
         let n = match a { Acts::Q1(v) => v.len(), Acts::Q2(v) => v.len(), Acts::F16(v) => v.len() };
         let mut out = vec![0.0f32; m.rows * n];
         match (m.ty, a) {
-            (TYPE_Q1_0, Acts::Q1(cols)) => q1_0::mat_mul_act_par(&self.pool, m.bytes, m.rows, cols, &mut out),
+            (TYPE_Q1_0, Acts::Q1(cols)) => {
+                // a verified card whose kernel takes many tokens at once (WebGPU) takes the first rows of every column
+                let mut worker = self.gpu.as_ref().and_then(|w| w.lock().ok());
+                let g = match worker.as_mut() {
+                    Some(w) => w.begin_many(m.name, m.bytes, m.rows, cols)?,
+                    None => 0,
+                };
+                if g == 0 {
+                    q1_0::mat_mul_act_par(&self.pool, m.bytes, m.rows, cols, &mut out);
+                } else {
+                    let (rb, rest) = (cols[0].n() / QK1_0 * Q1_0_BYTES, m.rows - g);
+                    let mut part = vec![0.0f32; rest * n];
+                    q1_0::mat_mul_act_par(&self.pool, &m.bytes[g * rb..], rest, cols, &mut part);
+                    for (c, p) in part.chunks_exact(rest.max(1)).enumerate().take(n) {
+                        out[c * m.rows + g..(c + 1) * m.rows].copy_from_slice(p);
+                    }
+                }
+                if let Some(w) = worker.as_mut() {
+                    w.finish_many(m.rows, &mut out)?;
+                }
+            }
             (TYPE_Q2_0, Acts::Q2(cols)) => q2_0::mat_mul_par(&self.pool, m.bytes, m.rows, cols, &mut out),
             // one column takes ggml_vec_dot_f16, two or more llamafile's tinyBLAS (f16.rs): mat_mul_par chooses as ggml does
             (TYPE_F16, Acts::F16(cols)) => crate::f16::mat_mul_par(&self.pool, m.bytes, m.rows, cols, &mut out),

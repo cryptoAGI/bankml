@@ -38,6 +38,7 @@ how each phase was reached, with its evidence — is in [../BUILD_HISTORY.md](..
 | [f16.md](f16.md) | `f16.rs` | ggml's two F16 products, chosen by shape as ggml chooses them |
 | [par.md](par.md) | `par.rs` | the zero-dependency thread pool; bits independent of thread count |
 | [gpu.md](gpu.md) | `gpu/` | Vulkan through dlopen, bankML's own SPIR-V, a verified card's share of the rows |
+| [host.md](host.md) | `host.rs` | where the engine runs: server hosts (the binary, the C API) and client hosts (browseML in the visitor's browser) |
 | [sys.md](sys.md) | `sys.rs` | machine facts and the process's usage (`bankml usage`, `/bankml/usage`): CPU, memory, GPU busy and memory, package power |
 | [metrics.md](metrics.md) | `metrics.rs` | bankML's own measurements of its answers: TTFT, pp and tg tokens/s, energy per token (`/bankml/metrics`) |
 | **The model** | | |

@@ -32,6 +32,8 @@ const USAGE: &str = "usage: bankml usage [PID …]
        bankml gpu [--remote | --verify]                        (every video card found, and which bankml will use;
                                                               --remote adds the GPUs Hugging Face rents, listed only;
                                                               --verify runs the bit-exact kernel oracle on each card)
+       bankml hosts                                           (where the engine runs: server hosts — this binary, the C API — and
+                                                              client hosts — browseML in the visitor's browser; JSON)
        bankml version";
 
 fn main() {
@@ -152,6 +154,11 @@ fn main() {
                     2
                 }
             }
+        }
+        (Some("hosts"), _) => {
+            // Where bankML's engine runs: the server hosts and the client hosts (browseML), and which one this is.
+            println!("{}", bankml::host::report_json());
+            0
         }
         (Some("gpu"), _) => {
             // Every GPU found (Vulkan merged with sysfs) and the selection.

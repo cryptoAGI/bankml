@@ -249,7 +249,7 @@ pub fn status_json() -> String        // GET /bankml/usage's "gpu_limiter"
 
 - **`BANKML_GPU_LIMIT`** = L: bankML's buffers stay within L of the heap they come from (the `Gpu.heap_bytes` field,
   against `Gpu::allocated()`), and on an integrated card within L of the RAM they could use (what they hold plus what
-  the system has available). After a dispatch of `d` the card rests `d·(1−L)/L`. A matrix that does not fit, or a
+  the system has available; where that is unknown, as in a browser with no `/proc`, the heap's limit alone). After a dispatch of `d` the card rests `d·(1−L)/L`. A matrix that does not fit, or a
   product arriving while the card rests, runs whole on the CPU — never a wait, the same bits.
 - **Per-shape calibration**: each matrix shape's first products alternate between the calibrated share and the CPU
   alone, timed `begin` → `finish` in the real pipeline (the CPU's rows included). After a warm-up (which includes
@@ -265,6 +265,32 @@ pub fn status_json() -> String        // GET /bankml/usage's "gpu_limiter"
 - Measured (CHANGELOG 0.3.7; Vega 3, Bonsai-1.7B, interleaved A/B, 4 rounds, the same answer every time): with one
   global share the card cost decode 18 % (10.40 → 8.51–8.58 tok/s); per shape, 10.36 tok/s off against 10.30–10.38
   on — neutral — with ~13 MB on the card instead of 66 MB.
+
+### WebGPU (browseML)
+
+On WebAssembly the `compute` module is `compute_webgpu.rs`: the same `Gpu`, `Buffer` and `Pipeline` over nine host
+imports (`bankml_gpu_adapter/open/buffer/write/free/pipeline/submit/wait/allocated`), served in browseML by a GPU
+worker that holds the WebGPU device; the engine thread blocks in `Atomics.wait` until a result lands in its output
+buffer's mirror. Discovery lists the page's adapter as backend `webgpu`; a fallback or software adapter (SwiftShader)
+is a CPU and never used. The verification, the calibration and the limiter are unchanged. Hosts: [host.md](host.md).
+
+`wgsl.rs` holds the kernel the host compiles, bankML's own, handed over as text with the workgroup size:
+
+- **Exact without an exact FMA.** WGSL has neither a guaranteed fused multiply-add nor NoContraction, so
+  `fma_exact` builds the fused result from a Veltkamp split (12 bits) and TwoSum, rounds to odd, and lets the last
+  addition round once.
+- **The driver's simplifier.** On a real Radeon (Mesa's NIR, through Dawn) `(a + b) − a` became `b` and the kernel
+  was wrong. Every TwoSum step now passes through `hide`, an OR with a uniform the host sets to zero, which no
+  compiler can see through. Every result is then bit-exact in every shape tested.
+- **Eight invocations per row**, one per accumulation lane of the CPU kernel, lane 0 adding the eight in the CPU's
+  order (6.5× the one-per-row kernel on the Vega 3), and **a token dimension**, so a prompt's micro-batch is one
+  dispatch (`Gpu::COLUMNS`; the worker's `begin_many` / `finish_many`, used by `forward.rs`'s `mm`).
+- **Workgroups by vendor** (`workgroup_for`): 64 for AMD, 32 for NVIDIA, else the subgroup size rounded up to 8. Any
+  multiple of 8 gives the same bits (checked at 32, 64, 128).
+- **The limiter without `/proc`**: on an integrated card whose available RAM is unknown, the heap's limit alone.
+
+browseML's gate checks that its own copy of the kernel (`web/browseml-gpu.js`) is this text, character for character,
+and every result against bankML's scalar reference (`testing/gpu.mjs`).
 
 ## How it is verified
 
@@ -315,6 +341,8 @@ pub fn status_json() -> String        // GET /bankml/usage's "gpu_limiter"
 - **Speed-neutral on the APU.** On the Vega 3 the card is worth about one CPU core, and each of the 253 matrix calls
   per token pays one submit and wait, which cancels the gain (CHANGELOG 0.2.14). Per-shape calibration (0.3.7) keeps
   the card from costing decode, but does not make it faster there. One submission is in flight at a time.
+- **Many tokens per dispatch only on WebGPU.** Vulkan's SPIR-V kernels take one activation; prompt reading on a
+  Vulkan card is still per token (the CPU reads prompts there).
 - **`Q1_0` only.** The worker is opened only for 1-bit models; there is no Q2_0 (ternary) or F16 GPU kernel yet.
 - **One card.** The worker uses the first selected card; several cards are not yet used together. The design for
   several cards gives each a share of every matrix's rows, which keeps each output element one card's exact dot

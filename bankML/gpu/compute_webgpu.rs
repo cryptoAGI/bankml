@@ -4,7 +4,8 @@
 //!
 //! The worker, its verification ([`super::kernels::verify_q1_0`]) and its calibration run unchanged on top of it, so a
 //! WebGPU device computes rows only after it has reproduced the CPU kernel's bits. Each SPIR-V kernel is mapped to its
-//! WGSL twin (browseML's `browseml-gpu.js`), which performs the same float operations in the same order.
+//! WGSL twin ([`super::wgsl`], bankML's own), which performs the same float operations in the same order. The engine
+//! hands the host the shader's text and the vendor's workgroup size: the host holds no kernel of its own.
 //!
 //! Calls are few per product: writes are staged here and posted without waiting, a submit is posted, and one
 //! [`Gpu::wait`] blocks (the host's `Atomics.wait`) until the result is in the output buffer's mirror in this memory, so
@@ -14,8 +15,8 @@ use std::cell::RefCell;
 
 #[link(wasm_import_module = "env")]
 extern "C" {
-    /// The adapter, as text "vendor\tarchitecture\tdescription\tkind\theap" into `out` (at most `cap` bytes); its
-    /// length, or 0 when the host has no WebGPU (or no bridge).
+    /// The adapter, as text "vendor\tarchitecture\tdescription\tkind\theap\tsubgroup" into `out` (at most `cap`
+    /// bytes; the largest subgroup size last, 0 when unknown); its length, or 0 when the host has no WebGPU (or no bridge).
     fn bankml_gpu_adapter(out: *mut u8, cap: u32) -> u32;
     /// Open the device; 1 on success.
     fn bankml_gpu_open() -> u32;
@@ -24,8 +25,9 @@ extern "C" {
     /// Copy `len` bytes at `ptr` into buffer `id` from its start: `wait` 1 blocks until copied, 0 posts and returns.
     fn bankml_gpu_write(id: u32, ptr: *const u8, len: u32, wait: u32) -> u32;
     fn bankml_gpu_free(id: u32);
-    /// A pipeline for kernel `kind` (1: Q1_0 one row per invocation, 2: Q1_0 eight per row); its id (0: no WGSL twin).
-    fn bankml_gpu_pipeline(kind: u32, bindings: u32, push_bytes: u32) -> u32;
+    /// A compute pipeline from the WGSL text at `code` (`len` bytes, entry point `main`), its `WG` override set to
+    /// `workgroup`, `bindings` storage buffers and a uniform after them; its id (0: refused).
+    fn bankml_gpu_pipeline(code: *const u8, len: u32, workgroup: u32, bindings: u32) -> u32;
     /// Dispatch pipeline `pipe` on buffers `ids[..n]` with push constants `push[..np]`; the last buffer's first
     /// `out_len` bytes are copied to `out_ptr` here when it finishes. Returns at once.
     fn bankml_gpu_submit(pipe: u32, ids: *const u32, n: u32, push: *const u32, np: u32, out_ptr: *mut u8, out_len: u32) -> u32;
@@ -35,8 +37,8 @@ extern "C" {
     fn bankml_gpu_allocated() -> f64;
 }
 
-/// The host's adapter, when it offers one: (vendor, architecture, description, kind, heap bytes).
-pub fn adapter() -> Option<(String, String, String, String, u64)> {
+/// The host's adapter, when it offers one: (vendor, architecture, description, kind, heap bytes, largest subgroup).
+pub fn adapter() -> Option<(String, String, String, String, u64, u32)> {
     let mut b = vec![0u8; 512];
     // SAFETY: the host writes at most `cap` bytes into `b`.
     let n = unsafe { bankml_gpu_adapter(b.as_mut_ptr(), b.len() as u32) } as usize;
@@ -46,13 +48,15 @@ pub fn adapter() -> Option<(String, String, String, String, u64)> {
     let s = String::from_utf8_lossy(&b[..n]).into_owned();
     let f: Vec<&str> = s.split('\t').collect();
     let get = |i: usize| f.get(i).map(|x| x.to_string()).unwrap_or_default();
-    Some((get(0), get(1), get(2), get(3), get(4).parse().unwrap_or(0)))
+    Some((get(0), get(1), get(2), get(3), get(4).parse().unwrap_or(0), get(5).parse().unwrap_or(0)))
 }
 
 /// One WebGPU device, through the host.
 pub struct Gpu {
     pub name: String,
     pub heap_bytes: u64,
+    /// The workgroup size for this vendor ([`super::wgsl::workgroup_for`]).
+    pub workgroup: u32,
 }
 
 /// A device buffer: its id, its size, the bytes staged for its next write, and (once it has been an output) the
@@ -70,26 +74,26 @@ pub struct Pipeline {
     push_bytes: u32,
 }
 
-/// The kernels with a WGSL twin, by their SPIR-V.
-fn kind_of(spirv: &[u32]) -> u32 {
-    if spirv == super::kernels::q1_0_mat_vec().as_slice() {
-        1
-    } else if spirv == super::kernels::q1_0_mat_vec8().as_slice() {
-        2
-    } else {
-        0
-    }
+/// The WGSL twin of a SPIR-V kernel: both Q1_0 kernels (one invocation per row, or eight) have the same one, which
+/// takes one activation or many.
+fn twin_of(spirv: &[u32]) -> Option<&'static str> {
+    (spirv == super::kernels::q1_0_mat_vec().as_slice() || spirv == super::kernels::q1_0_mat_vec8().as_slice()).then_some(super::wgsl::Q1_0_MM)
 }
 
 impl Gpu {
+    /// Many activations in one dispatch: push constants (rows, blocks per row, columns), output `O[col · rows + row]`
+    /// (the WGSL kernel's token dimension).
+    pub const COLUMNS: bool = true;
+
     /// Open the host's WebGPU device (`index` is 0: the one adapter the page was given).
     pub fn open(_index: usize) -> Result<Gpu, String> {
-        let (vendor, arch, desc, _, heap) = adapter().ok_or("no WebGPU adapter")?;
+        let (vendor, arch, desc, _, heap, subgroup) = adapter().ok_or("no WebGPU adapter")?;
+        let workgroup = super::wgsl::workgroup_for(&vendor, subgroup);
         // SAFETY: an import without arguments.
         if unsafe { bankml_gpu_open() } != 1 {
             return Err("the WebGPU device did not open".into());
         }
-        Ok(Gpu { name: [vendor, arch, desc].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · "), heap_bytes: heap })
+        Ok(Gpu { name: [vendor, arch, desc].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · "), heap_bytes: heap, workgroup })
     }
 
     pub fn buffer(&self, bytes: usize) -> Result<Buffer, String> {
@@ -129,7 +133,7 @@ impl Gpu {
     pub fn read_f32(&self, b: &Buffer, n: usize) -> Vec<f32> {
         let m = b.mirror.borrow();
         assert!(n * 4 <= m.len(), "this buffer was not the output of the last submit");
-        m[..n * 4].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+        m[..n * 4].as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect()
     }
 
     pub fn allocated(&self) -> u64 {
@@ -142,12 +146,9 @@ impl Gpu {
     }
 
     pub fn pipeline(&self, spirv: &[u32], bindings: u32, push_bytes: u32) -> Result<Pipeline, String> {
-        let kind = kind_of(spirv);
-        if kind == 0 {
-            return Err("no WGSL twin for this kernel".into());
-        }
-        // SAFETY: an import with plain arguments.
-        let id = unsafe { bankml_gpu_pipeline(kind, bindings, push_bytes) };
+        let code = twin_of(spirv).ok_or("no WGSL twin for this kernel")?;
+        // SAFETY: the host copies the text before the call returns.
+        let id = unsafe { bankml_gpu_pipeline(code.as_ptr(), code.len() as u32, self.workgroup, bindings) };
         if id == 0 {
             return Err("the WebGPU pipeline was refused".into());
         }
@@ -167,8 +168,8 @@ impl Gpu {
         Ok(())
     }
 
-    /// Start the kernel; the host computes the workgroups for its own workgroup size (the vendor's) from the rows in
-    /// `push`, so `groups` is not used. The last buffer is the output: its result lands in its mirror here.
+    /// Start the kernel; the host computes the workgroups for its own workgroup size (the vendor's) from the rows (and
+    /// the columns, when a third push constant gives them) in `push`, so `groups` is not used. The last buffer is the output: its result lands in its mirror here.
     pub fn submit(&self, p: &Pipeline, bufs: &[&Buffer], push: &[u32], _groups: u32) -> Result<(), String> {
         assert_eq!(bufs.len() as u32, p.bindings);
         assert_eq!(push.len() as u32 * 4, p.push_bytes);

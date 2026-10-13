@@ -36,6 +36,7 @@ pub mod forward;
 pub mod gguf;
 pub mod grammar;
 pub mod gpu;
+pub mod host;
 pub mod native;
 pub mod ollama;
 pub mod par;

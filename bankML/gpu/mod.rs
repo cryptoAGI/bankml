@@ -17,6 +17,7 @@ pub mod compute;
 pub mod hf;
 pub mod kernels;
 pub mod spirv;
+pub mod wgsl;
 pub mod vulkan;
 pub mod worker;
 
@@ -116,7 +117,7 @@ pub const BACKENDS: &[(&str, Discover)] = &[("webgpu", webgpu_devices)];
 /// never used, as llvmpipe is on Linux.
 #[cfg(target_family = "wasm")]
 fn webgpu_devices() -> Result<Vec<Device>, String> {
-    let (vendor, arch, desc, kind, heap) = compute::adapter().ok_or("this page has no WebGPU adapter")?;
+    let (vendor, arch, desc, kind, heap, _) = compute::adapter().ok_or("this page has no WebGPU adapter")?;
     let v = vendor.to_lowercase();
     let id = if v.contains("nvidia") { 0x10de } else if v.contains("amd") || v.contains("ati") { 0x1002 } else if v.contains("intel") { 0x8086 }
              else if v.contains("apple") { 0x106b } else { 0 };
