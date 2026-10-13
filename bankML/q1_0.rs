@@ -283,7 +283,6 @@ pub fn relaxed_madd_is_fused() -> bool {
 fn relaxed_core(n: usize, x: &[u8], a: &Q8Act) -> f32 {
     use std::arch::wasm32::*;
     let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
-    let zero = u8x16_splat(0);
     let one = u8x16_splat(1);
     let spread = [u8x16(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), u8x16(2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3)];
     let (mut acc_lo, mut acc_hi) = (f32x4_splat(0.0), f32x4_splat(0.0));
@@ -300,7 +299,8 @@ fn relaxed_core(n: usize, x: &[u8], a: &Q8Act) -> f32 {
                 // SAFETY: `qs` holds n i8 values and `tot` n / 4 sums (Q8Act's invariants); each load reads 16 bytes of
                 // block b, half h, and its 4 lane sums.
                 let (q, t) = unsafe { (v128_load(qs.add(b * QK8_0 + 16 * h) as *const v128), v128_load(tot.add(b * 8 + 4 * h) as *const v128)) };
-                let on = v128_and(v128_not(u8x16_eq(v128_and(u8x16_swizzle(signs, spread[h]), bit), zero)), one); // 1 where the bit is set
+                // 1 where the bit is set: the selected bit (0 or a power of two) clamped to 1 — three operations, not five
+                let on = u8x16_min(v128_and(u8x16_swizzle(signs, spread[h]), bit), one);
                 let pos = i32x4_relaxed_dot_i8x16_i7x16_add(q, on, i32x4_splat(0)); // Σ₊q per lane of four
                 f32x4_convert_i32x4(i32x4_sub(i32x4_shl(pos, 1), t))
             };
@@ -329,7 +329,6 @@ fn relaxed_core(n: usize, x: &[u8], a: &Q8Act) -> f32 {
 fn relaxed_core_1x4(n: usize, x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] {
     use std::arch::wasm32::*;
     let bit = u8x16(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
-    let zero = u8x16_splat(0);
     let one = u8x16_splat(1);
     let spread = [u8x16(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), u8x16(2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3)];
     let mut acc = [(f32x4_splat(0.0), f32x4_splat(0.0)); 4];
@@ -341,7 +340,7 @@ fn relaxed_core_1x4(n: usize, x: &[u8], cols: [&Q8Act; 4]) -> [f32; 4] {
             let b = i * 4 + k;
             let signs = u32x4_splat(u32::from_le_bytes([xb[2 + k * 4], xb[3 + k * 4], xb[4 + k * 4], xb[5 + k * 4]]));
             // the row's bits for this block, as 0 or 1 per element: once, for all four activations
-            let on = [0, 1].map(|h| v128_and(v128_not(u8x16_eq(v128_and(u8x16_swizzle(signs, spread[h]), bit), zero)), one));
+            let on = [0, 1].map(|h| u8x16_min(v128_and(u8x16_swizzle(signs, spread[h]), bit), one));
             for (c, a) in cols.iter().enumerate() {
                 let d = f32x4_splat(a.d[b]);
                 let half = |h: usize| {
@@ -1297,6 +1296,8 @@ pub(crate) mod tests {
             for c in 0..4 {
                 let want = vec_dot_ref(nb * 128, &x, &ys[c]);
                 assert_eq!(got[c].to_bits(), want.to_bits(), "round {round} nb {nb} col {c}");
+                // the per-token kernel (writing an answer) on the same row and activation
+                assert_eq!(vec_dot_act(&x, &acts[c]).to_bits(), want.to_bits(), "vec_dot_act: round {round} nb {nb} col {c}");
             }
         }
         for (rows, nb, cols) in [(3usize, 2usize, 4usize), (5, 7, 9), (17, 16, 13), (64, 16, 8)] {
