@@ -87,6 +87,8 @@ impl Gpu {
     pub const COLUMNS: bool = true;
     /// Several submits in flight, one [`Gpu::wait`] for all: each output lands in its own mirror.
     pub const MANY_IN_FLIGHT: bool = true;
+    /// Submissions a group may hold before its wait (the host keeps a mirror per output, so the bound is the group's).
+    pub const IN_FLIGHT: usize = 16;
 
     /// Open the host's WebGPU device (`index` is 0: the one adapter the page was given).
     pub fn open(_index: usize) -> Result<Gpu, String> {

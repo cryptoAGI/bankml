@@ -145,8 +145,10 @@ pub struct Gpu {
     /// Size of the heap bankML's buffers come from; the GPU limiter's budget, against [`Gpu::allocated`].
     pub heap_bytes: u64,
     cpool: H,
-    cb: P,
-    fence: H,
+    /// One command buffer and fence per submission in flight ([`Gpu::IN_FLIGHT`]); `in_flight` of them are in use.
+    cbs: Vec<P>,
+    fences: Vec<H>,
+    in_flight: std::cell::Cell<usize>,
 }
 
 /// A host-visible storage buffer, mapped for its whole life; destroyed, and its memory freed, on drop.
@@ -162,14 +164,14 @@ pub struct Buffer {
     alloc: u64,
 }
 
-/// A compute pipeline: its layout, single descriptor set and push-constant size; destroyed on drop.
+/// A compute pipeline: its layout, one descriptor set per submission in flight, and push-constant size; destroyed on drop.
 pub struct Pipeline {
     dev: std::sync::Arc<Device>,
     pipe: H,
     layout: H,
     dsl: H,
     pool: H,
-    set: H,
+    sets: Vec<H>,
     bindings: u32,
     push_bytes: u32,
 }
@@ -178,8 +180,11 @@ impl Gpu {
     /// Whether a Q1_0 kernel takes many activations in one dispatch: `kernels::q1_0_mat_mul8`, a third push constant
     /// (the columns) dispatched as the y dimension. Learned in browseML's WGSL; Vulkan and WebGPU both take it.
     pub const COLUMNS: bool = true;
-    /// Whether several submits may be in flight before one `wait` (WebGPU: yes; here one at a time).
-    pub const MANY_IN_FLIGHT: bool = false;
+    /// Whether several submits may be in flight before one `wait`: yes, up to [`Gpu::IN_FLIGHT`], each with its own
+    /// command buffer, fence and descriptor set (Q/K/V and gate/up as one group, browseML's WebGPU lesson).
+    pub const MANY_IN_FLIGHT: bool = true;
+    /// Submissions that may be in flight at once; one more `submit` before `wait` is an error.
+    pub const IN_FLIGHT: usize = 4;
 
     /// Open Vulkan physical device `index` (the index `bankml gpu` reports) for compute.
     pub fn open(index: usize) -> Result<Gpu, String> {
@@ -244,13 +249,20 @@ impl Gpu {
             let mut cpool = 0;
             let cpci = CommandPoolCreateInfo { s_type: 39, p_next: std::ptr::null(), flags: 0x2, family }; // RESET_COMMAND_BUFFER
             check((fns.cpool)(dev, &cpci, std::ptr::null(), &mut cpool), "vkCreateCommandPool")?;
-            let mut cb = std::ptr::null_mut();
-            let cbai = CommandBufferAllocateInfo { s_type: 40, p_next: std::ptr::null(), pool: cpool, level: 0, count: 1 };
-            check((fns.cbufs)(dev, &cbai, &mut cb), "vkAllocateCommandBuffers")?;
-            let mut fence = 0;
-            check((fns.fence)(dev, &FenceCreateInfo { s_type: 8, p_next: std::ptr::null(), flags: 0 }, std::ptr::null(), &mut fence), "vkCreateFence")?;
             let heap_bytes = mp.heaps[mp.types[mem_type as usize].heap as usize].size;
-            Ok(Gpu { name, dev: dv, queue, mem_type, heap_bytes, cpool, cb, fence })
+            // owned from here: an early return below destroys the pool and the fences made so far
+            let mut g = Gpu { name, dev: dv.clone(), queue, mem_type, heap_bytes, cpool, cbs: Vec::new(), fences: Vec::new(),
+                              in_flight: std::cell::Cell::new(0) };
+            let mut cbs = vec![std::ptr::null_mut(); Self::IN_FLIGHT];
+            let cbai = CommandBufferAllocateInfo { s_type: 40, p_next: std::ptr::null(), pool: cpool, level: 0, count: Self::IN_FLIGHT as u32 };
+            check((fns.cbufs)(dev, &cbai, cbs.as_mut_ptr()), "vkAllocateCommandBuffers")?;
+            g.cbs = cbs;
+            for _ in 0..Self::IN_FLIGHT {
+                let mut fence = 0;
+                check((fns.fence)(dev, &FenceCreateInfo { s_type: 8, p_next: std::ptr::null(), flags: 0 }, std::ptr::null(), &mut fence), "vkCreateFence")?;
+                g.fences.push(fence);
+            }
+            Ok(g)
         }
     }
 
@@ -342,16 +354,18 @@ impl Gpu {
             let cpci = ComputePipelineCreateInfo { s_type: 29, p_next: std::ptr::null(), flags: 0, stage, layout, base: 0, base_index: -1 };
             let mut pipe = 0;
             check((self.dev.fns.pipelines)(self.dev.dev, 0, 1, &cpci, std::ptr::null(), &mut pipe), "vkCreateComputePipelines")?;
-            let size = DescriptorPoolSize { dtype: STORAGE_BUFFER, count: bindings };
+            let n = Self::IN_FLIGHT as u32;
+            let size = DescriptorPoolSize { dtype: STORAGE_BUFFER, count: bindings.max(1) * n };
             let mut pool = 0;
-            let dpci = DescriptorPoolCreateInfo { s_type: 33, p_next: std::ptr::null(), flags: 0, max_sets: 1, size_count: 1, sizes: &size };
+            let dpci = DescriptorPoolCreateInfo { s_type: 33, p_next: std::ptr::null(), flags: 0, max_sets: n, size_count: 1, sizes: &size };
             check((self.dev.fns.dpool)(self.dev.dev, &dpci, std::ptr::null(), &mut pool), "vkCreateDescriptorPool")?;
-            let mut set = 0;
-            let dsai = DescriptorSetAllocateInfo { s_type: 34, p_next: std::ptr::null(), pool, count: 1, layouts: &dsl };
-            check((self.dev.fns.dsets)(self.dev.dev, &dsai, &mut set), "vkAllocateDescriptorSets")?;
+            let mut sets = vec![0; Self::IN_FLIGHT];
+            let layouts = [dsl; Self::IN_FLIGHT];
+            let dsai = DescriptorSetAllocateInfo { s_type: 34, p_next: std::ptr::null(), pool, count: n, layouts: layouts.as_ptr() };
+            check((self.dev.fns.dsets)(self.dev.dev, &dsai, sets.as_mut_ptr()), "vkAllocateDescriptorSets")?;
             // the module is compiled into the pipeline and no longer needed
             (self.dev.fns.destroy_shader)(self.dev.dev, module, std::ptr::null());
-            Ok(Pipeline { dev: self.dev.clone(), pipe, layout, dsl, pool, set, bindings, push_bytes })
+            Ok(Pipeline { dev: self.dev.clone(), pipe, layout, dsl, pool, sets, bindings, push_bytes })
         }
     }
 
@@ -361,50 +375,62 @@ impl Gpu {
         self.wait()
     }
 
-    /// Wait for the work `submit` started and reset the fence for the next submit.
-    ///
-    /// Call only after `submit`: the fence is otherwise never signalled and this blocks indefinitely.
+    /// Wait for every submission in flight and reset their fences for the next submits; nothing in flight returns at once.
     pub fn wait(&self) -> Result<(), String> {
-        // SAFETY: the fence belongs to `self.dev`.
-        unsafe {
-            check((self.dev.fns.wait)(self.dev.dev, 1, &self.fence, 1, u64::MAX), "vkWaitForFences")?;
-            check((self.dev.fns.reset_fence)(self.dev.dev, 1, &self.fence), "vkResetFences")
+        let n = self.in_flight.get();
+        if n == 0 {
+            return Ok(());
         }
+        // SAFETY: the first `n` fences belong to `self.dev` and each was given to a `vkQueueSubmit`, so each is signalled.
+        unsafe {
+            check((self.dev.fns.wait)(self.dev.dev, n as u32, self.fences.as_ptr(), 1, u64::MAX), "vkWaitForFences")?;
+            check((self.dev.fns.reset_fence)(self.dev.dev, n as u32, self.fences.as_ptr()), "vkResetFences")?;
+        }
+        self.in_flight.set(0);
+        Ok(())
     }
 
     /// Start `groups` workgroups of `p` on `bufs` and return at once; [`Gpu::wait`] completes it.
     ///
-    /// One submission is in flight at a time (one command buffer, one fence, one descriptor set per pipeline): call
-    /// `wait` before the next `submit`. Panics if `bufs` or `push` do not match the pipeline.
+    /// Up to [`Gpu::IN_FLIGHT`] submissions may be in flight, each in its own command buffer, fence and descriptor set
+    /// (of each pipeline); one more is an error until `wait`. Panics if `bufs` or `push` do not match the pipeline.
     pub fn submit(&self, p: &Pipeline, bufs: &[&Buffer], push: &[u32], groups: u32) -> Result<(), String> {
         assert_eq!(bufs.len() as u32, p.bindings);
         assert!(std::sync::Arc::ptr_eq(&p.dev, &self.dev) && bufs.iter().all(|b| std::sync::Arc::ptr_eq(&b.dev, &self.dev)),
                 "a pipeline or buffer of another device");
         assert_eq!(push.len() as u32 * 4, p.push_bytes);
-        // SAFETY: the buffers and pipeline belong to this device; the previous submission has been waited for, so the
-        // command buffer may be reset and the descriptor set rewritten; `infos`, `writes` and `si` outlive the calls.
+        let i = self.in_flight.get();
+        if i >= Self::IN_FLIGHT {
+            return Err(format!("{} submissions already in flight: wait first", Self::IN_FLIGHT));
+        }
+        let (cb, set, fence) = (self.cbs[i], p.sets[i], self.fences[i]);
+        // SAFETY: the buffers and pipeline belong to this device; slot `i` is not in flight (slots 0…i-1 are, and `wait`
+        // frees them all), so its command buffer may be reset and each pipeline's set `i` rewritten; `infos`, `writes`
+        // and `si` outlive the calls.
         unsafe {
             let infos: Vec<DescriptorBufferInfo> = bufs.iter().map(|b| DescriptorBufferInfo { buffer: b.buf, offset: 0, range: u64::MAX }).collect();
             let writes: Vec<WriteDescriptorSet> = infos.iter().enumerate()
-                .map(|(i, info)| WriteDescriptorSet { s_type: 35, p_next: std::ptr::null(), set: p.set, binding: i as u32, element: 0, count: 1,
+                .map(|(i, info)| WriteDescriptorSet { s_type: 35, p_next: std::ptr::null(), set, binding: i as u32, element: 0, count: 1,
                                                       dtype: STORAGE_BUFFER, images: std::ptr::null(), buffers: info, views: std::ptr::null() })
                 .collect();
             (self.dev.fns.update)(self.dev.dev, writes.len() as u32, writes.as_ptr(), 0, std::ptr::null());
-            check((self.dev.fns.reset_cb)(self.cb, 0), "vkResetCommandBuffer")?;
-            check((self.dev.fns.begin)(self.cb, &CommandBufferBeginInfo { s_type: 42, p_next: std::ptr::null(), flags: 1, inheritance: std::ptr::null() }), "vkBeginCommandBuffer")?;
-            (self.dev.fns.bind_pipeline)(self.cb, BIND_POINT_COMPUTE, p.pipe);
-            (self.dev.fns.bind_sets)(self.cb, BIND_POINT_COMPUTE, p.layout, 0, 1, &p.set, 0, std::ptr::null());
+            check((self.dev.fns.reset_cb)(cb, 0), "vkResetCommandBuffer")?;
+            check((self.dev.fns.begin)(cb, &CommandBufferBeginInfo { s_type: 42, p_next: std::ptr::null(), flags: 1, inheritance: std::ptr::null() }), "vkBeginCommandBuffer")?;
+            (self.dev.fns.bind_pipeline)(cb, BIND_POINT_COMPUTE, p.pipe);
+            (self.dev.fns.bind_sets)(cb, BIND_POINT_COMPUTE, p.layout, 0, 1, &set, 0, std::ptr::null());
             if p.push_bytes > 0 {
-                (self.dev.fns.push)(self.cb, p.layout, STAGE_COMPUTE, 0, p.push_bytes, push.as_ptr() as *const c_void);
+                (self.dev.fns.push)(cb, p.layout, STAGE_COMPUTE, 0, p.push_bytes, push.as_ptr() as *const c_void);
             }
             // a third push constant is the kernel's token dimension (q1_0_mat_mul8): one row of workgroups per column
             let gy = if p.push_bytes >= 12 { push[2].max(1) } else { 1 };
-            (self.dev.fns.dispatch)(self.cb, groups, gy, 1);
-            check((self.dev.fns.end)(self.cb), "vkEndCommandBuffer")?;
+            (self.dev.fns.dispatch)(cb, groups, gy, 1);
+            check((self.dev.fns.end)(cb), "vkEndCommandBuffer")?;
             let si = SubmitInfo { s_type: 4, p_next: std::ptr::null(), wait_count: 0, waits: std::ptr::null(), wait_stages: std::ptr::null(),
-                                  cb_count: 1, cbs: &self.cb, signal_count: 0, signals: std::ptr::null() };
-            check((self.dev.fns.submit)(self.queue, 1, &si, self.fence), "vkQueueSubmit")
+                                  cb_count: 1, cbs: &cb, signal_count: 0, signals: std::ptr::null() };
+            check((self.dev.fns.submit)(self.queue, 1, &si, fence), "vkQueueSubmit")?;
         }
+        self.in_flight.set(i + 1);
+        Ok(())
     }
 }
 
@@ -425,7 +451,9 @@ impl Drop for Gpu {
         // on this device and are destroyed once, here. The device itself goes with its last object.
         unsafe {
             (self.dev.fns.idle)(self.dev.dev);
-            (self.dev.fns.destroy_fence)(self.dev.dev, self.fence, std::ptr::null());
+            for &f in &self.fences {
+                (self.dev.fns.destroy_fence)(self.dev.dev, f, std::ptr::null());
+            }
             (self.dev.fns.destroy_cpool)(self.dev.dev, self.cpool, std::ptr::null());
         }
     }

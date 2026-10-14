@@ -279,7 +279,7 @@ impl Worker {
     /// shape decided for the CPU, or a matrix over the memory limit).
     pub fn begin_group(&mut self, mats: &[(&str, &[u8], usize)], a: &Q8Act) -> Result<Option<Vec<usize>>, String> {
         let n = a.n();
-        if !Gpu::MANY_IN_FLIGHT || n > self.cap_n || self.rest_until.is_some_and(|t| Instant::now() < t) {
+        if !Gpu::MANY_IN_FLIGHT || mats.len() > Gpu::IN_FLIGHT || n > self.cap_n || self.rest_until.is_some_and(|t| Instant::now() < t) {
             return Ok(None);
         }
         let mut card = Vec::with_capacity(mats.len());

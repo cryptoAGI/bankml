@@ -273,7 +273,8 @@ passes `bankml gpu --verify` bit-exact on layer-shaped data (RADV taught that a 
 - [ ] The F16 and Q2_0 (ternary) GPU kernels, bit-exact on the card, in `--verify`: the formats Qwen3.8 imprints and
   the ternary line need. **Q2_0 done (0.4.1):** `q2_0_mat_vec`, bit-exact on every row of the 8B shapes and in `--verify`; not yet used for inference (a lanes-per-row layout, as `q1_0_mat_vec8`, has to beat the CPU's ternary kernel first). F16 to do.
 - [ ] Batched GPU submissions: Q/K/V and gate/up in one command buffer, one wait per group, persistent descriptor
-  sets. Goal: a measured gain on the Vega 3.
+  sets. Goal: a measured gain on the Vega 3. **Grouped submissions done** (several in flight, one wait; see the
+  browseML track): neutral natively on the Vega 3; a discrete card is where a gain is expected.
 - [ ] Several cards: each takes a share of every matrix's rows, still one card's exact dot per element. Proven on a
   multi-card machine; a Hugging Face Job (`l4x4`, `a10g-largex2`) is the candidate, **only on the owner's go-ahead
   and budget**.
@@ -310,7 +311,13 @@ visitor's browser. Its work lands here first and is pinned there; the registry i
 - [x] **Grouped submissions on WebGPU** (`begin_group` / `finish_group`, `Gpu::MANY_IN_FLIGHT`): Q/K/V and gate/up
   submitted together, the CPU's rows of all of them in one wake of the pool, one wait. Measured through Dawn on the
   Vega 3, 3 threads, two alternating rounds at load ~5: reading 5.05 → 5.41 and 5.10 → 5.60 tok/s with the GPU,
-  writing unchanged (2.2), 12 of 12 answers identical. Vulkan keeps one submission in flight (0.5.0's item).
+  writing unchanged (2.2), 12 of 12 answers identical. On a quiet machine (load 2–5, 2026-10-13, bankML `bbe7419`):
+  reading 6.70–7.53 → 7.30–7.74 tok/s, writing 2.88–3.34 → 3.14–3.41, 12 of 12 identical.
+- [x] **Grouped submissions on Vulkan** (`Gpu::IN_FLIGHT` = 4: a command buffer, fence and descriptor set per
+  submission): the WebGPU lesson brought to the server's card. `gpu_submissions_in_flight` bit-exact; `--verify`
+  bit-exact; native `generate` (497 prompt tokens, two rounds) answers byte-identical, speed-neutral on the 3-CU Vega 3
+  (reading 32.1 → 33.0 s and 34.6 → 34.8 s; writing 8.74 → 7.57 and 8.00 → 8.10 tok/s): a native wait is cheap,
+  a browser's is a worker round-trip.
 - [x] **A token dimension in SPIR-V** (`q1_0_mat_mul8`): the many-token kernel for Vulkan, so the server reads prompts
   on its card too. Bit-exact on the Vega 3 in `--verify`; native `generate` (497 prompt tokens, two rounds): reading
   30.7 → 29.9 s and 35.1 → 31.5 s, writing ~4–6% slower on this 3-CU card, answers byte-identical.

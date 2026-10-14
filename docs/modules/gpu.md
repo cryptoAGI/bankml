@@ -186,9 +186,11 @@ impl Gpu {
 
 A device with one compute queue, host-visible coherent buffers mapped for their whole life (device-local and
 host-visible memory when the card has it, as an integrated GPU does), pipelines from bankML's own SPIR-V, and a
-dispatch that waits on a fence. `run` is `submit` then `wait`. One submission is in flight at a time (one command
-buffer, one fence, one descriptor set per pipeline), so `wait` must follow each `submit` before the next; `wait`
-without a pending `submit` blocks indefinitely. Every Vulkan call's result is checked.
+dispatch that waits on a fence. `run` is `submit` then `wait`. Up to `Gpu::IN_FLIGHT` (4) submissions may be in
+flight, each with its own command buffer, fence and descriptor set (of each pipeline), so Q/K/V and gate/up go to the
+card as one group; one more `submit` before `wait` is refused, `wait` waits for all of them, and `wait` with nothing
+in flight returns at once (`gpu_submissions_in_flight`: four products of one pipeline in flight, every row bit-exact,
+three rounds). Every Vulkan call's result is checked.
 
 On a card without device-local host-visible memory, buffers live in host-visible memory the CPU can write. `Gpu` is
 `Send` but not `Sync`: one thread drives it at a time (the forward pass holds the worker behind a `Mutex`).
@@ -301,6 +303,7 @@ is a CPU and never used. The verification, the calibration and the limiter are u
 - **Several products in flight** (`Gpu::MANY_IN_FLIGHT`; the worker's `begin_group` / `finish_group`, used by
   `mv_many`): Q/K/V and gate/up submitted together, the CPU's rows of all of them in one wake of the pool, one wait
   (each wait is a round-trip to the page's GPU worker). Once every shape is decided; while measuring, one by one.
+  Brought back to Vulkan: a command buffer, fence and descriptor set per submission in flight.
 - **Workgroups by vendor** (`workgroup_for`): 64 for AMD, 32 for NVIDIA, else the subgroup size rounded up to 8. Any
   multiple of 8 gives the same bits (checked at 32, 64, 128).
 - **The limiter without `/proc`**: on an integrated card whose available RAM is unknown, the heap's limit alone.
@@ -356,7 +359,8 @@ and every result against bankML's scalar reference (`testing/gpu.mjs`).
 
 - **Speed-neutral on the APU.** On the Vega 3 the card is worth about one CPU core, and each of the 253 matrix calls
   per token pays one submit and wait, which cancels the gain (CHANGELOG 0.2.14). Per-shape calibration (0.3.7) keeps
-  the card from costing decode, but does not make it faster there. One submission is in flight at a time.
+  the card from costing decode, but does not make it faster there. Grouped submissions (Q/K/V, gate/up) cut the waits
+  per token from 7 to 4 per layer.
 - **`Q1_0` only.** The worker is opened only for 1-bit models; there is no Q2_0 (ternary) or F16 GPU kernel yet.
 - **One card.** The worker uses the first selected card; several cards are not yet used together. The design for
   several cards gives each a share of every matrix's rows, which keeps each output element one card's exact dot

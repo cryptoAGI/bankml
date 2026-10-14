@@ -827,6 +827,70 @@ mod tests {
         }
     }
 
+    /// Several submissions in flight on one pipeline (Q/K/V as one group, 0.5.0): each output bit-identical to the CPU
+    /// kernel, one wait for all; a fifth submit before the wait is refused, and the slots are free again after it.
+    #[test]
+    #[ignore = "needs a Vulkan GPU"]
+    fn gpu_submissions_in_flight() {
+        use crate::gpu::compute::Gpu;
+        let devs = crate::gpu::selected(&crate::gpu::discover().0);
+        let Some(d) = devs.first() else {
+            eprintln!("gpu in flight: no usable GPU on this machine; skipped");
+            return;
+        };
+        let mut rng = 0x1234_5678_9abc_def1u64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        let gpu = Gpu::open(d.index).unwrap();
+        let pipe = gpu.pipeline(&q1_0_mat_vec8(), Q1_0_BINDINGS, 8).unwrap();
+        let n = 2048;
+        let nb = n / 128;
+        let x: Vec<f32> = (0..n).map(|_| ((next() % 20001) as f32 - 10000.0) * 1e-3).collect();
+        let a = Q8Act::quantize(&x);
+        let (ad, aq) = pack_act(&a);
+        let (bad, baq) = (gpu.upload(&ad).unwrap(), gpu.upload(&aq).unwrap());
+        let mats: Vec<(usize, Vec<u8>)> = [2048usize, 512, 512, 6144].iter().map(|&rows| {
+            (rows, (0..rows * nb).flat_map(|_| {
+                let mut b = vec![0u8; 18];
+                b[..2].copy_from_slice(&crate::q1_0::f32_to_f16(((next() % 2000) as f32 - 1000.0) * 1e-5).to_le_bytes());
+                for x in b[2..].iter_mut() {
+                    *x = next() as u8;
+                }
+                b
+            }).collect())
+        }).collect();
+        let bufs: Vec<_> = mats.iter().map(|(rows, w)| {
+            let (wd, wb) = pack_q1_0(w, *rows, n);
+            (gpu.upload(&wd).unwrap(), gpu.upload(&wb).unwrap(), gpu.buffer(rows * 4).unwrap())
+        }).collect();
+        let submit = |i: usize| {
+            let (wd, wb, out) = &bufs[i];
+            gpu.submit(&pipe, &[wd, wb, &bad, &baq, out], &[mats[i].0 as u32, nb as u32], (mats[i].0 as u32 * 8).div_ceil(LOCAL_SIZE))
+        };
+        for round in 0..3 {
+            for i in 0..Gpu::IN_FLIGHT.min(mats.len()) {
+                submit(i).unwrap();
+            }
+            if round == 0 {
+                assert!(submit(0).is_err(), "a submit past IN_FLIGHT is refused");
+            }
+            gpu.wait().unwrap();
+            gpu.wait().unwrap(); // nothing in flight: returns at once
+            for (i, (rows, w)) in mats.iter().enumerate() {
+                let mut cpu = vec![0.0f32; *rows];
+                mat_vec(w, *rows, &a, &mut cpu);
+                let got = gpu.read_f32(&bufs[i].2, *rows);
+                let same = got.iter().zip(&cpu).filter(|(a, b)| a.to_bits() == b.to_bits()).count();
+                assert_eq!(same, *rows, "round {round}, matrix {i}: {same} of {rows} rows bit-exact");
+            }
+        }
+        eprintln!("gpu {}: {} submissions in flight, one wait, 3 rounds: every row bit-exact", d.name, Gpu::IN_FLIGHT);
+    }
+
     /// Both Q1_0 kernels on every usable local GPU against the CPU kernel, including −128 quants.
     #[test]
     #[ignore = "needs a Vulkan GPU"]
