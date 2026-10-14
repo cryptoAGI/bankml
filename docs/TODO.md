@@ -45,6 +45,12 @@ The argument for the method is [thesis.md](thesis.md). Sources:
 - **KoboldCpp code** (K): AGPL-3.0; ideas only, from its documentation.
 - **fp8 KV cache** (V): needs AVX-512/AMX on vLLM's CPU backend; q8_0 via llama.cpp is the equivalent to measure
   (bankML's `q8_0` KV cache, token-identical to llama-server's: 0.4.0).
+- **A second GPU share for prompt reading** (`share_many`, calibrated on a 4096×4096 × 16-token product; built and
+  bit-exact, 2026-10-14): on the Vega 3 through Dawn it calibrated 49–64 % against 38–56 % for writing, but with the
+  writing share pinned (0.42) reading was 5.56 against 5.75 tok/s and writing 2.28 against 2.20 (three alternating
+  rounds, 18 of 18 identical): no gain. An uncontrolled first run had shown +8 % reading and −9 % writing, both from
+  the writing share's calibration noise (38–56 % run to run), not from the second share. What sets reading speed here
+  is the limiter's rest (about 30 % of products whole on the CPU at `BANKML_GPU_LIMIT` 0.8), not the split.
 
 ## 0.1.9 — done
 
