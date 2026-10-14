@@ -326,7 +326,10 @@ visitor's browser. Its work lands here first and is pinned there; the registry i
   included). Kernel, interleaved medians of five rounds on the Vega 3: 1.00–1.18× from 4 to 512 tokens, 1.14–1.18× at
   64 and 512; 2 tokens slower, so micro-batches under `MIN_MANY` (4) stay on the CPU. Tiles of 8 and 16 measured and
   not kept (0.97× and 0.78× geometric mean). The whole engine's reading speed, GPU on: within the noise under load
-  (12 of 12 answers identical); an idle-machine A/B is pending before browseML releases it.
+  (12 of 12 answers identical). Released in browseML 0.6.10 after a three-round whole-engine A/B (0.6.9's engine
+  against 0.6.10's, GPU on, 3 threads, load ≈ 4): reading mean 5.77 against 5.54 tok/s, within the noise; writing
+  unchanged; the card's verified share 39–49% in both; 18 of 18 identical. The kernel is faster; on this integrated
+  card the CPU's share of the rows, not the kernel, sets the reading speed.
 - [ ] **Subgroup reductions** where the adapter has `subgroups`, in the CPU's order, checked bit-exact. (Measured first: the reduction is 7 adds per row; the tile was the larger lever.)
 - [ ] **Discrete AMD and NVIDIA in a browser**: the same oracle, then reading and writing speed per card.
 
