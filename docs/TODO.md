@@ -199,8 +199,8 @@ Each milestone ends with a gated release, and nothing counts until its oracle pa
 ### 0.4.0 — native serve complete (everything Savante and mindX ask of llama-server)
 
 **The current plan.** The serving items below are done (0.3.3–0.3.8 released; the rest on main for 0.4.0). What
-remains for the milestone is three items: 1-bit decode at least at llama-server's speed, measured; the engine setting's `auto`
-choosing native for both the 1-bit and the ternary files; and the milestone's release gate. The same list is in
+remained for the milestone was three items, all done in 0.4.0: 1-bit decode at least at llama-server's speed, measured;
+the engine setting's `auto` choosing native for both the 1-bit and the ternary files; and the milestone's release gate. The same list is in
 [thesis.md](thesis.md) §VII.
 
 - [x] **Slot save and restore in `--native`** (**0.3.8**): the answer after a restore equals an empty slot's, across a
@@ -247,8 +247,8 @@ choosing native for both the 1-bit and the ternary files; and the milestone's re
   share one quantized activation across Q/K/V and gate/up, and compute logits only where sampled.
 - [x] The engine setting's `auto` picks native for both the 1-bit and the ternary files (**0.4.0**, `AUTO_NATIVE_Q1` in
   `sAGI/models.py`, set by the item above).
-- [ ] **The milestone gate**: `testing/release_gate.sh` for 0.4.0, every oracle above in it, recorded in
-  `testing/results/0.4.0.txt`.
+- [x] **The milestone gate** (**0.4.0**, `bd3399d`, 2026-10-07): `testing/release_gate.sh`, every oracle above in it,
+  recorded in `testing/results/0.4.0.txt` — 66 sections, every test result `0 failed`, `# gate done`.
 
 ### 0.4.x — found while measuring 0.4.0
 
