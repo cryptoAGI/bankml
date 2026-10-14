@@ -157,16 +157,22 @@ impl Worker {
         let best = |f: &mut dyn FnMut()| (0..3).map(|_| { let t = std::time::Instant::now(); f(); t.elapsed().as_secs_f64() }).fold(f64::MAX, f64::min);
         let t_cpu = best(&mut || mat_vec_par(pool, &w, rows, &a, &mut out));
         self.mats.remove("calibrate");
+        // a card run that fails gives no share (before, its quick failure timed as a very fast card)
+        let mut ok = true;
         let t_gpu = best(&mut || {
             self.pending = None;
-            if self.begin_share("calibrate", &w, rows, &a, 1.0, false).is_ok() {
-                let _ = self.finish(&mut out);
+            match self.begin_share("calibrate", &w, rows, &a, 1.0, false) {
+                Ok(g) if g > 0 => ok &= self.finish(&mut out).is_ok(),
+                _ => ok = false,
             }
         });
         if let Some(m) = self.mats.remove("calibrate") {
             for b in [m.wd, m.wb, m.out] {
                 self.gpu.free(b);
             }
+        }
+        if !ok {
+            return Ok(0.0);
         }
         let (rg, rc) = (1.0 / t_gpu, 1.0 / t_cpu);
         Ok(rg / (rg + rc))
@@ -475,5 +481,29 @@ impl Worker {
             let frac = d.as_secs_f64() / (d + rest).as_secs_f64().max(1e-9);
             self.st.busy = if self.st.busy == 0.0 { frac } else { 0.9 * self.st.busy + 0.1 * frac };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The calibration's spread: the worker opened eight times on this card, each share printed (a measurement, not a
+    /// bound: the machine's own load moves it); each share is a real one, in (0, 0.95].
+    #[test]
+    #[ignore = "needs a Vulkan GPU"]
+    fn the_calibrated_share_is_repeatable() {
+        let pool = Pool::new(2);
+        let mut shares = Vec::new();
+        for _ in 0..8 {
+            let Some(w) = Worker::open(&pool).unwrap() else {
+                eprintln!("calibration: no usable GPU on this machine; skipped");
+                return;
+            };
+            shares.push(w.share);
+        }
+        let (lo, hi) = shares.iter().fold((f64::MAX, f64::MIN), |(l, h), &s| (l.min(s), h.max(s)));
+        eprintln!("calibration: {} · spread {:.3}", shares.iter().map(|s| format!("{:.3}", s)).collect::<Vec<_>>().join(" "), hi - lo);
+        assert!(shares.iter().all(|&s| s > 0.0 && s <= 0.95), "{shares:?}");
     }
 }

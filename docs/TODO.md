@@ -50,7 +50,14 @@ The argument for the method is [thesis.md](thesis.md). Sources:
   writing share pinned (0.42) reading was 5.56 against 5.75 tok/s and writing 2.28 against 2.20 (three alternating
   rounds, 18 of 18 identical): no gain. An uncontrolled first run had shown +8 % reading and −9 % writing, both from
   the writing share's calibration noise (38–56 % run to run), not from the second share. What sets reading speed here
-  is the limiter's rest (about 30 % of products whole on the CPU at `BANKML_GPU_LIMIT` 0.8), not the split.
+  is not the split. Nor is it the limiter's rest: with the share fixed, `BANKML_GPU_LIMIT` 0.8, 1.0, and 1.0 with a
+  smaller share in place of the rests gave reading 6.23, 6.17, 6.28 and writing 2.36, 2.32, 2.46 tok/s (27 of 27
+  identical).
+- **A paired calibration** (card and CPU timed in five alternating pairs, the median share; 2026-10-14): over sets of
+  eight opens on the Vega 3 at load ≈ 3 its spread was 0.11–0.26 (one open at 0.60) against 0.10 and 0.41 (one at
+  0.71) for best-of-three of each in turn — not a clear gain; the machine's own load is what moves the share. Kept:
+  the test that measures the spread (`the_calibrated_share_is_repeatable`), and a fix it led to — a card run that
+  fails during calibration now gives no share instead of timing as a very fast card.
 
 ## 0.1.9 — done
 
