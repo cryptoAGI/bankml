@@ -223,11 +223,14 @@ identical bits. A second dispatch dimension carries a prompt's tokens (`q1_0_mat
 so a micro-batch is one dispatch. The workgroup size follows the vendor's SIMD width (64 for AMD wavefronts, 32 for
 NVIDIA warps). Any multiple of 8 gives the same bits, as checked at 32, 64 and 128.
 
-**Token tiling (experimental, 2026-10-14).** Each invocation may compute *T* tokens, decoding each weight word once
-for all *T*. Each token's chain is untouched, so the tile is admissible by construction. On the Vega 3 through Dawn,
-under background load: bit-identical to the untiled kernel in every case, and 1.2–1.5× faster at *T* = 8 on the
-model's shapes with 7–64 tokens. Smaller *T* was inconsistent. The measurement awaits repetition on an idle machine
-before it ships.
+**Token tiling** (`Q1_0_MM4`, 2026-10-14). Each invocation computes *T* tokens, decoding each weight word once for
+all *T*; each token's chain is untouched, so the tile is admissible by construction, and every result was
+bit-identical to the untiled kernel, partial tiles included. Interleaved medians of five rounds on the Vega 3 through
+Dawn chose *T* = 4: 1.00–1.18× from 4 to 512 tokens (1.14–1.18× at 64 and 512, the sizes prompt reading sends), a
+geometric mean of 1.09–1.10× over the shapes and token counts measured. *T* = 8 and 16 lost on short batches (0.97×
+and 0.78× geometric means) as the invocations of a partial tile compute clamped duplicate columns; a guard that skips
+them helped short batches but cost long ones. Batches of two tokens lose at any *T* and stay on the CPU. The whole
+engine's prompt reading, with the card taking ~38% of the rows, moved within the measurement noise under load.
 
 ### III.8 Transcendentals: porting the reference's libm
 

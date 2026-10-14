@@ -185,6 +185,8 @@ impl Gpu {
     pub const MANY_IN_FLIGHT: bool = true;
     /// Submissions that may be in flight at once; one more `submit` before `wait` is an error.
     pub const IN_FLIGHT: usize = 4;
+    /// The fewest tokens a micro-batch must have for the card to take part in reading it.
+    pub const MIN_MANY: usize = 2;
 
     /// Open Vulkan physical device `index` (the index `bankml gpu` reports) for compute.
     pub fn open(index: usize) -> Result<Gpu, String> {

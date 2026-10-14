@@ -321,7 +321,13 @@ visitor's browser. Its work lands here first and is pinned there; the registry i
 - [x] **A token dimension in SPIR-V** (`q1_0_mat_mul8`): the many-token kernel for Vulkan, so the server reads prompts
   on its card too. Bit-exact on the Vega 3 in `--verify`; native `generate` (497 prompt tokens, two rounds): reading
   30.7 → 29.9 s and 35.1 → 31.5 s, writing ~4–6% slower on this 3-CU card, answers byte-identical.
-- [ ] **Subgroup reductions** where the adapter has `subgroups`, in the CPU's order, checked bit-exact.
+- [x] **A token tile for prompts on WebGPU** (`Q1_0_MM4`, `TILE` = 4): each invocation computes four tokens, decoding
+  each weight word once; every token's chain unchanged (bit-exact in browseML's `testing/gpu.mjs`, partial tiles
+  included). Kernel, interleaved medians of five rounds on the Vega 3: 1.00–1.18× from 4 to 512 tokens, 1.14–1.18× at
+  64 and 512; 2 tokens slower, so micro-batches under `MIN_MANY` (4) stay on the CPU. Tiles of 8 and 16 measured and
+  not kept (0.97× and 0.78× geometric mean). The whole engine's reading speed, GPU on: within the noise under load
+  (12 of 12 answers identical); an idle-machine A/B is pending before browseML releases it.
+- [ ] **Subgroup reductions** where the adapter has `subgroups`, in the CPU's order, checked bit-exact. (Measured first: the reduction is 7 adds per row; the tile was the larger lever.)
 - [ ] **Discrete AMD and NVIDIA in a browser**: the same oracle, then reading and writing speed per card.
 
 ### 0.6.0 — more models

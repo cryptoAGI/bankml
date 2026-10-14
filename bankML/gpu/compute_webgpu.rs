@@ -27,7 +27,9 @@ extern "C" {
     fn bankml_gpu_free(id: u32);
     /// A compute pipeline from the WGSL text at `code` (`len` bytes, entry point `main`), its `WG` override set to
     /// `workgroup`, `bindings` storage buffers and a uniform after them; its id (0: refused).
-    fn bankml_gpu_pipeline(code: *const u8, len: u32, workgroup: u32, bindings: u32) -> u32;
+    /// `tile`: tokens per invocation (the host dispatches `ceil(columns / tile)` in y); a host that ignores it must
+    /// only be given untiled kernels (tile 1).
+    fn bankml_gpu_pipeline(code: *const u8, len: u32, workgroup: u32, bindings: u32, tile: u32) -> u32;
     /// Dispatch pipeline `pipe` on buffers `ids[..n]` with push constants `push[..np]`; the last buffer's first
     /// `out_len` bytes are copied to `out_ptr` here when it finishes. Returns at once.
     fn bankml_gpu_submit(pipe: u32, ids: *const u32, n: u32, push: *const u32, np: u32, out_ptr: *mut u8, out_len: u32) -> u32;
@@ -74,11 +76,15 @@ pub struct Pipeline {
     push_bytes: u32,
 }
 
-/// The WGSL twin of a SPIR-V kernel: both Q1_0 kernels (one invocation per row, or eight) have the same one, which
-/// takes one activation or many.
-fn twin_of(spirv: &[u32]) -> Option<&'static str> {
-    (spirv == super::kernels::q1_0_mat_vec().as_slice() || spirv == super::kernels::q1_0_mat_vec8().as_slice()
-        || spirv == super::kernels::q1_0_mat_mul8().as_slice()).then_some(super::wgsl::Q1_0_MM)
+/// The WGSL twin of a SPIR-V kernel and its token tile: the per-token Q1_0 kernels (one invocation per row, or eight)
+/// have the untiled kernel; the many-token one (`q1_0_mat_mul8`, reading prompts) has the tiled one.
+fn twin_of(spirv: &[u32]) -> Option<(&'static str, u32)> {
+    if spirv == super::kernels::q1_0_mat_mul8().as_slice() {
+        Some((super::wgsl::Q1_0_MM4, super::wgsl::TILE))
+    } else {
+        (spirv == super::kernels::q1_0_mat_vec().as_slice() || spirv == super::kernels::q1_0_mat_vec8().as_slice())
+            .then_some((super::wgsl::Q1_0_MM, 1))
+    }
 }
 
 impl Gpu {
@@ -89,6 +95,8 @@ impl Gpu {
     pub const MANY_IN_FLIGHT: bool = true;
     /// Submissions a group may hold before its wait (the host keeps a mirror per output, so the bound is the group's).
     pub const IN_FLIGHT: usize = 16;
+    /// The fewest tokens a micro-batch must have for the card to take part: the tiled kernel loses below four.
+    pub const MIN_MANY: usize = 4;
 
     /// Open the host's WebGPU device (`index` is 0: the one adapter the page was given).
     pub fn open(_index: usize) -> Result<Gpu, String> {
@@ -151,9 +159,9 @@ impl Gpu {
     }
 
     pub fn pipeline(&self, spirv: &[u32], bindings: u32, push_bytes: u32) -> Result<Pipeline, String> {
-        let code = twin_of(spirv).ok_or("no WGSL twin for this kernel")?;
+        let (code, tile) = twin_of(spirv).ok_or("no WGSL twin for this kernel")?;
         // SAFETY: the host copies the text before the call returns.
-        let id = unsafe { bankml_gpu_pipeline(code.as_ptr(), code.len() as u32, self.workgroup, bindings) };
+        let id = unsafe { bankml_gpu_pipeline(code.as_ptr(), code.len() as u32, self.workgroup, bindings, tile) };
         if id == 0 {
             return Err("the WebGPU pipeline was refused".into());
         }

@@ -213,7 +213,7 @@ impl Worker {
     pub fn begin_many(&mut self, name: &str, w: &[u8], rows: usize, cols: &[Q8Act]) -> Result<usize, String> {
         let Some(a0) = cols.first() else { return Ok(0) };
         let n = a0.n();
-        if self.pipe_many.is_none() || cols.len() < 2 || n > self.cap_n || (rows as f64 * self.share) as usize == 0 || cols.iter().any(|a| a.n() != n) {
+        if self.pipe_many.is_none() || cols.len() < Gpu::MIN_MANY || n > self.cap_n || (rows as f64 * self.share) as usize == 0 || cols.iter().any(|a| a.n() != n) {
             return Ok(0);
         }
         if self.candidate((rows, n + MANY)) == 0 {

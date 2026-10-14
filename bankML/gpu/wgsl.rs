@@ -88,6 +88,93 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
   }
 }"#;
 
+/// Tokens per invocation in [`Q1_0_MM4`]: dispatch `(ceil(rows · 8 / WG), ceil(columns / TILE))`.
+pub const TILE: u32 = 4;
+
+/// [`Q1_0_MM`] with a token tile, for reading prompts: each invocation computes `TILE` tokens, decoding each weight
+/// word once for all of them (the CPU prefill tile's idea). Every token's chain is the untiled kernel's, operation for
+/// operation, so the bits are the same (docs/KERNELS.md §III.7). Measured on a Radeon Vega 3 through Dawn, interleaved,
+/// medians of five rounds: 1.00–1.18× the untiled kernel from 4 to 512 tokens, 1.14–1.18× at 64 and 512; slower at 2
+/// tokens (0.6×), so the worker gives the card micro-batches of at least four ([`super::compute_webgpu::Gpu::MIN_MANY`]).
+/// Same bindings and uniform as [`Q1_0_MM`].
+pub const Q1_0_MM4: &str = r#"
+override WG: u32 = 64u;
+struct P { rows: u32, nb: u32, cols: u32, zero: u32 }
+@group(0) @binding(0) var<storage, read> Wd: array<f32>;
+@group(0) @binding(1) var<storage, read> Wb: array<u32>;
+@group(0) @binding(2) var<storage, read> Ad: array<f32>;
+@group(0) @binding(3) var<storage, read> Aq: array<u32>;
+@group(0) @binding(4) var<storage, read_write> O: array<f32>;
+@group(0) @binding(5) var<uniform> p: P;
+const T: u32 = 4u;
+var<workgroup> part: array<f32, 4u * WG>;
+
+fn hide(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) | p.zero); }  // see Q1_DOT_WGSL's hide
+fn two_sum(a: f32, b: f32) -> vec2<f32> {
+  let s = hide(a + b);
+  let bb = hide(s - a);
+  let sb = hide(s - bb);
+  return vec2<f32>(s, hide(a - sb) + hide(b - bb));
+}
+fn fma_exact(a: f32, b: f32, c: f32) -> f32 {
+  let bhi = bitcast<f32>(bitcast<u32>(b) & 0xfffff000u);
+  let blo = b - bhi;
+  let u = two_sum(a * bhi, a * blo);
+  let t = two_sum(c, u.x);
+  let v = two_sum(t.y, u.y);
+  var vb = bitcast<u32>(v.x);
+  if ((vb & 1u) == 0u && v.y != 0.0) { vb = select(vb - 1u, vb + 1u, (v.x > 0.0) == (v.y > 0.0)); }
+  return t.x + bitcast<f32>(vb);
+}
+
+@compute @workgroup_size(WG)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let r = gid.x / 8u;
+  let l = gid.x % 8u;
+  let c0 = gid.y * T;
+  var acc: array<f32, 4>;
+  for (var t = 0u; t < T; t++) { acc[t] = 0.0; }
+  if (r < p.rows) {
+    let nb = p.nb;
+    for (var i = 0u; i < nb; i++) {
+      let d0 = Wd[r * nb + i];
+      var ab: array<f32, 4>;
+      for (var k = 0u; k < 4u; k++) {
+        let b = i * 4u + k;
+        // the weight word decoded once for T tokens; each token's chain is the untiled kernel's
+        let bits = (Wb[(r * nb + i) * 4u + k] >> (4u * l)) & 0xfu;
+        for (var t = 0u; t < T; t++) {
+          // past the last token: a copy of it, computed and never stored (no branch inside the chain)
+          let c = min(c0 + t, p.cols - 1u);
+          let d1 = Ad[c * nb * 4u + b];
+          let qw = Aq[(c * nb * 4u + b) * 8u + l];
+          var s: i32 = 0;
+          for (var j = 0u; j < 4u; j++) {
+            let q = bitcast<i32>(qw << (24u - 8u * j)) >> 24u;
+            let nq = select(-q, -128, q == -128);
+            s += select(nq, q, ((bits >> j) & 1u) == 1u);
+          }
+          let prod = d1 * f32(s);
+          ab[t] = select(prod + ab[t], prod, k == 0u);
+        }
+      }
+      for (var t = 0u; t < T; t++) { acc[t] = fma_exact(d0, ab[t], acc[t]); }
+    }
+  }
+  for (var t = 0u; t < T; t++) { part[t * WG + lid.x] = acc[t]; }
+  workgroupBarrier();
+  if (r < p.rows && l == 0u) {
+    for (var t = 0u; t < T; t++) {
+      let c = c0 + t;
+      if (c < p.cols) {
+        let o = t * WG + lid.x;
+        let h = ((part[o] + part[o + 4u]) + (part[o + 2u] + part[o + 6u])) + ((part[o + 1u] + part[o + 5u]) + (part[o + 3u] + part[o + 7u]));
+        O[c * p.rows + r] = h;
+      }
+    }
+  }
+}"#;
+
 /// The workgroup size for a vendor: 64 for AMD, 32 for NVIDIA, else the largest subgroup rounded up to a multiple of
 /// 8 (64 when unknown). Any multiple of 8 gives the same bits; this one is the fastest measured or expected.
 pub fn workgroup_for(vendor: &str, subgroup_max: u32) -> u32 {
@@ -122,5 +209,17 @@ mod tests {
         assert!(Q1_0_MM.contains("let s = hide(a + b);") && Q1_0_MM.contains("let bb = hide(s - a);") && Q1_0_MM.contains("hide(s - bb)"));
         assert!(Q1_0_MM.contains("let c = gid.y;") && Q1_0_MM.contains("O[c * p.rows + r] = h;"));
         assert!(Q1_0_MM.starts_with("\noverride WG: u32 = 64u;"));
+    }
+
+    #[test]
+    fn the_tiled_kernel_is_the_untiled_one_with_a_token_tile() {
+        // the same helpers, bindings and uniform, byte for byte; only the tile and the main function differ
+        let shared = |k: &str| k[..k.find("var<workgroup>").unwrap()].to_string();
+        assert_eq!(shared(Q1_0_MM4).replace("const T: u32 = 4u;\n", ""), shared(Q1_0_MM));
+        let fns = |k: &str| k[k.find("fn hide").unwrap()..k.find("@compute").unwrap()].to_string();
+        assert_eq!(fns(Q1_0_MM4), fns(Q1_0_MM));
+        assert!(Q1_0_MM4.contains(&format!("const T: u32 = {TILE}u;")) && Q1_0_MM4.contains("let c0 = gid.y * T;"));
+        // stores only real tokens
+        assert!(Q1_0_MM4.contains("if (c < p.cols) {"));
     }
 }
