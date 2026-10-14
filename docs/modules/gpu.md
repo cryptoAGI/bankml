@@ -373,6 +373,7 @@ and every result against bankML's scalar reference (`testing/gpu.mjs`).
 
 ## See also
 
+- [KERNELS.md](../KERNELS.md) — the kernels as a treatise: why the emulated FMA is exact, the lane and tiling lemmas, the `hide` hazard
 - [usage.md](../usage.md) — `bankml gpu`, `BANKML_GPU`, `BANKML_GPU_SHARE`, `BANKML_GPU_LIMIT`
 - [sys.md](sys.md) and [metrics.md](metrics.md) — `/bankml/usage` (GPU busy, VRAM, GTT, the limiter) and the answers' measurements
 - [oracles.md](../oracles.md) — 0.2.13 and 0.2.14, the GPU oracles

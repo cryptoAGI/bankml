@@ -248,6 +248,7 @@ Start here, then go where your question is. The same documents read as a website
 | see how bankML was built, phase by phase, with the evidence each step stood on | **[docs/BUILD_HISTORY.md](docs/BUILD_HISTORY.md)** |
 | meet Savante's page for the first time: asking, her card, listening to her | **[docs/playback.md](docs/playback.md)** |
 | understand the design, the method, the proofs and the literature | **[docs/TECHNICAL.md](docs/TECHNICAL.md)** (the technical report and thesis) |
+| the kernels as a treatise: reference equivalence across x86, WebAssembly and WebGPU, its lemmas, evidence and literature | **[docs/KERNELS.md](docs/KERNELS.md)** |
 | read the thesis: the design intent of bankml's authors, in their own words | **[the Thesis](docs/TECHNICAL.md#thesis--professor-codephreak-and-gregory-l-magnusson)**, in TECHNICAL.md (Savante reads it aloud: `Savante-reading.opus`) |
 | read the argument in full: exact and precise first, then efficient and optimized, assembled from the code, the changelog and the oracles | **[docs/thesis.md](docs/thesis.md)** |
 | meet Savante, the agent bankml runs | **[Using Savante](#using-savante)**, with her public places (Hugging Face, canon, sAGI) |
