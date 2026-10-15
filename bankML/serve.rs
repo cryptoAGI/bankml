@@ -1107,10 +1107,15 @@ impl Tally {
         let mut h = crate::sha256::Sha256::default();
         h.update(self.text.as_bytes());
         let lp = logprobs.map(|j| format!("\"logprobs_sha256\": \"{}\", ", logprobs_sha256(j))).unwrap_or_default();
+        let response_sha256 = crate::sha256::hex(&h.finish());
+        // banked, when a ledger file is configured (BANKML_LEDGER): the same receipt, exact to 18 decimals, hash-chained
+        if let Err(e) = crate::ledger::bank_served("bankml", &v.model_sha256, &self.request_sha256, &response_sha256, self.prompt, self.completion) {
+            eprintln!("bankml: ledger: {e}");
+        }
         format!(
             "{{\"bankml\": \"{}\", \"engine\": {}, \"model_sha256\": \"{}\", \"guard\": \"{}\", \"prompt_tokens\": {}, \"completion_tokens\": {}, \"ttft_ms\": {}, \"wall_ms\": {}, \"response_sha256\": \"{}\", \"request_sha256\": \"{}\", {lp}\"signed\": false}}",
             crate::VERSION, crate::gguf::jstr(engine), v.model_sha256, v.guard, self.prompt, self.completion,
-            self.ttft.map(|d| d.as_millis().to_string()).unwrap_or("null".into()), self.t0.elapsed().as_millis(), crate::sha256::hex(&h.finish()),
+            self.ttft.map(|d| d.as_millis().to_string()).unwrap_or("null".into()), self.t0.elapsed().as_millis(), response_sha256,
             self.request_sha256
         )
     }

@@ -34,6 +34,8 @@ const USAGE: &str = "usage: bankml usage [PID …]
                                                               --verify runs the bit-exact kernel oracle on each card)
        bankml hosts                                           (where the engine runs: server hosts — this binary, the C API — and
                                                               client hosts — browseML in the visitor's browser; JSON)
+       bankml ledger verify|totals FILE                       (receipts banked: the hash chain checked; exact totals to 18 decimals
+                                                              per source; serve banks to FILE with --ledger FILE or BANKML_LEDGER)
        bankml version";
 
 fn main() {
@@ -154,6 +156,24 @@ fn main() {
                     2
                 }
             }
+        }
+        (Some("ledger"), Some(action)) if action == "verify" || action == "totals" => {
+            // Receipts banked (ledger.rs): verify the hash chain of a ledger file, and/or print its exact totals per source.
+            let Some(path) = a.get(2) else {
+                eprintln!("usage: bankml ledger verify|totals FILE");
+                std::process::exit(2);
+            };
+            let text = match std::fs::read_to_string(path) { Ok(t) => t, Err(e) => { eprintln!("bankml ledger: {path}: {e}"); std::process::exit(2); } };
+            let l = match bankml::ledger::Ledger::from_jsonl(&text) { Ok(l) => l, Err(e) => { eprintln!("bankml ledger: {e}"); std::process::exit(2); } };
+            if let Err(e) = l.verify() {
+                println!("{{\"ok\": false, \"entries\": {}, \"error\": {}}}", l.entries.len(), bankml::gguf::jstr(&e));
+                std::process::exit(1);
+            }
+            let totals = match l.totals() { Ok(t) => t, Err(e) => { eprintln!("bankml ledger: {e}"); std::process::exit(2); } };
+            let per: Vec<String> = totals.iter().map(|(k, t)| format!("{}: {{\"entries\": {}, \"prompt_tokens\": {}, \"completion_tokens\": {}, \"tokens\": \"{}\", \"cost\": \"{}\"}}",
+                bankml::gguf::jstr(k), t.entries, t.prompt_tokens, t.completion_tokens, t.tokens, t.cost)).collect();
+            println!("{{\"ok\": true, \"entries\": {}, \"head\": \"0x{}\", \"totals\": {{{}}}}}", l.entries.len(), bankml::ledger::hex(&l.head()), per.join(", "));
+            0
         }
         (Some("hosts"), _) => {
             // Where bankML's engine runs: the server hosts and the client hosts (browseML), and which one this is.
@@ -291,6 +311,10 @@ fn main() {
         (Some("serve"), Some(file)) => match fork() {
             Err(c) => c,
             Ok(fork_json) => {
+                // receipts banked to a ledger file (ledger.rs), when asked for
+                if let Some(p) = opt("--ledger") {
+                    std::env::set_var("BANKML_LEDGER", p);
+                }
                 let cfg = bankml::serve::Config {
                     model: file.into(),
                     fork_json,

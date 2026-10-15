@@ -387,7 +387,7 @@ and **GLM** models, on GPU.**
 
 ### 0.8.0 — trust
 
-- [ ] **Receipts banked (asked 2026-10-14): `ledger.rs`.** Token usage and the prompt/response receipts banked exact to
+- [ ] **Receipts banked (asked 2026-10-14): `ledger.rs`.** **Started**: the module, `serve --ledger`, `bankml ledger verify|totals`, keccak256 agreeing with sAGI and Solidity, live-checked ([modules/ledger.md](modules/ledger.md)); to do: browseML's browser ledger on the shared vector, the THOT and iNFT connectors, external counts. Token usage and the prompt/response receipts banked exact to
   18 decimal places — amounts as integers of 10⁻¹⁸ (an ERC-20 `uint256` with 18 decimals), parsed and printed exactly,
   checked arithmetic, no float. Each entry: model, request and response sha256, prompt / completion / total tokens, cost
   at its rate, its source, its time; its keccak256 covers the previous entry's, so the head commits to the whole
