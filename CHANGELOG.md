@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased (0.4.3) — browseML: bankML in the browser; the console's first answer
+## 0.4.3 — 2026-10-09 — browseML: bankML in the browser; the console's first answer
+
+**bankML's own engine, compiled to WebAssembly, answers in the visitor's browser**: verified as `serve` verifies (guard,
+sha256 pin), with `serve`'s receipt, and identical to llama-server b11192's record on 9 of 9 answers, on one thread
+and on Web Workers, with plain and relaxed SIMD (exact everywhere it runs; refused where `relaxed_madd` is not
+fused). The f16 paths and the tiled attention kernel joined the 1-bit kernel in exact SIMD (+19 % writing on two
+threads). With it: the console's first answer from a warm persona prefix (SELF out of the system prompt, a window
+that keeps the cache), `.context` (bankML and Savante know their own code, with sources), Savante's machine panel and
+the Savante | bankML switch both ways, the console's Diagnostics desk and Inspector, `.memory` per response window, and
+the Space's lean landing. Record: `testing/results/0.4.3.txt`.
 
 ### browseML — bankML in the browser (`browseML/`, `hf/space/browseml*.js`, `tools/browseml.sh`)
 - **The same engine, compiled to WebAssembly** (`wasm32-wasip1`, and `wasm32-wasip1-threads` for cross-origin-isolated
@@ -33,8 +42,9 @@
 - **The f16 paths and the tiled attention kernel in WebAssembly SIMD** (`bankML/wasm_simd.rs`): `f16::vec_dot` with
   the reference's accumulators and reduction order (f16 × f16 is exact in f32), `f16::widen`/`mad`/`scale` four lanes
   at a time, and the tiled kernel's score chains and V update through an exact four-lane `fmadd` (`relaxed_madd` in
-  the relaxed build, otherwise f64 with a scalar fallback for the lanes where rounding twice could differ). The
-  modules on the Space were already built from this code; the source now matches them byte for byte.
+  the relaxed build, otherwise f64 with a scalar fallback for the lanes where rounding twice could differ). (The commit that
+  added it, 8265ddb, says the Space's modules were already built from this code. They were not: the Space serves what
+  the committed source built before it, sha256 29243a07… for `browseml.wasm`; only local builds had it.)
   - Oracle: `browseml.wasm` 9 of 9 and `browseml-mt-relaxed.wasm` on 2 threads 9 of 9, identical to llama-server
     b11192's record.
   - Speed: measured old/new interleaved (3 rounds, both orders, Bonsai-1.7B, a 20-token prompt and 48 tokens written;

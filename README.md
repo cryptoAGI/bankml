@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/llama.cpp%20b11192-bit--exact-39D3C7?style=flat-square" alt="bit-exact vs llama.cpp b11192">
   <img src="https://img.shields.io/badge/ternary%20kernel-9.4%E2%80%9310.0%C3%97-D9A23A?style=flat-square" alt="ternary 9.4–10.0x">
   <img src="https://img.shields.io/badge/1--bit%20kernel-parity-5AD1FF?style=flat-square" alt="1-bit parity">
-  <img src="https://img.shields.io/badge/status-0.4.2%20%C2%B7%20logprobs%20on%20Ollama%27s%20API%2C%20receipts%20over%20logprobs-F59E0B?style=flat-square" alt="status">
+  <img src="https://img.shields.io/badge/status-0.4.3%20%C2%B7%20browseML%3A%20bankML%20in%20the%20browser-F59E0B?style=flat-square" alt="status">
   <a href="https://github.com/cryptoAGI/bankml/releases/latest"><img src="https://img.shields.io/github/v/release/cryptoAGI/bankml?style=flat-square&label=release&color=0ECB81" alt="latest release"></a>
   <a href="https://deltaverse.pythai.net/bankml"><img src="https://img.shields.io/badge/read-why%20bankML-22D3EE?style=flat-square" alt="why bankML, on the web"></a>
 </p>
@@ -26,8 +26,13 @@
   <a href="https://huggingface.co/spaces/PYTHAI/bankml"><b>on Hugging Face</b></a>
 </p>
 
-> **Latest release: [v0.4.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.2)** (2026-10-08, [record](testing/results/0.4.2.txt)):
-> logprobs on Ollama's API with llama-server b11192's numbers, receipts that hash them (`logprobs_sha256`), `max_tokens: 0`
+> **Latest release: [v0.4.3](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.3)** (2026-10-09, [record](testing/results/0.4.3.txt)):
+> **browseML** — bankML's own engine compiled to WebAssembly, verified and with a receipt in the visitor's browser,
+> identical to llama-server b11192 on 9 of 9 answers (threads and relaxed SIMD, exact where they run); the console's
+> first answer from a warm persona prefix; `.context`, so bankML and Savante know their own code
+> ([CHANGELOG](CHANGELOG.md)).
+>
+> **Before it: [v0.4.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.2)** (2026-10-08): logprobs on Ollama's API with llama-server b11192's numbers, receipts that hash them (`logprobs_sha256`), `max_tokens: 0`
 > as llama-server answers it, a request whose client has gone stopped, ternary on the GPU bit-exact, CI on ARM, one
 > theme with a dark-mode switch for the console and Savante, Savante's exact calculator, `install.sh restart`
 > ([CHANGELOG](CHANGELOG.md)).
@@ -63,9 +68,9 @@
 
 ---
 
-## Where it stands (2026-10-08)
+## Where it stands (2026-10-09)
 
-**[v0.4.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.2) is the latest release** (gate passed, every stage), on
+**[v0.4.3](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.3) is the latest release** (gate passed, every stage), on
 [v0.4.0](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.0), the milestone: native serving complete. What comes next is in [TODO.md](docs/TODO.md) (0.4.x, then 0.5.0 — hardware):
 
 | release | state | what it brings |
@@ -74,6 +79,7 @@
 | **0.3.8** | **released** 2026-10-06 | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
 | **0.4.0** | **released** 2026-10-07 — the milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)); with it: a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
 | **0.4.2** | **released** 2026-10-08 | with 0.4.1 (never tagged): logprobs on Ollama's API and `logprobs_sha256` on receipts; `max_tokens: 0` as llama-server; a request whose client has gone stops; GPU objects released on drop; ternary on the GPU bit-exact; CI on aarch64; the console and Savante in one theme with a dark-mode switch; Savante's calculator; `install.sh restart` |
+| **0.4.3** | **released** 2026-10-09 | browseML: bankML in the browser, verified, with a receipt, identical to llama-server on 9 / 9 answers (WebAssembly SIMD, threads, relaxed SIMD where exact); the console's first answer from a warm prefix; `.context`; Savante's machine panel; the Diagnostics desk; the Space's lean landing |
 
 ## Summary, limitations and next steps
 
@@ -340,11 +346,12 @@ the 1-bit kernel is at the core's instruction limit (TECHNICAL §IV.5).
 
 Every release passed the full gate (build, tests, clippy, every suite, every oracle, the A/Bs and the decode budgets)
 before it was tagged; its record is `testing/results/<version>.txt`, and the details are in
-**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.4.2, after 0.4.0, the milestone. What comes next is
+**[CHANGELOG.md](CHANGELOG.md)**. The latest release is 0.4.3, after 0.4.0, the milestone. What comes next is
 in the changelog's *Unreleased* sections until its gate passes and it is tagged.
 
 | version | what it brought |
 |---|---|
+| [0.4.3](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.3) | **browseML: bankML in the browser** — the same engine compiled to WebAssembly (`wasm32-wasip1`, and `-threads` on Web Workers for cross-origin-isolated pages), the model verified as `serve` verifies and `serve`'s receipt on every answer, 9 / 9 answers identical to llama-server b11192's record; exact SIMD for the 1-bit kernel, the f16 paths and the tiled attention kernel, relaxed SIMD only where `relaxed_madd` is fused (2 threads: 2.76 tok/s writing); the kernels' tests under Node's WASI (`tools/browseml.sh test`); the console's first answer from a warm persona prefix; `.context`; Savante's machine panel and the switch both ways; the Diagnostics desk and Inspector; `.memory` per response window; the Space's lean landing |
 | [0.4.2](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.2) | **Logprobs on Ollama's API and receipts over them** (with 0.4.1, never tagged) — `/api/chat` and `/api/generate` take `logprobs`/`top_logprobs` and carry llama-server b11192's entries (19 / 19); receipts carry `logprobs_sha256`; `max_tokens: 0` samples one token as llama-server does (7 / 7); a native run stops when its client goes away (6 / 6); every GPU object released on drop; the ternary kernel on the GPU bit-exact; CI natively on aarch64; one theme and a dark-mode switch for the console and Savante, a way back from Savante; Savante's exact calculator; `install.sh restart` |
 | [0.4.0](https://github.com/cryptoAGI/bankml/releases/tag/v0.4.0) | **Milestone: native serving complete** — everything Savante and mindX ask of llama-server, answered by bankML's own engine and identical to llama-server b11192; 1-bit decode at least at llama-server's speed (the pinned 8B A/B, 3 of 3 rounds, median 2.02 against 0.77 tokens/s under the same load, answers identical), so `auto` takes the 1-bit files too; a q8_0 KV cache with llama.cpp's Hadamard rotation (6 / 6); the grammar mask 13× faster; `cache_prompt: false` honoured; Q/K/V and gate/up in one pool wake; `GET /bankml/status` and serve's status page; the console's ultimate-input-field landing, Engine, Diagnostics (every sAGI component, traces) and Thesis tabs; `scientific.diagnostic` (32 / 32 tokens bit-equal to 18 decimals) |
 | [0.3.8](https://github.com/cryptoAGI/bankml/releases/tag/v0.3.8) | **The serving contract**: the context limit (a full context stops with `length`, a prompt that does not fit refused with llama-server's 400, 8 / 8), slots saved, erased and restored as llama-server's slot API (19 / 19, across a restart), a host prompt cache for conversations that take turns through one slot (14 / 14, `cache_n` identical), and logprobs, streamed and not (14 / 14, every logprob the same float) — all against llama-server b11192 |
