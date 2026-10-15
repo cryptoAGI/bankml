@@ -523,6 +523,10 @@ Nothing is ever written into the canon (`~/cryptoAGI/savante`). What the UI writ
   "response", "session", "sent_at", "response_sha256"}}`.
   In the prompt (Admin: *use .memory*, *.memory budget*): the newest notes that fit the budget (2,400 characters by
   default), listed oldest first, so a new note is appended and the engine keeps the cached prompt before it.
+  **Versions (0.4.4):** every add, remove and restore is a commit in a private git repository under
+  `<state>/memgit/` (one per `.memory`, holding a copy of it), and the vendored gitmind records each change in that
+  repository's `.gitmind/ledger.jsonl`. The `.memory` tab lists the newest versions and restores one as a new
+  commit. Nothing is backed up anywhere; `BANKML_MEMORY_GIT=0` turns versions off.
 - **Recall from `.history`** (Admin: *recall from .history*, 0–4, off by default): the earlier exchanges from other
   sessions that best match the question (BM25, fused with bge-m3 when it runs, as the ragebar searches), each cut to
   700 characters, sent as a system message just before the question, so it costs only its own tokens and the

@@ -51,6 +51,7 @@ import embed  # noqa: E402 — bge-m3 via the local Ollama (optional; BM25 stand
 import calc  # noqa: E402 — exact arithmetic for the answers a 1-bit model should not guess
 import sysdiag  # noqa: E402 — the machine now: CPU, memory, disk, GPU (stdlib, /proc and /sys)
 import selfcontext as SC  # noqa: E402 — a persona's .context: its summary and passages
+import memgit  # noqa: E402 — versions of .memory in a private git repository, watched by gitmind (optional)
 SAVANTE_CONTEXT = Path(__file__).resolve().parent / "personas" / "savante.context"  # her designer and family (tools/context.py --savante)
 
 def _canon_default() -> Path:
@@ -504,18 +505,26 @@ def memory_add(text: str, source: dict | None = None) -> int:
         return len(memory_all())
     jsonl_append(MEMORY, {"ts": round(time.time(), 3), "at": iso(time.time()), "text": text, "sha256": sha256(text.encode()),
                           "source": source or {"kind": "typed"}})
-    return len(memory_all())
+    n = len(memory_all())
+    memgit.commit(MEMORY, f"add note {n}: {' '.join(text.split())[:60]}")
+    return n
 
 
 def memory_remove(n: int) -> int:
     m = memory_all()
     if 1 <= n <= len(m):
-        del m[n - 1]
+        m_text = m.pop(n - 1).get("text", "")
         STATE.mkdir(parents=True, exist_ok=True)
         tmp = MEMORY.with_name(MEMORY.name + ".tmp")
         tmp.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in m), encoding="utf-8")
         os.replace(tmp, MEMORY)  # never half a .memory
+        memgit.commit(MEMORY, f"remove note {n}: {' '.join(m_text.split())[:60]}")
     return len(memory_all())
+
+
+def memory_restore(rev: str) -> bool:
+    """Put .memory back as it was at version `rev` (from memgit.versions), as a new version."""
+    return memgit.restore(MEMORY, rev) is not None
 
 
 MEMORY_BUDGET = 2400
@@ -1483,7 +1492,15 @@ def memory_html() -> str:
                    f"<div class='bk-a'>{E(x['text'])}</div></div>" for j, x in enumerate(m))
     blk = memory_block()
     return (f"<div class='bk-note'>{len(m)} notes · {len(blk)} of {MEMORY_BUDGET} characters go into the prompt when "
-            f".memory is on · <code>{E(str(MEMORY))}</code></div>" + rows)
+            f".memory is on · <code>{E(str(MEMORY))}</code></div>" + rows + memory_versions_html())
+
+
+def memory_versions_html(n: int = 8) -> str:
+    v = memgit.versions(MEMORY, n)
+    if not v:
+        return ""
+    rows = "".join(f"<div><code>{E(x['short'])}</code> · {E(x['at'])} · {E(x['subject'])}</div>" for x in v)
+    return f"<div class='bk-card'><b>versions</b> (newest first; restore one by its code below)<br>{rows}</div>"
 
 
 def _nice(mx: float) -> tuple:
@@ -2506,6 +2523,10 @@ def build(canon: Canon, mode: str):
                 which_n = gr.Number(label="note number", precision=0, value=1, scale=1)
                 b_del = gr.Button("remove that note", scale=1)
                 gr.Button("refresh", scale=1).click(memory_html, None, mview)
+            with gr.Row():
+                which_v = gr.Textbox(label="version", placeholder="a code from the versions list", scale=1)
+                b_restore = gr.Button("restore that version", scale=1)
+            b_restore.click(lambda v: (memory_restore(v), memory_html())[1], which_v, mview)
             b_add.click(lambda t: ("", memory_add(t, {"kind": "typed"}) and memory_html()), note, [note, mview])
             b_del.click(lambda n: (memory_remove(int(n or 0)), memory_html())[1], which_n, mview)
         with gr.Tab("Metrics"):

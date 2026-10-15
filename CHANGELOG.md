@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.4 — 2026-10-15 — `.memory` versions, with gitmind
+
+**`.memory` keeps its versions.** It is the one file the UI rewrites: removing a note wrote the file again without
+it, and the note was gone. Now every add, remove and restore is a commit in a private git repository of its own
+(`<state>/memgit/<name>-<8 hex of its path>/`, one per `.memory`, Savante's and each agent's), and gitmind records
+each change in its ledger. `.history` is
+not versioned: it is append-only and already committed by its Merkle root. Embeddings are not versioned either: the
+vectors are derived, rebuilt from the text and the model's digest.
+
+### Savante: `.memory` versions (`sAGI/memgit.py`, `sAGI/gitmind/`)
+- **A commit for every change.** `memory_add` and `memory_remove` commit `.memory` (`add note 3: …`,
+  `remove note 1: …`). The repository holds a copy of `.memory` and nothing else, so `.history`, its vectors and
+  receipts are never committed. It is never made in the file's own directory: an agent's directory is already its
+  own git repository (the THOT rung's locator), where `.memory` is git-ignored on purpose; that repository is left
+  untouched. The commits carry a fixed identity (`bankml .memory`), no signing and
+  no hooks, so the operator's global git settings cannot stall or change them.
+- **Restore, forward only.** The `.memory` tab lists the newest versions; *restore that version* puts `.memory` back
+  as it was at that commit, as a new commit (`restore savante.memory to …`). History is never rewritten, and a code
+  that is not a version of `.memory` is refused.
+- **gitmind 0.1.0, vendored** (`sAGI/gitmind/`, from github.com/Professor-Codephreak/gitmind, commit c4b379c; same
+  authors, `MIT OR Apache-2.0` here, its MIT licence kept). After each commit it takes a snapshot, so its ledger
+  (`<dir>/.gitmind/ledger.jsonl`) shows every change and marks a move backwards as a rollback. It runs with **no
+  backup sources**: its IPFS source would publish every version of `.memory`, which never leaves the laptop.
+- **Optional.** Without git, or with `BANKML_MEMORY_GIT=0`, nothing is versioned and nothing fails.
+- Tests: `testing/test_ui.py` — one version per change, only `.memory` committed, a removed note restored, codes that
+  are not versions refused, the ledger written with no backups, the switch off, and an agent's own repository untouched (108 / 108);
+  `testing/spdx_check.py` 122 / 122.
+
 ## 0.4.3 — 2026-10-09 — browseML: bankML in the browser; the console's first answer
 
 **bankML's own engine, compiled to WebAssembly, answers in the visitor's browser**: verified as `serve` verifies (guard,

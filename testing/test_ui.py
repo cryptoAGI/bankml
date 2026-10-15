@@ -163,6 +163,45 @@ u.memory_remove(3)
 u.memory_remove(1)
 check(".memory remove by number", [x["text"] for x in u.memory_all()] == ["second note"])
 
+# .memory versions: a private git repository beside the file (memgit), watched by gitmind when it is installed
+import memgit, shutil, subprocess  # noqa: E402
+if memgit.enabled():
+    v = memgit.versions(u.MEMORY, 50)
+    check(".memory versions: one per add and remove, newest first", len(v) == 5 and v[0]["subject"].startswith("remove note 1: the operator prefers"))
+    rd = memgit.repo_dir(u.MEMORY)
+    tracked = subprocess.run(["git", "ls-files"], cwd=rd, capture_output=True, text=True).stdout.split()
+    check(".memory versions: a copy of .memory in its own repository under memgit/, nothing else committed",
+          rd.parent == tmp / "memgit" and sorted(tracked) == [".gitignore", "SOURCE", "savante.memory"] and not (tmp / ".git").exists())
+    before_rm = v[1]["short"]  # after "remove note 3", before "remove note 1"
+    check(".memory restore brings a removed note back, as a new version", u.memory_restore(before_rm)
+          and [x["text"] for x in u.memory_all()] == ["the operator prefers verdicts", "second note"]
+          and len(memgit.versions(u.MEMORY, 50)) == 6 and memgit.versions(u.MEMORY, 1)[0]["subject"].startswith("restore"))
+    check(".memory restore refuses what is not a version", not u.memory_restore("zzzz") and not u.memory_restore("") and not u.memory_restore("0000000"))
+    check(".memory restore of the current version adds nothing", not u.memory_restore(memgit.versions(u.MEMORY, 1)[0]["short"]))
+    check(".memory tab lists the versions", "restore" in u.memory_html() and before_rm in u.memory_html())
+    if memgit._gitmind() is not None:
+        led = [json.loads(x) for x in (rd / ".gitmind" / "ledger.jsonl").read_text().splitlines()]
+        check("gitmind ledger: a snapshot for every version, with no backup sources", len(led) == 6 and all(e["kind"] == "snapshot" for e in led)
+              and not (rd / ".gitmind" / "backups").exists())
+    check(".memory restore to the newest-but-one version", u.memory_restore(v[0]["short"]) and [x["text"] for x in u.memory_all()] == ["second note"])
+    os.environ["BANKML_MEMORY_GIT"] = "0"
+    check("BANKML_MEMORY_GIT=0 turns versions off", u.memory_add("unversioned") and memgit.versions(u.MEMORY) == [])
+    del os.environ["BANKML_MEMORY_GIT"]
+    u.memory_remove(2)
+    # an agent's directory is its own git repository (the THOT rung's locator), with .memory git-ignored: untouched
+    ad = tmp / "agent-x"
+    ad.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=ad)
+    (ad / ".gitignore").write_text("x.history\nx.memory\n")
+    u.jsonl_append(ad / "x.memory", {"text": "agent note"})
+    v_agent = memgit.commit(ad / "x.memory", "add note 1: agent note")
+    agent_status = subprocess.run(["git", "status", "--porcelain", "--ignored"], cwd=ad, capture_output=True, text=True).stdout
+    check(".memory versions of an agent: its own repository gets no commit and no new file",
+          v_agent and subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=ad, capture_output=True).returncode != 0
+          and sorted(x.name for x in ad.iterdir()) == [".git", ".gitignore", "x.memory"] and "!! x.memory" in agent_status)
+else:
+    print("skip .memory versions: git is not installed")
+
 # recall from .history: other sessions' exchanges that match, answered ones only, at most k, before the question
 fake = [(9.0, 0, {"session": "now", "user": "same session", "assistant": "x"}),
         (8.0, 1, {"session": "old", "user": "no answer", "assistant": ""}),

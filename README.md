@@ -79,6 +79,7 @@
 | **0.3.8** | **released** 2026-10-06 | llama-server's behaviour at the context limit; slots saved and restored; a host prompt cache, so conversations taking turns keep their context; logprobs, streamed or not; the plain-language [why-bankml.md](docs/why-bankml.md) |
 | **0.4.0** | **released** 2026-10-07 — the milestone | native serving complete: everything Savante and mindX ask of llama-server, with bankML's own engine chosen by default for 1-bit and ternary models ([TODO.md](docs/TODO.md)); with it: a q8_0 conversation memory with llama.cpp's Hadamard rotation (53 % of the f16 cache, 6 / 6 answers identical); the grammar mask 13× faster at the median; a code audit and full docs pass; [thesis.md](docs/thesis.md). Left: 1-bit decode measured against llama-server, pinned and idle |
 | **0.4.2** | **released** 2026-10-08 | with 0.4.1 (never tagged): logprobs on Ollama's API and `logprobs_sha256` on receipts; `max_tokens: 0` as llama-server; a request whose client has gone stops; GPU objects released on drop; ternary on the GPU bit-exact; CI on aarch64; the console and Savante in one theme with a dark-mode switch; Savante's calculator; `install.sh restart` |
+| **0.4.4** | version set 2026-10-15; gate not yet run, not tagged | `.memory` versions: every add and remove a commit in a private repository of its own, restore any version from the tab, gitmind (vendored) keeping the ledger, no backup sources |
 | **0.4.3** | **released** 2026-10-09 | browseML: bankML in the browser, verified, with a receipt, identical to llama-server on 9 / 9 answers (WebAssembly SIMD, threads, relaxed SIMD where exact); the console's first answer from a warm prefix; `.context`; Savante's machine panel; the Diagnostics desk; the Space's lean landing |
 
 ## Summary, limitations and next steps
@@ -453,7 +454,9 @@ To ask for a review, start with *"review:"*.
   exchanges are ranked by RAGE retrieval (mindX's `rage.py` when present, the same BM25 built in otherwise).
 - **Responses** steps through every answer (⤒ ▲ ▼ ⤓). **📋 copy** puts the answer on the clipboard, **➕ save to
   .memory** keeps it, and **🔏 proof** gives the inclusion proof for that one exchange.
-- **`.memory`** (`savante.memory`) holds the notes you keep. With *use .memory* on, they go into the system prompt,
+- **`.memory`** (`savante.memory`) holds the notes you keep, and keeps its versions: every add and remove is a commit
+  in a private git repository of its own (`<state>/memgit/`), watched by the vendored gitmind, and the tab restores any version
+  (`BANKML_MEMORY_GIT=0` turns it off). With *use .memory* on, they go into the system prompt,
   labelled as your notes, never as evidence.
 - **Metrics** is computed from `.history`: time to first token, response time, prefill and writing speed (median, p90,
   mean), how many answers match their receipt, and the commitments.
