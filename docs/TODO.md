@@ -386,6 +386,17 @@ and **GLM** models, on GPU.**
   pipeline to find out why the gate has refused every generation since 39.
 
 ### 0.8.0 — trust
+
+- [ ] **Receipts banked (asked 2026-10-14): `ledger.rs`.** Token usage and the prompt/response receipts banked exact to
+  18 decimal places — amounts as integers of 10⁻¹⁸ (an ERC-20 `uint256` with 18 decimals), parsed and printed exactly,
+  checked arithmetic, no float. Each entry: model, request and response sha256, prompt / completion / total tokens, cost
+  at its rate, its source, its time; its keccak256 covers the previous entry's, so the head commits to the whole
+  ledger. Server side: `serve` banks to a file; client side: browseML banks in the browser, the same format and test
+  vectors. **External inference** counts the same way (its source and reported counts, its own rate). **Chain-ready by
+  module**: a connector interface, none by default; THOT (the head as a commitment in the bundle, `sAGI/thot.py`) and
+  iNFT (an unsigned anchoring transaction, the owner signs, `sAGI/chain.py`) first; bankML never signs or sends.
+- [ ] **Handheld GPUs** (Adreno, Mali, Apple): `workgroup_for` per vendor beyond AMD and NVIDIA (subgroups 16–128),
+  bit-exact per vendor, measured on a phone.
 - [ ] **Signed receipts** in `crypto/` (GPL-3.0-only, opt-in, a cargo feature): the operator's key through BANKON
   or Parsec custody, never an agent's. `bankml verify-receipt` for anyone.
 - [ ] Reproducible builds: the release binary's sha256 published and rebuilt in CI; an SBOM (zero dependencies make
