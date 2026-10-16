@@ -264,6 +264,7 @@ Start here, then go where your question is. The same documents read as a website
 | read the argument in full: exact and precise first, then efficient and optimized, assembled from the code, the changelog and the oracles | **[docs/thesis.md](docs/thesis.md)** |
 | meet Savante, the agent bankml runs | **[Using Savante](#using-savante)**, with her public places (Hugging Face, canon, sAGI) |
 | see every speed number, the machines and the commands that produced them | **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** |
+| know where NVIDIA Thrust (CUDA parallel algorithms) could and could not speed bankML and browseML — the research BROBOT, DeltaV THRUST's companion, brought to bankML | **[docs/nvidia-thrust.md](docs/nvidia-thrust.md)** |
 | know what bankml is checked against, and how | **[docs/oracles.md](docs/oracles.md)** |
 | see where bankml stands among Rust engines, 1-bit/ternary kernels and verifiable inference (with papers) | **[docs/research.md](docs/research.md)** |
 | use meaning search (bge-m3, the embedding model mindX uses) | **[docs/embedding.md](docs/embedding.md)** |
