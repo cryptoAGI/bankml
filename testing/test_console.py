@@ -195,6 +195,11 @@ try:
     check("sysdiag: temperatures by sensor, a sensor without one skipped", tt == {"k10temp": 96.0, "amdgpu": 70.0, "nvme": 41.0})
     check("sysdiag: a CPU at 96 °C is bad (throttling), at 70 °C ok",
           SD.cpu(tt, 50.0)["level"] == "bad" and "throttling" in SD.cpu(tt, 50.0)["lines"][3] and SD.cpu({"k10temp": 70.0}, None)["level"] == "ok")
+    # a question about the machine brings sysdiag's lines into SELF; any other question brings nothing
+    secs = [{"title": "CPU", "lines": ["model X · 4 logical cores", "temperature 61.0 °C"]}, {"title": "Memory", "lines": ["available 2.1 GB of 7.4 GB"]}]
+    mt = C.machine_text("how hot is my CPU running?", secs)
+    check("SELF: a machine question carries sysdiag's lines", mt.startswith("THIS MACHINE") and "temperature 61.0 °C" in mt and "available 2.1 GB" in mt)
+    check("SELF: other questions carry nothing (no false trigger)", C.machine_text("what is RAGE?", secs) == "" and C.machine_text("write a haiku about rain", secs) == "")
     drm = tmp / "drm"
     (drm / "card0" / "device").mkdir(parents=True); (drm / "card0-eDP-1" / "device").mkdir(parents=True)
     for f, v in (("vendor", "0x1002"), ("device", "0x15d8"), ("gpu_busy_percent", "37"), ("mem_info_vram_used", "500000000"), ("mem_info_vram_total", "2000000000")):

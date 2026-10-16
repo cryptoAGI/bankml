@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.5 — 2026-10-16 — gitmind ingestion with embeddings: incremental, .memory embedded, recall from PostgreSQL
+
+Toward 1.0.0: what bankML knows — its .history, its .memory and their versions — reaches PostgreSQL (pgvector /
+pgvectorscale) efficiently, comes back at answer time, and a browser's .memory (browseML's gitmind bundle) joins it.
+
+### PostgreSQL (`sAGI/connectors.py`)
+- **Incremental publish.** The stored lines are read first; only lines that changed are written (a line keeps its row
+  and its vector while its text is unchanged; one changed in the database is rewritten). Measured in the test: the
+  second publish writes 0 lines, embeds 0 texts and sends 0 vectors; one new note costs one line, one embedding, one
+  vector.
+- **.memory is embedded too.** `bankml_memory` gains `embedding vector(1024)` and its DiskANN / HNSW index, as
+  `bankml_exchanges` had.
+- **Every vector names its weights.** `embed_model` and `content_hash` = sha256(model ‖ digest ‖ dims ‖ text) on both
+  tables: a vector made by another model (or another file of it) never passes for this one. Vectors are copied from
+  the cache beside each file (`<history>.emb`, now also `<memory>.emb`); nothing already embedded is embedded again.
+- **Versions.** `bankml_memory_versions` holds .memory's memgit commits (each once).
+- **Recall by meaning** (`connectors.recall`): an agent's rows nearest a vector, with their model.
+
+### Awareness at answer time
+- **Savante** (`BANKML_PG_RECALL=1`): the active agent's .memory notes nearest the question, from PostgreSQL, join the
+  recall message as NOTES (notes, not evidence) — a third source beside BM25 and the local vectors; when the database
+  or the embedder does not answer, recall goes on without them.
+- **The console**: a question about the machine (CPU, memory, disk, GPU, temperatures…) carries sysdiag's lines in
+  SELF for that question only; other questions carry nothing more. Not in public mode.
+
+### gitmind
+- **A browser's .memory, ingested** (`memgit.ingest_bundle`): a browseML GITMIND bundle is verified by git, cloned, and
+  every note this .memory lacks (same sha256 of its text) appended, delivery records left out, as one version
+  ("ingest N notes from a browseML bundle (abc1234)").
+- `embed.index` takes `text_of` (`exchange_text` for .history, `note_text` for .memory); `embed.content_hash`.
+- Tests: test_connectors 19 (6 new), test_ui (2 new), test_console (2 new).
+
 ## 0.4.4 — 2026-10-15 — `.memory` versions, with gitmind
 
 **`.memory` keeps its versions.** It is the one file the UI rewrites: removing a note wrote the file again without

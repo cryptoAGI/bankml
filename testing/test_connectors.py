@@ -100,6 +100,32 @@ try:
     except RuntimeError:
         after = connectors.psql("SELECT generation, (SELECT count(*) FROM bankml_exchanges) FROM bankml_agents;", dsn=dsn).strip()
         check("a publish that fails part-way changes nothing (one transaction)", before == after)
+    # incremental publish, .memory embedded, vectors copied from the cache: a deterministic embedder stands in for bge-m3
+    import embed, hashlib, memgit  # noqa: E401
+    calls = []
+    def fake(texts):
+        calls.extend(texts)
+        return [[(hashlib.sha256(t.encode()).digest()[i % 32] - 128) / 128 for i in range(1024)] for t in texts]
+    embed.embed, embed.provenance = fake, (lambda: {"digest": "sha256:test-weights"})
+    f["history"].write_text("".join(l + "\n" for l in f["history"].read_text().splitlines() if l.startswith("{")), encoding="utf-8")
+    memgit.commit(f["memory"], "add notes")
+    r4 = connectors.publish(slug, include_private=True, dsn=dsn)
+    nv = connectors.psql("SELECT (SELECT count(*) FROM bankml_exchanges WHERE embedding IS NOT NULL) || ',' || (SELECT count(*) FROM bankml_memory WHERE embedding IS NOT NULL)"
+                         " || ',' || (SELECT count(DISTINCT embed_model) FROM bankml_memory) || ',' || (SELECT count(*) FROM bankml_memory_versions);", dsn=dsn).strip()
+    check(f"publish embeds .history and .memory, records the model, ingests memgit's versions ({nv})", nv.split(",")[:3] == ["2", "2", "1"] and int(nv.split(",")[3]) >= 1)
+    n_calls = len(calls)
+    r5 = connectors.publish(slug, include_private=True, dsn=dsn)
+    check("publishing again writes nothing, embeds nothing, sends no vector", r5["written"] == 0 and r5["vectors_sent"] == 0 and len(calls) == n_calls and r5["kept"] == 4)
+    f["memory"].write_text(f["memory"].read_text() + '{"ts": 5, "text": "a third note"}\n', encoding="utf-8")
+    r6 = connectors.publish(slug, include_private=True, dsn=dsn)
+    check("one new note: one line written, one text embedded, one vector sent", r6["written"] == 1 and len(calls) == n_calls + 1 and r6["vectors_sent"] == 1)
+    connectors.psql("UPDATE bankml_memory SET line = replace(line, 'another', 'ANOTHER') WHERE seq = 1;", dsn=dsn)
+    r7 = connectors.publish(slug, include_private=True, dsn=dsn)
+    back = connectors.psql("SELECT line FROM bankml_memory WHERE seq = 1;", dsn=dsn).strip()
+    check("a line changed in the database is rewritten by the next publish (its vector reused from the cache)", r7["written"] == 1 and "another" in back and len(calls) == n_calls + 1)
+    near = connectors.recall(slug, fake(["a third note"])[0], k=2, dsn=dsn)
+    check("recall by meaning: the note nearest a query is that note, with its model", near and near[0]["text"] == "a third note"
+          and near[0]["similarity"] > 0.999 and near[0]["model"] == embed.MODEL)
     cr = json.loads((agents.agent_dir(slug) / f"{slug}.thot.json").read_text())["identity"]["contentRoot"]
     try:
         connectors.load(slug, as_slug="ada_anchor", dsn=dsn, expect_content_root="0x" + "00" * 32)

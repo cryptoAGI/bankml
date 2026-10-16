@@ -110,6 +110,18 @@ def exchange_text(r: dict) -> str:
     return f"{r.get('user', '')}\n{r.get('assistant', '')}"[:MAX_CHARS]
 
 
+def note_text(r: dict) -> str:
+    """What is embedded for one .memory note: its text (a delivery record, never sent to the model, is not a note)."""
+    return str(r.get("text", ""))[:MAX_CHARS]
+
+
+def content_hash(text: str) -> str:
+    """A vector's identity: sha256(model ‖ digest ‖ dims ‖ text) — the ragesink rule, with the exact weights in it, so a
+    vector made by another model (or another file of it) never passes for this one."""
+    pv = provenance()
+    return hashlib.sha256(f"{MODEL}\n{pv.get('digest', '')}\n{DIMS}\n{text}".encode()).hexdigest()
+
+
 def _pack(v: list) -> str:
     return base64.b64encode(struct.pack(f"<{len(v)}f", *v)).decode()
 
@@ -141,17 +153,20 @@ def cached(history: Path) -> dict:
     return out
 
 
-def index(history: Path, records: list, batch: int = 8) -> dict:
-    """Embed every exchange not yet in the cache. Returns {embedded, cached, total}."""
+def index(history: Path, records: list, batch: int = 8, text_of=None) -> dict:
+    """Embed every record not yet in the cache (`text_of`: what is embedded of a record — exchange_text for .history,
+    note_text for .memory). Returns {embedded, cached, total}."""
     with _INDEX_LOCK:
-        return _index(history, records, batch)
+        return _index(history, records, batch, text_of or exchange_text)
 
 
-def _index(history: Path, records: list, batch: int) -> dict:
+def _index(history: Path, records: list, batch: int, text_of=exchange_text) -> dict:
     have = cached(history)
     todo = []
     for r in records:
-        t = exchange_text(r)
+        t = text_of(r)
+        if not t.strip():
+            continue
         h = hashlib.sha256(t.encode()).hexdigest()
         if h not in have and h not in {x[0] for x in todo}:
             todo.append((h, t))

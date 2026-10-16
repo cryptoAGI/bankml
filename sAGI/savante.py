@@ -559,8 +559,9 @@ def recall_block(question: str, k: int, session: str | None = None, search=None)
         return "", []
     hits, engine = (search or history_search)(question, k=k * 3)
     rows = [(i, r) for _, i, r in hits if r.get("assistant") and not (session and r.get("session") == session)][:k]
+    notes = pg_notes(question, k)
     if not rows:
-        return "", []
+        return (_notes_text(notes), []) if notes else ("", [])
     half = RECALL_CHARS // 2
 
     def cut(t: str) -> str:
@@ -569,7 +570,28 @@ def recall_block(question: str, k: int, session: str | None = None, search=None)
     lines = [f"- {str(r.get('sent_at') or r.get('at') or '')[:10]} · asked: {cut(r.get('user'))} · answered: {cut(r.get('assistant'))}"
              for _, r in rows]
     return (f"RECALL — earlier exchanges from .history that match this question ({engine}). Context, not evidence: "
-            "say so when you rely on one.\n" + "\n".join(lines)), [i for i, _ in rows]
+            "say so when you rely on one.\n" + "\n".join(lines) + (("\n" + _notes_text(notes)) if notes else "")), [i for i, _ in rows]
+
+
+def pg_notes(question: str, k: int) -> list:
+    """The active agent's .memory notes nearest the question, from PostgreSQL (BANKML_PG_RECALL=1, after publishing
+    with private lines): a third source beside BM25 and the local vectors. [] when off, when no agent is active, when
+    the embedder or the database does not answer — recall never waits on them and never fails for them."""
+    if not os.environ.get("BANKML_PG_RECALL") or not ACTIVE.get("slug") or k <= 0:
+        return []
+    try:
+        qv = embed.query_vector(question)
+        if qv is None:
+            return []
+        import connectors
+        return [n for n in connectors.recall(ACTIVE["slug"], qv, k) if n.get("text")]
+    except Exception:  # noqa: BLE001 — the database is optional here
+        return []
+
+
+def _notes_text(notes: list) -> str:
+    return ("NOTES — the operator's .memory notes nearest this question, by meaning, from the database. Notes, not "
+            "evidence.\n" + "\n".join(f"- {' '.join(str(n['text']).split())[:RECALL_CHARS // 2]}" for n in notes))
 
 
 # ── metrics, computed from .history ───────────────────────────────────────────────

@@ -129,3 +129,53 @@ def restore(path: Path, rev: str) -> str | None:
     tmp.write_bytes(data.stdout)
     os.replace(tmp, path)  # never half a .memory
     return commit(path, f"restore {path.name} to {full[:7]}")
+
+
+def ingest_bundle(path: Path, bundle_path: Path, name: str = "browseml.memory") -> dict:
+    """Bring a browser's .memory into this one: a git bundle from browseML's GITMIND (EXPORT BUNDLE) is cloned to a
+    temporary directory, its newest `name` read, and every note this .memory does not hold yet (same sha256 of its text)
+    appended — delivery records (how an answer was delivered, never sent to a model) left out — then committed as one
+    version. Returns {head, notes, added, skipped}. The bundle is checked by git (`git bundle verify`) before it is read."""
+    import json as _json, tempfile
+    path, bundle_path = Path(path), Path(bundle_path)
+    with tempfile.TemporaryDirectory(prefix="bankml-ingest-") as t:
+        d = Path(t)
+        if _git(d, "init", "-q") is None or _git(d, "bundle", "verify", str(bundle_path)) is None:
+            raise ValueError("not a git bundle git accepts")
+        if _git(d, "clone", "-q", str(bundle_path), "c") is None:
+            raise ValueError("the bundle could not be cloned")
+        c = d / "c"
+        head = _git(c, "rev-parse", "HEAD") or ""
+        src = c / name
+        if not src.is_file():
+            raise ValueError(f"the bundle has no {name}")
+        lines = [l for l in src.read_text(encoding="utf-8").splitlines() if l.strip()]
+    have = set()
+    if path.exists():
+        for l in path.read_text(encoding="utf-8").splitlines():
+            try:
+                have.add(hashlib.sha256(str(_json.loads(l).get("text", "")).encode()).hexdigest())
+            except ValueError:
+                continue
+    added, skipped = [], 0
+    for l in lines:
+        try:
+            n = _json.loads(l)
+        except ValueError:
+            skipped += 1
+            continue
+        text = str(n.get("text", "")).strip()
+        h = hashlib.sha256(text.encode()).hexdigest()
+        if not text or (n.get("source") or {}).get("kind") == "delivery" or h in have:
+            skipped += 1
+            continue
+        have.add(h)
+        added.append(_json.dumps({"ts": n.get("ts"), "at": n.get("at"), "text": text, "sha256": h,
+                                  "source": {"kind": (n.get("source") or {}).get("kind", "typed"), "from": f"browseML bundle {head[:7]}"}},
+                                 ensure_ascii=False))
+    if added:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write("".join(a + "\n" for a in added))
+        commit(path, f"ingest {len(added)} note{'s' if len(added) != 1 else ''} from a browseML bundle ({head[:7]})")
+    return {"head": head, "notes": len(lines), "added": len(added), "skipped": skipped}

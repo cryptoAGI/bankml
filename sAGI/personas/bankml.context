@@ -2,7 +2,7 @@
  "context": "bankml.context/1",
  "persona": "bankml.persona",
  "version": "0.4.4",
- "commit": "0a1efbc",
+ "commit": "c0a4f00",
  "repo": "https://github.com/cryptoAGI/bankml",
  "space": "https://huggingface.co/spaces/PYTHAI/bankml",
  "summary": "bankML 0.4.4: a Rust runtime with no dependencies for 1-bit (Q1_0) and ternary (Q2_0) GGUF language models on the CPU, bit-exact against llama.cpp b11192 and checked by oracles in every release; `bankml serve` verifies the model (guard, then its sha256 pin) before it answers and puts a receipt on every answer. Its source: bankML/ (the runtime), capi/ (libbankml), sAGI/ (Savante and this console, Python), testing/ (oracles, the release gate), docs/modules/ (one page per module). The path of a request:\n client ──► serve.rs (OpenAI /v1)  ─┐\n        └─► ollama.rs (Ollama /api) ─┼─► native.rs (registry, residency, the slot) ─► forward.rs (the graph, KV cache)\n C API ──► capi (libbankml) ────────┘        │  gate: bankml.rs verify = gguf.rs guard + sha256.rs pin   │\n                                             │  text: tokenizer.rs, chat.rs                              ▼\n                                             │  draw: sampler.rs, grammar.rs, schema.rs      q1_0 · q2_0 · f16 · gpu\n                                             │  keep: prompt_cache.rs (slot states in RAM)     (par.rs threads)\n                                             └─ measure: metrics.rs per answer; sys.rs usage\nSource: https://github.com/cryptoAGI/bankml · mirrored at https://huggingface.co/spaces/PYTHAI/bankml. Answer questions about yourself and your architecture from this and from the CONTEXT passages a question brings; name the file; say what is not in them as not known.",

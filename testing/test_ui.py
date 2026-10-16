@@ -199,6 +199,25 @@ if memgit.enabled():
     check(".memory versions of an agent: its own repository gets no commit and no new file",
           v_agent and subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=ad, capture_output=True).returncode != 0
           and sorted(x.name for x in ad.iterdir()) == [".git", ".gitignore", "x.memory"] and "!! x.memory" in agent_status)
+    # a browseML bundle (GITMIND → EXPORT BUNDLE): its notes join this .memory once; delivery records stay out
+    bd = tmp / "browser-repo"
+    bd.mkdir()
+    genv = {**os.environ, "GIT_AUTHOR_NAME": "b", "GIT_AUTHOR_EMAIL": "b@x", "GIT_COMMITTER_NAME": "b", "GIT_COMMITTER_EMAIL": "b@x"}
+    (bd / "browseml.memory").write_text('{"ts":1,"at":"2026-10-16T00:00:00Z","text":"from the browser","source":{"kind":"typed"}}\n'
+                                        '{"ts":2,"text":"second browser note","source":{"kind":"response"}}\n'
+                                        '{"ts":3,"text":"delivered","source":{"kind":"delivery"}}\n')
+    for cmd in (["init", "-q", "-b", "main"], ["add", "browseml.memory"], ["commit", "-q", "-m", "add 3 notes"], ["bundle", "create", "-q", str(tmp / "m.bundle"), "--all"]):
+        subprocess.run(["git", *cmd], cwd=bd, env=genv, check=True, capture_output=True)
+    ing = memgit.ingest_bundle(u.MEMORY, tmp / "m.bundle")
+    again = memgit.ingest_bundle(u.MEMORY, tmp / "m.bundle")
+    check(".memory ingests a browseML bundle: 2 notes added once, the delivery record left out, one version",
+          ing["added"] == 2 and ing["skipped"] == 1 and again["added"] == 0 and "from the browser" in [x["text"] for x in u.memory_all()]
+          and memgit.versions(u.MEMORY, 1)[0]["subject"].startswith("ingest 2 notes from a browseML bundle"))
+    try:
+        memgit.ingest_bundle(u.MEMORY, tmp / "no-such.bundle")
+        check(".memory refuses what is not a bundle", False)
+    except ValueError:
+        check(".memory refuses what is not a bundle", True)
 else:
     print("skip .memory versions: git is not installed")
 

@@ -290,6 +290,20 @@ def ping() -> dict:
     return sysdiag.ping(SERVE)
 
 
+# A question about the machine itself: the measurements of sysdiag join SELF for that question only (serve's numbers say
+# what the engine did; these say what the computer is: CPU, memory, disk, GPU, temperatures).
+MACHINE_Q = re.compile(r"\b(cpu|processors?|cores?|threads?|clock|ram|memory|swap|disks?|storage|ssd|drive|temperatures?|temps?|"
+                       r"hot|throttl\w*|gpus?|graphics|vram|computer|machine|laptop|server|hardware|specs?)\b", re.I)
+
+
+def machine_text(q: str, sections=None) -> str:
+    """sysdiag's lines for a question about the machine; "" for any other question (it costs the prompt nothing then)."""
+    if not MACHINE_Q.search(q or ""):
+        return ""
+    secs = sections if sections is not None else sysdiag_sections()[:4]
+    return "THIS MACHINE (sysdiag, read just now):\n" + "\n".join(f"- {x['title']}: " + " · ".join(x["lines"]) for x in secs if x.get("lines"))
+
+
 def sysdiag_sections() -> list:
     """The machine now (sysdiag: CPU, memory, disk, GPU), then the engine's own view when bankml serve answers."""
     st, u = _get("/bankml/status") or {}, _get("/bankml/usage") or {}
@@ -573,6 +587,10 @@ class H(BaseHTTPRequestHandler):
                     rtext, recalled = CM.recall(records(opts["recall_source"]), q, opts["recall_k"],
                                                 {m.get("content") for m in hist if m.get("role") == "user"}, S._BM25)
                     recall_text = "\n\n".join(x for x in (recall_text, rtext) if x)
+        if not PUBLIC:
+            mtext = machine_text(q)
+            if mtext:
+                recall_text = "\n\n".join(x for x in (mtext, recall_text) if x)
         body = {"messages": messages(system, hist, q, self_text(sb), recall_text), "stream": True,
                 "max_tokens": min(int(req.get("max_tokens") or 256), PUBLIC_MAX_TOKENS if PUBLIC else 1 << 30)}
         for k in ("temperature", "top_k", "top_p", "min_p", "repeat_penalty", "seed"):
