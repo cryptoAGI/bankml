@@ -3,6 +3,8 @@
 //!
 //! The public hardware list (no token) is fetched with the system `curl`, since bankML has no TLS stack; without
 //! `curl` or the network the backend returns the reason. Nothing is started, rented or paid for.
+//! The flavors are NVIDIA cards, but bankML reaches them through its own Vulkan/SPIR-V, not CUDA: NVIDIA Thrust (CCCL)
+//! is not used and not ported, since its reductions fix no float order and bankML's results are bit-exact.
 //! Details: docs/modules/gpu.md.
 
 use super::{Device, Kind};
